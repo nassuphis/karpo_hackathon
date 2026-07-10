@@ -30,17 +30,28 @@ from port_poly100_programs import (
 N_PARITY = 36  # parity-gate coefficient count
 
 # Declared degree contract per fable (CR28 F4): min_coeffs..max_coeffs the
-# program is validated for. min guards sparse-poke fables whose fixed/computed
-# slots need room (a negative/colliding index otherwise); max is the largest
-# length where every parity point stays inside the f32 wire range (factorial /
-# Pochhammer families overflow past it — with the F3 checked packer the native
-# now fails loudly there rather than writing inf). Formula fables default to
-# (2, max). The multi-length gate enforces this; the selector should too.
+# program is validated for.
+#
+# min guards sparse-poke fables whose fixed/computed slots need room (a
+# negative/colliding index otherwise) — the short-length indexing constraint.
+#
+# max is a PARITY-VERIFICATION ceiling, not a usability or overflow-failure cap:
+# the fable renders at any degree (a factorial/Pochhammer tail that overflows
+# f32 becomes inf, which the companion solver handles — see the poly100-900
+# families and project_f32_overflow_is_intended). max is simply the largest
+# degree at which parity_check still confirms the fable against its numpy
+# reference with comfortable margin (>= PARITY_MIN_POINTS + 2 sample points stay
+# inside the f32 range; past it too many f64 reference coefficients exceed
+# FLT_MAX to compare). These were re-derived after CR28 F3 was reverted: the old
+# values were set while the F3 checked packer aborted the native on the FIRST
+# overflow point, so they were capped at the strict all-points-finite limit and
+# were far too low (e.g. fable-25 was 86, really 101; fable-18 was 185, really
+# 230). Formula fables default to (2, 256). The multi-length gate enforces this.
 FABLE_LIMITS = {
-    "fable-7": (2, 98), "fable-9": (2, 138), "fable-10": (2, 103),
-    "fable-11": (2, 95), "fable-12": (2, 98), "fable-13": (2, 98),
-    "fable-17": (2, 67), "fable-18": (2, 185), "fable-19": (2, 102),
-    "fable-25": (2, 86), "fable-28": (2, 66), "fable-32": (2, 98),
+    "fable-7": (2, 101), "fable-9": (2, 142), "fable-10": (2, 107),
+    "fable-11": (2, 100), "fable-12": (2, 101), "fable-13": (2, 103),
+    "fable-17": (2, 68), "fable-18": (2, 230), "fable-19": (2, 117),
+    "fable-25": (2, 101), "fable-28": (2, 69), "fable-32": (2, 101),
     # sparse pokes: min is where the poked slots are all valid + distinct
     "fable-40": (6, 256), "fable-41": (12, 256), "fable-42": (6, 256),
     "fable-43": (10, 256), "fable-44": (14, 256),

@@ -52,9 +52,12 @@ class FableNativeParityTests(unittest.TestCase):
 
     def test_fables_hold_across_their_declared_degrees(self):
         # CR28 F4: validate every fable at its min, 36, and max_coeffs, not just
-        # one length. Within [min,max] every parity point stays in f32 range
-        # (the F3 checked packer would fail the native otherwise), and the poked
-        # slots of the sparse fables are valid at their declared minimum.
+        # one length. max is the parity-VERIFICATION ceiling — the largest degree
+        # where parity_check still confirms the fable against numpy with margin
+        # (fables render past it too, with inf tails the solver handles; the
+        # ceilings were re-derived after F3's checked packer was reverted). The
+        # sparse fables' declared minimum is the short-length indexing bound
+        # where their poked slots are all valid + distinct.
         import functools
         from port_poly100_programs import parity_check, PARITY_REL_TOL
         for name, source, ref in fp.FABLES:

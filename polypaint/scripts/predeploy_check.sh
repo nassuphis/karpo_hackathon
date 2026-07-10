@@ -89,6 +89,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
 	    tests/test_solve_score_source_equivalence.py \
 	    tests/test_solve_score_program_storage.py \
 	    tests/test_storage_handler.py \
+	    tests/test_favorites_storage.py \
 	    tests/test_s3_error_taxonomy.py \
 	    tests/test_render_key_identity.py \
 	    tests/test_attach_palette_to_color_handler.py \

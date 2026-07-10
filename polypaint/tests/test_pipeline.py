@@ -3002,104 +3002,16 @@ class TestRenderArtifactInventory(unittest.TestCase):
 
 
 class TestFavoritesStorage(unittest.TestCase):
+    # Behavioral coverage (panel-ready list, exact-key resolve, single-row
+    # Add/Delete, transient-vs-missing) now lives in the GATED
+    # tests/test_favorites_storage.py (favorites-speedup.md). The old
+    # full-partition-response tests were removed here because they asserted the
+    # superseded response shape.
 
     def test_favorites_key_under_polypaint_prefix(self):
         import handler_storage
 
         self.assertEqual(handler_storage.FAVORITES_KEY, "polypaint/favorites/color_artifacts.json")
-
-    @patch("handler_storage._favorite_store_initialized", return_value=False)
-    @patch("handler_storage.s3")
-    def test_list_favorites_returns_empty_when_missing(self, mock_s3, mock_init):
-        from handler_storage import handle_list_favorites
-
-        mock_s3.get_object.side_effect = Exception("NoSuchKey")
-
-        result = handle_list_favorites({"body": "{}"})
-        body = json.loads(result["body"])
-
-        self.assertEqual(body["favorites"], [])
-        self.assertEqual(body["count"], 0)
-
-    @patch("handler_storage._read_favorites_from_ddb")
-    @patch("handler_storage._put_favorite_entry")
-    @patch("handler_storage._ensure_favorites_store_ready")
-    def test_add_favorite_prepends_new_ref(self, mock_ensure, mock_put, mock_read):
-        from handler_storage import handle_add_favorite
-
-        mock_put.return_value = True
-        mock_read.return_value = [
-            {"job_id": "job_new", "artifact_id": "color_new", "family": "color", "added_at": "2026-01-02T00:00:00Z",
-             "image_key": "renders/job_new/color/color_new/image.jpeg"},
-            {"job_id": "job_old", "artifact_id": "color_old", "family": "color", "added_at": "2026-01-01T00:00:00Z"}
-        ]
-
-        result = handle_add_favorite({
-            "body": json.dumps({
-                "job_id": "job_new",
-                "artifact_id": "color_new",
-                "family": "color",
-                "display_name": "color_new",
-                "image_key": "renders/job_new/color/color_new/image.jpeg",
-                "preview_key": "renders/job_new/color/color_new/preview.png",
-            })
-        })
-        body = json.loads(result["body"])
-
-        self.assertTrue(body["added"])
-        self.assertEqual(body["count"], 2)
-        written = mock_put.call_args[0][0]
-        self.assertEqual(written["job_id"], "job_new")
-        self.assertEqual(written["artifact_id"], "color_new")
-        self.assertEqual(written["image_key"], "renders/job_new/color/color_new/image.jpeg")
-
-    @patch("handler_storage._read_favorites_from_ddb")
-    @patch("handler_storage._put_favorite_entry")
-    @patch("handler_storage._ensure_favorites_store_ready")
-    def test_add_favorite_dedupes_existing_ref(self, mock_ensure, mock_put, mock_read):
-        from handler_storage import handle_add_favorite
-
-        mock_put.return_value = False
-        mock_read.return_value = [
-            {"job_id": "job_a", "artifact_id": "color_1", "family": "color", "added_at": "2026-01-01T00:00:00Z"}
-        ]
-
-        result = handle_add_favorite({
-            "body": json.dumps({
-                "job_id": "job_a",
-                "artifact_id": "color_1",
-                "family": "color",
-            })
-        })
-        body = json.loads(result["body"])
-
-        self.assertFalse(body["added"])
-        self.assertEqual(body["count"], 1)
-        mock_put.assert_called_once()
-
-    @patch("handler_storage._read_favorites_from_ddb")
-    @patch("handler_storage._delete_favorite_entry")
-    @patch("handler_storage._ensure_favorites_store_ready")
-    def test_delete_favorite_removes_only_matching_ref(self, mock_ensure, mock_delete, mock_read):
-        from handler_storage import handle_delete_favorite
-
-        mock_delete.return_value = True
-        mock_read.return_value = [
-            {"job_id": "job_b", "artifact_id": "color_2", "family": "color", "added_at": "2026-01-02T00:00:00Z"},
-        ]
-
-        result = handle_delete_favorite({
-            "body": json.dumps({
-                "job_id": "job_a",
-                "artifact_id": "color_1",
-            })
-        })
-        body = json.loads(result["body"])
-
-        self.assertTrue(body["deleted"])
-        self.assertEqual(body["count"], 1)
-        mock_delete.assert_called_once_with("job_a", "color_1")
-        self.assertEqual(body["favorites"], [{"job_id": "job_b", "artifact_id": "color_2", "family": "color", "added_at": "2026-01-02T00:00:00Z"}])
 
     def test_order_color_variants_breaks_cycles(self):
         from handler_storage import _order_color_variants

@@ -477,7 +477,9 @@ async function loadLambdaConfig() {
         const count = Object.keys(_lambdaUrls).length;
         statusEl.textContent = `${count} endpoints loaded`;
         statusEl.style.color = '#4ecca3';
-        try { await _loadFavoriteRefs(true); } catch (e) {}
+        // One-time favorites index for the Render-tab Favorite button. Not
+        // forced: use stored snapshots (0 S3) rather than re-resolving on boot.
+        try { await _loadFavoriteRefs(); } catch (e) {}
     } catch (e) {
         statusEl.textContent = 'Error: ' + e.message;
         statusEl.style.color = '#ff5555';

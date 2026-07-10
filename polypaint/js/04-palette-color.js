@@ -221,13 +221,18 @@ let _renderLoresPreviewEmissionHistograms = [];
 let _renderLoresPreviewHasPalette = false;
 let _renderLoadedJobId = '';
 let _renderNeedsRefresh = false;
-let _favoriteRefs = [];
-let _favoriteArtifacts = [];
+let _favoriteRefs = [];              // /list-favorites panel rows; also the _isFavorite index
+let _favoriteArtifacts = [];         // display rows = refs + derived public URLs
 let _favoriteSelectedIdx = -1;
 let _favoriteSelectedKey = '';
 let _favoriteCatalogScrollTop = 0;
 let _favoriteSaveDirHandle = null;
-let _favoriteRefsLoaded = false;
+let _favoriteRefsLoaded = false;     // refs fetched at least once this session
+// favorites-speedup.md Phase 1: cache-aware, idempotent, dedup'd tab load.
+let _favoriteArtifactsReady = false;      // display rows built + valid for current refs
+let _favoriteArtifactsSignature = '';     // signature of the refs the rows were built from
+let _favoriteLoadPromise = null;          // shared in-flight load (dedup rapid tab clicks)
+let _favoriteLoadGeneration = 0;          // stale-completion guard (force refresh bumps it)
 let _triPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _builtinPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };

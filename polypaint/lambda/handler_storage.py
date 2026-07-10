@@ -42,7 +42,8 @@ from logical_sections import (
 )
 from shared import (BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response,
                     _get_ddb, parse_boolish, assert_safe_render_image_key,
-                    assert_render_identity, is_missing_s3_error, s3_error_reason)
+                    assert_render_identity, is_missing_s3_error, s3_error_reason,
+                    assert_safe_id)
 from coeff_program_chain import (
     PROGRAM_KIND as COEFF_PROGRAM_KIND,
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
@@ -125,6 +126,23 @@ FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
 FAVORITES_DDB_JOB_ID = "favorites#color"
 FAVORITES_DDB_META_TASK_ID = "__meta__"
 FAVORITES_DDB_TASK_PREFIX = "favorite#"
+# Bump when the persisted favorite display snapshot shape changes; a row whose
+# stored version != this is treated as legacy and re-resolved by exact key
+# (favorites-speedup.md Proposal 3).
+FAVORITE_SNAPSHOT_VERSION = 1
+# Display-only fields projected from a resolved Color artifact entry into the
+# compact per-favorite snapshot. Enough to render the Favorites panel row
+# (Added / Job / Dims / Size / Summary + preview) without a /render-summary
+# fan-out; URLs are derived client-side from the keys, so none are stored (they
+# would otherwise be stale one-hour presigns).
+_FAVORITE_SNAPSHOT_FIELDS = (
+    "created_at", "image_key", "preview_key", "width", "height", "file_size", "size",
+    "content_type", "format", "color_mode", "palette", "color_interpretation",
+    "postprocess_kind", "derivation_kind", "derived_from_artifact_id",
+    "source_artifact_id", "source_color_artifact_id", "derived_from_color_artifact_id",
+    "solve_score_chain", "solve_score_program_source_text", "score_source_text",
+    "solve_metric", "solve_score_quantile", "threshold", "legacy", "view_mode",
+)
 SOLVE_SCORE_PROGRAMS_PREFIX = "polypaint/solve-score-programs/"
 SOLVE_SCORE_PROGRAM_VERSION = 1
 SOLVE_SCORE_PROGRAM_META_NAME = "solve_score_name"
@@ -1259,18 +1277,6 @@ def _sort_favorites(items):
     return sorted(items, key=lambda item: item.get("added_at", ""), reverse=True)
 
 
-def _read_favorites_from_ddb():
-    rows = _list_favorite_rows()
-    favorites = []
-    for row in rows:
-        task_id = row.get("task_id", {}).get("S")
-        if task_id == FAVORITES_DDB_META_TASK_ID:
-            continue
-        if task_id and task_id.startswith(FAVORITES_DDB_TASK_PREFIX):
-            favorites.append(_favorite_from_row(row))
-    return _sort_favorites(favorites)
-
-
 def _put_favorite_meta():
     try:
         _get_ddb().put_item(
@@ -1289,7 +1295,7 @@ def _put_favorite_meta():
             raise
 
 
-def _put_favorite_entry(entry):
+def _put_favorite_entry(entry, snapshot=None):
     item = {
         "job_id": {"S": FAVORITES_DDB_JOB_ID},
         "task_id": {"S": _favorite_task_id(entry["job_id"], entry["artifact_id"])},
@@ -1303,6 +1309,9 @@ def _put_favorite_entry(entry):
         value = entry.get(field)
         if value:
             item[field] = {"S": value}
+    if snapshot is not None:
+        item["snapshot_version"] = {"N": str(FAVORITE_SNAPSHOT_VERSION)}
+        item["snapshot"] = {"S": json.dumps(snapshot, separators=(",", ":"))}
     try:
         _get_ddb().put_item(
             TableName=JOBS_TABLE,
@@ -1329,6 +1338,107 @@ def _delete_favorite_entry(job_id, artifact_id):
     return "Attributes" in resp
 
 
+def _favorite_color_prefix(job_id, artifact_id):
+    return f"renders/{job_id}/color/{artifact_id}/"
+
+
+def _favorite_snapshot_from_entry(entry):
+    """Project a resolved Color artifact entry to the compact display snapshot."""
+    snap = {}
+    for field in _FAVORITE_SNAPSHOT_FIELDS:
+        value = entry.get(field)
+        if value not in (None, ""):
+            snap[field] = value
+    return snap
+
+
+def _resolve_favorite_color_snapshot(job_id, artifact_id, *, s3_client=None):
+    """Resolve a favorite's Color artifact by EXACT key: HEAD the known image /
+    preview candidates and read that artifact's own overlay. No job scan, no
+    /render-summary, no list_objects_v2 (favorites-speedup.md Proposal 3).
+
+    Returns (snapshot|None, state, reason). state:
+      'ready'   snapshot built from the resolved artifact;
+      'missing' genuine 404 — the artifact is gone (mark the favorite missing);
+      'error'   transient/throttle/access/overlay failure — the bytes may well
+                exist, so the favorite must NOT be relabeled missing (CR28 F13)."""
+    client = s3_client or s3
+    shape = RENDER_FAMILY_SHAPES["color"]
+    prefix = _favorite_color_prefix(job_id, artifact_id)
+    image_candidates = [prefix + k for k in shape["image_candidates"]]
+    preview_candidates = [prefix + k for k in shape["preview_candidates"]]
+    try:
+        head = _head_artifact_keys(image_candidates + preview_candidates,
+                                   presign=False, s3_client=client)
+    except Exception as exc:
+        return None, "error", s3_error_reason(exc)
+    image_info = _first_existing(head, image_candidates)
+    if not image_info:
+        # Distinguish a real 404 from a transient/permission failure using the
+        # per-key error_reason _head_artifact_keys now surfaces (CR28 F13).
+        for key in image_candidates:
+            reason = (head.get(key) or {}).get("error_reason")
+            if reason:
+                return None, "error", reason
+        return None, "missing", "not found"
+    # Identity guard: the key we built must name this exact artifact.
+    assert_render_identity(image_info["key"], job_id, artifact_id, "favorite image_key")
+    preview_info = _first_existing(head, preview_candidates)
+    try:
+        overlay = _load_color_artifact_overlay(job_id, artifact_id, s3_client=client)
+    except Exception as exc:
+        return None, "error", s3_error_reason(exc)
+    entry = _render_artifact_entry("color", artifact_id, image_info, preview_info,
+                                   fallback_meta=overlay)
+    return _favorite_snapshot_from_entry(entry), "ready", ""
+
+
+def _favorite_panel_row(ref, snapshot, state, reason):
+    """Build the panel-ready favorite row the frontend renders directly (no
+    client-side hydration). URLs are derived client-side from the keys."""
+    row = {
+        "family": "color",
+        "artifact_id": ref["artifact_id"],
+        "favorite_job_id": ref["job_id"],
+        "favorite_artifact_id": ref["artifact_id"],
+        "favorite_added_at": ref.get("added_at", ""),
+        "display_name": ref.get("display_name") or ref["artifact_id"],
+        "image_key": ref.get("image_key", ""),
+        "preview_key": ref.get("preview_key", ""),
+        "hydration_state": state,
+        "missing": state == "missing",
+    }
+    if snapshot:
+        row.update(snapshot)
+        row["image_key"] = snapshot.get("image_key") or row["image_key"]
+        row["preview_key"] = snapshot.get("preview_key") or row["preview_key"]
+    if state == "missing":
+        row["missing_reason"] = reason or "not found"
+    elif state == "error":
+        # NOT missing: keep the row displayable from its stored keys; flag stale.
+        row["error_reason"] = reason or "error"
+    return row
+
+
+def _backfill_favorite_snapshot(job_id, artifact_id, snapshot):
+    """Persist a resolved snapshot onto an existing (legacy) favorite row so the
+    next list is zero-S3 for it. Conditioned on the row still existing."""
+    _get_ddb().update_item(
+        TableName=JOBS_TABLE,
+        Key={
+            "job_id": {"S": FAVORITES_DDB_JOB_ID},
+            "task_id": {"S": _favorite_task_id(job_id, artifact_id)},
+        },
+        UpdateExpression="SET snapshot_version = :v, snapshot = :s, updated_at_ms = :u",
+        ExpressionAttributeValues={
+            ":v": {"N": str(FAVORITE_SNAPSHOT_VERSION)},
+            ":s": {"S": json.dumps(snapshot, separators=(",", ":"))},
+            ":u": {"N": str(int(time.time() * 1000))},
+        },
+        ConditionExpression="attribute_exists(task_id)",
+    )
+
+
 def _ensure_favorites_store_ready():
     if _favorite_store_initialized():
         return
@@ -1345,12 +1455,6 @@ def _ensure_favorites_store_ready():
                 "image_key": entry.get("image_key"),
                 "preview_key": entry.get("preview_key"),
             })
-
-
-def _read_favorites():
-    if _favorite_store_initialized():
-        return _read_favorites_from_ddb()
-    return _load_legacy_favorites()
 
 
 def handler(event, context):
@@ -1485,32 +1589,135 @@ def handler(event, context):
     }
 
 
+def _favorite_refs_from_rows(rows):
+    """Extract favorite refs + parsed snapshots from raw DDB rows. Returns
+    (refs_sorted_desc, {(job,artifact): snapshot}, saw_meta)."""
+    refs = []
+    snapshots = {}
+    saw_meta = False
+    for row in rows:
+        task_id = row.get("task_id", {}).get("S")
+        if task_id == FAVORITES_DDB_META_TASK_ID:
+            saw_meta = True
+            continue
+        if not task_id or not task_id.startswith(FAVORITES_DDB_TASK_PREFIX):
+            continue
+        ref = _favorite_from_row(row)
+        refs.append(ref)
+        version = _parse_int((row.get("snapshot_version") or {}).get("N"))
+        snap_raw = (row.get("snapshot") or {}).get("S")
+        if version == FAVORITE_SNAPSHOT_VERSION and snap_raw:
+            try:
+                snapshots[(ref["job_id"], ref["artifact_id"])] = json.loads(snap_raw)
+            except (ValueError, TypeError):
+                pass
+    return _sort_favorites(refs), snapshots, saw_meta
+
+
 def handle_list_favorites(event):
-    favorites = _read_favorites()
-    return ok_response({"favorites": favorites, "count": len(favorites)})
+    """Panel-ready favorites in one DDB query (favorites-speedup.md Proposal 3).
+
+    Rows with a current snapshot return with zero S3 work; legacy/incomplete
+    rows are resolved by EXACT key (no /render-summary, no list_objects_v2) and
+    backfilled. `{"refresh": true}` re-resolves every row. A transient S3 error
+    is surfaced as `error`, never as a missing artifact (CR28 F13)."""
+    params = parse_body(event) if event else {}
+    refresh = parse_boolish(params.get("refresh"), False)
+    t0 = time.time()
+
+    # Single round trip on the initialized path: query once, and only run the
+    # legacy migration + re-query if the __meta__ marker is absent (Proposal 5).
+    rows = _list_favorite_rows()
+    refs, snapshots, saw_meta = _favorite_refs_from_rows(rows)
+    if not saw_meta:
+        _ensure_favorites_store_ready()
+        rows = _list_favorite_rows()
+        refs, snapshots, _ = _favorite_refs_from_rows(rows)
+
+    to_resolve = [r for r in refs
+                  if refresh or (r["job_id"], r["artifact_id"]) not in snapshots]
+    resolved = {}
+    if to_resolve:
+        import concurrent.futures
+        client = _results_list_s3_client(len(to_resolve))
+
+        def work(ref):
+            return (ref["job_id"], ref["artifact_id"]), _resolve_favorite_color_snapshot(
+                ref["job_id"], ref["artifact_id"], s3_client=client)
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(len(to_resolve), 16)) as pool:
+            for keypair, result in pool.map(work, to_resolve):
+                resolved[keypair] = result
+
+    panel = []
+    diag = {"snapshot_hits": 0, "snapshot_backfills": 0, "missing": 0, "errors": 0}
+    backfills = []
+    for ref in refs:
+        keypair = (ref["job_id"], ref["artifact_id"])
+        if keypair in resolved:
+            snap, state, reason = resolved[keypair]
+            panel.append(_favorite_panel_row(ref, snap, state, reason))
+            if state == "ready" and snap is not None:
+                backfills.append((ref["job_id"], ref["artifact_id"], snap))
+                diag["snapshot_backfills"] += 1
+            elif state == "missing":
+                diag["missing"] += 1
+            elif state == "error":
+                diag["errors"] += 1
+        else:
+            panel.append(_favorite_panel_row(ref, snapshots[keypair], "ready", ""))
+            diag["snapshot_hits"] += 1
+
+    for job_id, artifact_id, snap in backfills:
+        try:
+            _backfill_favorite_snapshot(job_id, artifact_id, snap)
+        except Exception:
+            pass  # backfill is an optimization; never fail the list on it
+
+    return ok_response({
+        "favorites": panel,
+        "count": len(panel),
+        "snapshot_hits": diag["snapshot_hits"],
+        "snapshot_backfills": diag["snapshot_backfills"],
+        "missing": diag["missing"],
+        "errors": diag["errors"],
+        "hydrate_us": int((time.time() - t0) * 1e6),
+    })
 
 
 def handle_add_favorite(event):
+    """Resolve + validate the artifact server-side by EXACT key, store canonical
+    keys + a compact display snapshot, and return the single affected row
+    (favorites-speedup.md Proposals 3 & 4). No full-partition reread."""
     params = parse_body(event)
-    job_id = params["job_id"]
-    artifact_id = params["artifact_id"]
+    job_id = assert_safe_id(params["job_id"], "job_id")
+    artifact_id = assert_safe_id(params["artifact_id"], "artifact_id")
     family = params.get("family", "color")
     if family != "color":
         raise ValueError("Only color favorites are supported")
     _ensure_favorites_store_ready()
+
+    # Do NOT trust caller-provided image/preview keys: resolve them ourselves.
+    snapshot, state, reason = _resolve_favorite_color_snapshot(job_id, artifact_id)
+    if state == "missing":
+        raise ValueError(f"color artifact {artifact_id} not found under job {job_id}")
+    if state == "error":
+        raise RuntimeError(f"could not resolve color artifact {artifact_id}: {reason}")
+
     entry = {
         "job_id": job_id,
         "artifact_id": artifact_id,
         "family": "color",
         "added_at": params.get("added_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "display_name": str(params.get("display_name") or artifact_id),
+        "image_key": snapshot.get("image_key", ""),
+        "preview_key": snapshot.get("preview_key", ""),
     }
-    for field in ("display_name", "image_key", "preview_key"):
-        value = params.get(field)
-        if value:
-            entry[field] = value
-    added = _put_favorite_entry(entry)
-    favorites = _read_favorites_from_ddb()
-    return ok_response({"added": added, "favorites": favorites, "count": len(favorites)})
+    added = _put_favorite_entry(entry, snapshot=snapshot)
+    # A conditional-put miss (already favorited) is not an error; return the
+    # freshly-resolved row so the caller can ensure it is in the local list.
+    return ok_response({"added": added, "favorite": _favorite_panel_row(entry, snapshot, "ready", "")})
 
 
 def handle_delete_favorite(event):
@@ -1519,8 +1726,7 @@ def handle_delete_favorite(event):
     artifact_id = params["artifact_id"]
     _ensure_favorites_store_ready()
     deleted = _delete_favorite_entry(job_id, artifact_id)
-    favorites = _read_favorites_from_ddb()
-    return ok_response({"deleted": deleted, "favorites": favorites, "count": len(favorites)})
+    return ok_response({"deleted": deleted, "job_id": job_id, "artifact_id": artifact_id})
 
 
 def handle_list_solve_score_programs(event):

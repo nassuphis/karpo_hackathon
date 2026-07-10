@@ -66,7 +66,7 @@ function switchTab(name) {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
     if (name === 'results') loadResults();
     if (name === 'render') _maybeAutoRefreshRenderInventory();
-    if (name === 'favorites') loadFavoritesInventory();
+    if (name === 'favorites') void loadFavoritesInventory();
     if (name === 'book') void loadBookTab();
     if (name === 'palette') loadPaletteInventory();
     if (name === 'deepzoom') loadDeepZoomInventory();
@@ -295,69 +295,57 @@ function _favoriteRefKey(jobId, artifactId) {
     return `${jobId}::${artifactId}`;
 }
 
+function _favoriteRefJob(ref) { return String((ref && (ref.favorite_job_id || ref.job_id)) || ''); }
+function _favoriteRefArtifact(ref) { return String((ref && (ref.favorite_artifact_id || ref.artifact_id)) || ''); }
+
 function _isFavorite(jobId, artifactId) {
     if (!jobId || !artifactId) return false;
     const key = _favoriteRefKey(jobId, artifactId);
-    return (_favoriteRefs || []).some(ref => _favoriteRefKey(ref.job_id, ref.artifact_id) === key);
+    return (_favoriteRefs || []).some(ref => _favoriteRefKey(_favoriteRefJob(ref), _favoriteRefArtifact(ref)) === key);
+}
+
+// app + artifacts share the bucket, so a canonical render key maps to a stable
+// public URL — no presign, no one-hour expiry (favorites-speedup.md Phase 2).
+function _publicStorageUrl(key) {
+    const k = String(key || '');
+    if (!k) return '';
+    return 'https://polypaint.s3.us-east-1.amazonaws.com/' + encodeURI(k);
+}
+
+// Panel display row = the panel-ready /list-favorites row + client-derived URLs.
+function _favoriteDisplayRow(row) {
+    const imageKey = String(row.image_key || '');
+    const previewKey = String(row.preview_key || '');
+    return {
+        ...row,
+        image_url: _publicStorageUrl(imageKey),
+        preview_url: _publicStorageUrl(previewKey),
+        viewer_url: _publicStorageUrl(previewKey || imageKey),
+    };
+}
+
+// Signature over the ref fields that affect the panel. If it changes (e.g. an
+// out-of-band index refresh), the cached display rows are rebuilt on tab entry.
+function _favoriteRowsSignature(rows) {
+    return (rows || []).map(r =>
+        [_favoriteRefJob(r), _favoriteRefArtifact(r), r.favorite_added_at || r.added_at || '',
+         r.image_key || '', r.preview_key || '', r.hydration_state || ''].join('|')
+    ).join(';');
 }
 
 async function _loadFavoriteRefs(force = false) {
     if (_favoriteRefsLoaded && !force) return _favoriteRefs;
-    const resp = await lambdaPost('storage', {}, '/list-favorites');
+    // force -> refresh:true re-validates each favorite by exact key server-side.
+    const resp = await lambdaPost('storage', force ? { refresh: true } : {}, '/list-favorites');
     _favoriteRefs = Array.isArray(resp.favorites) ? resp.favorites : [];
     _favoriteRefsLoaded = true;
     return _favoriteRefs;
 }
 
-async function _hydrateFavoriteArtifacts() {
-    const refs = Array.isArray(_favoriteRefs) ? _favoriteRefs.slice() : [];
-    if (!refs.length) return [];
-    const grouped = new Map();
-    refs.forEach(ref => {
-        if (!ref || !ref.job_id) return;
-        if (!grouped.has(ref.job_id)) grouped.set(ref.job_id, []);
-        grouped.get(ref.job_id).push(ref);
-    });
-    const summaries = new Map();
-    await asyncPool(4, Array.from(grouped.keys()), async (jobId) => {
-        try {
-            const summary = await lambdaPost('storage', { job_id: jobId }, '/render-summary');
-            summaries.set(jobId, summary || {});
-        } catch (e) {
-            summaries.set(jobId, { _favorite_error: e.message });
-        }
-    });
-    return refs.map(ref => {
-        const summary = summaries.get(ref.job_id) || {};
-        const inv = (summary.families && summary.families.color) || [];
-        const match = inv.find(a => a.artifact_id === ref.artifact_id) || null;
-        if (match) {
-            return {
-                ...match,
-                favorite_ref: ref,
-                favorite_job_id: ref.job_id,
-                favorite_added_at: ref.added_at || '',
-            };
-        }
-        return {
-            family: 'color',
-            artifact_id: ref.artifact_id,
-            favorite_ref: ref,
-            favorite_job_id: ref.job_id,
-            favorite_added_at: ref.added_at || '',
-            display_name: ref.display_name || ref.artifact_id,
-            image_key: ref.image_key || '',
-            preview_key: ref.preview_key || '',
-            image_url: '',
-            viewer_url: '',
-            preview_url: '',
-            width: 0,
-            height: 0,
-            file_size: 0,
-            missing: true,
-            missing_reason: summary._favorite_error || 'missing artifact',
-        };
-    });
+function _rebuildFavoriteArtifactsFromRefs() {
+    _favoriteArtifacts = (_favoriteRefs || []).map(_favoriteDisplayRow);
+    _favoriteArtifactsSignature = _favoriteRowsSignature(_favoriteRefs);
+    _favoriteArtifactsReady = true;
 }
 
 async function _addColorFavorite(ref, options = {}) {
@@ -367,18 +355,29 @@ async function _addColorFavorite(ref, options = {}) {
     if (!options.force && _isFavorite(jobId, artifactId)) {
         return { already: true };
     }
+    // The backend resolves + validates the image/preview keys itself (identity
+    // trust), so we no longer send caller-provided keys.
     const resp = await lambdaPost('storage', {
         job_id: jobId,
         artifact_id: artifactId,
         family: 'color',
         display_name: (ref && (ref.displayName || ref.display_name)) || artifactId,
-        image_key: (ref && (ref.imageKey || ref.image_key)) || '',
-        preview_key: (ref && (ref.previewKey || ref.preview_key)) || '',
     }, '/add-favorite');
-    _favoriteRefs = Array.isArray(resp.favorites) ? resp.favorites : _favoriteRefs;
-    _favoriteRefsLoaded = true;
-    if (document.getElementById('tab-favorites')?.classList.contains('active')) {
-        await loadFavoritesInventory();
+    // Write-through (favorites-speedup.md Proposal 4): the response carries the
+    // single resolved row. added:false means it already existed (e.g. a retried
+    // POST) — still returns the row. Patch the local cache; never reload.
+    const row = resp && resp.favorite;
+    if (row) {
+        const key = _favoriteRefKey(_favoriteRefJob(row), _favoriteRefArtifact(row));
+        _favoriteRefs = [row, ...(_favoriteRefs || []).filter(
+            r => _favoriteRefKey(_favoriteRefJob(r), _favoriteRefArtifact(r)) !== key)];
+        _favoriteRefsLoaded = true;
+        if (_favoriteArtifactsReady) {
+            _rebuildFavoriteArtifactsFromRefs();
+            if (document.getElementById('tab-favorites')?.classList.contains('active')) {
+                renderFavoritesPanel({ preserveScroll: true, ensureSelected: true });
+            }
+        }
     }
     return { already: resp && resp.added === false };
 }
@@ -564,30 +563,40 @@ function renderFavoritesPanel(options = {}) {
     }
 }
 
-async function loadFavoritesInventory() {
+async function loadFavoritesInventory(options = {}) {
+    const force = !!options.force;
     const statusEl = document.getElementById('favorites-status');
-    if (statusEl) {
-        statusEl.textContent = 'Loading...';
-        statusEl.className = 'status';
-    }
-    try {
-        if (!_favoriteRefsLoaded) await _loadFavoriteRefs();
-        _favoriteArtifacts = await _hydrateFavoriteArtifacts();
+    // Cache hit (favorites-speedup.md Phase 1): refs loaded, display rows built,
+    // and the refs are unchanged since. Render immediately, issue zero requests.
+    if (!force && _favoriteRefsLoaded && _favoriteArtifactsReady
+        && _favoriteRowsSignature(_favoriteRefs) === _favoriteArtifactsSignature) {
         renderFavoritesPanel();
-        if (statusEl) {
-            statusEl.textContent = 'Ready';
-            statusEl.className = 'status ok';
-        }
-    } catch (e) {
-        _favoriteArtifacts = [];
-        _favoriteSelectedIdx = -1;
-        _favoriteSelectedKey = '';
-        renderFavoritesPanel();
-        if (statusEl) {
-            statusEl.textContent = 'Refresh failed: ' + e.message;
-            statusEl.className = 'status error';
-        }
+        if (statusEl) { statusEl.textContent = 'Ready'; statusEl.className = 'status ok'; }
+        return _favoriteArtifacts;
     }
+    // Dedup overlapping (non-forced) loads so rapid tab clicks share one request.
+    if (_favoriteLoadPromise && !force) return _favoriteLoadPromise;
+    if (statusEl) { statusEl.textContent = 'Loading...'; statusEl.className = 'status'; }
+    const generation = force ? ++_favoriteLoadGeneration : _favoriteLoadGeneration;
+    _favoriteLoadPromise = (async () => {
+        try {
+            await _loadFavoriteRefs(force);
+            if (generation !== _favoriteLoadGeneration) return _favoriteArtifacts;  // superseded
+            _rebuildFavoriteArtifactsFromRefs();
+            renderFavoritesPanel();
+            if (statusEl) { statusEl.textContent = 'Ready'; statusEl.className = 'status ok'; }
+        } catch (e) {
+            if (generation !== _favoriteLoadGeneration) return _favoriteArtifacts;
+            _favoriteArtifactsReady = false;
+            _favoriteArtifacts = [];
+            _favoriteSelectedIdx = -1;
+            _favoriteSelectedKey = '';
+            renderFavoritesPanel();
+            if (statusEl) { statusEl.textContent = 'Refresh failed: ' + e.message; statusEl.className = 'status error'; }
+        }
+        return _favoriteArtifacts;
+    })().finally(() => { _favoriteLoadPromise = null; });
+    return _favoriteLoadPromise;
 }
 
 async function refreshFavoritesInventory() {
@@ -595,8 +604,7 @@ async function refreshFavoritesInventory() {
     const orig = btn ? btn.textContent : 'Refresh';
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
-        await _loadFavoriteRefs(true);
-        await loadFavoritesInventory();
+        await loadFavoritesInventory({ force: true });
         log('Favorites refreshed', 'ok', 'favorites-log');
     } catch (e) {
         log(`Favorites refresh failed: ${e.message}`, 'err', 'favorites-log');
@@ -728,14 +736,21 @@ async function deleteSelectedFavorite() {
     const orig = btn ? btn.textContent : 'Delete';
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Deleting...'; }
-        const resp = await lambdaPost('storage', {
+        await lambdaPost('storage', {
             job_id: art.favorite_job_id,
             artifact_id: art.artifact_id,
         }, '/delete-favorite');
-        _favoriteRefs = Array.isArray(resp.favorites) ? resp.favorites : _favoriteRefs.filter(ref => _favoriteRefKey(ref.job_id, ref.artifact_id) !== _favoriteRefKey(art.favorite_job_id, art.artifact_id));
+        // Write-through (favorites-speedup.md Proposal 4): drop the one row
+        // locally; no partition reread, no rehydration.
+        const removedKey = _favoriteRefKey(art.favorite_job_id, art.artifact_id);
+        _favoriteRefs = (_favoriteRefs || []).filter(
+            ref => _favoriteRefKey(_favoriteRefJob(ref), _favoriteRefArtifact(ref)) !== removedKey);
         _favoriteRefsLoaded = true;
+        const removedArtKey = _favoriteArtifactKey(art);
         const nextIdx = _favoriteSelectedIdx;
-        _favoriteArtifacts = await _hydrateFavoriteArtifacts();
+        _favoriteArtifacts = (_favoriteArtifacts || []).filter(a => _favoriteArtifactKey(a) !== removedArtKey);
+        _favoriteArtifactsSignature = _favoriteRowsSignature(_favoriteRefs);
+        _favoriteArtifactsReady = true;
         _favoriteSelectedIdx = _favoriteArtifacts.length ? Math.min(nextIdx, _favoriteArtifacts.length - 1) : -1;
         _favoriteSelectedKey = _favoriteSelectedIdx >= 0 ? _favoriteArtifactKey(_favoriteArtifacts[_favoriteSelectedIdx]) : '';
         renderFavoritesPanel({ preserveScroll: true, ensureSelected: true });

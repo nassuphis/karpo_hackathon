@@ -1,81 +1,54 @@
 // @ts-check
 const { test, expect } = require('@playwright/test');
 
-const FAVORITE_REFS = [
+// favorites-speedup.md: /list-favorites now returns PANEL-READY rows (compact
+// display snapshot + favorite_* identity). The favorites tab renders them
+// directly and derives preview/image URLs from the keys — it must NOT call
+// /render-summary. These specs assert that: the favorites-only flows make
+// /render-summary throw.
+const FAVORITE_ROWS = [
   {
-    job_id: 'job_fav_a',
-    artifact_id: 'color_a',
-    family: 'color',
-    added_at: '2026-04-08T12:00:00Z',
-    display_name: 'Favorite A',
+    family: 'color', artifact_id: 'color_a',
+    favorite_job_id: 'job_fav_a', favorite_artifact_id: 'color_a',
+    favorite_added_at: '2026-04-08T12:00:00Z', display_name: 'Favorite A',
     image_key: 'renders/job_fav_a/color/color_a/image.jpeg',
     preview_key: 'renders/job_fav_a/color/color_a/preview.png',
+    width: 1200, height: 1200, file_size: 180000,
+    color_mode: 'solve_score', palette: 'inferno', format: 'jpeg',
+    hydration_state: 'ready', missing: false,
   },
   {
-    job_id: 'job_fav_b',
-    artifact_id: 'color_b',
-    family: 'color',
-    added_at: '2026-04-08T13:00:00Z',
-    display_name: 'Favorite B',
+    family: 'color', artifact_id: 'color_b',
+    favorite_job_id: 'job_fav_b', favorite_artifact_id: 'color_b',
+    favorite_added_at: '2026-04-08T13:00:00Z', display_name: 'Favorite B',
     image_key: 'renders/job_fav_b/color/color_b/image.jpeg',
     preview_key: 'renders/job_fav_b/color/color_b/preview.png',
+    width: 1600, height: 1600, file_size: 240000,
+    color_mode: 'rainbow', format: 'jpeg',
+    hydration_state: 'ready', missing: false,
   },
 ];
 
-const FAVORITE_SUMMARIES = {
-  job_fav_a: {
-    calc: { exists: true, N: 2000, degree: 8 },
-    families: {
-      color: [
-        {
-          artifact_id: 'color_a',
-          display_name: 'Favorite A',
-          image_key: 'renders/job_fav_a/color/color_a/image.jpeg',
-          image_url: 'https://example.com/favorite-a.jpeg',
-          preview_key: 'renders/job_fav_a/color/color_a/preview.png',
-          preview_url: 'https://example.com/favorite-a-preview.png',
-          viewer_url: 'https://example.com/favorite-a-preview.png',
-          width: 1200,
-          height: 1200,
-          file_size: 180000,
-          color_mode: 'solve_score',
-          palette: 'inferno',
-          format: 'jpeg',
-        },
-      ],
-      bilevel: [],
-      coeffs: [],
-      palette: [],
-    },
-    artifacts: {},
-    deepzoom_latest: { exists: false },
+// derived, stable public URL for color_a's preview (no presign, no expiry)
+const COLOR_A_PREVIEW = 'https://polypaint.s3.us-east-1.amazonaws.com/renders/job_fav_a/color/color_a/preview.png';
+
+// Render-tab inventory (GoRender navigates to the Render tab, which legitimately
+// uses /render-summary — that is not a favorites concern).
+const RENDER_SUMMARY_A = {
+  calc: { exists: true, N: 2000, degree: 8 },
+  families: {
+    color: [{
+      artifact_id: 'color_a', display_name: 'Favorite A',
+      image_key: 'renders/job_fav_a/color/color_a/image.jpeg',
+      image_url: 'https://example.com/favorite-a.jpeg',
+      preview_key: 'renders/job_fav_a/color/color_a/preview.png',
+      preview_url: 'https://example.com/favorite-a-preview.png',
+      viewer_url: 'https://example.com/favorite-a-preview.png',
+      width: 1200, height: 1200, file_size: 180000, color_mode: 'solve_score', format: 'jpeg',
+    }],
+    bilevel: [], coeffs: [], palette: [],
   },
-  job_fav_b: {
-    calc: { exists: true, N: 3000, degree: 10 },
-    families: {
-      color: [
-        {
-          artifact_id: 'color_b',
-          display_name: 'Favorite B',
-          image_key: 'renders/job_fav_b/color/color_b/image.jpeg',
-          image_url: 'https://example.com/favorite-b.jpeg',
-          preview_key: 'renders/job_fav_b/color/color_b/preview.png',
-          preview_url: 'https://example.com/favorite-b-preview.png',
-          viewer_url: 'https://example.com/favorite-b-preview.png',
-          width: 1600,
-          height: 1600,
-          file_size: 240000,
-          color_mode: 'rainbow',
-          format: 'jpeg',
-        },
-      ],
-      bilevel: [],
-      coeffs: [],
-      palette: [],
-    },
-    artifacts: {},
-    deepzoom_latest: { exists: false },
-  },
+  artifacts: {}, deepzoom_latest: { exists: false },
 };
 
 const RESULT_DETAIL = {
@@ -84,12 +57,7 @@ const RESULT_DETAIL = {
   file_count: 9,
   calc: { solver: 'aberth', function: 'poly_1' },
   pipeline: { function: 'poly_1', cfpv: [], coeff_transforms: [] },
-  preview_stats: {
-    n_roots: 80,
-    n_roots_total: 100,
-    q_re: [-1, 1],
-    q_im: [-1, 1],
-  },
+  preview_stats: { n_roots: 80, n_roots_total: 100, q_re: [-1, 1], q_im: [-1, 1] },
 };
 
 test.beforeEach(async ({ page }) => {
@@ -98,8 +66,7 @@ test.beforeEach(async ({ page }) => {
   await page.evaluate(() => {
     window.OpenSeadragon = function () {
       return {
-        addHandler() {},
-        destroy() {},
+        addHandler() {}, destroy() {},
         world: { getItemAt() { return null; }, getItemCount() { return 0; } },
         viewport: { getZoom() { return 1; }, getCenter() { return { x: 0, y: 0 }; } },
       };
@@ -108,35 +75,53 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe('Favorites UI', () => {
-  test('favorites tab loads artifacts, auto-selects one, and enables actions', async ({ page }) => {
-    await page.evaluate(({ refs, summaries }) => {
-      window._mockFavoriteRefs = refs.slice();
-      window._mockFavoriteSummaries = summaries;
+  test('favorites tab renders panel-ready rows without calling render-summary', async ({ page }) => {
+    await page.evaluate(({ rows }) => {
+      window._mockFavoriteRows = rows.slice();
       window.lambdaPost = async function (name, body, path) {
         if (name !== 'storage') throw new Error(`unexpected ${name}`);
-        if (path === '/list-favorites') return { favorites: window._mockFavoriteRefs.slice() };
-        if (path === '/render-summary') return window._mockFavoriteSummaries[body.job_id] || { families: { color: [] } };
+        if (path === '/list-favorites') return { favorites: window._mockFavoriteRows.slice(), count: window._mockFavoriteRows.length };
+        if (path === '/render-summary') throw new Error('favorites must not call /render-summary');
         throw new Error(`unexpected storage path ${path}`);
       };
-    }, { refs: FAVORITE_REFS, summaries: FAVORITE_SUMMARIES });
+    }, { rows: FAVORITE_ROWS });
 
     await page.click('.tab-btn:text("Favorites")');
     await expect(page.locator('.favorite-art-row')).toHaveCount(2);
-    await expect(page.locator('#favorites-preview img')).toHaveAttribute('src', 'https://example.com/favorite-a-preview.png');
+    await expect(page.locator('#favorites-preview img')).toHaveAttribute('src', COLOR_A_PREVIEW);
     await expect(page.locator('#favorites-info')).toContainText('2 favorites loaded.');
     await expect(page.locator('#btn-favorites-go-render')).toBeEnabled();
     await expect(page.locator('#btn-favorites-download')).toBeEnabled();
     await expect(page.locator('#btn-favorites-delete')).toBeEnabled();
   });
 
+  test('reopening the favorites tab issues no second /list-favorites', async ({ page }) => {
+    await page.evaluate(({ rows }) => {
+      window._listCalls = 0;
+      window._mockFavoriteRows = rows.slice();
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-favorites') { window._listCalls += 1; return { favorites: window._mockFavoriteRows.slice() }; }
+        if (path === '/render-summary') throw new Error('favorites must not call /render-summary');
+        throw new Error(`unexpected storage path ${path}`);
+      };
+    }, { rows: FAVORITE_ROWS });
+
+    await page.click('.tab-btn:text("Favorites")');
+    await expect(page.locator('.favorite-art-row')).toHaveCount(2);
+    await page.click('.tab-btn:text("Render")');
+    await page.click('.tab-btn:text("Favorites")');
+    await expect(page.locator('.favorite-art-row')).toHaveCount(2);
+    // one list on first entry; the repeat visit renders from cache
+    expect(await page.evaluate(() => window._listCalls)).toBe(1);
+  });
+
   test('GoRender switches to Render and selects the artifact', async ({ page }) => {
-    await page.evaluate(({ refs, summaries, detail }) => {
-      window._mockFavoriteRefs = refs.slice();
-      window._mockFavoriteSummaries = summaries;
+    await page.evaluate(({ rows, summaryA, detail }) => {
+      window._mockFavoriteRows = rows.slice();
       window.lambdaPost = async function (name, body, path) {
         if (name !== 'storage') throw new Error(`unexpected ${name}`);
-        if (path === '/list-favorites') return { favorites: window._mockFavoriteRefs.slice() };
-        if (path === '/render-summary') return window._mockFavoriteSummaries[body.job_id] || { families: { color: [] } };
+        if (path === '/list-favorites') return { favorites: window._mockFavoriteRows.slice() };
+        if (path === '/render-summary') return body.job_id === 'job_fav_a' ? summaryA : { families: { color: [] } };
         if (path === '/detail') return detail;
         throw new Error(`unexpected storage path ${path}`);
       };
@@ -144,7 +129,7 @@ test.describe('Favorites UI', () => {
         { job_id: 'job_fav_a', function: 'poly_1', degree: 8, N: 2000, times: 1, total_size: 1200000 },
       ];
       _selectedJobId = null;
-    }, { refs: FAVORITE_REFS, summaries: FAVORITE_SUMMARIES, detail: RESULT_DETAIL });
+    }, { rows: FAVORITE_ROWS, summaryA: RENDER_SUMMARY_A, detail: RESULT_DETAIL });
 
     await page.click('.tab-btn:text("Favorites")');
     await page.click('#btn-favorites-go-render');
@@ -155,23 +140,20 @@ test.describe('Favorites UI', () => {
   });
 
   test('download menu stays wired and Image + Meta uses the selected artifact', async ({ page }) => {
-    await page.evaluate(({ refs, summaries }) => {
-      window._mockFavoriteRefs = refs.slice();
-      window._mockFavoriteSummaries = summaries;
+    await page.evaluate(({ rows }) => {
+      window._mockFavoriteRows = rows.slice();
       window._favoriteDownloads = [];
       window.lambdaPost = async function (name, body, path) {
         if (name !== 'storage') throw new Error(`unexpected ${name}`);
-        if (path === '/list-favorites') return { favorites: window._mockFavoriteRefs.slice() };
-        if (path === '/render-summary') return window._mockFavoriteSummaries[body.job_id] || { families: { color: [] } };
+        if (path === '/list-favorites') return { favorites: window._mockFavoriteRows.slice() };
+        if (path === '/render-summary') throw new Error('favorites must not call /render-summary');
         throw new Error(`unexpected storage path ${path}`);
       };
       window.downloadPresignedFile = async function (url, filename, explicitKey) {
         window._favoriteDownloads.push({ url, filename, explicitKey });
       };
-      window._buildArtifactMeta = async function () {
-        return { ok: true };
-      };
-    }, { refs: FAVORITE_REFS, summaries: FAVORITE_SUMMARIES });
+      window._buildArtifactMeta = async function () { return { ok: true }; };
+    }, { rows: FAVORITE_ROWS });
 
     await page.click('.tab-btn:text("Favorites")');
     await page.click('#btn-favorites-download');
@@ -184,29 +166,30 @@ test.describe('Favorites UI', () => {
     expect(downloads[0].filename).toContain('job_fav_a_color_a');
   });
 
-  test('delete removes the selected favorite from the inventory', async ({ page }) => {
-    await page.evaluate(({ refs, summaries }) => {
+  test('delete removes the favorite locally from a single-row response', async ({ page }) => {
+    await page.evaluate(({ rows }) => {
       window.confirm = () => true;
-      window._mockFavoriteRefs = refs.slice();
-      window._mockFavoriteSummaries = summaries;
+      window._mockFavoriteRows = rows.slice();
+      window._deleteCalls = [];
       window.lambdaPost = async function (name, body, path) {
         if (name !== 'storage') throw new Error(`unexpected ${name}`);
-        if (path === '/list-favorites') return { favorites: window._mockFavoriteRefs.slice() };
-        if (path === '/render-summary') return window._mockFavoriteSummaries[body.job_id] || { families: { color: [] } };
+        if (path === '/list-favorites') return { favorites: window._mockFavoriteRows.slice() };
+        if (path === '/render-summary') throw new Error('favorites must not call /render-summary');
         if (path === '/delete-favorite') {
-          window._mockFavoriteRefs = window._mockFavoriteRefs.filter(
-            ref => !(ref.job_id === body.job_id && ref.artifact_id === body.artifact_id)
-          );
-          return { favorites: window._mockFavoriteRefs.slice() };
+          window._deleteCalls.push(body);
+          // new single-row response shape (no full partition)
+          return { deleted: true, job_id: body.job_id, artifact_id: body.artifact_id };
         }
         throw new Error(`unexpected storage path ${path}`);
       };
-    }, { refs: FAVORITE_REFS, summaries: FAVORITE_SUMMARIES });
+    }, { rows: FAVORITE_ROWS });
 
     await page.click('.tab-btn:text("Favorites")');
     await expect(page.locator('.favorite-art-row')).toHaveCount(2);
     await page.click('#btn-favorites-delete');
     await expect(page.locator('.favorite-art-row')).toHaveCount(1);
     await expect(page.locator('#favorites-log')).toContainText('Favorite removed');
+    // exactly one delete call, and the UI patched locally (no re-list)
+    expect(await page.evaluate(() => window._deleteCalls.length)).toBe(1);
   });
 });

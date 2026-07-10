@@ -14,7 +14,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <float.h>
 #include <time.h>
 #include <stdint.h>
 #include <limits.h>
@@ -23,17 +22,14 @@
 #include <pthread.h>
 #include "companion_solver.h"
 
-/* Checked f32 transport pack (CR28 F3): a finite double outside the f32 range
- * (e.g. 1e100) silently becomes +/-inf on a plain (float) cast, publishing a
- * wire file the solver then misinterprets. pack_f32 returns 0 on success and
- * 1 when the value cannot be represented (non-finite or |v| > FLT_MAX);
- * subnormal underflow toward 0 is accepted. Callers turn 1 into a structured
- * failure naming the step and index. */
-static inline int pack_f32(double v, float *out) {
-    if (!isfinite(v) || fabs(v) > (double)FLT_MAX) return 1;
-    *out = (float)v;
-    return 0;
-}
+/* f32 transport: coefficient/param/root values are written as float32. A finite
+ * double outside the f32 range (e.g. 1e100) becomes +/-inf on the (float) cast,
+ * and a genuine inf/nan is preserved as inf/nan. This is INTENTIONAL and part of
+ * the wire contract (CR28 F3 revisited): the poly100-900 families legitimately
+ * overflow, the companion solver handles inf/nan rows (skips/zeros them), and
+ * tests/test_low_agreement_hand.py validates that native overflow tails match
+ * the Python reference. A hard f32-range check here was reverted because it
+ * broke both that parity corpus and real rendering of those polynomials. */
 #include "merged_opcodes.h"
 
 #define MAX_DEGREE 255
@@ -8512,12 +8508,8 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             for (int k = nCoeffs; k < nCoeffsOut; k++) { cRe[k] = 0; cIm[k] = 0; }
 
             for (int k = 0; k < nCoeffsOut; k++) {
-                if (pack_f32(cRe[k], &stepBuf[k * 2]) ||
-                    pack_f32(cIm[k], &stepBuf[k * 2 + 1])) {
-                    fprintf(stderr, "coeffgen: coefficient %d = (%g, %g) exceeds f32 range\n",
-                            k, cRe[k], cIm[k]);
-                    return 1;
-                }
+                stepBuf[k * 2]     = (float)cRe[k];
+                stepBuf[k * 2 + 1] = (float)cIm[k];
             }
             fwrite(stepBuf, sizeof(float), nCoeffsOut * 2, fout);
         }
@@ -8770,12 +8762,10 @@ static int computeParamGenRow(long globalRow, int n1, int n2, int gridN,
                 ptEntries, nPt, &z1r, &z1i, &z2r, &z2i) != 0) {
             return 1;
         }
-        if (pack_f32(z1r, &outRow[j * 4]) || pack_f32(z1i, &outRow[j * 4 + 1]) ||
-            pack_f32(z2r, &outRow[j * 4 + 2]) || pack_f32(z2i, &outRow[j * 4 + 3])) {
-            fprintf(stderr, "paramgen: param %d = (%g,%g,%g,%g) exceeds f32 range\n",
-                    j, z1r, z1i, z2r, z2i);
-            return 1;
-        }
+        outRow[j * 4]     = (float)z1r;
+        outRow[j * 4 + 1] = (float)z1i;
+        outRow[j * 4 + 2] = (float)z2r;
+        outRow[j * 4 + 3] = (float)z2i;
     }
     return 0;
 }
@@ -9650,20 +9640,10 @@ static void *coeffGenWorkerMain(void *vp) {
             break;
         }
 
-        int packErr = 0;
         for (int k = 0; k < ctx->nCoeffsOut; k++) {
-            if (pack_f32(cRe[k], &stepBuf[k * 2]) ||
-                pack_f32(cIm[k], &stepBuf[k * 2 + 1])) {
-                char msg[256];
-                snprintf(msg, sizeof(msg),
-                         "coeffgen: coefficient %d = (%g, %g) exceeds f32 range at step %ld",
-                         k, cRe[k], cIm[k], ctx->globalStepStart + s);
-                coeffGenSetThreadError(ctx, msg);
-                packErr = 1;
-                break;
-            }
+            stepBuf[k * 2]     = (float)cRe[k];
+            stepBuf[k * 2 + 1] = (float)cIm[k];
         }
-        if (packErr) break;
 
         off_t outOff = (off_t)(s * ctx->outRowBytes);
         ssize_t wrote = pwrite(ctx->outFd, stepBuf, (size_t)ctx->outRowBytes, outOff);
@@ -9880,12 +9860,8 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
             }
 
             for (int k = 0; k < nCoeffsOut; k++) {
-                if (pack_f32(cRe[k], &stepBuf[k * 2]) ||
-                    pack_f32(cIm[k], &stepBuf[k * 2 + 1])) {
-                    fprintf(stderr, "coeffgen: coefficient %d = (%g, %g) exceeds f32 range\n",
-                            k, cRe[k], cIm[k]);
-                    return 1;
-                }
+                stepBuf[k * 2]     = (float)cRe[k];
+                stepBuf[k * 2 + 1] = (float)cIm[k];
             }
             if (pwrite(outFd, stepBuf, (size_t)outRowBytes, (off_t)(s * outRowBytes)) != (ssize_t)outRowBytes) {
                 fprintf(stderr, "Short write at step %ld\n", stepStart + s);
@@ -10266,12 +10242,8 @@ static int runGrid(const char *buf, const char *outPath) {
 
             /* Pack and write */
             for (int i = 0; i < degree; i++) {
-                if (pack_f32(rootRe[i], &stepBuf[i * 2]) ||
-                    pack_f32(rootIm[i], &stepBuf[i * 2 + 1])) {
-                    fprintf(stderr, "root pack: root %d = (%g, %g) exceeds f32 range\n",
-                            i, rootRe[i], rootIm[i]);
-                    return 1;
-                }
+                stepBuf[i * 2]     = (float)rootRe[i];
+                stepBuf[i * 2 + 1] = (float)rootIm[i];
             }
             fwrite(stepBuf, sizeof(float), degree * 2, fout);
         }
@@ -10524,12 +10496,8 @@ int main(int argc, char **argv) {
 
         /* Pack as f32 and write */
         for (int i = 0; i < degree; i++) {
-            if (pack_f32(rootRe[i], &stepBuf[i * 2]) ||
-                pack_f32(rootIm[i], &stepBuf[i * 2 + 1])) {
-                fprintf(stderr, "root pack: root %d = (%g, %g) exceeds f32 range\n",
-                        i, rootRe[i], rootIm[i]);
-                return 1;
-            }
+            stepBuf[i * 2]     = (float)rootRe[i];
+            stepBuf[i * 2 + 1] = (float)rootIm[i];
         }
         fwrite(stepBuf, sizeof(float), degree * 2, fout);
     }

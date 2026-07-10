@@ -18,7 +18,7 @@ import boto3
 
 from color_artifact_meta import load_color_artifact_head
 from shared import (BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status,
-                    imgpipe_env, assert_render_source)
+                    imgpipe_env, assert_render_source, assert_safe_id)
 
 s3 = boto3.client("s3")
 DZ_EXPORT = os.path.join(os.path.dirname(__file__), "dz_export")
@@ -28,12 +28,16 @@ _SOURCE_FAMILY_DIR_MAP = {"color": "color", "bilevel": "bilevel", "coeffs": "coe
 
 
 def _render_viewer(job_id, export_id, created_at):
-    """Render standalone viewer HTML from template."""
+    """Render standalone viewer HTML from template. Every substitution is
+    HTML-escaped (defense in depth on top of the id validation): this HTML is
+    published to the public bucket, so an unescaped id would be stored XSS
+    (CR28 F9)."""
+    import html
     with open(VIEWER_TEMPLATE) as f:
         tmpl = f.read()
-    return tmpl.replace("{job_id}", job_id) \
-               .replace("{export_id}", export_id) \
-               .replace("{created_at}", created_at)
+    return tmpl.replace("{job_id}", html.escape(str(job_id))) \
+               .replace("{export_id}", html.escape(str(export_id))) \
+               .replace("{created_at}", html.escape(str(created_at)))
 
 
 def _read_body_to_path(obj_body, path):
@@ -126,11 +130,14 @@ def _manifest_source_fields(source_key):
 
 
 def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id="deepzoom_export"):
-    job_id = params["job_id"]
+    # job_id + export_id become an S3 prefix AND public viewer HTML — validate
+    # to a safe charset before any use (CR28 F9): no slashes / HTML / control
+    # chars. This blocks both stored-HTML injection and malformed prefixes.
+    job_id = assert_safe_id(params["job_id"], "job_id")
+    export_id = assert_safe_id(params.get("export_id", f"dz_{int(time.time())}"), "export_id")
     source_key = str(params.get("source_key") or "").strip()
     raw_key = str(params.get("raw_key") or "").strip()
     raw_meta_key = str(params.get("raw_meta_key") or "").strip()
-    export_id = params.get("export_id", f"dz_{int(time.time())}")
     source_path = ""
 
     try:

@@ -2855,4 +2855,47 @@ if (ctx.trustedBase('https://polypaint.s3.us-east-1.amazonaws.com/') !== DEF) { 
 console.log('Frontend mosaic viewer URL validation checks: OK');
 NODE
 
+# ── lambdaPost mutation classifier: reads retry, mutations don't (CR28 F6) ──
+node - "$ROOT" <<'NODE'
+const fs = require('fs'), path = require('path'), vm = require('vm');
+const src = fs.readFileSync(path.join(process.argv[2], 'js', '02-preview-solvescore.js'), 'utf8');
+function grab(name) {
+  const marker = 'function ' + name + '(';
+  const start = src.indexOf(marker);
+  if (start < 0) { console.error('FATAL: js/02 missing ' + name); process.exit(1); }
+  const brace = src.indexOf('{', start);
+  let depth = 0;
+  for (let i = brace; i < src.length; i += 1) {
+    if (src[i] === '{') depth += 1;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  console.error('FATAL: js/02 unbalanced ' + name); process.exit(1);
+}
+const ctx = vm.createContext({});
+vm.runInContext(grab('_lambdaEndpointIsMutation'), ctx);
+const isMut = ctx._lambdaEndpointIsMutation;
+// dispatch fan-out and every save-*/delete-*/cleanup path is non-idempotent.
+const mutations = [
+  ['dispatch', undefined], ['storage', '/save-book'], ['storage', '/save-vision-config'],
+  ['storage', '/save-coeff-program'], ['storage', '/delete'], ['storage', '/delete-prefix'],
+  ['storage', '/delete-book'], ['storage', '/cleanup'],
+];
+for (const [n, p] of mutations) {
+  if (!isMut(n, p)) { console.error(`FATAL: ${n}${p||''} must be classified as a mutation`); process.exit(1); }
+}
+// Reads (fetch-*/list-*/detail/presign) must stay retryable on ambiguous failure.
+const reads = [
+  ['storage', '/detail'], ['storage', '/render-summary'], ['storage', '/render-count'],
+  ['storage', '/fetch-book'], ['storage', '/fetch-vision-config'], ['storage', '/list'],
+  ['storage', '/list-books'], ['storage', '/presign'], ['compute-preview', undefined],
+  ['coeffgen', undefined],
+];
+for (const [n, p] of reads) {
+  if (isMut(n, p)) { console.error(`FATAL: ${n}${p||''} must NOT be classified as a mutation`); process.exit(1); }
+}
+// A read path that merely contains "saved" as a hyphenated word is not a save.
+if (isMut('storage', '/list-saved-items')) { console.error('FATAL: /list-saved-items false positive'); process.exit(1); }
+console.log('Frontend lambdaPost mutation classifier checks: OK');
+NODE
+
 echo "=== Frontend fused render source test passed ==="

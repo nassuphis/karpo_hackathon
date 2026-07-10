@@ -606,34 +606,83 @@ function _formatLambdaRetryAttempt(kind, attempt, detail) {
     return `attempt ${attempt}: ${kind}${suffix ? ` ${suffix}` : ''}`;
 }
 
-// Helper: POST JSON to a Lambda and parse response
-async function lambdaPost(name, body, path) {
+// Endpoints that mutate server state. A *network-level* failure against one of
+// these is AMBIGUOUS — the request may already have been delivered and applied
+// (a dispatch fan-out fired, a book saved) even though we never saw the
+// response. Silently retrying would double-apply the side effect, so we do NOT
+// retry mutations on ambiguous failures. An explicit HTTP 429/503 is different:
+// the server told us it rejected the request without processing it, so retrying
+// is safe even for a mutation. Callers can override via opts.idempotent.
+function _lambdaEndpointIsMutation(name, path) {
+    if (name === 'dispatch') return true;               // fan-out invoke
+    const p = String(path || '');
+    return /\/(save|delete|cleanup|migrate)/i.test(p);  // save-*, delete-*, cleanup, migrate-*
+}
+
+// Helper: POST JSON to a Lambda and parse response.
+// opts: { idempotent?: boolean, timeoutMs?: number }
+//   idempotent — override the auto-classification (true = safe to retry on an
+//     ambiguous network failure; false = do not). Defaults to !isMutation.
+//   timeoutMs — per-attempt abort deadline for a hung connection (default 120s).
+async function lambdaPost(name, body, path, opts) {
+    opts = opts || {};
     await _ensureLambdaServiceConfigured(name);
     const url = lambdaUrl(name, path);
-    const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
     const endpoint = `${name}${path || ''}`;
+    const isMutation = _lambdaEndpointIsMutation(name, path);
+    const idempotent = opts.idempotent != null ? !!opts.idempotent : !isMutation;
+    const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 120000;
     const requestCtx = _summarizeLambdaBody(body);
     const attempts = [];
     for (let attempt = 0; attempt < 5; attempt++) {
         let resp;
+        // Per-attempt timeout so a hung connection can't stall forever. An
+        // abort surfaces as a network-level failure and follows the same
+        // ambiguity rules below.
+        const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+        const fetchOpts = {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        };
+        if (controller) fetchOpts.signal = controller.signal;
         try {
-            resp = await fetch(url, opts);
+            resp = await fetch(url, fetchOpts);
         } catch (e) {
-            // Network-level failure (Failed to fetch) — retry with backoff
-            attempts.push(_formatLambdaRetryAttempt('network', attempt + 1, e && e.message ? e.message : e));
+            const aborted = e && e.name === 'AbortError';
+            const kind = aborted ? `timeout>${timeoutMs}ms` : 'network';
+            attempts.push(_formatLambdaRetryAttempt(kind, attempt + 1, e && e.message ? e.message : e));
+            // Ambiguous failure: the request may already have been applied. Only
+            // retry if the operation is idempotent (a read, or an explicitly
+            // safe mutation). For a non-idempotent mutation, stop and surface a
+            // clear error so the caller can decide, rather than double-firing.
+            if (!idempotent) {
+                const ctxSuffix = requestCtx ? ` (${requestCtx})` : '';
+                throw new Error(`${endpoint} ${aborted ? 'timed out' : 'network failure'} after ` +
+                    `${attempt + 1} attempt(s); not retried (non-idempotent mutation — ` +
+                    `may or may not have been applied)${ctxSuffix}`);
+            }
             if (attempt < 4) {
                 const delay = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
                 await new Promise(r => setTimeout(r, delay));
                 continue;
             }
             break;
+        } finally {
+            if (timer) clearTimeout(timer);
         }
         if (resp.status === 503 || resp.status === 429) {
+            // Explicit server rejection — the request was NOT processed, so
+            // retrying is safe even for a mutation.
             const retryText = await resp.text().catch(() => '');
             attempts.push(_formatLambdaRetryAttempt(`HTTP ${resp.status}`, attempt + 1, retryText));
-            const delay = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
-            await new Promise(r => setTimeout(r, delay));
-            continue;
+            if (attempt < 4) {
+                const delay = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+            break;
         }
         if (!resp.ok) {
             const text = await resp.text().catch(() => '');

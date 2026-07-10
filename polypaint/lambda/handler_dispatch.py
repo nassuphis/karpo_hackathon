@@ -42,6 +42,7 @@ FUNCTIONS = {
 }
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_WORKERS = int(os.environ.get("DISPATCH_THREADS", "50"))
+MAX_JOBS = int(os.environ.get("DISPATCH_MAX_JOBS", "4096"))
 
 lambda_client = boto3.client("lambda", region_name=REGION)
 
@@ -74,14 +75,26 @@ def handler(event, context):
     if not function_name:
         return ok_response({"error": f"Unknown target: {target}", "fired": 0, "total": 0})
 
-    jobs = params["jobs"]
+    # Validate the batch before spinning up the pool (CR28 F7): a dict would
+    # iterate as keys and string jobs could be sent to workers; cap the fan-out.
+    jobs = params.get("jobs")
+    if not isinstance(jobs, list):
+        return ok_response({"error": "jobs must be a list", "fired": 0, "total": 0})
+    if len(jobs) > MAX_JOBS:
+        return ok_response({"error": f"jobs count {len(jobs)} exceeds cap {MAX_JOBS}",
+                            "fired": 0, "total": len(jobs)})
+    if not all(isinstance(j, dict) for j in jobs):
+        return ok_response({"error": "each job must be an object",
+                            "fired": 0, "total": len(jobs)})
 
     logger.info(f"DISPATCH target={target} function={function_name} jobs={len(jobs)}")
 
-    # Fire all Lambdas in parallel using thread pool
-    fired = 0
-    errors = []
-    non_202 = []
+    # Fire all Lambdas in parallel. `accepted` = HTTP 202 only; a non-202
+    # response or an invoke exception is NOT counted as fired (CR28 F7), so
+    # callers see the truthful accepted count and can refuse to poll rejects.
+    accepted = 0
+    rejected = []
+    failed = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = {pool.submit(_invoke_one, function_name, job): i
                    for i, job in enumerate(jobs)}
@@ -90,21 +103,27 @@ def handler(event, context):
             try:
                 status = future.result()
                 if status == 202:
-                    fired += 1
+                    accepted += 1
                 else:
-                    non_202.append({"idx": idx, "status": status})
-                    fired += 1  # still count as fired — Lambda may run
+                    rejected.append({"idx": idx, "status": status})
             except Exception as e:
-                errors.append(f"job[{idx}]: {e}")
+                failed.append(f"job[{idx}]: {e}")
 
-    logger.info(f"DISPATCH DONE fired={fired}/{len(jobs)} errors={len(errors)} non_202={len(non_202)}")
+    logger.info(f"DISPATCH DONE accepted={accepted}/{len(jobs)} "
+                f"rejected={len(rejected)} failed={len(failed)}")
 
     result = {
-        "fired": fired,
+        "attempted": len(jobs),
+        "accepted": accepted,
+        "rejected": len(rejected),
+        "failed": len(failed),
+        # `fired` now means ACCEPTED (202) only — callers must also check that
+        # rejected and failed are zero before polling for job output.
+        "fired": accepted,
         "total": len(jobs),
     }
-    if errors:
-        result["errors"] = errors[:10]
-    if non_202:
-        result["non_202"] = non_202[:10]
+    if failed:
+        result["errors"] = failed[:10]
+    if rejected:
+        result["non_202"] = rejected[:10]
     return ok_response(result)

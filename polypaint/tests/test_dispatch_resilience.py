@@ -292,17 +292,91 @@ class TestDispatchTargets(unittest.TestCase):
         self.assertIn("polypaint-color-to-bilevel", invoke_call[1]["FunctionName"])
 
     @patch("handler_dispatch.lambda_client")
-    def test_dispatch_non_202_tracked(self, mock_client):
-        """Non-202 responses are counted as fired but logged in non_202."""
+    def test_dispatch_non_202_not_counted_as_fired(self, mock_client):
+        """A non-202 response is rejected, NOT fired (CR28 F7 truthful counts).
+
+        `fired` must mean HTTP 202 accepted only; a throttled 429 job is
+        surfaced in `rejected`/`non_202` so callers refuse to poll for output
+        that will never be produced.
+        """
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 429}
         jobs = [{"phase": "clip", "job_id": "j", "task_id": "clip_0"}]
         event = self._make_event({"target": "solve_proximity", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
-        self.assertEqual(body["fired"], 1)
+        self.assertEqual(body["fired"], 0)
+        self.assertEqual(body["accepted"], 0)
+        self.assertEqual(body["attempted"], 1)
+        self.assertEqual(body["rejected"], 1)
+        self.assertEqual(body["failed"], 0)
         self.assertEqual(len(body.get("non_202", [])), 1)
         self.assertEqual(body["non_202"][0]["status"], 429)
+
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_partial_acceptance_counts_only_202(self, mock_client):
+        """Mixed 202/429 batch: fired == accepted (202s), rest rejected."""
+        from handler_dispatch import handler
+        mock_client.invoke.side_effect = [
+            {"StatusCode": 202}, {"StatusCode": 429}, {"StatusCode": 202},
+        ]
+        jobs = [{"phase": "clip", "job_id": "j", "task_id": f"clip_{i}"} for i in range(3)]
+        event = self._make_event({"target": "solve_proximity", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 2)
+        self.assertEqual(body["accepted"], 2)
+        self.assertEqual(body["rejected"], 1)
+        self.assertEqual(body["attempted"], 3)
+
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_invoke_exception_counted_as_failed(self, mock_client):
+        """An invoke that raises is `failed`, not `fired` (CR28 F7)."""
+        from handler_dispatch import handler
+        mock_client.invoke.side_effect = RuntimeError("boom")
+        jobs = [{"phase": "clip", "job_id": "j", "task_id": "clip_0"}]
+        event = self._make_event({"target": "solve_proximity", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 0)
+        self.assertEqual(body["failed"], 1)
+        self.assertEqual(len(body.get("errors", [])), 1)
+
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_rejects_non_list_jobs(self, mock_client):
+        """A dict `jobs` is rejected before any invoke (CR28 F7 validation)."""
+        from handler_dispatch import handler
+        event = self._make_event({"target": "solve_proximity", "jobs": {"a": 1}})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertIn("error", body)
+        self.assertEqual(body["fired"], 0)
+        mock_client.invoke.assert_not_called()
+
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_rejects_non_dict_job_items(self, mock_client):
+        """String job items are rejected before any invoke (CR28 F7)."""
+        from handler_dispatch import handler
+        event = self._make_event({"target": "solve_proximity", "jobs": ["not-a-dict"]})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertIn("error", body)
+        self.assertEqual(body["fired"], 0)
+        mock_client.invoke.assert_not_called()
+
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_enforces_batch_cap(self, mock_client):
+        """A batch over MAX_JOBS is rejected before the pool spins up (CR28 F7)."""
+        import handler_dispatch
+        from handler_dispatch import handler
+        jobs = [{"job_id": "j", "task_id": f"t_{i}"}
+                for i in range(handler_dispatch.MAX_JOBS + 1)]
+        event = self._make_event({"target": "solve_proximity", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertIn("error", body)
+        self.assertEqual(body["fired"], 0)
+        mock_client.invoke.assert_not_called()
 
     @patch("handler_dispatch.lambda_client")
     def test_dispatch_large_batch(self, mock_client):
@@ -335,7 +409,7 @@ class TestDispatchTargets(unittest.TestCase):
 
     @patch("handler_dispatch.lambda_client")
     def test_dispatch_solve_proximity_non_202(self, mock_client):
-        """solve_proximity non-202 responses are tracked."""
+        """solve_proximity non-202 responses are rejected, not fired (CR28 F7)."""
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 429}
         jobs = [{"phase": "hist", "job_id": "j", "stripe_idx": 0,
@@ -347,7 +421,8 @@ class TestDispatchTargets(unittest.TestCase):
         event = self._make_event({"target": "solve_proximity", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
-        self.assertEqual(body["fired"], 1)
+        self.assertEqual(body["fired"], 0)
+        self.assertEqual(body["rejected"], 1)
         self.assertEqual(len(body["non_202"]), 1)
         self.assertEqual(body["non_202"][0]["status"], 429)
 

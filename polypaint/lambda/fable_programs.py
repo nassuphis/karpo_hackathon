@@ -849,6 +849,236 @@ def ref_fable_32(p1, p2, n=N_PARITY):
     return e + b
 
 
+# =============================================================================
+# The p11 family: the interesting shapes come NOT from smooth decay (which pins
+# roots to a circle) but from a SAWTOOTH magnitude (k mod 2m — periodic resets
+# carve scallops/petals), a param-derived INTEGER regime m (the sweep jumps
+# between discrete patterns), and a param-winding phase. Ported from poly.py's
+# p11a1/p11b and generalized. Magnitudes are exact integers, so the leading
+# slot is either 0 (degree drops) or >=1 — no tiny-nonzero spurious roots.
+# =============================================================================
+
+# m in 1..13 from |p1+p2|: floor(5|p1+p2|) mod 13, +1 (>=1 so 2m>0).
+_M13 = ("(1 + ((floor(5 * abs(p1 + p2))) - "
+        "((floor((floor(5 * abs(p1 + p2))) / 13)) * 13)))")
+
+
+def _m13(p1, p2):
+    a = np.floor(5 * np.abs(p1 + p2))
+    return 1 + (a - np.floor(a / 13) * 13)
+
+
+# --- fable-33: petal gear (port of p11a1) -------------------------------------
+# c_k = (k mod 2m) * exp(i*pi*k/((poly_len-1)/poly_len*(m+3+p1+p2))). Sawtooth
+# magnitude with a param-set tooth count m, wound by a param-dependent phase:
+# a scalloped gear-ring with radial spikes, the pattern re-teething as m jumps.
+FABLE_33 = f"""\
+# fable-33: petal gear — sawtooth (k mod 2m) x param winding, m=1+floor(5|p1+p2|)%13
+fill(poly_len, (2 * {_M13}))
+push_range(0, poly_len, 1)
+rem(pop, pop)
+poly = pop
+push_range(0, poly_len, 1)
+linear(((1i * pi * poly_len) / ((poly_len - 1) * (({_M13} + 3) + (p1 + p2)))), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_33(p1, p2, n=N_PARITY):
+    m = _m13(p1, p2)
+    k = np.arange(n, dtype=np.float64)
+    sf = k % (2 * m)
+    coef = 1j * np.pi * n / ((n - 1) * (m + 3 + p1 + p2))
+    return sf * np.exp(coef * k)
+
+
+# --- fable-34: spiral petal (port of p11b) ------------------------------------
+# c_k = (k mod 2m) * exp(i*pi*poly_len*v^2/(m+3+p1+p2)), v=k/(poly_len-1). The
+# sawtooth petals of fable-33 wound by a QUADRATIC (accelerating) phase instead
+# of linear: the teeth pull out into long sweeping spiral arms — a pinwheel.
+FABLE_34 = f"""\
+# fable-34: spiral petal — sawtooth (k mod 2m) x quadratic winding exp(i pi n v^2/denom)
+fill(poly_len, (2 * {_M13}))
+push_range(0, poly_len, 1)
+rem(pop, pop)
+poly = pop
+push_range(0, poly_len, 1)
+linear((1.0 / (poly_len - 1)), 0)
+dup
+multiply(pop, pop)
+linear(((1i * pi * poly_len) / (({_M13} + 3) + (p1 + p2))), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_34(p1, p2, n=N_PARITY):
+    m = _m13(p1, p2)
+    k = np.arange(n, dtype=np.float64)
+    sf = k % (2 * m)
+    v = k / (n - 1)
+    coef = 1j * np.pi * n / (m + 3 + p1 + p2)
+    return sf * np.exp(coef * v * v)
+
+
+# --- fable-35: mandala (port of p11b2_v1) -------------------------------------
+# c_k = (1 + k mod 2m) * exp(i*pi*3*poly_len*v^6/(p1+p2+3)), v=k/(poly_len-1).
+# An extreme nonlinear phase (v^6) crushes the winding to the outer
+# coefficients, so the roots stack into concentric rings pierced by radial
+# spokes — a bullseye mandala. The +1 keeps every magnitude >=1 (like
+# p11b2_v1) so no interior/leading zero throws a spurious far root.
+FABLE_35 = f"""\
+# fable-35: mandala — (1 + k mod 2m) x exp(i*A*v^6), A = n*(1.5+angle(p1)+0.4 angle(p2)).
+# PURELY-imaginary winding: |exp| = 1 always, so magnitude is entirely the
+# bounded sawtooth and no leading-coefficient collapse can throw a far root.
+fill(poly_len, (2 * {_M13}))
+push_range(0, poly_len, 1)
+rem(pop, pop)
+linear(1, 1)
+poly = pop
+push_range(0, poly_len, 1)
+linear((1.0 / (poly_len - 1)), 0)
+dup
+multiply(pop, pop)
+dup
+dup
+multiply(pop, pop)
+multiply(pop, pop)
+linear((1i * (poly_len * ((1.5 + angle(p1)) + (0.4 * angle(p2))))), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_35(p1, p2, n=N_PARITY):
+    m = _m13(p1, p2)
+    k = np.arange(n, dtype=np.float64)
+    sf = (k % (2 * m)) + 1
+    v = k / (n - 1)
+    coef = 1j * (n * (1.5 + np.angle(p1) + 0.4 * np.angle(p2)))
+    return sf * np.exp(coef * (v ** 6))
+
+
+# --- fable-36: triangle petals -------------------------------------------------
+# c_k = (m - |k mod 2m - m|) * exp(i*pi*k/((poly_len-1)*(m+3+p1+p2))). A TRIANGLE
+# wave magnitude (ramp up then down each period) instead of the sawtooth's hard
+# reset: the petals are symmetric lobes rather than hooked teeth.
+FABLE_36 = f"""\
+# fable-36: triangle petals — magnitude m-|k mod 2m - m| x param winding
+fill(poly_len, (2 * {_M13}))
+push_range(0, poly_len, 1)
+rem(pop, pop)
+linear(1, (0 - {_M13}))
+mod(pop)
+linear((0 - 1), {_M13})
+poly = pop
+push_range(0, poly_len, 1)
+linear(((1i * pi * poly_len) / ((poly_len - 1) * (({_M13} + 3) + (p1 + p2)))), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_36(p1, p2, n=N_PARITY):
+    m = _m13(p1, p2)
+    k = np.arange(n, dtype=np.float64)
+    tri = m - np.abs((k % (2 * m)) - m)
+    coef = 1j * np.pi * n / ((n - 1) * (m + 3 + p1 + p2))
+    return tri * np.exp(coef * k)
+
+
+# --- fable-37: beat petals -----------------------------------------------------
+# c_k = (k mod 2m)*(k mod (m+5)) * exp(i*pi*k/((poly_len-1)*(m+3+p1+p2))). TWO
+# sawtooths of coprime-ish periods multiplied: their beat carves a longer-period
+# lattice of petals-within-petals.
+FABLE_37 = f"""\
+# fable-37: beat petals — (k mod 2m)(k mod (m+5)) x param winding
+fill(poly_len, (2 * {_M13}))
+push_range(0, poly_len, 1)
+rem(pop, pop)
+poly = pop
+fill(poly_len, ({_M13} + 5))
+push_range(0, poly_len, 1)
+rem(pop, pop)
+poly = multiply(poly, pop)
+push_range(0, poly_len, 1)
+linear(((1i * pi * poly_len) / ((poly_len - 1) * (({_M13} + 3) + (p1 + p2)))), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_37(p1, p2, n=N_PARITY):
+    m = _m13(p1, p2)
+    k = np.arange(n, dtype=np.float64)
+    sf = (k % (2 * m)) * (k % (m + 5))
+    coef = 1j * np.pi * n / ((n - 1) * (m + 3 + p1 + p2))
+    return sf * np.exp(coef * k)
+
+
+# --- fable-38: petal spiral (sawtooth on a log spiral) ------------------------
+# c_k = (k mod 2m) * (0.93 e^{i angle(p1)})^k. The sawtooth petals ride an
+# inward geometric spiral instead of a circle, so the whole scalloped ring
+# coils toward the center — petals on a nautilus.
+FABLE_38 = f"""\
+# fable-38: petal spiral — sawtooth (k mod 2m) x (0.93 e^{{i angle(p1)}})^k
+fill(poly_len, (2 * {_M13}))
+push_range(0, poly_len, 1)
+rem(pop, pop)
+poly = pop
+push_range(0, poly_len, 1)
+linear(((log(0.93)) + (1i * angle(p1))), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_38(p1, p2, n=N_PARITY):
+    m = _m13(p1, p2)
+    k = np.arange(n, dtype=np.float64)
+    sf = k % (2 * m)
+    return sf * np.exp(k * (np.log(0.93) + 1j * np.angle(p1)))
+
+
+# --- fable-39: cubic pinwheel --------------------------------------------------
+# c_k = (k mod 2m) * exp(i*pi*poly_len*v^3/(m+3+p1+p2)), v=k/(poly_len-1). A
+# CUBIC phase winds even harder than fable-34's quadratic: the spiral arms
+# curl into a many-bladed pinwheel that tightens toward the rim.
+FABLE_39 = f"""\
+# fable-39: cubic pinwheel — sawtooth x cubic winding exp(i pi n v^3/denom)
+fill(poly_len, (2 * {_M13}))
+push_range(0, poly_len, 1)
+rem(pop, pop)
+poly = pop
+push_range(0, poly_len, 1)
+linear((1.0 / (poly_len - 1)), 0)
+dup
+dup
+multiply(pop, pop)
+multiply(pop, pop)
+linear(((1i * pi * poly_len) / (({_M13} + 3) + (p1 + p2))), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_39(p1, p2, n=N_PARITY):
+    m = _m13(p1, p2)
+    k = np.arange(n, dtype=np.float64)
+    sf = k % (2 * m)
+    v = k / (n - 1)
+    coef = 1j * np.pi * n / (m + 3 + p1 + p2)
+    return sf * np.exp(coef * (v ** 3))
+
+
 FABLES = [
     ("fable-1", FABLE_1, ref_fable_1),
     ("fable-2", FABLE_2, ref_fable_2),
@@ -882,6 +1112,13 @@ FABLES = [
     ("fable-30", FABLE_30, ref_fable_30),
     ("fable-31", FABLE_31, ref_fable_31),
     ("fable-32", FABLE_32, ref_fable_32),
+    ("fable-33", FABLE_33, ref_fable_33),
+    ("fable-34", FABLE_34, ref_fable_34),
+    ("fable-35", FABLE_35, ref_fable_35),
+    ("fable-36", FABLE_36, ref_fable_36),
+    ("fable-37", FABLE_37, ref_fable_37),
+    ("fable-38", FABLE_38, ref_fable_38),
+    ("fable-39", FABLE_39, ref_fable_39),
 ]
 
 

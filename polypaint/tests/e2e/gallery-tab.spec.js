@@ -1,0 +1,114 @@
+// @ts-check
+// The Gallery tab (virtual-gallery.md §15 / Reshape B): create a gallery, curate
+// it (reorder + titles + name), Save (CAS), and Open Gallery (snapshot -> 3D
+// viewer). Mirrors the Book tab. The active gallery id (localStorage) is what the
+// DeepZoom tab appends to.
+const { test, expect } = require('@playwright/test');
+
+// Install an in-memory fake of the gallery storage routes AFTER the page's real
+// scripts have loaded (so it overrides the real lambdaPost), then open the tab.
+async function setup(page, { docs = {}, active = '' } = {}) {
+  await page.goto('http://localhost:8765/index.html');
+  await page.waitForLoadState('domcontentloaded');
+  await page.evaluate(({ docs, active }) => {
+    window._galleryPosts = [];
+    window.__docs = docs;
+    window._rev = 1;
+    window._galleryNav = '';
+    if (active) localStorage.setItem('polypaint_active_gallery', active);
+    else localStorage.removeItem('polypaint_active_gallery');
+    window.open = function () {
+      const win = { closed: false, close() { this.closed = true; } };
+      Object.defineProperty(win, 'location', { set(v) { window._galleryNav = String(v); }, configurable: true });
+      return win;
+    };
+    window.lambdaPost = async function (name, body, path) {
+      window._galleryPosts.push({ path, body: JSON.parse(JSON.stringify(body || {})) });
+      if (path === '/list-galleries') {
+        return { galleries: Object.values(window.__docs).map((d) => ({ gallery_id: d.gallery_id, name: d.name, count: (d.pieces || []).length })) };
+      }
+      if (path === '/create-gallery') {
+        const id = 'gal_' + (Object.keys(window.__docs).length + 1);
+        const doc = { gallery_id: id, name: body.name, document_kind: 'editable', pieces: [] };
+        window.__docs[id] = doc;
+        return { gallery: doc, revision: 'r' + (++window._rev) };
+      }
+      if (path === '/fetch-gallery') {
+        const d = window.__docs[body.gallery_id];
+        return d ? { gallery: JSON.parse(JSON.stringify(d)), revision: 'r' + window._rev } : { error: 'gallery not found' };
+      }
+      if (path === '/save-gallery') {
+        window.__docs[body.gallery.gallery_id] = JSON.parse(JSON.stringify(body.gallery));
+        return { gallery: window.__docs[body.gallery.gallery_id], revision: 'r' + (++window._rev) };
+      }
+      if (path === '/create-gallery-share') {
+        const d = window.__docs[body.gallery_id];
+        return { manifest_url: 'https://polypaint.s3.us-east-1.amazonaws.com/renders/_shared_mosaic/gallery/s1/manifest.json',
+                 share_id: 's1', count: (d.pieces || []).length };
+      }
+      return {};
+    };
+  }, { docs, active });
+  await page.click('.tab-btn:text("Gallery")');
+}
+
+function pieces() {
+  const mk = (job, art, fn) => ({
+    job_id: job, artifact_id: art, function: fn, title: '',
+    preview_key: `renders/${job}/color/${art}/preview.jpg`,
+    image_key: `renders/${job}/color/${art}/image.jpeg`,
+    preview_width: 512, preview_height: 512, deepzoom: null,
+  });
+  return [mk('jobA', 'artA', 'poly_a'), mk('jobB', 'artB', 'poly_b')];
+}
+
+function docWith(pcs) {
+  return { docs: { gal_x: { gallery_id: 'gal_x', name: 'Show', document_kind: 'editable', pieces: pcs } }, active: 'gal_x' };
+}
+
+test('New creates a gallery and makes it active', async ({ page }) => {
+  page.on('dialog', (d) => d.accept('My Show'));
+  await setup(page, {});
+  await page.click('#btn-gallery-new');
+  await expect(page.locator('#gallery-name')).toHaveValue('My Show');
+  const active = await page.evaluate(() => localStorage.getItem('polypaint_active_gallery'));
+  expect(active).toBe('gal_1');
+  const created = await page.evaluate(() => window._galleryPosts.find((p) => p.path === '/create-gallery'));
+  expect(created.body.name).toBe('My Show');
+});
+
+test('reorder + save posts the new order with a CAS token', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await expect(page.locator('#gallery-piece-list > div')).toHaveCount(2);
+  await page.locator('#gallery-piece-list > div').nth(0).locator('button', { hasText: '↓' }).click();
+  await expect(page.locator('#btn-gallery-save')).toBeEnabled();
+  await page.click('#btn-gallery-save');
+  const saved = await page.evaluate(() => window._galleryPosts.filter((p) => p.path === '/save-gallery').pop());
+  expect(saved.body.gallery.pieces.map((p) => p.artifact_id)).toEqual(['artB', 'artA']);
+  expect(saved.body.expected_revision).toBeTruthy();
+});
+
+test('retitle + save carries the title', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.locator('#gallery-piece-list input[type="text"]').nth(0).fill('Opening Work');
+  await page.click('#btn-gallery-save');
+  const saved = await page.evaluate(() => window._galleryPosts.filter((p) => p.path === '/save-gallery').pop());
+  expect(saved.body.gallery.pieces[0].title).toBe('Opening Work');
+});
+
+test('remove piece shrinks the list', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await expect(page.locator('#gallery-piece-list > div')).toHaveCount(2);
+  await page.locator('#gallery-piece-list > div').nth(0).locator('button', { hasText: '✕' }).click();
+  await expect(page.locator('#gallery-piece-list > div')).toHaveCount(1);
+});
+
+test('Open Gallery snapshots and navigates to the viewer', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await expect(page.locator('#btn-gallery-open')).toBeEnabled();   // loaded, not dirty
+  await page.click('#btn-gallery-open');
+  const shared = await page.evaluate(() => window._galleryPosts.find((p) => p.path === '/create-gallery-share'));
+  expect(shared.body.gallery_id).toBe('gal_x');
+  const nav = await page.evaluate(() => window._galleryNav);
+  expect(nav).toContain('https://polypaint.s3.us-east-1.amazonaws.com/gallery.html?manifest=');
+});

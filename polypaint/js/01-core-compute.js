@@ -68,6 +68,7 @@ function switchTab(name) {
     if (name === 'render') _maybeAutoRefreshRenderInventory();
     if (name === 'favorites') void loadFavoritesInventory();
     if (name === 'book') void loadBookTab();
+    if (name === 'gallery') void loadGalleryTab();
     if (name === 'palette') loadPaletteInventory();
     if (name === 'deepzoom') loadDeepZoomInventory();
     if (name === 'allcol') loadAllCol();

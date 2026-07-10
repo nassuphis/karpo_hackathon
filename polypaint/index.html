@@ -1609,6 +1609,7 @@ button {
         <div class="tab-btn" onclick="switchTab('render')">Render</div>
         <div class="tab-btn" onclick="switchTab('favorites')">Favorites</div>
     <div class="tab-btn" onclick="switchTab('book')">Book</div>
+        <div class="tab-btn" onclick="switchTab('gallery')">Gallery</div>
         <div class="tab-btn" onclick="switchTab('allcol')">AllCol</div>
         <div class="tab-btn" onclick="switchTab('allpal')">AllPal</div>
         <div class="tab-btn" onclick="switchTab('deepzoom')">DeepZoom</div>
@@ -2241,6 +2242,26 @@ button {
             </div>
             <div id="palette-inventory" style="font-size:12px; color:#ccc; max-height:220px; overflow-y:auto; border:1px solid #333; border-radius:4px"></div>
             <div id="palette-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
+        </div>
+        <!-- Gallery tab -->
+        <div id="tab-gallery" class="tab-content">
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
+        <select id="gallery-selector" onchange="gallerySelectorChanged()" style="min-width:220px"></select>
+        <button id="btn-gallery-new" type="button" class="btn-secondary" onclick="galleryNew()" style="padding:6px 12px">New</button>
+        <button id="btn-gallery-save" type="button" class="btn-primary" onclick="gallerySave()" style="padding:6px 12px" disabled>Save</button>
+        <button id="btn-gallery-open" type="button" class="btn-primary" onclick="galleryOpen()" style="padding:6px 12px" disabled>Open Gallery</button>
+        <button id="btn-gallery-refresh" type="button" class="btn-secondary" onclick="void loadGalleryTab()" style="padding:6px 12px">Refresh</button>
+        <button id="btn-gallery-delete" type="button" class="btn-secondary" onclick="galleryDelete()" style="padding:6px 12px" disabled>Delete</button>
+        <span id="gallery-info" style="color:#9aa0b4; font-size:12px"></span>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
+        <label style="font-size:12px; color:#9aa0b4">Name
+            <input id="gallery-name" type="text" oninput="_galleryOnNameInput(this.value)" style="min-width:240px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:5px 8px; font-size:12px" disabled>
+        </label>
+        <span style="color:#9aa0b4; font-size:12px">Add color renders from the DeepZoom tab, then order them and add titles here. “Open Gallery” builds the walkable 3D room.</span>
+    </div>
+    <div id="gallery-piece-list" style="display:flex; flex-direction:column; gap:6px; max-height:60vh; overflow-y:auto"></div>
+    <div id="gallery-status" class="status" style="margin-top:8px; font-size:12px"></div>
         </div>
         <!-- DeepZoom tab -->
         <div id="tab-deepzoom" class="tab-content">
@@ -3354,6 +3375,7 @@ button {
 <script src="js/12-deepzoom-boot.js"></script>
 <script src="js/13-artifact-mosaics.js"></script>
 <script src="js/14-book.js"></script>
+<script src="js/15-gallery.js"></script>
 <script>
 // Part-consistency check: every split file must have registered, in order.
 // Catches a partial upload or a cached/mixed set of js/ files immediately.

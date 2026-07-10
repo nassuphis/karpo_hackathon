@@ -350,7 +350,7 @@ def _storage(payload):
 
 def _fetch_book(book_id):
     resp = _storage({"path": "/fetch-book", "body": json.dumps({"id": book_id})})
-    return resp.get("book") or {}
+    return resp.get("book") or {}, str(resp.get("revision") or "")
 
 
 def _find_entry(doc, entry_id):
@@ -360,34 +360,32 @@ def _find_entry(doc, entry_id):
     return None
 
 
-def _save_book_cas(book_id, doc, expected, run_prose, attempts=4):
-    """Save the book with compare-and-swap on expected saved_at. On conflict
-    (a concurrent edit landed), refetch the current book and re-apply THIS
-    run's generated prose onto it — but ONLY where the refetched entry is
-    still blank or already equals what we generated. If a human has since
-    edited an entry we generated earlier, that entry now differs, so we leave
-    it alone: the human's edit wins (code-review-26 F2). Returns
-    (authoritative_doc, new_saved_at)."""
+def _save_book_cas(book_id, doc, revision, run_prose, run_base, attempts=4):
+    """Save the book with a REAL compare-and-swap: /save-book passes the opaque
+    revision (S3 ETag) it last saw, and S3 atomically rejects the write if the
+    object moved (CR28 F5 — no timestamp/read-then-write pseudo-CAS). On
+    conflict, refetch and re-apply THIS run's generated prose onto the fresh
+    doc, but ONLY where the refetched entry still equals the BASE we captured
+    before generating (or already equals our prose). If a human has since
+    edited that entry, it no longer equals the base, so we keep their edit and
+    drop ours (CR28 F11). Returns (authoritative_doc, new_revision)."""
     for _ in range(attempts):
-        body = {"book": doc, "expected_saved_at": expected}
+        body = {"book": doc, "expected_revision": revision}
         try:
             resp = _storage({"path": "/save-book", "body": json.dumps(body)})
-            return doc, str((resp.get("book") or {}).get("saved_at") or "")
+            return doc, str(resp.get("revision") or "")
         except _SaveConflict:
-            doc = _fetch_book(book_id)
+            doc, revision = _fetch_book(book_id)
             for eid, (title, desc) in run_prose.items():
                 e = _find_entry(doc, eid)
                 if e is None:
                     continue
-                cur_title = str(e.get("title_override") or "")
-                cur_body = str(e.get("body_override") or "")
-                blank = not cur_title and not cur_body
-                ours = cur_title == title and cur_body == desc
-                if blank or ours:
+                cur = (str(e.get("title_override") or ""), str(e.get("body_override") or ""))
+                base = run_base.get(eid, ("", ""))
+                if cur == base or cur == (title, desc):
                     e["title_override"], e["body_override"] = title, desc
-                # else: a human edited this entry after we generated it —
+                # else: a human edited this entry since we generated it —
                 # preserve their edit, do not stamp our prose back over it
-            expected = str(doc.get("saved_at") or "")
     raise RuntimeError(
         f"book {book_id} kept changing during describe (CAS gave up after {attempts} tries)")
 
@@ -506,6 +504,7 @@ def handle_describe(params):
     _phase(job_id, task_id, "started", "load_book", "Load book")
     obj = s3.get_object(Bucket=BUCKET, Key=f"{BOOKS_PREFIX}{book_id}.json")
     doc = json.loads(obj["Body"].read())
+    revision = str(obj.get("ETag") or "").strip('"')   # opaque CAS token (F5)
     if expected_saved_at and str(doc.get("saved_at") or "") != expected_saved_at:
         raise RuntimeError(f"book {book_id} was saved mid-describe; retry")
     entries = doc.get("entries") or []
@@ -520,8 +519,8 @@ def handle_describe(params):
     total = len(work_ids)
     used_titles = [str(e.get("title_override") or "").strip()
                    for e in entries if str(e.get("title_override") or "").strip()]
-    expected = str(doc.get("saved_at") or "")
     run_prose = {}   # entry_id -> (title, body): re-applied on CAS conflict
+    run_base = {}    # entry_id -> (title, body) BEFORE we generated (F11)
     described = skipped = 0
     failures = []
     for idx, entry_id in enumerate(work_ids, start=1):
@@ -549,27 +548,35 @@ def handle_describe(params):
             _phase(job_id, task_id, "processing", "describe",
                    f"Failed {idx}/{total}: {str(exc)[:120]}")
             continue
+        # capture the entry's prior state BEFORE we overwrite it, so a save
+        # failure restores exactly that (in overwrite mode it may hold old
+        # prose, which blanking would destroy — CR28 F11)
+        base_title = str(entry.get("title_override") or "")
+        base_body = str(entry.get("body_override") or "")
         entry["title_override"] = title
         entry["body_override"] = description
         used_titles.append(title)
         run_prose[entry_id] = (title, description)
+        run_base[entry_id] = (base_title, base_body)
         described += 1
         # save after EVERY entry: a mid-run quota death keeps the prose so
         # far, and skip-existing makes the rerun resume where it stopped.
-        # Compare-and-swap on saved_at: a concurrent human edit no longer
-        # gets clobbered by our stale full-document write — on conflict we
-        # refetch, re-apply this run's prose, and adopt the merged doc.
+        # Atomic revision CAS: a concurrent human edit no longer gets clobbered
+        # by our stale full-document write — on conflict we refetch, re-apply
+        # this run's prose (base-aware), and adopt the merged doc.
         try:
-            doc, expected = _save_book_cas(book_id, doc, expected, run_prose)
+            doc, revision = _save_book_cas(book_id, doc, revision, run_prose, run_base)
         except Exception as exc:
-            # roll the failed entry back out of BOTH the run record and the
-            # in-memory doc, so a later successful save can't silently persist
-            # prose we reported as failed (code-review-26 F2 related edge)
+            # roll the failed entry back to its captured base in BOTH the run
+            # record and the in-memory doc, so a later successful save can't
+            # persist prose we reported as failed AND we don't destroy any
+            # pre-existing prose (CR28 F11)
             run_prose.pop(entry_id, None)
+            run_base.pop(entry_id, None)
             reverted = _find_entry(doc, entry_id)
             if reverted is not None:
-                reverted["title_override"] = ""
-                reverted["body_override"] = ""
+                reverted["title_override"] = base_title
+                reverted["body_override"] = base_body
             if used_titles and used_titles[-1] == title:
                 used_titles.pop()
             failures.append({"entry_id": entry_id, "error": f"save: {str(exc)[:280]}"})

@@ -7,6 +7,8 @@ import sys
 import unittest
 from unittest.mock import patch
 
+from botocore.exceptions import ClientError
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 
@@ -14,17 +16,31 @@ class _FakeS3:
     def __init__(self):
         self.objects = {}
         self.metadata = {}
+        self.etags = {}
+        self._seq = 0
 
     def get_object(self, Bucket=None, Key=None):
         if Key not in self.objects:
-            raise Exception("NoSuchKey")
-        return {"Body": io.BytesIO(self.objects[Key])}
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        return {"Body": io.BytesIO(self.objects[Key]),
+                "ETag": self.etags.get(Key, '"e0"'),
+                "Metadata": dict(self.metadata.get(Key) or {})}
 
-    def put_object(self, Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+    def put_object(self, Bucket=None, Key=None, Body=None, ContentType=None,
+                   Metadata=None, IfMatch=None):
+        # simulate S3 conditional PutObject: reject if the current ETag doesn't
+        # match IfMatch (real atomic CAS)
+        if IfMatch is not None:
+            cur = self.etags.get(Key, "").strip('"')
+            if cur != str(IfMatch).strip('"'):
+                raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         data = Body if isinstance(Body, bytes) else str(Body or "").encode("utf-8")
         self.objects[Key] = data
         self.metadata[Key] = dict(Metadata or {})
-        return {}
+        self._seq += 1
+        etag = f'"e{self._seq}"'
+        self.etags[Key] = etag
+        return {"ETag": etag}
 
     def head_object(self, Bucket=None, Key=None):
         if Key not in self.objects:
@@ -188,24 +204,33 @@ class TestBookStorage(unittest.TestCase):
         self.assertEqual(ok["statusCode"], 200)
 
     @patch("handler_storage.s3")
-    def test_save_book_compare_and_swap(self, mock_s3):
-        # code-review-25 F2: expected_saved_at guards a concurrent overwrite;
-        # the interactive save (no expected) stays last-write-wins
+    def test_save_book_atomic_revision_cas(self, mock_s3):
+        # CR28 F5: /save-book uses an ATOMIC S3 conditional write (IfMatch on
+        # the opaque revision/ETag), not a timestamp read-then-write.
         import handler_storage
         _patch_s3(mock_s3, _FakeS3())
         first = json.loads(handler_storage.handler(_event("/save-book", {"book": {
             "name": "CAS Book", "entries": [_entry(1)]}}), None)["body"])
-        saved_at = first["book"]["saved_at"]
         book = first["book"]
-        # stale expected -> 409 conflict, S3 untouched
+        rev1 = first["revision"]
+        self.assertTrue(rev1)
+        # fetch returns the current revision
+        fetched = json.loads(handler_storage.handler(
+            _event("/fetch-book", {"id": "cas-book"}), None)["body"])
+        self.assertEqual(fetched["revision"], rev1)
+        # stale revision -> 409 conflict, S3 rejects the write atomically
         stale = handler_storage.handler(_event("/save-book", {
-            "book": book, "expected_saved_at": "1999-01-01T00:00:00Z"}), None)
+            "book": book, "expected_revision": '"nope"'}), None)
         self.assertEqual(stale["statusCode"], 409)
         self.assertEqual(json.loads(stale["body"])["conflict"], "book_saved_at")
-        # correct expected -> 200, and it advances saved_at
-        ok = handler_storage.handler(_event("/save-book", {
-            "book": book, "expected_saved_at": saved_at}), None)
-        self.assertEqual(ok["statusCode"], 200)
+        # correct revision -> 200, and it advances the revision
+        ok = json.loads(handler_storage.handler(_event("/save-book", {
+            "book": book, "expected_revision": rev1}), None)["body"])
+        self.assertNotEqual(ok["revision"], rev1)
+        # replaying the now-stale rev1 fails (someone already moved it)
+        replay = handler_storage.handler(_event("/save-book", {
+            "book": book, "expected_revision": rev1}), None)
+        self.assertEqual(replay["statusCode"], 409)
         # no expected -> unconditional overwrite still works (human Save)
         plain = handler_storage.handler(_event("/save-book", {"book": book}), None)
         self.assertEqual(plain["statusCode"], 200)

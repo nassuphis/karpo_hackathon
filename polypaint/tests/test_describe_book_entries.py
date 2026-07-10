@@ -213,23 +213,28 @@ class DescribeEngineTests(unittest.TestCase):
         def storage(payload):
             path = payload["path"]
             if path == "/fetch-book":
-                return {"book": copy.deepcopy(fresh)}
+                return {"book": copy.deepcopy(fresh), "revision": '"R2"'}
             seq["n"] += 1
             if seq["n"] == 1:
                 raise self.mod._SaveConflict("conflict")
             body = json.loads(payload["body"])
             saved["book"] = body["book"]
-            return {"book": {**body["book"], "saved_at": "S3"}}
+            return {"book": body["book"], "revision": '"R3"'}
 
         doc = {"id": "b1", "saved_at": "S1", "entries": [
             {"entry_id": "e1", "title_override": "GEN", "body_override": "gen"},
             {"entry_id": "e2", "title_override": "E2", "body_override": "e2body"}]}
         run_prose = {"e1": ("GEN", "gen"), "e2": ("E2", "e2body")}
+        # base = what each entry was BEFORE we generated: e1 was blank (we
+        # generated GEN), e2 was blank (we generated E2)
+        run_base = {"e1": ("", ""), "e2": ("", "")}
         with patch.object(self.mod, "_storage", side_effect=storage):
-            self.mod._save_book_cas("b1", doc, "S1", run_prose)
+            self.mod._save_book_cas("b1", doc, '"R1"', run_prose, run_base)
         by_id = {e["entry_id"]: e for e in saved["book"]["entries"]}
-        self.assertEqual(by_id["e1"]["title_override"], "HUMAN")  # human wins
-        self.assertEqual(by_id["e2"]["title_override"], "E2")     # our prose fills blank
+        # e1 was edited by a human since our base (blank -> HUMAN): keep theirs
+        self.assertEqual(by_id["e1"]["title_override"], "HUMAN")
+        # e2 still equals its base (blank): apply our generated prose
+        self.assertEqual(by_id["e2"]["title_override"], "E2")
 
     def test_preview_falls_back_to_stored_image_key(self):
         # code-review-25 F5: legacy/root artifacts lack the immutable color
@@ -389,6 +394,47 @@ class HandleDescribeTests(unittest.TestCase):
         saved = {e["entry_id"]: e for e in state["last_book"]["entries"]}
         self.assertEqual(saved["e1"]["title_override"], "E1 Auto")
         self.assertEqual(saved["e2"]["title_override"], "HUMAN EDIT")  # not clobbered
+
+    def test_save_failure_restores_prior_prose_not_blank(self):
+        # CR28 F11: overwrite mode regenerates an entry holding OLD prose; if
+        # that entry's save fails, restore the old prose (don't blank it) so a
+        # later successful save can't persist a blank / the failed generation.
+        doc = {"id": "b1", "name": "b1", "saved_at": "S1", "entries": [
+            {"entry_id": "e1", "job_id": "j", "artifact_id": "a1",
+             "title_override": "OLD TITLE", "body_override": "old body"},
+            {"entry_id": "e2", "job_id": "j", "artifact_id": "a2"}]}
+        replies = [
+            {"candidates": [{"content": {"parts": [{"text":
+                '{"title": "NEW1", "description": "new1"}'}]}}]},
+            {"candidates": [{"content": {"parts": [{"text":
+                '{"title": "NEW2", "description": "new2"}'}]}}]}]
+        saves = {"n": 0, "last": None}
+
+        def invoke(FunctionName=None, Payload=None):
+            p = json.loads(Payload)
+            saves["n"] += 1
+            if saves["n"] == 1:                 # e1's save: hard (non-conflict) failure
+                return {"Payload": MagicMock(read=lambda: json.dumps(
+                    {"statusCode": 500, "body": "boom"}).encode())}
+            saves["last"] = json.loads(p["body"])["book"]   # e2's save persists
+            return {"Payload": MagicMock(read=lambda: json.dumps(
+                {"statusCode": 200, "body": json.dumps({"book": {}, "revision": '"R"'})}).encode())}
+
+        fake_lambda = MagicMock()
+        fake_lambda.invoke.side_effect = invoke
+        with patch.object(self.mod, "s3", self._fake_s3(doc)), \
+             patch.object(self.mod, "boto3") as fb, \
+             patch.object(self.mod, "_gemini_call", side_effect=replies):
+            fb.client.return_value = fake_lambda
+            resp = self.mod.handle_describe({
+                "job_id": "book#b1", "task_id": "t", "book_id": "b1", "overwrite": True})
+        body = json.loads(resp["body"])
+        self.assertEqual(body["failed"], 1)     # e1 save failed
+        self.assertEqual(body["described"], 1)  # e2
+        saved = {e["entry_id"]: e for e in saves["last"]["entries"]}
+        self.assertEqual(saved["e1"]["title_override"], "OLD TITLE")  # restored, not blank
+        self.assertEqual(saved["e1"]["body_override"], "old body")
+        self.assertEqual(saved["e2"]["title_override"], "NEW2")
 
     def test_one_failing_entry_does_not_abort_the_run(self):
         # the 7/21 abort: entry e1's model reply is flaky BOTH times (retry

@@ -1998,7 +1998,7 @@ def _book_put_metadata(book):
     }
 
 
-def _read_book_object(book_id):
+def _read_book_object_with_etag(book_id):
     key = _book_key(book_id)
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=key)
@@ -2009,7 +2009,11 @@ def _read_book_object(book_id):
     payload = json.loads(obj["Body"].read())
     if str(payload.get("book_kind") or "") != "book":
         raise ValueError(f"object at {key} is not a book document")
-    return payload
+    return payload, str(obj.get("ETag") or "").strip('"')
+
+
+def _read_book_object(book_id):
+    return _read_book_object_with_etag(book_id)[0]
 
 
 VISION_CONFIG_JOB_ID = "__config__"
@@ -2106,31 +2110,31 @@ def handle_save_book(event):
     book = _validate_book_payload(params.get("book"))
     key = _book_key(book["id"])
     overwritten = _key_exists(key)
-    # Optional compare-and-swap: when the caller passes expected_saved_at,
-    # refuse the write if the stored book has moved since they read it. This
-    # is what stops a long Describe run from clobbering a concurrent human
-    # edit with its stale in-memory document (the interactive Save omits it
-    # and keeps last-write-wins, which is what a human clicking Save wants).
-    expected_saved_at = str(params.get("expected_saved_at") or "").strip()
-    if expected_saved_at:
-        current = ""
-        if overwritten:
-            try:
-                current = str(_read_book_object(book["id"]).get("saved_at") or "")
-            except Exception:
-                current = ""
-        if current != expected_saved_at:
-            raise BookConflictError(
-                f"book {book['id']} changed since {expected_saved_at!r} "
-                f"(now {current!r}); refetch and retry")
-    s3.put_object(
-        Bucket=BUCKET,
-        Key=key,
+    put_kwargs = dict(
+        Bucket=BUCKET, Key=key,
         Body=json.dumps(book).encode("utf-8"),
         ContentType="application/json",
-        Metadata=_book_put_metadata(book),
-    )
-    return ok_response({"book": book, "overwritten": overwritten})
+        Metadata=_book_put_metadata(book))
+    # Real compare-and-swap (CR28 F5): when the caller passes the opaque
+    # `revision` it fetched, S3 atomically refuses the write if the object's
+    # ETag has changed (a concurrent save landed). No read-then-write TOCTOU
+    # and no 1-second timestamp collision — this is what stops a long Describe
+    # run from clobbering a human edit. Interactive Save omits it and keeps
+    # last-write-wins, which is what a human clicking Save wants.
+    expected_revision = str(params.get("expected_revision") or "").strip()
+    if expected_revision:
+        put_kwargs["IfMatch"] = expected_revision
+    try:
+        resp = s3.put_object(**put_kwargs)
+    except ClientError as exc:
+        code = str((exc.response.get("Error") or {}).get("Code") or "")
+        if code in ("PreconditionFailed", "412", "ConditionalRequestConflict"):
+            raise BookConflictError(
+                f"book {book['id']} changed since revision {expected_revision!r}; "
+                f"refetch and retry")
+        raise
+    new_rev = str((resp or {}).get("ETag") or "").strip('"')
+    return ok_response({"book": book, "overwritten": overwritten, "revision": new_rev})
 
 
 def handle_fetch_book(event):
@@ -2138,7 +2142,7 @@ def handle_fetch_book(event):
     book_id = str(params.get("id") or "").strip()
     if not book_id:
         raise ValueError("book fetch requires id")
-    book = _read_book_object(book_id)
+    book, revision = _read_book_object_with_etag(book_id)
     latest_output = None
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=f"{BOOKS_PREFIX}{book_id}/out/latest.json")
@@ -2146,7 +2150,8 @@ def handle_fetch_book(event):
     except Exception as exc:
         if not _is_missing_s3_error(exc):
             raise
-    return ok_response({"book": book, "latest_output": latest_output})
+    # `revision` is the opaque CAS token (S3 ETag) — pass it back on save (F5)
+    return ok_response({"book": book, "latest_output": latest_output, "revision": revision})
 
 
 def handle_list_books(event):

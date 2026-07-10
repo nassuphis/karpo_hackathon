@@ -24,14 +24,17 @@ docker run --rm --platform linux/arm64 \
         gcc -O3 -o /tmp/wall_dz /src/wall_dz.c $VIPS_CFLAGS $VIPS_LIBS
         export LD_LIBRARY_PATH=/opt/lib
 
-        # synthesize 5 distinct 512px jpg cells with vips (via a tiny C tool)
+        # synthesize 5 distinct jpg cells with vips (via a tiny C tool); cell 2
+        # is 500px (a small-N render preview) to exercise the normalise-to-512
+        # path in wall_dz — the wall must still come out uniform 1024x1536
         cat > /tmp/make_cells.c <<CELLS
 #include <vips/vips.h>
 int main(int argc, char **argv) {
     if (VIPS_INIT(argv[0])) return 1;
     for (int i = 0; i < 5; i++) {
         VipsImage *noise, *cell;
-        if (vips_gaussnoise(&noise, 512, 512, "mean", 90.0 + 30.0 * i, "sigma", 40.0, NULL)) return 1;
+        int sz = (i == 2) ? 500 : 512;
+        if (vips_gaussnoise(&noise, sz, sz, "mean", 90.0 + 30.0 * i, "sigma", 40.0, NULL)) return 1;
         if (vips_cast_uchar(noise, &cell, NULL)) return 1;
         char path[64];
         snprintf(path, sizeof(path), "/tmp/cell_%d.jpg", i);
@@ -48,8 +51,9 @@ CELLS
 
         OUT=$(/tmp/wall_dz /tmp/wall_list.txt 2 /tmp/wall) || { echo "FATAL: wall_dz failed"; exit 1; }
         echo "  wall_dz: $OUT"
-        # 5 cells across=2 -> 3 rows: 1024 x 1536 exactly
-        echo "$OUT" | grep -q "\"width\":1024" || { echo "FATAL: wrong width: $OUT"; exit 1; }
+        # 5 cells across=2 -> 3 rows: 1024 x 1536 EXACTLY even though cell 2 is
+        # 500px (proves normalise-to-512 kept the grid uniform)
+        echo "$OUT" | grep -q "\"width\":1024" || { echo "FATAL: wrong width (500px cell not normalised?): $OUT"; exit 1; }
         echo "$OUT" | grep -q "\"height\":1536" || { echo "FATAL: wrong height: $OUT"; exit 1; }
         [ -f /tmp/wall.dzi ] || { echo "FATAL: no .dzi"; exit 1; }
         [ -s /tmp/wall.jpg ] || { echo "FATAL: no flat wall.jpg composite"; exit 1; }

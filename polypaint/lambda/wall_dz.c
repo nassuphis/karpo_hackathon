@@ -10,9 +10,12 @@
  * Output: {outputBase}.dzi + {outputBase}_files/level/col_row.jpg
  * Prints: {"width":W,"height":H,"count":N,"across":A} on success.
  *
- * Inputs are the wall's uniform 512px preview jpgs; RANDOM access decodes
- * each (~786 KB) so dzsave can pull lower pyramid levels — ~1.3 GB for a
- * 1,651-tile wall, which is why the deepzoom-export lambda gets 8 GB.
+ * Inputs are preview jpgs; each is normalised to CELL_PX square before the
+ * join so the grid is uniform even when a preview is not 512px (small-N
+ * renders are <=512 and never upscaled at preview time, so an N=500 render
+ * lands at 500px). Uniform cells keep the viewer's click-to-tile mapping
+ * correct. RANDOM access decodes each so dzsave can pull lower pyramid
+ * levels — ~1.3 GB for a 1,651-tile wall (why the lambda gets 8 GB).
  *
  * Build (dynamic, needs libvips from Lambda layer) — same recipe as
  * dz_export.c in deploy.sh's layer-build block.
@@ -22,6 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <vips/vips.h>
+
+#define CELL_PX 512   /* must match handler_wall_pyramid.CELL_PX / viewer cell */
 
 int main(int argc, char **argv) {
     if (argc < 4) {
@@ -78,6 +83,23 @@ int main(int argc, char **argv) {
             }
             g_object_unref(img);
             img = rgb;
+        }
+        /* Normalise every tile to a CELL_PX square so the grid stays uniform
+         * even when a preview is not 512px (small-N renders are <=512 and
+         * never upscaled at preview time). Fill + centre-crop keeps the tile
+         * filling its cell; a clean scale for the common square previews. */
+        if (img->Xsize != CELL_PX || img->Ysize != CELL_PX) {
+            VipsImage *sq;
+            if (vips_thumbnail_image(img, &sq, CELL_PX,
+                                     "height", CELL_PX,
+                                     "crop", VIPS_INTERESTING_CENTRE, NULL)) {
+                fprintf(stderr, "Cannot resize %s to %dpx: %s\n",
+                        line, CELL_PX, vips_error_buffer());
+                fclose(lf);
+                return 1;
+            }
+            g_object_unref(img);
+            img = sq;
         }
         images[count++] = img;
     }

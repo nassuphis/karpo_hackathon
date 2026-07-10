@@ -150,21 +150,18 @@ def handle_build_wall_pyramid(params):
         if not tiles:
             _set_wall_state(kind, refresh_id, "error", error="manifest has no tiles")
             return ok_response({"error": "manifest has no tiles"})
-        # The wall grid + viewer click-mapping assume uniform CELL_PX cells
-        # (wall_dz.c). If the migration left any non-512 preview, building the
-        # wall would produce wrong geometry — refuse and let the UI fall back
-        # to the per-tile grid instead of silently mis-mapping (F10).
-        bad = [t for t in tiles
+        # The wall grid + viewer click-mapping assume uniform CELL_PX cells.
+        # wall_dz normalises every tile to CELL_PX square before the join, so a
+        # non-512 preview (small-N renders are <=512 and never upscaled) still
+        # produces correct geometry — just log how many needed resizing rather
+        # than refusing the whole wall (code-review-26 F10 was too strict).
+        off = [t for t in tiles
                if (t.get("preview_width") not in (None, CELL_PX)
                    or t.get("preview_height") not in (None, CELL_PX))]
-        if bad:
-            ex = bad[0]
-            msg = (f"wall unsupported: {len(bad)} tile(s) are not {CELL_PX}px "
-                   f"(e.g. {ex.get('key')!r} {ex.get('preview_width')}x{ex.get('preview_height')})")
-            # 'error' (not a new state) so the existing viewer falls back to
-            # the per-tile grid via its wall_state != 'ready' guard
-            _set_wall_state(kind, refresh_id, "error", error=msg)
-            return ok_response({"error": msg, "wall_state": "error"})
+        if off:
+            ex = off[0]
+            print(f"wall: normalising {len(off)}/{len(tiles)} non-{CELL_PX}px tiles "
+                  f"(e.g. {ex.get('key')!r} {ex.get('preview_width')}x{ex.get('preview_height')})")
 
         t0 = time.time()
         with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:

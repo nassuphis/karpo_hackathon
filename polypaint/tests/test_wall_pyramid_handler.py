@@ -108,36 +108,49 @@ class BuildWallPyramidTests(unittest.TestCase):
                 "manifest_key": self.MANIFEST_KEY})
         return json.loads(resp["body"]), puts, ddb_updates
 
-    def test_non_512_tile_marks_error_and_builds_no_wall(self):
-        # code-review-26 F10: the wall grid + click-mapping assume 512px cells;
-        # a non-512 tile must fall back to the grid, not silently mis-map
+    def test_non_512_tiles_still_build_the_wall(self):
+        # code-review-26 F10 revisited: small-N renders yield <512 previews
+        # (never upscaled). wall_dz normalises every tile to CELL_PX before the
+        # join, so a mixed-size manifest must BUILD (not fall back to the grid).
+        body, puts, ddb_updates = self._run_mixed_sizes()
+        self.assertNotIn("error", body)
+        self.assertEqual(ddb_updates[-1]["ExpressionAttributeValues"][":ws"], {"S": "ready"})
+
+    def _run_mixed_sizes(self):
         import handler_wall_pyramid as mod
         manifest = {"tiles": [
             {"created": "2026-02-01T00:00:00Z", "job_id": "j1", "artifact_id": "a1",
              "key": "renders/j1/color/a1/preview.jpg",
              "preview_width": 512, "preview_height": 512},
             {"created": "2026-01-01T00:00:00Z", "job_id": "j2", "artifact_id": "a2",
-             "key": "renders/j2/color/a2/preview.jpg",
-             "preview_width": 1024, "preview_height": 1024}]}
+             "key": "renders/j2/palettes/a2/preview.jpg",
+             "preview_width": 500, "preview_height": 500}]}  # small-N render
+        puts, ddb_updates = [], []
         fake_s3 = MagicMock()
         fake_s3.get_object.return_value = {"Body": io.BytesIO(json.dumps(manifest).encode())}
-        states = []
+        fake_s3.download_file.side_effect = lambda b, k, p: open(p, "wb").write(b"jpg")
+        fake_s3.put_object.side_effect = lambda **kw: puts.append(kw)
         fake_ddb = MagicMock()
-        fake_ddb.update_item.side_effect = lambda **kw: states.append(kw)
+        fake_ddb.update_item.side_effect = lambda **kw: ddb_updates.append(kw)
         fake_ddb.exceptions.ConditionalCheckFailedException = type("CCF", (Exception,), {})
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None, env=None):
+            outbase = cmd[3]
+            os.makedirs(outbase + "_files/0", exist_ok=True)
+            open(outbase + ".dzi", "w").write("<dzi/>")
+            open(outbase + ".jpg", "wb").write(b"flatjpg")
+            open(outbase + "_files/0/0_0.jpg", "wb").write(b"tile")
+            return MagicMock(returncode=0, stdout=json.dumps(
+                {"width": 1024, "height": 512, "count": 2, "across": 2}), stderr="")
+
         with patch.object(mod, "s3", fake_s3), \
              patch.object(mod, "boto3") as fb, \
-             patch.object(mod.subprocess, "run") as run:
+             patch.object(mod.subprocess, "run", side_effect=fake_run):
             fb.client.return_value = fake_ddb
             resp = mod.handle_build_wall_pyramid({
                 "kind": "color", "refresh_id": self.REFRESH_ID,
                 "manifest_key": self.MANIFEST_KEY})
-        body = json.loads(resp["body"])
-        self.assertIn("not 512px", body["error"])
-        self.assertEqual(body["wall_state"], "error")
-        run.assert_not_called()   # never spent libvips on a bad manifest
-        # wall_state persisted as error so the viewer falls back to the grid
-        self.assertEqual(states[-1]["ExpressionAttributeValues"][":ws"], {"S": "error"})
+        return json.loads(resp["body"]), puts, ddb_updates
 
     def test_rejects_bad_refresh_id_and_mismatched_manifest_key(self):
         # code-review-25 F4: pin inputs to the canonical mosaic index layout

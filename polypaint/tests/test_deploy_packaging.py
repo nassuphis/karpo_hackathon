@@ -718,6 +718,57 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('done < <(frontend_asset_keys)', DEPLOY_TEXT)
         self.assertTrue((ROOT / "solve-score-programs" / "index.json").exists())
 
+    def test_deploy_publishes_gallery_viewer_and_vendored_libs(self):
+        # Standalone 3D gallery viewer (virtual-gallery.md §12): the shell, its
+        # ES modules, and the pinned Three.js + OpenSeadragon vendor files must
+        # all be published, with the module entry build-versioned and the shell
+        # stamped (like index.html), and the OSD control PNGs served correctly.
+        self.assertIn('"gallery.html"', DEPLOY_TEXT)
+        self.assertIn('find "gallery" -name "*.js" -type f | sort', DEPLOY_TEXT)
+        self.assertIn('"vendor/three-r160"', DEPLOY_TEXT)
+        self.assertIn('"vendor/openseadragon-r411"', DEPLOY_TEXT)
+        # gallery modules are build-versioned; the shell keeps a stable key.
+        self.assertIn('gallery/*.js', DEPLOY_TEXT)
+        self.assertIn('gallery.html) echo "gallery.html" ;;', DEPLOY_TEXT)
+        # PNG content type for the vendored OSD control images.
+        self.assertIn('*.png) echo "image/png" ;;', DEPLOY_TEXT)
+        # A dedicated stamper rewrites only the module entry point.
+        self.assertIn('stamped_gallery_html() {', DEPLOY_TEXT)
+        self.assertIn('LOCAL_SRC=$(stamped_gallery_html)', DEPLOY_TEXT)
+
+        # Upload order: gallery.html (stamped, stable key) after its modules and
+        # vendor files, and index.html still LAST of all.
+        helper = re.search(r"upload_frontend_assets\(\) \{(?P<body>.*?)\n\}", DEPLOY_TEXT, re.DOTALL)
+        self.assertIsNotNone(helper, "upload_frontend_assets helper missing")
+        body = helper.group("body")
+        skip_at = body.index('if [ "$asset" = "index.html" ] || [ "$asset" = "gallery.html" ]')
+        gallery_upload_at = body.index('aws s3 cp "$STAMPED_GALLERY" "s3://$BUCKET/gallery.html"')
+        index_upload_at = body.index('aws s3 cp "$STAMPED" "s3://$BUCKET/index.html"')
+        self.assertLess(skip_at, gallery_upload_at, "gallery.html must upload after the module loop")
+        self.assertLess(gallery_upload_at, index_upload_at, "index.html must still upload LAST")
+
+        # The shell references a relative module entry that stamping can rewrite,
+        # and pins the vendored libraries (never cdnjs).
+        gallery_html = (ROOT / "gallery.html").read_text()
+        self.assertIn('<script type="module" src="gallery/app.js"></script>', gallery_html)
+        self.assertIn('"three": "./vendor/three-r160/three.module.js"', gallery_html)
+        self.assertIn('vendor/openseadragon-r411/openseadragon.min.js', gallery_html)
+        self.assertNotIn('cdnjs.cloudflare.com', gallery_html)
+
+        # Every published artifact exists on disk (build_deploy_metadata cats
+        # each frontend asset, so a missing file breaks the deploy).
+        for rel in [
+            "gallery.html",
+            "gallery/app.js", "gallery/manifest.js", "gallery/layout.js", "gallery/texture-manager.js",
+            "vendor/three-r160/three.module.js",
+            "vendor/three-r160/addons/controls/PointerLockControls.js",
+            "vendor/three-r160/LICENSE",
+            "vendor/openseadragon-r411/openseadragon.min.js",
+            "vendor/openseadragon-r411/LICENSE",
+            "vendor/openseadragon-r411/images/home_rest.png",
+        ]:
+            self.assertTrue((ROOT / rel).exists(), f"missing published asset {rel}")
+
     def test_updated_summary_prints_http_and_https_site_urls_together(self):
         self.assertIn('echo "  Site:"', DEPLOY_TEXT)
         self.assertIn('echo "  Build:    $BUILD_ID"', DEPLOY_TEXT)

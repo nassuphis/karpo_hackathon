@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="color-scheme" content="dark">
+<title>PolyPaint Gallery</title>
+<link rel="icon" href="data:,">
+<!--
+  Standalone 3D gallery viewer (virtual-gallery.md Phase 0). Loads an immutable
+  virtual_gallery share manifest (?manifest=<same-origin url>) and renders a
+  walkable room of curated color artifacts with real DeepZoom inspection.
+
+  Dependencies are VENDORED and version-stamped (vendor/three-r160,
+  vendor/openseadragon-r411) — never cdnjs — so a shared link stays reproducible.
+  The import map maps the bare `three` specifiers to the vendored ESM build; it
+  is anchored at THIS document's root, so it keeps working even after deploy.sh
+  rewrites the module entry point to its build-versioned assets/<id>/gallery key.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three-r160/three.module.js",
+    "three/addons/controls/PointerLockControls.js": "./vendor/three-r160/addons/controls/PointerLockControls.js"
+  }
+}
+</script>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #14110d; color: #efe9df;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #gl-root { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* Center crosshair (visible only while pointer-locked). */
+  #crosshair { position: fixed; left: 50%; top: 50%; width: 14px; height: 14px;
+    margin: -7px 0 0 -7px; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 6; }
+  #crosshair::before, #crosshair::after { content: ""; position: absolute; background: rgba(255,255,255,.75); }
+  #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+  #crosshair::after { top: 6px; left: 0; height: 2px; width: 14px; }
+  body.locked #crosshair { opacity: 1; }
+
+  /* Minimal HUD. */
+  #hud { position: fixed; left: 16px; bottom: 14px; z-index: 5; max-width: 60ch;
+    font-size: 13px; line-height: 1.5; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
+  #hud .title { font-weight: 600; }
+  #hud .sub { opacity: .72; font-size: 12px; }
+  #hint { position: fixed; left: 50%; top: 20px; transform: translateX(-50%); z-index: 5;
+    font-size: 13px; opacity: .82; background: rgba(0,0,0,.35); padding: 6px 12px; border-radius: 20px;
+    pointer-events: none; transition: opacity .3s; }
+  body.locked #hint { opacity: 0; }
+
+  /* Guided navigation controls. */
+  #guided { position: fixed; right: 16px; bottom: 14px; z-index: 5; display: flex; gap: 8px; }
+  #guided button { font: inherit; font-size: 13px; color: #efe9df; background: rgba(40,34,26,.85);
+    border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+  #guided button:hover { background: rgba(60,50,38,.95); }
+  #guided button:disabled { opacity: .4; cursor: default; }
+
+  /* Debug HUD (texture counters). */
+  #debug { position: fixed; right: 16px; top: 14px; z-index: 5; font-size: 11px; opacity: .55;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; white-space: pre; }
+
+  /* Full-window inspection overlay. */
+  #overlay { position: fixed; inset: 0; z-index: 20; background: rgba(10,8,6,.96);
+    display: none; flex-direction: column; }
+  #overlay.open { display: flex; }
+  #overlay-bar { display: flex; align-items: baseline; gap: 14px; padding: 12px 18px;
+    border-bottom: 1px solid rgba(255,255,255,.1); }
+  #overlay-bar .meta { font-size: 13px; opacity: .82; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #overlay-bar .spacer { flex: 1; }
+  #overlay-bar button { font: inherit; font-size: 13px; color: #efe9df; background: rgba(40,34,26,.9);
+    border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  #overlay-bar button:hover { background: rgba(60,50,38,1); }
+  #overlay-stage { position: relative; flex: 1; min-height: 0; background: #0b0908; }
+  #overlay-stage img { position: absolute; inset: 0; margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
+  #osd { position: absolute; inset: 0; }
+  #overlay-status { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    font-size: 13px; opacity: .7; }
+
+  /* Blocking messages (loading / error / no-WebGL). */
+  #message { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center;
+    padding: 24px; text-align: center; }
+  #message.show { display: flex; }
+  #message .box { max-width: 46ch; }
+  #message h1 { font-size: 17px; margin: 0 0 10px; font-weight: 600; }
+  #message p { font-size: 14px; line-height: 1.6; opacity: .82; margin: 6px 0; }
+  #message a { color: #e0b877; }
+</style>
+</head>
+<body>
+  <div id="gl-root"></div>
+  <div id="crosshair"></div>
+
+  <div id="hint">Click to enter · WASD to move · mouse to look · Esc to release</div>
+  <div id="hud"><div class="title" id="hud-title"></div><div class="sub" id="hud-sub"></div></div>
+  <div id="debug"></div>
+  <div id="guided">
+    <button id="btn-prev" type="button">‹ Prev</button>
+    <button id="btn-next" type="button">Next ›</button>
+    <button id="btn-inspect" type="button" disabled>Inspect</button>
+  </div>
+
+  <div id="overlay" aria-hidden="true">
+    <div id="overlay-bar">
+      <span class="meta" id="overlay-meta"></span>
+      <span class="spacer"></span>
+      <button id="overlay-zoom" type="button" style="display:none">Zoom (DeepZoom)</button>
+      <button id="overlay-original" type="button">Open original ↗</button>
+      <button id="overlay-copy" type="button">Copy ref</button>
+      <button id="overlay-close" type="button">Close ✕</button>
+    </div>
+    <div id="overlay-stage">
+      <img id="overlay-img" alt="">
+      <div id="osd"></div>
+      <div id="overlay-status"></div>
+    </div>
+  </div>
+
+  <div id="message"><div class="box" id="message-box"></div></div>
+
+  <!-- OpenSeadragon is a classic (non-module) script exposing window.OpenSeadragon. -->
+  <script src="vendor/openseadragon-r411/openseadragon.min.js"></script>
+  <!-- Module entry point. deploy.sh rewrites this src to its build-versioned key. -->
+  <script type="module" src="gallery/app.js"></script>
+</body>
+</html>

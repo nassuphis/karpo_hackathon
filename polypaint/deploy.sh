@@ -75,6 +75,7 @@ frontend_asset_keys() {
         "index.html" \
         "artifact_mosaic_viewer.html" \
         "flipbook.html" \
+        "gallery.html" \
         "vendor/page-flip.browser.js" \
         "program_profiles_js.js" \
         "merged_opcodes_js.js" \
@@ -97,6 +98,24 @@ frontend_asset_keys() {
             find "solve-score-programs" -type f | sort
         )
     fi
+    # Standalone 3D gallery viewer ES modules (build-versioned like js/*).
+    if [ -d "$SCRIPT_DIR/gallery" ]; then
+        (
+            cd "$SCRIPT_DIR"
+            find "gallery" -name "*.js" -type f | sort
+        )
+    fi
+    # Vendored, version-stamped libraries (Three.js + OpenSeadragon). The
+    # directory name pins the version, so these keep STABLE keys — an upgrade
+    # bumps the directory (three-r161/...) rather than overwriting in place.
+    for vdir in "vendor/three-r160" "vendor/openseadragon-r411"; do
+        if [ -d "$SCRIPT_DIR/$vdir" ]; then
+            (
+                cd "$SCRIPT_DIR"
+                find "$vdir" -type f | sort
+            )
+        fi
+    done
 }
 
 frontend_asset_content_type() {
@@ -104,6 +123,8 @@ frontend_asset_content_type() {
         *.html) echo "text/html" ;;
         *.js) echo "application/javascript" ;;
         *.json) echo "application/json" ;;
+        *.png) echo "image/png" ;;                 # OpenSeadragon control images
+        */LICENSE|*.txt) echo "text/plain" ;;      # vendored license files
         *) echo "application/octet-stream" ;;
     esac
 }
@@ -198,31 +219,54 @@ stamped_index_html() {
     echo "$STAMPED"
 }
 
+# gallery.html keeps a STABLE root key but its ES-module entry point is rewritten
+# to the build-versioned key (its sibling imports resolve relative to it, so they
+# ride along under assets/$BUILD_ID/gallery/). The import map's vendored `three`
+# paths and the OpenSeadragon <script> are anchored at the document root and stay
+# stable (vendor dirs are version-stamped by name), so they are NOT rewritten.
+stamped_gallery_html() {
+    local STAMPED=/tmp/polypaint-gallery-stamped.html
+    if [ -z "$BUILD_ID" ]; then
+        echo "FATAL: stamped_gallery_html called before build_deploy_metadata" >&2
+        return 1
+    fi
+    sed -E "s|<script type=\"module\" src=\"(gallery/[^\"]+\.js)\"></script>|<script type=\"module\" src=\"assets/${BUILD_ID}/\1\"></script>|" \
+        "$SCRIPT_DIR/gallery.html" > "$STAMPED"
+    echo "$STAMPED"
+}
+
 # Where an asset lives in the bucket: scripts go under the build-versioned
 # prefix; index.html (and any non-script asset) keeps its stable key.
 deployed_asset_key() {
     local ASSET="$1"
     case "$ASSET" in
         index.html) echo "index.html" ;;
-        js/*|*_js.js) echo "assets/${BUILD_ID}/${ASSET}" ;;
+        gallery.html) echo "gallery.html" ;;
+        js/*|gallery/*.js|*_js.js) echo "assets/${BUILD_ID}/${ASSET}" ;;
         *) echo "$ASSET" ;;
     esac
 }
 
 upload_frontend_assets() {
-    local STAMPED
+    local STAMPED STAMPED_GALLERY
     STAMPED=$(stamped_index_html)
-    # Order matters: every script lands at its build-versioned key before
-    # the index.html that references those keys goes live. The old index
-    # keeps serving the old build's objects throughout.
+    STAMPED_GALLERY=$(stamped_gallery_html)
+    # Order matters: every script (and gallery module + vendor file) lands at its
+    # deployed key before the stamped HTML shells that reference those keys go
+    # live. The old index keeps serving the old build's objects throughout.
     while IFS= read -r asset; do
-        if [ "$asset" = "index.html" ]; then
+        if [ "$asset" = "index.html" ] || [ "$asset" = "gallery.html" ]; then
             continue
         fi
         aws s3 cp "$SCRIPT_DIR/$asset" "s3://$BUCKET/$(deployed_asset_key "$asset")" \
             --content-type "$(frontend_asset_content_type "$asset")" \
             --cache-control "no-cache" --region "$REGION"
     done < <(frontend_asset_keys)
+    # gallery.html (stable key, stamped module entry) after its modules/vendor.
+    aws s3 cp "$STAMPED_GALLERY" "s3://$BUCKET/gallery.html" \
+        --content-type "$(frontend_asset_content_type "gallery.html")" \
+        --cache-control "no-cache" --region "$REGION"
+    # index.html LAST: it flips the site to the new build set atomically.
     aws s3 cp "$STAMPED" "s3://$BUCKET/index.html" \
         --content-type "$(frontend_asset_content_type "index.html")" \
         --cache-control "no-cache" --region "$REGION"
@@ -250,6 +294,8 @@ verify_frontend_assets() {
         local LOCAL_SRC="$SCRIPT_DIR/${asset}"
         if [ "$asset" = "index.html" ]; then
             LOCAL_SRC=$(stamped_index_html)
+        elif [ "$asset" = "gallery.html" ]; then
+            LOCAL_SRC=$(stamped_gallery_html)
         fi
         LOCAL_HASH=$(shasum -a 256 "$LOCAL_SRC" | cut -d' ' -f1)
         REMOTE_HASH=$(shasum -a 256 "${TMP_DIR}/${asset}" | cut -d' ' -f1)

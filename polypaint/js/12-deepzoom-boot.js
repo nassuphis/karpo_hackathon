@@ -45,7 +45,7 @@ function _dzRenderSourceLabel(ex) {
 // Each pick is {job_id, artifact_id, export_id} for a COLOR export. The draft is
 // submitted to /share-gallery, which validates + enriches server-side and
 // returns an immutable virtual_gallery manifest the standalone viewer opens.
-window._galleryDraft = window._galleryDraft || [];
+// The draft array is created in the boot block (top level is declaration-only).
 
 function _dzGalleryPickForExport(ex) {
     if (!ex) return null;
@@ -1135,6 +1135,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
    Moved from the monolith's mid-file position (js/06 tail): these are
    the top-level initializer calls, and they reference functions from
    several parts, so they must run only after every part is parsed. */
+window._galleryDraft = window._galleryDraft || [];  // gallery curation draft (Phase 0)
 buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette);
 buildPaletteCircles('palette-circles-solve-score', 'solve_score', () => renderSolveScorePalette);
 buildPaletteCircles('palette-circles-palette-tab', 'palette_tab', () => paletteTabPalette);

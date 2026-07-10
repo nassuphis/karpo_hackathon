@@ -16,11 +16,21 @@
 #include <curl/curl.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+/* Deterministic collision policy (CR28 F1): when two fragments carry the same
+ * global pixel, the one from the LOWEST source ordinal wins, independent of
+ * thread timing. A per-pixel owner (uint16 ordinal, 0xFFFF = unclaimed) plus a
+ * bank of striped mutexes makes concurrent overlapping writes race-free while
+ * keeping non-overlapping writes contended only by hash bucket. */
+#define AG_WRITE_STRIPES 64
+#define AG_OWNER_NONE 0xFFFFu
+#define AG_MAX_FRAGMENTS 65534   /* ordinal must fit uint16 below AG_OWNER_NONE */
 
 typedef struct {
     uint8_t *data;
@@ -36,13 +46,15 @@ typedef struct {
     size_t record_size;
     size_t npix;
     uint8_t *buf;
+    uint16_t *owner;                 /* per-pixel winning fragment ordinal */
     char **paths;
     int n_paths;
     int next_idx;
-    int failed;
+    atomic_int failed;               /* read cross-mutex in next_job */
     char error[512];
     pthread_mutex_t queue_mu;
     pthread_mutex_t err_mu;
+    pthread_mutex_t write_mu[AG_WRITE_STRIPES];
 } AssembleState;
 
 typedef struct {
@@ -67,17 +79,23 @@ static int getArgInt(int argc, char **argv, const char *key, int def) {
 
 static void set_error(AssembleState *st, const char *fmt, const char *path, long long a, long long b) {
     pthread_mutex_lock(&st->err_mu);
-    if (!st->failed) {
-        st->failed = 1;
+    if (!atomic_load(&st->failed)) {
+        atomic_store(&st->failed, 1);
         snprintf(st->error, sizeof(st->error), fmt, path, a, b);
     }
     pthread_mutex_unlock(&st->err_mu);
 }
 
+/* Set the stop flag without recording an error (used to abort remaining work
+ * during a partial thread-start failure, F2). */
+static void request_stop(AssembleState *st) {
+    atomic_store(&st->failed, 1);
+}
+
 static int next_job(AssembleState *st) {
     int idx = -1;
     pthread_mutex_lock(&st->queue_mu);
-    if (!st->failed && st->next_idx < st->n_paths) {
+    if (!atomic_load(&st->failed) && st->next_idx < st->n_paths) {
         idx = st->next_idx++;
     }
     pthread_mutex_unlock(&st->queue_mu);
@@ -123,10 +141,15 @@ static void ag_sleep_ms(long ms) {
 }
 
 static int ag_retryable_failure(CURLcode rc, long httpStatus) {
-    if (httpStatus == 429L || httpStatus == 500L || httpStatus == 502L ||
-        httpStatus == 503L || httpStatus == 504L) return 1;
-    return rc == CURLE_HTTP_RETURNED_ERROR ||
-           rc == CURLE_OPERATION_TIMEDOUT ||
+    /* When an HTTP response arrived (status != 0), retry ONLY transient
+     * statuses — a permanent 4xx (403/404) must not be retried even though
+     * CURLOPT_FAILONERROR reports it as CURLE_HTTP_RETURNED_ERROR (CR28 F16). */
+    if (httpStatus != 0L) {
+        return httpStatus == 429L || httpStatus == 500L ||
+               httpStatus == 502L || httpStatus == 503L || httpStatus == 504L;
+    }
+    /* No HTTP status: a transport-level failure — retry the transient ones. */
+    return rc == CURLE_OPERATION_TIMEDOUT ||
            rc == CURLE_COULDNT_CONNECT ||
            rc == CURLE_COULDNT_RESOLVE_HOST ||
            rc == CURLE_RECV_ERROR ||
@@ -138,6 +161,7 @@ static int ag_retryable_failure(CURLcode rc, long httpStatus) {
 static int download_url_bytes(WorkerCtx *ctx, const char *url, uint8_t **outData, size_t *outSize) {
     char curlErr[CURL_ERROR_SIZE] = {0};
     long httpStatus = 0;
+    int attempts_made = 0;
     CURLcode rc = CURLE_OK;
 
     if (!ctx->curl) {
@@ -163,6 +187,13 @@ static int download_url_bytes(WorkerCtx *ctx, const char *url, uint8_t **outData
         curl_easy_setopt(ctx->curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(ctx->curl, CURLOPT_ACCEPT_ENCODING, "identity");
         curl_easy_setopt(ctx->curl, CURLOPT_TCP_KEEPALIVE, 1L);
+        /* Deadlines so retry count actually bounds wall time (CR28 F16):
+         * 10s to connect, 120s total per attempt, and abort a stalled
+         * transfer (<1 byte/s for 30s). */
+        curl_easy_setopt(ctx->curl, CURLOPT_CONNECTTIMEOUT, 10L);
+        curl_easy_setopt(ctx->curl, CURLOPT_TIMEOUT, 120L);
+        curl_easy_setopt(ctx->curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+        curl_easy_setopt(ctx->curl, CURLOPT_LOW_SPEED_TIME, 30L);
 
         rc = curl_easy_perform(ctx->curl);
         curl_easy_getinfo(ctx->curl, CURLINFO_RESPONSE_CODE, &httpStatus);
@@ -173,7 +204,8 @@ static int download_url_bytes(WorkerCtx *ctx, const char *url, uint8_t **outData
         }
 
         free(dl.data);
-        if (attempt + 1 >= AG_DOWNLOAD_ATTEMPTS || !ag_retryable_failure(rc, httpStatus)) {
+        attempts_made = attempt + 1;
+        if (attempts_made >= AG_DOWNLOAD_ATTEMPTS || !ag_retryable_failure(rc, httpStatus)) {
             break;
         }
         /* backoff with a small linear ramp (150/300/450/... ms); S3 SlowDown
@@ -183,11 +215,12 @@ static int download_url_bytes(WorkerCtx *ctx, const char *url, uint8_t **outData
 
     /* Diagnostics lead: presigned URLs (~1.5 KB) overflow the 512-byte error
      * buffer, so anything formatted after the URL is truncated away (this hid
-     * the curl rc during the 2026-06 incident). */
+     * the curl rc during the 2026-06 incident). Report ACTUAL attempts, not
+     * the constant max (CR28 F16). */
     char detail[512];
     snprintf(detail, sizeof(detail),
-             "assemble_greyscale: download failed after %d attempts (curl %d %s; http %ld; %s): %s",
-             AG_DOWNLOAD_ATTEMPTS, (int)rc, curl_easy_strerror(rc), httpStatus,
+             "assemble_greyscale: download failed after %d attempt(s) (curl %d %s; http %ld; %s): %s",
+             attempts_made, (int)rc, curl_easy_strerror(rc), httpStatus,
              curlErr[0] ? curlErr : "no detail", url);
     set_error(ctx->st, "%s", detail, 0, 0);
     return 0;
@@ -236,7 +269,7 @@ static int load_local_bytes(AssembleState *st, const char *path, uint8_t **outDa
     return 1;
 }
 
-static int process_fragment_bytes(AssembleState *st, const char *path, uint8_t *data, size_t size) {
+static int process_fragment_bytes(AssembleState *st, int frag_ord, const char *path, uint8_t *data, size_t size) {
     if (st->record_size < 5) {
         set_error(st, "assemble_greyscale: invalid record size for %s (%lld)", path, (long long)st->record_size, 0);
         return 0;
@@ -271,12 +304,21 @@ static int process_fragment_bytes(AssembleState *st, const char *path, uint8_t *
             );
             return 0;
         }
-        memcpy(st->buf + ((size_t)pixel_idx * (size_t)st->channels), data + off + 4, (size_t)st->channels);
+        /* Deterministic, race-free write (CR28 F1): lowest source ordinal
+         * wins each pixel, under the pixel's stripe lock. */
+        int stripe = (int)(pixel_idx & (AG_WRITE_STRIPES - 1));
+        pthread_mutex_lock(&st->write_mu[stripe]);
+        if ((uint32_t)frag_ord < (uint32_t)st->owner[pixel_idx]) {
+            st->owner[pixel_idx] = (uint16_t)frag_ord;
+            memcpy(st->buf + ((size_t)pixel_idx * (size_t)st->channels),
+                   data + off + 4, (size_t)st->channels);
+        }
+        pthread_mutex_unlock(&st->write_mu[stripe]);
     }
     return 1;
 }
 
-static int process_fragment_source(WorkerCtx *ctx, const char *path) {
+static int process_fragment_source(WorkerCtx *ctx, int frag_ord, const char *path) {
     uint8_t *data = NULL;
     size_t size = 0;
     int ok = 0;
@@ -291,7 +333,7 @@ static int process_fragment_source(WorkerCtx *ctx, const char *path) {
         }
     }
 
-    ok = process_fragment_bytes(ctx->st, path, data, size);
+    ok = process_fragment_bytes(ctx->st, frag_ord, path, data, size);
     free(data);
     return ok;
 }
@@ -302,7 +344,7 @@ static void *worker_main(void *arg) {
     for (;;) {
         int idx = next_job(st);
         if (idx < 0) break;
-        if (!process_fragment_source(ctx, st->paths[idx])) {
+        if (!process_fragment_source(ctx, idx, st->paths[idx])) {
             break;
         }
     }
@@ -435,6 +477,14 @@ int main(int argc, char **argv) {
             return 3;
         }
     }
+    if (n_paths > AG_MAX_FRAGMENTS) {
+        fprintf(stderr, "assemble_greyscale: %d fragments exceeds max %d\n", n_paths, AG_MAX_FRAGMENTS);
+        for (int i = 0; i < n_paths; i++) free(paths[i]);
+        free(paths);
+        return 2;
+    }
+    /* never spawn more workers than fragments (F2) */
+    if (workers > n_paths && n_paths > 0) workers = n_paths;
 
     curlRc = curl_global_init(CURL_GLOBAL_DEFAULT);
     if (curlRc != CURLE_OK) {
@@ -445,14 +495,21 @@ int main(int argc, char **argv) {
     size_t npix = (size_t)width * (size_t)height;
     size_t raw_size = npix * (size_t)channels;
     uint8_t *buf = (uint8_t *)calloc(raw_size ? raw_size : 1, 1);
-    if (!buf) {
+    /* per-pixel winning ordinal, init 0xFFFF (unclaimed) via 0xFF byte fill */
+    uint16_t *owner = (uint16_t *)malloc((npix ? npix : 1) * sizeof(uint16_t));
+    if (!buf || !owner) {
         fprintf(stderr, "assemble_greyscale: cannot allocate %zu bytes\n", raw_size);
+        free(buf); free(owner);
+        for (int i = 0; i < n_paths; i++) free(paths[i]);
+        free(paths);
         curl_global_cleanup();
         return 4;
     }
+    memset(owner, 0xFF, (npix ? npix : 1) * sizeof(uint16_t));
 
     AssembleState st;
     memset(&st, 0, sizeof(st));
+    st.owner = owner;
     st.width = width;
     st.height = height;
     st.channels = channels;
@@ -464,6 +521,7 @@ int main(int argc, char **argv) {
     st.n_paths = n_paths;
     pthread_mutex_init(&st.queue_mu, NULL);
     pthread_mutex_init(&st.err_mu, NULL);
+    for (int i = 0; i < AG_WRITE_STRIPES; i++) pthread_mutex_init(&st.write_mu[i], NULL);
 
     pthread_t *threads = (pthread_t *)calloc((size_t)workers, sizeof(pthread_t));
     WorkerCtx *ctxs = (WorkerCtx *)calloc((size_t)workers, sizeof(WorkerCtx));
@@ -471,37 +529,47 @@ int main(int argc, char **argv) {
         fprintf(stderr, "assemble_greyscale: cannot allocate worker state\n");
         free(ctxs);
         free(threads);
-        free(buf);
+        free(buf); free(owner);
         for (int i = 0; i < n_paths; i++) free(paths[i]);
         free(paths);
         curl_global_cleanup();
         return 5;
     }
 
+    /* Safe partial thread startup (CR28 F2): on a mid-loop pthread_create
+     * failure, signal stop and JOIN the threads already created before freeing
+     * any shared state they still reference. */
+    int created = 0;
+    int start_failed = 0;
     for (int i = 0; i < workers; i++) {
         ctxs[i].st = &st;
         ctxs[i].curl = NULL;
         if (pthread_create(&threads[i], NULL, worker_main, &ctxs[i]) != 0) {
             fprintf(stderr, "assemble_greyscale: pthread_create failed\n");
-            free(ctxs);
-            free(threads);
-            free(buf);
-            for (int j = 0; j < n_paths; j++) free(paths[j]);
-            free(paths);
-            curl_global_cleanup();
-            return 6;
+            request_stop(&st);
+            start_failed = 1;
+            break;
         }
+        created++;
     }
-    for (int i = 0; i < workers; i++) pthread_join(threads[i], NULL);
+    for (int i = 0; i < created; i++) pthread_join(threads[i], NULL);
 
     pthread_mutex_destroy(&st.queue_mu);
     pthread_mutex_destroy(&st.err_mu);
+    for (int i = 0; i < AG_WRITE_STRIPES; i++) pthread_mutex_destroy(&st.write_mu[i]);
     free(ctxs);
     free(threads);
+    if (start_failed) {
+        free(buf); free(owner);
+        for (int i = 0; i < n_paths; i++) free(paths[i]);
+        free(paths);
+        curl_global_cleanup();
+        return 6;
+    }
 
     if (st.failed) {
         fprintf(stderr, "%s\n", st.error);
-        free(buf);
+        free(buf); free(owner);
         for (int i = 0; i < n_paths; i++) free(paths[i]);
         free(paths);
         curl_global_cleanup();
@@ -511,7 +579,7 @@ int main(int argc, char **argv) {
     FILE *out = fopen(outPath, "wb");
     if (!out) {
         fprintf(stderr, "assemble_greyscale: cannot create %s\n", outPath);
-        free(buf);
+        free(buf); free(owner);
         for (int i = 0; i < n_paths; i++) free(paths[i]);
         free(paths);
         curl_global_cleanup();
@@ -520,7 +588,7 @@ int main(int argc, char **argv) {
     if (raw_size > 0 && fwrite(buf, 1, raw_size, out) != raw_size) {
         fprintf(stderr, "assemble_greyscale: short write to %s\n", outPath);
         fclose(out);
-        free(buf);
+        free(buf); free(owner);
         for (int i = 0; i < n_paths; i++) free(paths[i]);
         free(paths);
         curl_global_cleanup();
@@ -539,7 +607,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    free(buf);
+    free(buf); free(owner);
     for (int i = 0; i < n_paths; i++) free(paths[i]);
     free(paths);
     curl_global_cleanup();

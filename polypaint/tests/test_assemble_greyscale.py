@@ -164,15 +164,23 @@ class TestAssembleGreyscale(unittest.TestCase):
         self.assertEqual(hist["histogram"][1], 2)
         self.assertEqual(hist["histogram"][9], 1)
 
-    def test_repeated_aliased_writes_are_accepted(self):
+    def test_overlapping_writes_are_deterministic_lowest_ordinal_wins(self):
+        # CR28 F1: on a pixel collision the LOWEST source-ordinal fragment wins,
+        # deterministically, regardless of thread timing or worker count.
+        # frag 0 (ordinal 0) writes pixel 0 = 3; frag 1 writes pixel 0 = 7.
         frags = [
             _encode_pairs([(0, 3), (1, 4)]),
             _encode_pairs([(0, 7)]),
         ]
-        result, output, _ = self._run(2, frags, workers=2)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(output[0], (3, 7))
-        self.assertEqual(output[1], 4)
+        seen = set()
+        for _ in range(12):
+            for w in (1, 2, 4):
+                result, output, _ = self._run(2, frags, workers=w)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output[0], 3)   # frag 0 wins, never 7
+                self.assertEqual(output[1], 4)
+                seen.add(bytes(output))
+        self.assertEqual(len(seen), 1)   # identical bytes every run/worker-count
 
     def test_missing_fragment_path_is_clear_error(self):
         frags = [_encode_pairs([(0, 5)])]
@@ -210,9 +218,19 @@ class TestAssembleGreyscale(unittest.TestCase):
             1, frags, fail_times=999, workers=1)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("http 503", result.stderr)
-        self.assertIn("after 6 attempts", result.stderr)
+        self.assertIn("after 6 attempt", result.stderr)
 
-    def _run_with_flaky_server(self, pix, fragment_payloads, *, fail_times, workers=1):
+    def test_permanent_404_is_not_retried(self):
+        # CR28 F16: a 404 is permanent — fail on the FIRST attempt, not 6
+        frags = [_encode_pairs([(0, 9)])]
+        result, _o, _h, attempts = self._run_with_flaky_server(
+            1, frags, fail_times=999, workers=1, fail_status=404)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("http 404", result.stderr)
+        self.assertIn("after 1 attempt", result.stderr)
+        self.assertEqual(attempts.get("/frag_0.bin", 0), 1)
+
+    def _run_with_flaky_server(self, pix, fragment_payloads, *, fail_times, workers=1, fail_status=503):
         attempts = {}
         lock = threading.Lock()
         with tempfile.TemporaryDirectory() as td:
@@ -231,9 +249,9 @@ class TestAssembleGreyscale(unittest.TestCase):
                     if body is None:
                         self.send_response(404); self.end_headers(); return
                     if n <= fail_times:
-                        self.send_response(503)
+                        self.send_response(fail_status)
                         self.end_headers()
-                        self.wfile.write(b"SlowDown")
+                        self.wfile.write(b"fail")
                         return
                     self.send_response(200)
                     self.send_header("Content-Length", str(len(body)))

@@ -9,6 +9,10 @@ dependencies = [
     "numpy>=2.4.4",
     "pillow>=12.2.0",
     "pytest>=9.0.3",
+    # spread_pdf.py imports reportlab; the gated PDF tests need it in the
+    # local env so a clean checkout reproduces the predeploy gate (CR28 F10).
+    # The deployed book image installs it separately in the Dockerfile.
+    "reportlab>=4,<5",
 ]
 
 [tool.pytest.ini_options]

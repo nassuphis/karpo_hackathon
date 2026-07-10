@@ -108,10 +108,14 @@ static void sleep_ms(long ms) {
 }
 
 static int retryable_range_failure(CURLcode rc, long httpStatus) {
-    if (httpStatus == 429L || httpStatus == 500L || httpStatus == 502L ||
-        httpStatus == 503L || httpStatus == 504L) return 1;
-    return rc == CURLE_HTTP_RETURNED_ERROR ||
-           rc == CURLE_OPERATION_TIMEDOUT ||
+    /* HTTP response present: retry only transient statuses, never a
+     * permanent 4xx even though FAILONERROR reports CURLE_HTTP_RETURNED_ERROR
+     * (CR28 F16). */
+    if (httpStatus != 0L) {
+        return httpStatus == 429L || httpStatus == 500L ||
+               httpStatus == 502L || httpStatus == 503L || httpStatus == 504L;
+    }
+    return rc == CURLE_OPERATION_TIMEDOUT ||
            rc == CURLE_COULDNT_CONNECT ||
            rc == CURLE_COULDNT_RESOLVE_HOST ||
            rc == CURLE_RECV_ERROR ||

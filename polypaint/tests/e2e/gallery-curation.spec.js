@@ -1,8 +1,8 @@
 // @ts-check
-// Wave 2 (virtual-gallery.md Phase 0): the DeepZoom-tab "Add to Gallery" /
-// "Create Gallery" curation flow. Only COLOR exports are addable; Create Gallery
-// POSTs the picks to /share-gallery and opens gallery.html from the manifest
-// origin, surfacing skipped[].
+// The DeepZoom-tab "Add to Gallery" action (virtual-gallery.md §15). The tab can
+// only ADD: it appends the selected COLOR export to the ACTIVE gallery (chosen in
+// the Gallery tab; stored in localStorage 'polypaint_active_gallery') via
+// /add-to-gallery. No create/curate here.
 const { test, expect } = require('@playwright/test');
 
 const EXPORTS = [
@@ -33,32 +33,24 @@ test.beforeEach(async ({ page }) => {
       return v;
     };
     window._osdViewer = null;
-    window._sharePosts = [];
-    window._galleryNav = '';
-    window.open = function () {
-      const win = { closed: false, close() { this.closed = true; } };
-      Object.defineProperty(win, 'location', { set(v) { window._galleryNav = String(v); }, configurable: true });
-      return win;
-    };
+    window._addPosts = [];
+    localStorage.removeItem('polypaint_active_gallery');
+    // Default add response: success into gallery "Show".
+    window.__addResponse = { added: true, gallery: { name: 'Show', pieces: [{}, {}] } };
     window.lambdaPost = async function (name, body, path) {
       if (name === 'storage' && path === '/list-deepzoom') {
         return { exports: exports.slice(), count: exports.length };
       }
-      if (name === 'storage' && path === '/share-gallery') {
-        window._sharePosts.push(body);
-        return {
-          manifest_url: 'https://polypaint.s3.us-east-1.amazonaws.com/renders/_shared_mosaic/gallery/share_1/manifest.json',
-          share_id: 'share_1',
-          count: (body.picks || []).length,
-          skipped: [],
-        };
+      if (name === 'storage' && path === '/add-to-gallery') {
+        window._addPosts.push(body);
+        return window.__addResponse;
       }
       return {};
     };
   }, EXPORTS);
 });
 
-test.describe('Gallery curation (DeepZoom tab)', () => {
+test.describe('Gallery curation (DeepZoom tab: add-only)', () => {
   async function openTab(page) {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
@@ -67,65 +59,43 @@ test.describe('Gallery curation (DeepZoom tab)', () => {
   // date-desc sort => rows are [bC (bilevel), cB (color), cA (color)].
   test('Add to Gallery enables only for color exports', async ({ page }) => {
     await openTab(page);
-    // row 0 is the bilevel export — Add to Gallery must be disabled
-    await page.locator('.dz-inv-row').nth(0).click();
+    await page.locator('.dz-inv-row').nth(0).click();   // bilevel
     await expect(page.locator('#btn-dz-add-gallery')).toBeDisabled();
-    // row 1 is a color export — enabled
-    await page.locator('.dz-inv-row').nth(1).click();
+    await page.locator('.dz-inv-row').nth(1).click();   // color
     await expect(page.locator('#btn-dz-add-gallery')).toBeEnabled();
   });
 
-  test('Add builds a draft and Create Gallery POSTs picks + opens the viewer', async ({ page }) => {
+  test('Add posts the pick to the active gallery', async ({ page }) => {
+    await page.evaluate(() => localStorage.setItem('polypaint_active_gallery', 'gal_1'));
     await openTab(page);
-    // add cA (row 2) then cB (row 1) — curator order is preserved
-    await page.locator('.dz-inv-row').nth(2).click();
+    await page.locator('.dz-inv-row').nth(1).click();   // color cB
     await page.click('#btn-dz-add-gallery');
-    await expect(page.locator('#btn-dz-create-gallery')).toHaveText('Create Gallery (1)');
+
+    await expect(page.locator('#deepzoom-status')).toContainText('Added');
+    await expect(page.locator('#deepzoom-status')).toContainText('Show');
+    const posts = await page.evaluate(() => window._addPosts);
+    expect(posts).toEqual([
+      { gallery_id: 'gal_1', job_id: 'rjobB', artifact_id: 'cB', export_id: 'dz_B' },
+    ]);
+  });
+
+  test('Add with no active gallery is refused with a hint', async ({ page }) => {
+    await openTab(page);
+    await page.locator('.dz-inv-row').nth(1).click();   // color, but no active gallery
+    await page.click('#btn-dz-add-gallery');
+    await expect(page.locator('#deepzoom-status')).toContainText('No active gallery');
+    const posts = await page.evaluate(() => window._addPosts);
+    expect(posts).toHaveLength(0);   // never posted
+  });
+
+  test('a duplicate add is surfaced, not treated as success', async ({ page }) => {
+    await page.evaluate(() => {
+      localStorage.setItem('polypaint_active_gallery', 'gal_1');
+      window.__addResponse = { added: false, reason: 'duplicate', gallery: { name: 'Show', pieces: [{}] } };
+    });
+    await openTab(page);
     await page.locator('.dz-inv-row').nth(1).click();
     await page.click('#btn-dz-add-gallery');
-    await expect(page.locator('#btn-dz-create-gallery')).toHaveText('Create Gallery (2)');
-
-    await page.click('#btn-dz-create-gallery');
-
-    const posts = await page.evaluate(() => window._sharePosts);
-    expect(posts).toHaveLength(1);
-    expect(posts[0].picks).toEqual([
-      { job_id: 'rjobA', artifact_id: 'cA', export_id: 'dz_A' },
-      { job_id: 'rjobB', artifact_id: 'cB', export_id: 'dz_B' },
-    ]);
-    const nav = await page.evaluate(() => window._galleryNav);
-    expect(nav).toContain('https://polypaint.s3.us-east-1.amazonaws.com/gallery.html?manifest=');
-    expect(decodeURIComponent(nav)).toContain('/renders/_shared_mosaic/gallery/share_1/manifest.json');
-  });
-
-  test('duplicate add is ignored and Clear resets the draft', async ({ page }) => {
-    await openTab(page);
-    await page.locator('.dz-inv-row').nth(2).click();  // color export cA
-    await page.click('#btn-dz-add-gallery');
-    await page.click('#btn-dz-add-gallery'); // duplicate
-    await expect(page.locator('#btn-dz-create-gallery')).toHaveText('Create Gallery (1)');
-    await page.click('#btn-dz-clear-gallery');
-    await expect(page.locator('#btn-dz-create-gallery')).toHaveText('Create Gallery (0)');
-    await expect(page.locator('#btn-dz-create-gallery')).toBeDisabled();
-  });
-
-  test('skipped pieces are surfaced in the status', async ({ page }) => {
-    await page.evaluate(() => {
-      window.lambdaPost = async function (name, body, path) {
-        if (path === '/list-deepzoom') return { exports: [], count: 0 };
-        if (path === '/share-gallery') {
-          window._sharePosts.push(body);
-          return { manifest_url: 'https://polypaint.s3.us-east-1.amazonaws.com/renders/_shared_mosaic/gallery/s/manifest.json',
-                   count: 1, skipped: [{ job_id: 'rjobA', artifact_id: 'cZ', reason: 'export_dzi_absent' }] };
-        }
-        return {};
-      };
-      window._galleryDraft = [{ job_id: 'rjobA', artifact_id: 'cZ', export_id: 'dz_Z' }];
-      _dzUpdateGalleryButtons();
-    });
-    await page.click('.tab-btn:text("DeepZoom")');
-    await page.click('#btn-dz-create-gallery');
-    await expect(page.locator('#deepzoom-status')).toContainText('1 skipped');
-    await expect(page.locator('#deepzoom-status')).toContainText('export_dzi_absent');
+    await expect(page.locator('#deepzoom-status')).toContainText('already in this gallery');
   });
 });

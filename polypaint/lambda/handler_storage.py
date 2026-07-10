@@ -261,7 +261,7 @@ def _client_error_message(exc):
 def _handle_storage_route(fn, event):
     try:
         return fn(event)
-    except (_SolveScoreProgramNotFound, _ParamProgramNotFound, _CoeffProgramNotFound, _RootProgramNotFound, _BookNotFound) as exc:
+    except (_SolveScoreProgramNotFound, _ParamProgramNotFound, _CoeffProgramNotFound, _RootProgramNotFound, _BookNotFound, _GalleryNotFound) as exc:
         return _error_response(404, exc)
     except _MigrationConflict as exc:
         return _json_error_response(409, {
@@ -271,6 +271,8 @@ def _handle_storage_route(fn, event):
         })
     except BookConflictError as exc:
         return _json_error_response(409, {"error": str(exc), "conflict": "book_saved_at"})
+    except GalleryConflictError as exc:
+        return _json_error_response(409, {"error": str(exc), "conflict": "gallery_revision"})
     except _MigrationMissingMacros as exc:
         return _json_error_response(422, {"error": "macro not migrated", "missing": exc.missing})
     except ClientError as exc:
@@ -1576,8 +1578,20 @@ def handler(event, context):
         return _handle_storage_route(handle_list_palette_mosaic, event)
     elif path.endswith("/share-mosaic"):
         return _handle_storage_route(handle_share_mosaic, event)
-    elif path.endswith("/share-gallery"):
-        return _handle_storage_route(handle_share_gallery, event)
+    elif path.endswith("/create-gallery-share"):
+        return _handle_storage_route(handle_create_gallery_share, event)
+    elif path.endswith("/create-gallery"):
+        return _handle_storage_route(handle_create_gallery, event)
+    elif path.endswith("/list-galleries"):
+        return _handle_storage_route(handle_list_galleries, event)
+    elif path.endswith("/fetch-gallery"):
+        return _handle_storage_route(handle_fetch_gallery, event)
+    elif path.endswith("/save-gallery"):
+        return _handle_storage_route(handle_save_gallery, event)
+    elif path.endswith("/add-to-gallery"):
+        return _handle_storage_route(handle_add_to_gallery, event)
+    elif path.endswith("/delete-gallery"):
+        return _handle_storage_route(handle_delete_gallery, event)
     elif path.endswith("/delete-task"):
         return _handle_storage_route(handle_delete_task, event)
     elif path.endswith("/delete-prefix"):
@@ -4423,10 +4437,16 @@ def handle_share_mosaic(event):
     })
 
 
-# ── Virtual gallery share (virtual-gallery.md §3.1) ────────────────────────
-GALLERY_SHARE_PREFIX = MOSAIC_SHARE_PREFIX + "gallery/"   # renders/_shared_mosaic/gallery/
+# ── Virtual gallery (virtual-gallery.md §13) ──────────────────────────────
+# Two documents: an EDITABLE gallery the Gallery tab curates (S3 object with
+# ETag CAS, like a book), and the IMMUTABLE share snapshot the standalone viewer
+# loads (written by create-gallery-share, preserving sequence + titles).
+GALLERY_SHARE_PREFIX = MOSAIC_SHARE_PREFIX + "gallery/"   # renders/_shared_mosaic/gallery/ (immutable shares)
+GALLERIES_PREFIX = "polypaint/galleries/"                 # editable gallery documents
 GALLERY_MAX_PIECES = 64
 GALLERY_SCHEMA_VERSION = 1
+GALLERY_NAME_MAX = 120
+GALLERY_TITLE_MAX = 160
 
 
 def _read_deepzoom_export_meta(job_id, export_id, client):
@@ -4510,74 +4530,55 @@ def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, clien
             "source_key": image_key, "source_artifact_id": artifact_id}, ""
 
 
-def handle_share_gallery(event):
-    """Create an immutable virtual_gallery share from an explicit, validated pick
-    list (virtual-gallery.md §3.1). Filters to color, enriches each pick by exact
-    key, validates any supplied export, assigns ordinals after filtering, writes
-    the manifest under the public gallery share prefix, and returns skipped[]."""
-    params = parse_body(event)
-    raw_picks = params.get("picks")
-    if not isinstance(raw_picks, list) or not raw_picks:
-        return ok_response({"error": "picks must be a non-empty list"})
-    if len(raw_picks) > GALLERY_MAX_PIECES:
-        return ok_response({"error": f"too many picks (max {GALLERY_MAX_PIECES})"})
-    seed = _parse_int(params.get("seed")) or 1
+def _enrich_gallery_pick(job_id, artifact_id, export_id, calc_cache, *, client):
+    """Validate + enrich ONE gallery pick to a piece dict (no ordinal/title yet).
+    Returns (piece|None, reason|None, fatal): fatal True means a transient/systemic
+    S3 error (the caller should FAIL, never silently drop); fatal False with a None
+    piece means the pick is genuinely unusable and should be skipped with reason."""
+    tile, state, reason = _gallery_resolve_color_tile(job_id, artifact_id, calc_cache, client=client)
+    if state == "error":
+        return None, reason, True
+    if tile is None:
+        return None, reason or "missing", False
+    deepzoom = None
+    if export_id:
+        dz, dz_reason = _validate_gallery_export(job_id, artifact_id, export_id, tile["image_key"], client=client)
+        if dz is None:
+            return None, dz_reason, False
+        deepzoom = dz
+    piece = {
+        "job_id": job_id,
+        "artifact_id": artifact_id,
+        "preview_key": tile["key"],
+        "image_key": tile["image_key"],
+        "preview_width": tile.get("preview_width"),
+        "preview_height": tile.get("preview_height"),
+        "function": tile.get("function", "?"),
+        "degree": tile.get("degree", 0),
+        "N": tile.get("N", 0),
+        "times": tile.get("times", 1),
+        "created_at": tile.get("created_at", ""),
+        "deepzoom": deepzoom,
+    }
+    return piece, None, False
 
-    # Validate + de-dup in request order (order is authoritative — §3.1).
-    picks = []
-    seen = set()
-    for raw in raw_picks:
-        if not isinstance(raw, dict):
-            return ok_response({"error": "each pick must be an object"})
-        job_id = assert_safe_id(raw.get("job_id"), "job_id")
-        artifact_id = assert_safe_id(raw.get("artifact_id"), "artifact_id")
-        if (job_id, artifact_id) in seen:
-            continue
-        seen.add((job_id, artifact_id))
-        export_id = raw.get("export_id")
-        export_id = assert_safe_id(export_id, "export_id") if export_id not in (None, "") else None
-        picks.append((job_id, artifact_id, export_id))
 
-    client = _results_list_s3_client(len(picks))
-    calc_cache = {}
-    pieces = []
-    skipped = []
-    for job_id, artifact_id, export_id in picks:
-        tile, state, reason = _gallery_resolve_color_tile(job_id, artifact_id, calc_cache, client=client)
-        if state == "error":
-            # transient/systemic — fail the whole request, never silently drop.
-            return ok_response({"error": f"could not resolve {job_id}/{artifact_id}: {reason}"})
-        if tile is None:
-            skipped.append({"job_id": job_id, "artifact_id": artifact_id, "reason": reason or "missing"})
-            continue
-        deepzoom = None
-        if export_id:
-            dz, dz_reason = _validate_gallery_export(job_id, artifact_id, export_id, tile["image_key"], client=client)
-            if dz is None:
-                skipped.append({"job_id": job_id, "artifact_id": artifact_id, "reason": dz_reason})
-                continue
-            deepzoom = dz
-        pieces.append({
-            "ordinal": len(pieces),
-            "job_id": job_id,
-            "artifact_id": artifact_id,
-            "preview_key": tile["key"],
-            "image_key": tile["image_key"],
-            "preview_width": tile.get("preview_width"),
-            "preview_height": tile.get("preview_height"),
-            "function": tile.get("function", "?"),
-            "degree": tile.get("degree", 0),
-            "N": tile.get("N", 0),
-            "times": tile.get("times", 1),
-            "created_at": tile.get("created_at", ""),
-            "deepzoom": deepzoom,
-        })
-
-    if not pieces:
-        return ok_response({"error": "no valid pieces", "skipped": skipped, "count": 0})
-
+def _write_gallery_share_manifest(pieces, *, source_kind, seed):
+    """Write an immutable virtual_gallery SHARE manifest (the document the viewer
+    loads) and return (public_url, key, share_id, count). `pieces` order is
+    authoritative; ordinals are assigned here and curator titles carried through."""
     share_id = f"share_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
     snapshot_key = f"{GALLERY_SHARE_PREFIX}{share_id}/manifest.json"
+    out_pieces = []
+    for i, p in enumerate(pieces):
+        piece = {k: p.get(k) for k in (
+            "job_id", "artifact_id", "preview_key", "image_key", "preview_width",
+            "preview_height", "function", "degree", "N", "times", "created_at", "deepzoom")}
+        piece["ordinal"] = i
+        title = str(p.get("title") or "").strip()
+        if title:
+            piece["title"] = title
+        out_pieces.append(piece)
     manifest = {
         "schema_version": GALLERY_SCHEMA_VERSION,
         "manifest_type": "virtual_gallery",
@@ -4586,9 +4587,9 @@ def handle_share_gallery(event):
         "created_at": _utc_now_iso(),
         "share_id": share_id,
         "manifest_key": snapshot_key,
-        "source": {"kind": "deepzoom_selection", "share_id": share_id},
+        "source": {"kind": source_kind, "share_id": share_id},
         "layout": {"mode": "auto", "seed": seed},
-        "pieces": pieces,
+        "pieces": out_pieces,
     }
     s3.put_object(
         Bucket=BUCKET,
@@ -4597,12 +4598,310 @@ def handle_share_gallery(event):
         ContentType="application/json",
         CacheControl=CACHE_IMMUTABLE,
     )
+    return _s3_public_url(snapshot_key), snapshot_key, share_id, len(out_pieces)
+
+
+# ── Editable gallery documents (the Gallery tab curates these) ─────────────
+class _GalleryNotFound(Exception):
+    pass
+
+
+class GalleryConflictError(Exception):
+    """Optimistic-concurrency failure: the stored gallery moved under a caller
+    that passed the revision it read (a concurrent Add/Save landed)."""
+
+
+def _gallery_doc_key(gallery_id):
+    return f"{GALLERIES_PREFIX}{gallery_id}.json"
+
+
+def _new_gallery_id():
+    return f"gallery_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+
+
+def _clean_gallery_name(value):
+    name = str(value or "").strip()
+    if len(name) > GALLERY_NAME_MAX:
+        name = name[:GALLERY_NAME_MAX].rstrip()
+    return name or "Untitled gallery"
+
+
+def _valid_color_artifact_key(key, job_id, artifact_id):
+    """A piece key must be EXACTLY renders/<job>/color/<artifact>/<leaf> built
+    from the piece's own declared ids — no traversal, no cross-identity."""
+    if not isinstance(key, str) or not key:
+        return False
+    if any(bad in key for bad in ("..", "\\", "{", "}", "?", "#", "//")):
+        return False
+    parts = key.split("/")
+    if len(parts) != 5:
+        return False
+    return (parts[0] == "renders" and parts[1] == job_id
+            and parts[2] == "color" and parts[3] == artifact_id
+            and bool(re.fullmatch(r"[A-Za-z0-9._-]{1,96}", parts[4])))
+
+
+def _validate_gallery_piece(raw):
+    """Structurally validate one piece from a client-supplied gallery doc (save).
+    Keys must belong to the declared identity; a deepzoom (if present) must carry
+    the canonical dzi_key + matching source. Returns a normalized piece dict."""
+    if not isinstance(raw, dict):
+        raise ValueError("gallery piece must be an object")
+    job_id = assert_safe_id(raw.get("job_id"), "job_id")
+    artifact_id = assert_safe_id(raw.get("artifact_id"), "artifact_id")
+    preview_key = raw.get("preview_key")
+    image_key = raw.get("image_key")
+    if not _valid_color_artifact_key(preview_key, job_id, artifact_id):
+        raise ValueError(f"invalid preview_key for {job_id}/{artifact_id}")
+    if not _valid_color_artifact_key(image_key, job_id, artifact_id):
+        raise ValueError(f"invalid image_key for {job_id}/{artifact_id}")
+    deepzoom = raw.get("deepzoom")
+    dz_out = None
+    if deepzoom:
+        if not isinstance(deepzoom, dict):
+            raise ValueError("deepzoom must be an object or null")
+        export_id = assert_safe_id(deepzoom.get("export_id"), "export_id")
+        dzi_key = f"deepzoom/{job_id}/{export_id}/image.dzi"
+        if str(deepzoom.get("dzi_key") or "") != dzi_key:
+            raise ValueError("deepzoom dzi_key mismatch")
+        if str(deepzoom.get("source_key") or "") != image_key:
+            raise ValueError("deepzoom source_key mismatch")
+        if str(deepzoom.get("source_artifact_id") or "") != artifact_id:
+            raise ValueError("deepzoom source_artifact_id mismatch")
+        dz_out = {"export_id": export_id, "dzi_key": dzi_key,
+                  "source_key": image_key, "source_artifact_id": artifact_id}
+    title = str(raw.get("title") or "").strip()
+    if len(title) > GALLERY_TITLE_MAX:
+        title = title[:GALLERY_TITLE_MAX].rstrip()
+    return {
+        "job_id": job_id,
+        "artifact_id": artifact_id,
+        "preview_key": preview_key,
+        "image_key": image_key,
+        "preview_width": raw.get("preview_width"),
+        "preview_height": raw.get("preview_height"),
+        "function": str(raw.get("function") or "?"),
+        "degree": raw.get("degree", 0),
+        "N": raw.get("N", 0),
+        "times": raw.get("times", 1),
+        "created_at": str(raw.get("created_at") or ""),
+        "title": title,
+        "deepzoom": dz_out,
+    }
+
+
+def _new_gallery_doc(gallery_id, name, pieces=None):
+    now = _utc_now_iso()
+    return {
+        "schema_version": GALLERY_SCHEMA_VERSION,
+        "manifest_type": "virtual_gallery",
+        "document_kind": "editable",
+        "artifact_kind": "color",
+        "gallery_id": gallery_id,
+        "name": name,
+        "created_at": now,
+        "updated_at": now,
+        "source": {"kind": "deepzoom_selection"},
+        "layout": {"mode": "auto", "seed": 1},
+        "pieces": pieces or [],
+    }
+
+
+def _read_gallery_doc_with_etag(gallery_id):
+    key = _gallery_doc_key(gallery_id)
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if is_missing_s3_error(exc):
+            raise _GalleryNotFound(f"gallery not found: {gallery_id}")
+        raise
+    payload = json.loads(obj["Body"].read())
+    if str(payload.get("document_kind") or "") != "editable":
+        raise ValueError(f"object at {key} is not an editable gallery")
+    return payload, str(obj.get("ETag") or "").strip('"')
+
+
+def _gallery_summary(doc):
+    return {
+        "gallery_id": doc.get("gallery_id"),
+        "name": doc.get("name"),
+        "count": len(doc.get("pieces") or []),
+        "created_at": doc.get("created_at"),
+        "updated_at": doc.get("updated_at"),
+    }
+
+
+def _put_gallery_doc(doc, *, expected_revision=None, create_only=False):
+    """Write an editable gallery doc; return the new revision (ETag). Raises
+    GalleryConflictError on a CAS failure (concurrent write)."""
+    put_kwargs = dict(
+        Bucket=BUCKET, Key=_gallery_doc_key(doc["gallery_id"]),
+        Body=json.dumps(doc, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
+        ContentType="application/json")
+    if create_only:
+        put_kwargs["IfNoneMatch"] = "*"
+    elif expected_revision:
+        put_kwargs["IfMatch"] = expected_revision
+    try:
+        resp = s3.put_object(**put_kwargs)
+    except ClientError as exc:
+        code = str((exc.response.get("Error") or {}).get("Code") or "")
+        if code in ("PreconditionFailed", "412", "ConditionalRequestConflict"):
+            raise GalleryConflictError(
+                f"gallery {doc['gallery_id']} changed; refetch and retry")
+        raise
+    return str((resp or {}).get("ETag") or "").strip('"')
+
+
+def handle_create_gallery(event):
+    """Create a new empty editable gallery. Returns the doc + its CAS revision."""
+    params = parse_body(event)
+    name = _clean_gallery_name(params.get("name"))
+    doc = _new_gallery_doc(_new_gallery_id(), name)
+    revision = _put_gallery_doc(doc, create_only=True)
+    return ok_response({"gallery": doc, "revision": revision})
+
+
+def handle_list_galleries(event):
+    """Panel-ready list of editable galleries (id, name, count, timestamps),
+    newest-updated first."""
+    del event
+    galleries = []
+    kwargs = {"Bucket": BUCKET, "Prefix": GALLERIES_PREFIX}
+    while True:
+        resp = s3.list_objects_v2(**kwargs)
+        for item in resp.get("Contents") or []:
+            key = item.get("Key") or ""
+            if not key.endswith(".json"):
+                continue
+            gallery_id = key[len(GALLERIES_PREFIX):-len(".json")]
+            if not gallery_id or "/" in gallery_id:
+                continue
+            try:
+                obj = s3.get_object(Bucket=BUCKET, Key=key)
+                doc = json.loads(obj["Body"].read())
+            except Exception:
+                continue
+            if str(doc.get("document_kind") or "") != "editable":
+                continue
+            galleries.append(_gallery_summary(doc))
+        if not resp.get("IsTruncated"):
+            break
+        kwargs["ContinuationToken"] = resp.get("NextContinuationToken")
+    galleries.sort(key=lambda g: str(g.get("updated_at") or ""), reverse=True)
+    return ok_response({"galleries": galleries, "count": len(galleries)})
+
+
+def handle_fetch_gallery(event):
+    params = parse_body(event)
+    gallery_id = assert_safe_id(params.get("gallery_id") or params.get("id"), "gallery_id")
+    doc, revision = _read_gallery_doc_with_etag(gallery_id)
+    return ok_response({"gallery": doc, "revision": revision})
+
+
+def handle_save_gallery(event):
+    """Persist the curated gallery (rename, reorder, retitle, remove). The client
+    sends the full ordered piece list; each piece is structurally re-validated,
+    dedup'd, and re-numbered. ETag CAS via expected_revision (like save-book)."""
+    params = parse_body(event)
+    incoming = params.get("gallery")
+    if not isinstance(incoming, dict):
+        raise ValueError("save-gallery requires a gallery object")
+    gallery_id = assert_safe_id(incoming.get("gallery_id"), "gallery_id")
+    name = _clean_gallery_name(incoming.get("name"))
+    raw_pieces = incoming.get("pieces")
+    if not isinstance(raw_pieces, list):
+        raise ValueError("gallery pieces must be a list")
+    if len(raw_pieces) > GALLERY_MAX_PIECES:
+        raise ValueError(f"too many pieces (max {GALLERY_MAX_PIECES})")
+    pieces = []
+    seen = set()
+    for raw in raw_pieces:
+        piece = _validate_gallery_piece(raw)
+        ident = (piece["job_id"], piece["artifact_id"])
+        if ident in seen:
+            continue
+        seen.add(ident)
+        piece["ordinal"] = len(pieces)
+        pieces.append(piece)
+    created_at = _utc_now_iso()
+    try:
+        existing, _ = _read_gallery_doc_with_etag(gallery_id)
+        created_at = existing.get("created_at") or created_at
+    except _GalleryNotFound:
+        pass
+    doc = _new_gallery_doc(gallery_id, name, pieces)
+    doc["created_at"] = created_at
+    doc["updated_at"] = _utc_now_iso()
+    doc["layout"] = {"mode": "auto", "seed": _parse_int((incoming.get("layout") or {}).get("seed")) or 1}
+    expected_revision = str(params.get("expected_revision") or "").strip() or None
+    revision = _put_gallery_doc(doc, expected_revision=expected_revision)
+    return ok_response({"gallery": doc, "revision": revision})
+
+
+def handle_delete_gallery(event):
+    params = parse_body(event)
+    gallery_id = assert_safe_id(params.get("gallery_id") or params.get("id"), "gallery_id")
+    key = _gallery_doc_key(gallery_id)
+    deleted = _key_exists(key)
+    if deleted:
+        s3.delete_object(Bucket=BUCKET, Key=key)
+    return ok_response({"deleted": bool(deleted), "gallery_id": gallery_id})
+
+
+def handle_add_to_gallery(event):
+    """Append ONE color export to an editable gallery (the DeepZoom tab's only
+    gallery action). Enriches + validates the single piece, dedups, and CAS-saves
+    against the revision it read."""
+    params = parse_body(event)
+    gallery_id = assert_safe_id(params.get("gallery_id"), "gallery_id")
+    job_id = assert_safe_id(params.get("job_id"), "job_id")
+    artifact_id = assert_safe_id(params.get("artifact_id"), "artifact_id")
+    export_id = params.get("export_id")
+    export_id = assert_safe_id(export_id, "export_id") if export_id not in (None, "") else None
+
+    doc, revision = _read_gallery_doc_with_etag(gallery_id)
+    pieces = doc.get("pieces") or []
+    if any(p.get("job_id") == job_id and p.get("artifact_id") == artifact_id for p in pieces):
+        return ok_response({"gallery": doc, "revision": revision, "added": False, "reason": "duplicate"})
+    if len(pieces) >= GALLERY_MAX_PIECES:
+        return ok_response({"gallery": doc, "revision": revision, "added": False, "reason": "gallery_full"})
+
+    client = _results_list_s3_client(1)
+    piece, reason, fatal = _enrich_gallery_pick(job_id, artifact_id, export_id, {}, client=client)
+    if piece is None:
+        if fatal:
+            return ok_response({"error": f"could not resolve {job_id}/{artifact_id}: {reason}"})
+        return ok_response({"gallery": doc, "revision": revision, "added": False, "reason": reason})
+    piece["ordinal"] = len(pieces)
+    piece["title"] = ""
+    pieces.append(piece)
+    doc["pieces"] = pieces
+    doc["updated_at"] = _utc_now_iso()
+    new_revision = _put_gallery_doc(doc, expected_revision=revision)
+    return ok_response({"gallery": doc, "revision": new_revision, "added": True,
+                        "job_id": job_id, "artifact_id": artifact_id})
+
+
+def handle_create_gallery_share(event):
+    """Snapshot an editable gallery into the immutable share manifest the viewer
+    loads (the 'Open Gallery' action) — sequence + titles preserved."""
+    params = parse_body(event)
+    gallery_id = assert_safe_id(params.get("gallery_id") or params.get("id"), "gallery_id")
+    doc, _ = _read_gallery_doc_with_etag(gallery_id)
+    pieces = doc.get("pieces") or []
+    if not pieces:
+        return ok_response({"error": "gallery is empty"})
+    source_kind = str((doc.get("source") or {}).get("kind") or "deepzoom_selection")
+    seed = _parse_int((doc.get("layout") or {}).get("seed")) or 1
+    manifest_url, manifest_key, share_id, count = _write_gallery_share_manifest(
+        pieces, source_kind=source_kind, seed=seed)
     return ok_response({
-        "manifest_url": _s3_public_url(snapshot_key),
-        "manifest_key": snapshot_key,
+        "manifest_url": manifest_url,
+        "manifest_key": manifest_key,
         "share_id": share_id,
-        "count": len(pieces),
-        "skipped": skipped,
+        "count": count,
+        "gallery_id": gallery_id,
     })
 
 

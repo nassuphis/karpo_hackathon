@@ -1,0 +1,233 @@
+// Virtual Gallery — manifest validation and normalization (pure, no DOM/WebGL).
+//
+// This is the trust boundary for the standalone viewer (virtual-gallery.md
+// §4/§4.1/§13.1). It turns an untrusted manifest URL + document into a
+// normalized `GallerySceneSpec` (a flat, ordered piece list) or a precise
+// error. It performs NO I/O: the streaming byte-cap fetch lives in the shell
+// (gallery/app.js); everything here is synchronous and unit-testable.
+//
+// Everything the manifest declares is untrusted. Keys are validated to belong
+// to the row's own declared (job_id, artifact_id, color) identity; asset URLs
+// are rebuilt against a trusted origin (manifest.base is ignored); display
+// metadata is passed through verbatim for the caller to render with
+// textContent (never innerHTML).
+
+export const GALLERY_LIMITS = Object.freeze({
+  MAX_MANIFEST_TILES: 20_000,   // input rows accepted before the display cap
+  MANIFEST_MAX_BYTES: 8 * 1024 * 1024,
+  SCHEMA_VERSION: 1,
+  ID_MAX: 64,
+  LEAF_MAX: 96,
+});
+
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const LEAF_RE = /^[A-Za-z0-9._-]{1,96}$/;
+
+// The two accepted document types, each pinned to an exact same-origin path
+// shape with a single {share_id} segment. The PATH decides which type is
+// expected; the document's manifest_type must then agree (§4.1 step 4).
+const PATH_KINDS = [
+  { kind: 'virtual_gallery', re: /^\/renders\/_shared_mosaic\/gallery\/([A-Za-z0-9_-]{1,64})\/manifest\.json$/ },
+  { kind: 'artifact_mosaic', re: /^\/renders\/_shared_mosaic\/color\/([A-Za-z0-9_-]{1,64})\/manifest\.json$/ },
+];
+
+export function isValidId(value) {
+  return typeof value === 'string' && ID_RE.test(value);
+}
+
+function isFinitePositive(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+// A color-artifact object key must be EXACTLY renders/<job>/color/<artifact>/<leaf>
+// built from the row's own declared ids — this is what rejects a row that
+// declares job A but points image_key at job B (§4.1 step 10). Returns the leaf
+// on success, null on any violation.
+function validateColorKey(key, jobId, artifactId) {
+  if (typeof key !== 'string' || !key) return null;
+  if (key.includes('..') || key.includes('\\') || key.includes('{') ||
+      key.includes('}') || key.includes('?') || key.includes('#') ||
+      key.includes('//')) {
+    return null;
+  }
+  const parts = key.split('/');
+  if (parts.length !== 5) return null;
+  if (parts[0] !== 'renders' || parts[1] !== jobId ||
+      parts[2] !== 'color' || parts[3] !== artifactId) {
+    return null;
+  }
+  const leaf = parts[4];
+  if (!LEAF_RE.test(leaf)) return null;
+  return leaf;
+}
+
+// Re-validate a piece's `deepzoom` on load — the viewer must not trust the
+// manifest blindly (§13.1). Returns a normalized zoom descriptor or null
+// (zoomless). The dzi_key is reconstructed from validated ids, never read as a
+// free string, and any absolute URL in the document is ignored.
+export function validateDeepzoom(dz, { jobId, artifactId, imageKey, trustedOrigin }) {
+  if (!dz || typeof dz !== 'object') return null;
+  const exportId = dz.export_id;
+  if (!isValidId(exportId)) return null;
+  if (dz.source_artifact_id !== artifactId) return null;
+  if (dz.source_key !== imageKey) return null;
+  const expectedDziKey = `deepzoom/${jobId}/${exportId}/image.dzi`;
+  if (dz.dzi_key !== expectedDziKey) return null;
+  return {
+    export_id: exportId,
+    dzi_key: expectedDziKey,
+    dzi_url: originAbsolute(trustedOrigin, expectedDziKey),
+    source_key: imageKey,
+    source_artifact_id: artifactId,
+  };
+}
+
+function originAbsolute(trustedOrigin, key) {
+  // key is already validated (no leading slash, no traversal). Resolve against
+  // the trusted origin only — never against manifest.base.
+  return trustedOrigin.replace(/\/+$/, '') + '/' + key;
+}
+
+// Validate the manifest URL the viewer was launched with. `origin` is the
+// viewer's own location.origin (production requires same-origin HTTPS); pass
+// { requireHttps:false } for local http dev. Returns
+// { ok, url, pathKind, shareId } or { ok:false, error }.
+export function parseTrustedManifestUrl(raw, { origin, requireHttps = true } = {}) {
+  let url;
+  try {
+    url = new URL(String(raw), origin);
+  } catch {
+    return { ok: false, error: 'manifest url is not parseable' };
+  }
+  if (requireHttps && url.protocol !== 'https:') {
+    return { ok: false, error: 'manifest url must be https' };
+  }
+  if (origin && url.origin !== new URL(origin).origin) {
+    return { ok: false, error: 'manifest url must be same-origin as the viewer' };
+  }
+  if (url.search || url.hash) {
+    return { ok: false, error: 'manifest url must not carry a query or fragment' };
+  }
+  for (const { kind, re } of PATH_KINDS) {
+    const m = re.exec(url.pathname);
+    if (m) return { ok: true, url, pathKind: kind, shareId: m[1] };
+  }
+  return { ok: false, error: 'manifest url is not an accepted gallery/mosaic path' };
+}
+
+// Normalize an already-fetched, size-checked manifest document into a
+// GallerySceneSpec. `pathKind` comes from parseTrustedManifestUrl (the path and
+// the document type must agree). A single malformed row is skipped and counted;
+// only a structurally invalid document fails the whole scene.
+export function normalizeManifest(doc, { pathKind, trustedOrigin }) {
+  if (!doc || typeof doc !== 'object') {
+    return { ok: false, error: 'manifest is not an object' };
+  }
+  if (doc.schema_version !== GALLERY_LIMITS.SCHEMA_VERSION) {
+    return { ok: false, error: 'unsupported schema_version' };
+  }
+  if (doc.manifest_type !== pathKind) {
+    return { ok: false, error: `manifest_type ${doc.manifest_type} does not match path type ${pathKind}` };
+  }
+  if (doc.artifact_kind !== 'color') {
+    return { ok: false, error: 'only color artifacts are supported' };
+  }
+  const rawRows = pathKind === 'virtual_gallery' ? doc.pieces : doc.tiles;
+  if (!Array.isArray(rawRows)) {
+    return { ok: false, error: 'manifest has no piece/tile array' };
+  }
+  if (rawRows.length > GALLERY_LIMITS.MAX_MANIFEST_TILES) {
+    return { ok: false, error: 'manifest exceeds the maximum row count' };
+  }
+
+  const pieces = [];
+  const skipped = [];
+  for (let i = 0; i < rawRows.length; i++) {
+    const piece = pathKind === 'virtual_gallery'
+      ? normalizeGalleryPiece(rawRows[i], i, trustedOrigin)
+      : normalizeMosaicTile(rawRows[i], i, trustedOrigin);
+    if (piece.ok) pieces.push(piece.value);
+    else skipped.push({ index: i, reason: piece.error });
+  }
+
+  // Order authority (§4/§13.1): a virtual_gallery share is fixed by curator
+  // ordinal; a mosaic has no stored order (the caller may sort it).
+  if (pathKind === 'virtual_gallery') {
+    pieces.sort((a, b) => (a.ordinal - b.ordinal) ||
+      (a.job_id < b.job_id ? -1 : a.job_id > b.job_id ? 1 : 0) ||
+      (a.artifact_id < b.artifact_id ? -1 : a.artifact_id > b.artifact_id ? 1 : 0));
+  }
+  // Re-assign dense ordinals so a partially-skipped share stays 0..n-1.
+  pieces.forEach((p, idx) => { p.ordinal = idx; });
+
+  return { ok: true, kind: pathKind, artifactKind: 'color', pieces, skipped };
+}
+
+function normalizeGalleryPiece(row, index, trustedOrigin) {
+  if (!row || typeof row !== 'object') return { ok: false, error: 'row is not an object' };
+  const jobId = row.job_id;
+  const artifactId = row.artifact_id;
+  if (!isValidId(jobId) || !isValidId(artifactId)) return { ok: false, error: 'bad job/artifact id' };
+  const previewLeaf = validateColorKey(row.preview_key, jobId, artifactId);
+  const imageLeaf = validateColorKey(row.image_key, jobId, artifactId);
+  if (!previewLeaf) return { ok: false, error: 'invalid preview_key' };
+  if (!imageLeaf) return { ok: false, error: 'invalid image_key' };
+  if (!isFinitePositive(row.preview_width) || !isFinitePositive(row.preview_height)) {
+    return { ok: false, error: 'invalid preview dimensions' };
+  }
+  const ordinal = Number.isFinite(row.ordinal) ? row.ordinal : index;
+  return {
+    ok: true,
+    value: {
+      ordinal,
+      job_id: jobId,
+      artifact_id: artifactId,
+      preview_key: row.preview_key,
+      image_key: row.image_key,
+      preview_url: originAbsolute(trustedOrigin, row.preview_key),
+      image_url: originAbsolute(trustedOrigin, row.image_key),
+      preview_width: row.preview_width,
+      preview_height: row.preview_height,
+      function: typeof row.function === 'string' ? row.function : '',
+      degree: Number.isFinite(row.degree) ? row.degree : null,
+      N: Number.isFinite(row.N) ? row.N : null,
+      times: Number.isFinite(row.times) ? row.times : null,
+      created_at: typeof row.created_at === 'string' ? row.created_at : '',
+      deepzoom: validateDeepzoom(row.deepzoom, { jobId, artifactId, imageKey: row.image_key, trustedOrigin }),
+    },
+  };
+}
+
+function normalizeMosaicTile(row, index, trustedOrigin) {
+  if (!row || typeof row !== 'object') return { ok: false, error: 'row is not an object' };
+  const jobId = row.job_id;
+  const artifactId = row.artifact_id;
+  if (!isValidId(jobId) || !isValidId(artifactId)) return { ok: false, error: 'bad job/artifact id' };
+  const previewLeaf = validateColorKey(row.key, jobId, artifactId);
+  const imageLeaf = validateColorKey(row.image_key, jobId, artifactId);
+  if (!previewLeaf) return { ok: false, error: 'invalid preview key' };
+  if (!imageLeaf) return { ok: false, error: 'invalid image_key' };
+  if (!isFinitePositive(row.preview_width) || !isFinitePositive(row.preview_height)) {
+    return { ok: false, error: 'invalid preview dimensions' };
+  }
+  return {
+    ok: true,
+    value: {
+      ordinal: index,
+      job_id: jobId,
+      artifact_id: artifactId,
+      preview_key: row.key,
+      image_key: row.image_key,
+      preview_url: originAbsolute(trustedOrigin, row.key),
+      image_url: originAbsolute(trustedOrigin, row.image_key),
+      preview_width: row.preview_width,
+      preview_height: row.preview_height,
+      function: typeof row.function === 'string' ? row.function : '',
+      degree: Number.isFinite(row.degree) ? row.degree : null,
+      N: Number.isFinite(row.N) ? row.N : null,
+      times: Number.isFinite(row.times) ? row.times : null,
+      created_at: typeof row.created_at === 'string' ? row.created_at : '',
+      deepzoom: null,  // artifact_mosaic never carries a DZI (§4)
+    },
+  };
+}

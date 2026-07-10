@@ -1079,6 +1079,90 @@ def ref_fable_39(p1, p2, n=N_PARITY):
     return sf * np.exp(coef * (v ** 3))
 
 
+# =============================================================================
+# Sparse pokes: instead of a dense formula for every coefficient, hand-place a
+# few terms and leave the rest zero. Sparse (lacunary) polynomials have roots
+# that are NOT near the unit circle — trinomials z^a + c z^b + d fan into two
+# interleaved rosettes of a-b and b arcs. The base is all-zero, so poking a
+# handful of slots (poly[i] = f(p1,p2)) is the whole program.
+# =============================================================================
+
+# --- fable-40: trinomial rosette ----------------------------------------------
+# z^(poly_len-1) + (12i*p1 - 8)*z^m + 4*p2, m = 0.38*(poly_len-1). Three terms:
+# the roots split into (poly_len-1-m) outer arcs and m inner arcs, a two-tier
+# flower that rotates and resizes with the middle coefficient.
+FABLE_40 = """\
+# fable-40: trinomial rosette — z^(n-1) + (12i*p1-8) z^m + 4 p2, m=floor(0.38(n-1))
+fill(poly_len, 0)
+poly = pop
+poly[0] = (4 * p2)
+poly[(floor(0.38 * (poly_len - 1)))] = ((12i * p1) - 8)
+poly[(poly_len - 1)] = 1
+emit
+"""
+
+
+def ref_fable_40(p1, p2, n=N_PARITY):
+    c = np.zeros(n, dtype=np.complex128)
+    c[0] = 4 * p2
+    c[int(np.floor(0.38 * (n - 1)))] = 12j * p1 - 8
+    c[n - 1] = 1
+    return c
+
+
+# --- fable-41: pentanomial chord ----------------------------------------------
+# Five hand-placed terms (poly[k] = f(p1,p2)), rest zero — a sparse "chord" of
+# powers. Each term contributes its own rosette of roots; the five interleave
+# into a lattice that morphs as the coefficients slide (the cf[10]=100i*t1-100
+# idea, five notes at once).
+FABLE_41 = """\
+# fable-41: pentanomial chord — 5 poked slots, rest zero
+fill(poly_len, 0)
+poly = pop
+poly[0] = (2 + (3 * p2))
+poly[5] = ((6i * p1) - 3)
+poly[12] = ((9 * p1) * p2)
+poly[22] = ((0 - 5i) * p2)
+poly[(poly_len - 1)] = (2 + p1)
+emit
+"""
+
+
+def ref_fable_41(p1, p2, n=N_PARITY):
+    c = np.zeros(n, dtype=np.complex128)
+    c[0] = 2 + 3 * p2
+    c[5] = 6j * p1 - 3
+    c[12] = 9 * p1 * p2
+    c[22] = -5j * p2
+    c[n - 1] = 2 + p1
+    return c
+
+
+# --- fable-42: quadrinomial tiers ---------------------------------------------
+# z^(poly_len-1) + a*z^(2(n-1)/3) + b*z^((n-1)/3) + c, exponents at even thirds.
+# Four widely-spaced terms fan the roots into three nested tiers of arcs — a
+# layered flower whose petals rotate independently with a and b.
+FABLE_42 = """\
+# fable-42: quadrinomial tiers — z^(n-1) + a z^(2(n-1)/3) + b z^((n-1)/3) + c
+fill(poly_len, 0)
+poly = pop
+poly[0] = (3 * p2)
+poly[(floor((poly_len - 1) / 3))] = ((8i * p1) - 4)
+poly[(floor((2 * (poly_len - 1)) / 3))] = ((7 * p2) - 3i)
+poly[(poly_len - 1)] = 1
+emit
+"""
+
+
+def ref_fable_42(p1, p2, n=N_PARITY):
+    c = np.zeros(n, dtype=np.complex128)
+    c[0] = 3 * p2
+    c[int(np.floor((n - 1) / 3))] = 8j * p1 - 4
+    c[int(np.floor(2 * (n - 1) / 3))] = 7 * p2 - 3j
+    c[n - 1] = 1
+    return c
+
+
 FABLES = [
     ("fable-1", FABLE_1, ref_fable_1),
     ("fable-2", FABLE_2, ref_fable_2),
@@ -1119,6 +1203,9 @@ FABLES = [
     ("fable-37", FABLE_37, ref_fable_37),
     ("fable-38", FABLE_38, ref_fable_38),
     ("fable-39", FABLE_39, ref_fable_39),
+    ("fable-40", FABLE_40, ref_fable_40),
+    ("fable-41", FABLE_41, ref_fable_41),
+    ("fable-42", FABLE_42, ref_fable_42),
 ]
 
 

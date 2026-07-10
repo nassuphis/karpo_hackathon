@@ -50,6 +50,22 @@ class FableNativeParityTests(unittest.TestCase):
             self.assertIsNone(err, f"{name}: {err}")
             self.assertLessEqual(stats["worst"], PARITY_REL_TOL, name)
 
+    def test_fables_hold_across_their_declared_degrees(self):
+        # CR28 F4: validate every fable at its min, 36, and max_coeffs, not just
+        # one length. Within [min,max] every parity point stays in f32 range
+        # (the F3 checked packer would fail the native otherwise), and the poked
+        # slots of the sparse fables are valid at their declared minimum.
+        import functools
+        from port_poly100_programs import parity_check, PARITY_REL_TOL
+        for name, source, ref in fp.FABLES:
+            lo, hi = fp.fable_limits(name)
+            lengths = sorted({lo, min(max(36, lo), hi), hi})
+            compiled = compile_coeff_program_source(source)
+            for L in lengths:
+                stats, err = parity_check(compiled, functools.partial(ref, n=L), L)
+                self.assertIsNone(err, f"{name} n={L}: {err}")
+                self.assertLessEqual(stats["worst"], PARITY_REL_TOL, f"{name} n={L}")
+
 
 class FableCliTests(unittest.TestCase):
     def _run(self, *args):

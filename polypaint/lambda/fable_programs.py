@@ -27,7 +27,29 @@ from port_poly100_programs import (
     PARITY_REL_TOL, build_payload, list_existing_keys, parity_check, upload,
 )
 
-N_PARITY = 36  # parity-gate coefficient count; sources are degree-agnostic
+N_PARITY = 36  # parity-gate coefficient count
+
+# Declared degree contract per fable (CR28 F4): min_coeffs..max_coeffs the
+# program is validated for. min guards sparse-poke fables whose fixed/computed
+# slots need room (a negative/colliding index otherwise); max is the largest
+# length where every parity point stays inside the f32 wire range (factorial /
+# Pochhammer families overflow past it — with the F3 checked packer the native
+# now fails loudly there rather than writing inf). Formula fables default to
+# (2, max). The multi-length gate enforces this; the selector should too.
+FABLE_LIMITS = {
+    "fable-7": (2, 98), "fable-9": (2, 138), "fable-10": (2, 103),
+    "fable-11": (2, 95), "fable-12": (2, 98), "fable-13": (2, 98),
+    "fable-17": (2, 67), "fable-18": (2, 185), "fable-19": (2, 102),
+    "fable-25": (2, 86), "fable-28": (2, 66), "fable-32": (2, 98),
+    # sparse pokes: min is where the poked slots are all valid + distinct
+    "fable-40": (6, 256), "fable-41": (12, 256), "fable-42": (6, 256),
+    "fable-43": (10, 256), "fable-44": (14, 256),
+}
+DEFAULT_LIMITS = (2, 256)
+
+
+def fable_limits(name):
+    return FABLE_LIMITS.get(name, DEFAULT_LIMITS)
 
 
 def _k(n):
@@ -1120,9 +1142,9 @@ FABLE_41 = """\
 fill(poly_len, 0)
 poly = pop
 poly[0] = (2 + (3 * p2))
-poly[5] = ((6i * p1) - 3)
-poly[12] = ((9 * p1) * p2)
-poly[22] = ((0 - 5i) * p2)
+poly[(floor(0.143 * (poly_len - 1)))] = ((6i * p1) - 3)
+poly[(floor(0.343 * (poly_len - 1)))] = ((9 * p1) * p2)
+poly[(floor(0.629 * (poly_len - 1)))] = ((0 - 5i) * p2)
 poly[(poly_len - 1)] = (2 + p1)
 emit
 """
@@ -1131,9 +1153,9 @@ emit
 def ref_fable_41(p1, p2, n=N_PARITY):
     c = np.zeros(n, dtype=np.complex128)
     c[0] = 2 + 3 * p2
-    c[5] = 6j * p1 - 3
-    c[12] = 9 * p1 * p2
-    c[22] = -5j * p2
+    c[int(np.floor(0.143 * (n - 1)))] = 6j * p1 - 3
+    c[int(np.floor(0.343 * (n - 1)))] = 9 * p1 * p2
+    c[int(np.floor(0.629 * (n - 1)))] = -5j * p2
     c[n - 1] = 2 + p1
     return c
 

@@ -43,7 +43,7 @@ from logical_sections import (
 from shared import (BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response,
                     _get_ddb, parse_boolish, assert_safe_render_image_key,
                     assert_render_identity, is_missing_s3_error, s3_error_reason,
-                    assert_safe_id)
+                    assert_safe_id, CACHE_IMMUTABLE)
 from coeff_program_chain import (
     PROGRAM_KIND as COEFF_PROGRAM_KIND,
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
@@ -1576,6 +1576,8 @@ def handler(event, context):
         return _handle_storage_route(handle_list_palette_mosaic, event)
     elif path.endswith("/share-mosaic"):
         return _handle_storage_route(handle_share_mosaic, event)
+    elif path.endswith("/share-gallery"):
+        return _handle_storage_route(handle_share_gallery, event)
     elif path.endswith("/delete-task"):
         return _handle_storage_route(handle_delete_task, event)
     elif path.endswith("/delete-prefix"):
@@ -4418,6 +4420,189 @@ def handle_share_mosaic(event):
         "sort": sort,
         "cols": cols,
         "count": snapshot_manifest.get("count", status.get("count", 0)),
+    })
+
+
+# ── Virtual gallery share (virtual-gallery.md §3.1) ────────────────────────
+GALLERY_SHARE_PREFIX = MOSAIC_SHARE_PREFIX + "gallery/"   # renders/_shared_mosaic/gallery/
+GALLERY_MAX_PIECES = 64
+GALLERY_SCHEMA_VERSION = 1
+
+
+def _read_deepzoom_export_meta(job_id, export_id, client):
+    """Load a DeepZoom export's meta.json. Returns the dict, None if the export
+    is genuinely absent; a transient/other S3 error propagates (CR28 F13)."""
+    try:
+        obj = client.get_object(Bucket=BUCKET, Key=f"deepzoom/{job_id}/{export_id}/meta.json")
+    except Exception as exc:
+        if is_missing_s3_error(exc):
+            return None
+        raise
+    try:
+        data = json.loads(obj["Body"].read())
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _gallery_resolve_color_tile(job_id, artifact_id, calc_cache, *, client):
+    """Enrich one gallery pick to a piece tile by EXACT key — HEAD the color
+    image/preview candidates + overlay + calc.json (reusing the mosaic tile
+    builder). No job scan. Returns (tile|None, state, reason): state is
+    'ready' | 'missing' (genuinely absent — skip) | 'error' (transient — fail)."""
+    shape = RENDER_FAMILY_SHAPES["color"]
+    prefix = f"renders/{job_id}/color/{artifact_id}/"
+    image_candidates = [prefix + k for k in shape["image_candidates"]]
+    preview_candidates = [prefix + k for k in shape["preview_candidates"]]
+    try:
+        head = _head_artifact_keys(image_candidates + preview_candidates,
+                                   presign=False, s3_client=client)
+    except Exception as exc:
+        return None, "error", s3_error_reason(exc)
+    image_info = _first_existing(head, image_candidates)
+    if not image_info:
+        for key in image_candidates:
+            reason = (head.get(key) or {}).get("error_reason")
+            if reason:
+                return None, "error", reason
+        return None, "missing", "missing_image"
+    preview_info = _first_existing(head, preview_candidates)
+    try:
+        overlay = _load_color_artifact_overlay(job_id, artifact_id, s3_client=client)
+    except Exception as exc:
+        return None, "error", s3_error_reason(exc)
+    entry = _render_artifact_entry("color", artifact_id, image_info, preview_info,
+                                   fallback_meta=overlay)
+    if job_id not in calc_cache:
+        try:
+            calc_cache[job_id] = _read_mosaic_calc_meta(client, job_id)
+        except Exception as exc:
+            return None, "error", s3_error_reason(exc)
+    tile, status = _mosaic_tile_from_entry(client, job_id, entry, calc_cache[job_id])
+    if tile is None:
+        return None, "missing", status  # missing_preview / non_square
+    return tile, "ready", ""
+
+
+def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, client):
+    """Validate a caller-named DeepZoom export for a piece (virtual-gallery.md
+    §3.1 step 4): exact identity match + canonical dzi_key + a live DZI. Returns
+    (deepzoom_ref|None, reason). A transient error propagates."""
+    meta = _read_deepzoom_export_meta(job_id, export_id, client)
+    if meta is None:
+        return None, "export_not_found"
+    if (str(meta.get("job_id") or "") != job_id
+            or str(meta.get("export_id") or "") != export_id
+            or str(meta.get("source_family") or "") != "color"
+            or str(meta.get("source_artifact_id") or "") != artifact_id
+            or str(meta.get("source_key") or "") != image_key):
+        return None, "export_identity_mismatch"
+    dzi_key = f"deepzoom/{job_id}/{export_id}/image.dzi"
+    if str(meta.get("dzi_key") or "") != dzi_key:
+        return None, "export_dzi_key_mismatch"
+    try:
+        client.head_object(Bucket=BUCKET, Key=dzi_key)
+    except Exception as exc:
+        if is_missing_s3_error(exc):
+            return None, "export_dzi_absent"
+        raise
+    return {"export_id": export_id, "dzi_key": dzi_key,
+            "source_key": image_key, "source_artifact_id": artifact_id}, ""
+
+
+def handle_share_gallery(event):
+    """Create an immutable virtual_gallery share from an explicit, validated pick
+    list (virtual-gallery.md §3.1). Filters to color, enriches each pick by exact
+    key, validates any supplied export, assigns ordinals after filtering, writes
+    the manifest under the public gallery share prefix, and returns skipped[]."""
+    params = parse_body(event)
+    raw_picks = params.get("picks")
+    if not isinstance(raw_picks, list) or not raw_picks:
+        return ok_response({"error": "picks must be a non-empty list"})
+    if len(raw_picks) > GALLERY_MAX_PIECES:
+        return ok_response({"error": f"too many picks (max {GALLERY_MAX_PIECES})"})
+    seed = _parse_int(params.get("seed")) or 1
+
+    # Validate + de-dup in request order (order is authoritative — §3.1).
+    picks = []
+    seen = set()
+    for raw in raw_picks:
+        if not isinstance(raw, dict):
+            return ok_response({"error": "each pick must be an object"})
+        job_id = assert_safe_id(raw.get("job_id"), "job_id")
+        artifact_id = assert_safe_id(raw.get("artifact_id"), "artifact_id")
+        if (job_id, artifact_id) in seen:
+            continue
+        seen.add((job_id, artifact_id))
+        export_id = raw.get("export_id")
+        export_id = assert_safe_id(export_id, "export_id") if export_id not in (None, "") else None
+        picks.append((job_id, artifact_id, export_id))
+
+    client = _results_list_s3_client(len(picks))
+    calc_cache = {}
+    pieces = []
+    skipped = []
+    for job_id, artifact_id, export_id in picks:
+        tile, state, reason = _gallery_resolve_color_tile(job_id, artifact_id, calc_cache, client=client)
+        if state == "error":
+            # transient/systemic — fail the whole request, never silently drop.
+            return ok_response({"error": f"could not resolve {job_id}/{artifact_id}: {reason}"})
+        if tile is None:
+            skipped.append({"job_id": job_id, "artifact_id": artifact_id, "reason": reason or "missing"})
+            continue
+        deepzoom = None
+        if export_id:
+            dz, dz_reason = _validate_gallery_export(job_id, artifact_id, export_id, tile["image_key"], client=client)
+            if dz is None:
+                skipped.append({"job_id": job_id, "artifact_id": artifact_id, "reason": dz_reason})
+                continue
+            deepzoom = dz
+        pieces.append({
+            "ordinal": len(pieces),
+            "job_id": job_id,
+            "artifact_id": artifact_id,
+            "preview_key": tile["key"],
+            "image_key": tile["image_key"],
+            "preview_width": tile.get("preview_width"),
+            "preview_height": tile.get("preview_height"),
+            "function": tile.get("function", "?"),
+            "degree": tile.get("degree", 0),
+            "N": tile.get("N", 0),
+            "times": tile.get("times", 1),
+            "created_at": tile.get("created_at", ""),
+            "deepzoom": deepzoom,
+        })
+
+    if not pieces:
+        return ok_response({"error": "no valid pieces", "skipped": skipped, "count": 0})
+
+    share_id = f"share_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    snapshot_key = f"{GALLERY_SHARE_PREFIX}{share_id}/manifest.json"
+    manifest = {
+        "schema_version": GALLERY_SCHEMA_VERSION,
+        "manifest_type": "virtual_gallery",
+        "document_kind": "share",
+        "artifact_kind": "color",
+        "created_at": _utc_now_iso(),
+        "share_id": share_id,
+        "manifest_key": snapshot_key,
+        "source": {"kind": "deepzoom_selection", "share_id": share_id},
+        "layout": {"mode": "auto", "seed": seed},
+        "pieces": pieces,
+    }
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=snapshot_key,
+        Body=json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
+        ContentType="application/json",
+        CacheControl=CACHE_IMMUTABLE,
+    )
+    return ok_response({
+        "manifest_url": _s3_public_url(snapshot_key),
+        "manifest_key": snapshot_key,
+        "share_id": share_id,
+        "count": len(pieces),
+        "skipped": skipped,
     })
 
 

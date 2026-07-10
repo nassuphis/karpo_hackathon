@@ -76,6 +76,7 @@
       "/save-root-program",
       "/save-solve-score-program",
       "/save-vision-config",
+      "/share-gallery",
       "/share-mosaic",
       "/solve-score-chain-to-source"
     ]
@@ -145,6 +146,7 @@
       "/save-root-program",
       "/save-solve-score-program",
       "/save-vision-config",
+      "/share-gallery",
       "/share-mosaic",
       "/solve-proximity",
       "/solve-score-chain-to-source",

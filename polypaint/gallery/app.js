@@ -356,7 +356,7 @@ class GalleryViewer {
         mesh.userData.frame.material = this._focusFrameMat;
       }
       const p = this.pieces[index];
-      hud.title = p.function || p.artifact_id;
+      hud.title = p.title || p.function || p.artifact_id;
       hud.sub = [p.job_id, p.degree != null ? 'deg ' + p.degree : '', p.N != null ? 'N=' + p.N : ''].filter(Boolean).join(' · ');
     }
     $('hud-title').textContent = hud.title;
@@ -396,13 +396,13 @@ class GalleryViewer {
     if (this.controls.isLocked) this.controls.unlock();
     this.tm.pin(this._pieceId(p));
 
-    $('overlay-meta').textContent = [p.function || p.artifact_id, p.job_id, p.artifact_id,
+    $('overlay-meta').textContent = [p.title || p.function || p.artifact_id, p.job_id, p.artifact_id,
       p.degree != null ? 'deg ' + p.degree : '', p.N != null ? 'N=' + p.N : '',
       p.times != null ? '×' + p.times : '', p.created_at].filter(Boolean).join('  ·  ');
     const img = $('overlay-img');
     img.style.display = 'block';
     img.src = p.preview_url;
-    img.alt = p.function || p.artifact_id;
+    img.alt = p.title || p.function || p.artifact_id;
     $('osd').style.display = 'none';
     $('overlay-status').textContent = '';
     $('overlay-zoom').style.display = p.deepzoom ? '' : 'none';

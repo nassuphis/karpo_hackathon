@@ -30,7 +30,7 @@ function galleryDoc() {
     schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color',
     layout: { mode: 'auto', seed: 1 },
     pieces: [
-      { ordinal: 1, job_id: 'compute_a', artifact_id: 'cA', preview_key: 'renders/compute_a/color/cA/preview.jpg', image_key: 'renders/compute_a/color/cA/image.jpeg', preview_width: 512, preview_height: 512, function: 'f', degree: 12, N: 2048, times: 1, created_at: '2026-05-01', deepzoom: dz },
+      { ordinal: 1, job_id: 'compute_a', artifact_id: 'cA', preview_key: 'renders/compute_a/color/cA/preview.jpg', image_key: 'renders/compute_a/color/cA/image.jpeg', preview_width: 512, preview_height: 512, function: 'f', degree: 12, N: 2048, times: 1, created_at: '2026-05-01', title: 'Opening', deepzoom: dz },
       { ordinal: 0, job_id: 'compute_b', artifact_id: 'cB', preview_key: 'renders/compute_b/color/cB/preview.jpg', image_key: 'renders/compute_b/color/cB/image.jpeg', preview_width: 512, preview_height: 256, function: 'g', degree: 9, N: 1024, times: 1, created_at: '2026-05-02', deepzoom: null },
       { ordinal: 2, job_id: 'compute_x', artifact_id: 'cX', preview_key: 'renders/OTHERJOB/color/cX/preview.jpg', image_key: 'renders/compute_x/color/cX/image.jpeg', preview_width: 512, preview_height: 512 },
     ],
@@ -70,7 +70,7 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
       return {
         ok: n.ok, count: n.pieces.length, skipped: n.skipped.length,
         first: n.pieces[0] && { job: n.pieces[0].job_id, ordinal: n.pieces[0].ordinal, preview: n.pieces[0].preview_url, dz: n.pieces[0].deepzoom },
-        second: n.pieces[1] && { job: n.pieces[1].job_id, ordinal: n.pieces[1].ordinal, dziUrl: n.pieces[1].deepzoom && n.pieces[1].deepzoom.dzi_url },
+        second: n.pieces[1] && { job: n.pieces[1].job_id, ordinal: n.pieces[1].ordinal, title: n.pieces[1].title, dziUrl: n.pieces[1].deepzoom && n.pieces[1].deepzoom.dzi_url },
       };
     }, galleryDoc());
     expect(r.ok).toBe(true);
@@ -82,6 +82,7 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
     expect(r.first.dz).toBeNull();     // null deepzoom stays zoomless
     expect(r.second.job).toBe('compute_a');
     expect(r.second.ordinal).toBe(1);  // dense reindex after skip
+    expect(r.second.title).toBe('Opening');  // curator title carried through
     expect(r.second.dziUrl).toBe(ORIGIN + '/deepzoom/compute_a/dz_A/image.dzi');
   });
 

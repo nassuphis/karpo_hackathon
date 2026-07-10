@@ -193,6 +193,7 @@ function normalizeGalleryPiece(row, index, trustedOrigin) {
       N: Number.isFinite(row.N) ? row.N : null,
       times: Number.isFinite(row.times) ? row.times : null,
       created_at: typeof row.created_at === 'string' ? row.created_at : '',
+      title: typeof row.title === 'string' ? row.title : '',
       deepzoom: validateDeepzoom(row.deepzoom, { jobId, artifactId, imageKey: row.image_key, trustedOrigin }),
     },
   };
@@ -227,6 +228,7 @@ function normalizeMosaicTile(row, index, trustedOrigin) {
       N: Number.isFinite(row.N) ? row.N : null,
       times: Number.isFinite(row.times) ? row.times : null,
       created_at: typeof row.created_at === 'string' ? row.created_at : '',
+      title: '',       // artifact_mosaic tiles carry no curator title
       deepzoom: null,  // artifact_mosaic never carries a DZI (§4)
     },
   };

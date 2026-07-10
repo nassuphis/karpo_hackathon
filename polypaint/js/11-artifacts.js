@@ -1532,6 +1532,12 @@ function _dzSetButtonsEnabled(enabled) {
     if (gotoRenderBtn) gotoRenderBtn.disabled = !_dzRenderSourceRef(ex).jobId;
     if (populateBtn) populateBtn.disabled = !ex || !String(ex.job_id || '').trim();
     if (deleteBtn) deleteBtn.disabled = !ex || !String(ex.export_id || '').trim();
+    // "Add to Gallery" enables only for a COLOR export with a resolvable
+    // artifact + export id (virtual-gallery.md Phase 0). Create/Clear track the
+    // draft, independent of the current selection.
+    const addGalleryBtn = document.getElementById('btn-dz-add-gallery');
+    if (addGalleryBtn) addGalleryBtn.disabled = !(typeof _dzGalleryPickForExport === 'function' && _dzGalleryPickForExport(ex));
+    if (typeof _dzUpdateGalleryButtons === 'function') _dzUpdateGalleryButtons();
 }
 
 function _dzClearViewer() {

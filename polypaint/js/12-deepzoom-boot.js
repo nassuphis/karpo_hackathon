@@ -41,6 +41,100 @@ function _dzRenderSourceLabel(ex) {
     return explicitArtifactId || renderRef.artifactId || renderRef.jobId || '?';
 }
 
+// ── Gallery draft: curate DeepZoom exports into a virtual gallery (Phase 0) ──
+// Each pick is {job_id, artifact_id, export_id} for a COLOR export. The draft is
+// submitted to /share-gallery, which validates + enriches server-side and
+// returns an immutable virtual_gallery manifest the standalone viewer opens.
+window._galleryDraft = window._galleryDraft || [];
+
+function _dzGalleryPickForExport(ex) {
+    if (!ex) return null;
+    const ref = _dzRenderSourceRef(ex);
+    const exportId = String((ex && ex.export_id) || '').trim();
+    if (ref.family !== 'color' || !ref.jobId || !ref.artifactId || !exportId) return null;
+    return { job_id: ref.jobId, artifact_id: ref.artifactId, export_id: exportId };
+}
+
+function _galleryPickKey(pick) {
+    return `${pick.job_id}::${pick.artifact_id}`;
+}
+
+function _dzUpdateGalleryButtons() {
+    const draft = window._galleryDraft || [];
+    const createBtn = document.getElementById('btn-dz-create-gallery');
+    const clearBtn = document.getElementById('btn-dz-clear-gallery');
+    if (createBtn) {
+        createBtn.textContent = `Create Gallery (${draft.length})`;
+        createBtn.disabled = draft.length === 0;
+    }
+    if (clearBtn) clearBtn.disabled = draft.length === 0;
+}
+
+function _dzAddSelectedToGallery() {
+    const inv = window._dzInventory || [];
+    const idx = window._dzSelectedIdx ?? -1;
+    const ex = idx >= 0 && idx < inv.length ? inv[idx] : null;
+    const pick = _dzGalleryPickForExport(ex);
+    const statusEl = document.getElementById('deepzoom-status');
+    if (!pick) {
+        if (statusEl) statusEl.textContent = 'Add to Gallery needs a color DeepZoom export.';
+        return;
+    }
+    const key = _galleryPickKey(pick);
+    if ((window._galleryDraft || []).some((p) => _galleryPickKey(p) === key)) {
+        if (statusEl) statusEl.textContent = `Already in gallery draft: ${pick.artifact_id}`;
+    } else {
+        window._galleryDraft.push(pick);
+        if (statusEl) statusEl.textContent = `Added to gallery draft: ${pick.artifact_id} (${window._galleryDraft.length})`;
+    }
+    _dzUpdateGalleryButtons();
+}
+
+function _dzClearGalleryDraft() {
+    window._galleryDraft = [];
+    _dzUpdateGalleryButtons();
+    const statusEl = document.getElementById('deepzoom-status');
+    if (statusEl) statusEl.textContent = 'Gallery draft cleared.';
+}
+
+async function createGalleryFromDraft() {
+    const draft = (window._galleryDraft || []).slice();
+    if (!draft.length) return;
+    const statusEl = document.getElementById('deepzoom-status');
+    // Open a blank window synchronously inside the click so the popup is not
+    // blocked (virtual-gallery.md §3); navigate it after the async POST returns,
+    // or close it and fall back to a copied link on failure.
+    const win = window.open('', '_blank');
+    const createBtn = document.getElementById('btn-dz-create-gallery');
+    const origLabel = createBtn ? createBtn.textContent : '';
+    if (createBtn) { createBtn.disabled = true; createBtn.textContent = 'Creating...'; }
+    try {
+        const resp = await lambdaPost('storage', { picks: draft, seed: 1 }, '/share-gallery');
+        if (resp && resp.error) throw new Error(resp.error);
+        const manifestUrl = String((resp && resp.manifest_url) || '');
+        if (!manifestUrl) throw new Error('no manifest_url returned');
+        // Derive gallery.html from the MANIFEST origin (the HTTPS REST endpoint),
+        // not the app page origin (which may be the HTTP website endpoint) — §3.
+        const galleryUrl = new URL('/gallery.html', new URL(manifestUrl).origin);
+        galleryUrl.searchParams.set('manifest', manifestUrl);
+        const skipped = Array.isArray(resp.skipped) ? resp.skipped : [];
+        let msg = `Gallery created: ${resp.count} piece${resp.count === 1 ? '' : 's'}`;
+        if (skipped.length) msg += ` · ${skipped.length} skipped (${skipped.map((s) => `${s.artifact_id}:${s.reason}`).join(', ')})`;
+        if (statusEl) { statusEl.textContent = msg; statusEl.className = 'status ok'; }
+        if (win) win.location = galleryUrl.toString();
+        else if (typeof _copyTextToClipboard === 'function') {
+            await _copyTextToClipboard(galleryUrl.toString());
+            if (statusEl) statusEl.textContent = msg + ' — link copied (popup blocked)';
+        }
+    } catch (e) {
+        if (win) win.close();
+        if (statusEl) { statusEl.textContent = 'Create Gallery failed: ' + e.message; statusEl.className = 'status error'; }
+    } finally {
+        if (createBtn) createBtn.textContent = origLabel;
+        _dzUpdateGalleryButtons();
+    }
+}
+
 function _dzSelectKey(key) {
     const inv = window._dzInventory || [];
     const nextKey = String(key || '');

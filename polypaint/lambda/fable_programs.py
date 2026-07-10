@@ -1163,6 +1163,82 @@ def ref_fable_42(p1, p2, n=N_PARITY):
     return c
 
 
+def _rev_blend(c, alpha):
+    """VM's rev(poly, alpha): andy blend alpha*c[k] + (1-alpha)*c[n-1-k].
+    alpha=1 keeps the original, alpha=0 is a full reversal (reciprocal roots)."""
+    return alpha * c + (1 - alpha) * c[::-1]
+
+
+# --- fable-43: clustered rosette (a local index + a triplet of pokes) ---------
+# Poke a TRIPLET of neighbouring slots around a computed index r1 (via a local
+# variable), a couple more near the top, then a faint reciprocal-root blend
+# rev(poly, 1 - |p1|^2/100). The cluster makes each rosette petal split into a
+# little fork; the rev whisper bends the whole figure toward self-inversive.
+FABLE_43 = """\
+# fable-43: clustered rosette — triplet pokes at r1-1,r1,r1+1 + rev blend
+fill(poly_len, 0)
+poly = pop
+poly[0] = (0.4 * p2)
+r1 = (floor(0.38 * (poly_len - 1)))
+poly[r1 - 1] = ((12i * p2) + 8)
+poly[r1] = ((12i * p1) - 8)
+poly[r1 + 1] = ((12 * p2) + 8i)
+poly[(poly_len - 2)] = ((1 * p1) + (100i * p2))
+poly[(poly_len - 1)] = 1i
+poly = rev(poly, (1 - ((abs(p1) * abs(p1)) * 0.01)))
+emit
+"""
+
+
+def ref_fable_43(p1, p2, n=N_PARITY):
+    c = np.zeros(n, dtype=np.complex128)
+    c[0] = 0.4 * p2
+    r1 = int(np.floor(0.38 * (n - 1)))
+    c[r1 - 1] = 12j * p2 + 8
+    c[r1] = 12j * p1 - 8
+    c[r1 + 1] = 12 * p2 + 8j
+    c[n - 2] = p1 + 100j * p2
+    c[n - 1] = 1j
+    return _rev_blend(c, 1 - (abs(p1) * abs(p1)) * 0.01)
+
+
+# --- fable-44: twin clusters ---------------------------------------------------
+# TWO triplet clusters at r1 = 0.25(n-1) and r2 = 0.7(n-1), each a little fork
+# of param-dependent terms, plus anchored ends. Two rosette groups at different
+# radii interleave — a double flower whose two tiers turn independently.
+FABLE_44 = """\
+# fable-44: twin clusters — triplets at r1=0.25(n-1) and r2=0.7(n-1)
+fill(poly_len, 0)
+poly = pop
+poly[0] = (2 * p2)
+r1 = (floor(0.25 * (poly_len - 1)))
+r2 = (floor(0.7 * (poly_len - 1)))
+poly[r1 - 1] = ((5i * p1) + 3)
+poly[r1] = ((10 * p1) * p2)
+poly[r1 + 1] = ((5 * p2) - 3i)
+poly[r2 - 1] = ((7i * p2) - 2)
+poly[r2] = ((8 * p1) + 4i)
+poly[r2 + 1] = ((6i * p1) + 2)
+poly[(poly_len - 1)] = (2 + p1)
+emit
+"""
+
+
+def ref_fable_44(p1, p2, n=N_PARITY):
+    c = np.zeros(n, dtype=np.complex128)
+    c[0] = 2 * p2
+    r1 = int(np.floor(0.25 * (n - 1)))
+    r2 = int(np.floor(0.7 * (n - 1)))
+    c[r1 - 1] = 5j * p1 + 3
+    c[r1] = 10 * p1 * p2
+    c[r1 + 1] = 5 * p2 - 3j
+    c[r2 - 1] = 7j * p2 - 2
+    c[r2] = 8 * p1 + 4j
+    c[r2 + 1] = 6j * p1 + 2
+    c[n - 1] = 2 + p1
+    return c
+
+
 FABLES = [
     ("fable-1", FABLE_1, ref_fable_1),
     ("fable-2", FABLE_2, ref_fable_2),
@@ -1206,6 +1282,8 @@ FABLES = [
     ("fable-40", FABLE_40, ref_fable_40),
     ("fable-41", FABLE_41, ref_fable_41),
     ("fable-42", FABLE_42, ref_fable_42),
+    ("fable-43", FABLE_43, ref_fable_43),
+    ("fable-44", FABLE_44, ref_fable_44),
 ]
 
 

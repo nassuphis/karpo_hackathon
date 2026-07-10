@@ -21,13 +21,23 @@ import zlib
 import boto3
 from botocore.config import Config
 
-from shared import BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response
+from shared import (BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response,
+                    is_missing_s3_error, s3_error_reason)
 
 WALL_DZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wall_dz")
 JOBS_TABLE = os.environ.get("JOBS_TABLE", "polypaint-jobs")
 MOSAIC_STATUS_PK = "__allrenders_mosaic__"
 STATUS_TASK_BY_KIND = {"color": "color_mosaic_status", "palette": "palette_mosaic_status"}
 CELL_PX = 512
+# Abort a wall build rather than publish a mostly-placeholder wall as "ready"
+# (code-review-28 F14). A wall with more than this fraction of failed tiles —
+# or every tile failed — is a systemic problem (credentials, bucket, network),
+# not one bad artifact, and must surface as an error with per-reason counts.
+WALL_MAX_FAIL_RATIO = float(os.environ.get("WALL_MAX_FAIL_RATIO", "0.5"))
+WALL_TILE_RETRIES = int(os.environ.get("WALL_TILE_RETRIES", "3"))
+# Reasons that are worth retrying (transient); 'missing' and 'access_denied'
+# are terminal for a single tile and never retried.
+_WALL_TRANSIENT_REASONS = {"throttled", "server_error", "transport"}
 
 # pool sized to the download/upload thread counts (default 10 floods the log
 # with discarded-connection warnings and throttles throughput)
@@ -68,14 +78,33 @@ def default_wall_order(tiles):
 
 
 def _download_tile(idx, key, work_dir):
+    """Download one wall tile, classifying failure so the builder can tell a
+    single missing artifact from a systemic outage (code-review-28 F14).
+
+    Returns (path, reason): reason is 'ok' on success, else 'missing' (404,
+    placeholder is legitimate), 'throttled'/'server_error'/'transport' (retried
+    up to WALL_TILE_RETRIES then placeholdered), or 'access_denied'/'error'
+    (terminal, placeholdered). Transient reasons are retried with backoff."""
     path = os.path.join(work_dir, "%05d" % idx)
-    try:
-        s3.download_file(BUCKET, key, path + ".jpg")
-        return path + ".jpg", False
-    except Exception:
+    if not key:
         with open(path + ".png", "wb") as fh:
             fh.write(_placeholder_png())
-        return path + ".png", True
+        return path + ".png", "missing"
+    last_reason = "error"
+    for attempt in range(WALL_TILE_RETRIES + 1):
+        try:
+            s3.download_file(BUCKET, key, path + ".jpg")
+            return path + ".jpg", "ok"
+        except Exception as exc:
+            reason = "missing" if is_missing_s3_error(exc) else s3_error_reason(exc)
+            last_reason = reason
+            if reason in _WALL_TRANSIENT_REASONS and attempt < WALL_TILE_RETRIES:
+                time.sleep(min(2.0, 0.25 * (2 ** attempt)))
+                continue
+            break
+    with open(path + ".png", "wb") as fh:
+        fh.write(_placeholder_png())
+    return path + ".png", last_reason
 
 
 def _upload_pyramid(prefix, dzi_path, tiles_dir):
@@ -169,8 +198,26 @@ def handle_build_wall_pyramid(params):
                 lambda item: _download_tile(item[0], item[1].get("key") or "", work_dir),
                 enumerate(tiles)))
         paths = [p for p, _ in results]
-        placeholders = sum(1 for _, ph in results if ph)
+        reason_counts = {}
+        for _, reason in results:
+            if reason != "ok":
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        placeholders = sum(reason_counts.values())
         dl_ms = int((time.time() - t0) * 1000)
+
+        # Refuse to advertise a mostly-placeholder wall as ready (code-review-28
+        # F14): every tile failing, or a fail ratio over the configured cap, is
+        # a systemic fault (credentials, bucket, networking), not one bad
+        # artifact. Surface the per-reason counts so the cause is diagnosable.
+        n = len(tiles)
+        fail_ratio = (placeholders / n) if n else 1.0
+        if placeholders >= n or fail_ratio > WALL_MAX_FAIL_RATIO:
+            summary = ", ".join(f"{k}={v}" for k, v in sorted(reason_counts.items()))
+            msg = (f"wall build aborted: {placeholders}/{n} tiles failed "
+                   f"({fail_ratio:.0%} > {WALL_MAX_FAIL_RATIO:.0%} cap; {summary})")
+            _set_wall_state(kind, refresh_id, "error", error=msg)
+            return ok_response({"error": msg, "reason_counts": reason_counts,
+                                "placeholders": placeholders, "count": n})
 
         cols = max(1, math.ceil(math.sqrt(len(tiles))))
         list_path = os.path.join(out_dir, "tiles.txt")
@@ -191,16 +238,24 @@ def handle_build_wall_pyramid(params):
         t2 = time.time()
         uploaded = _upload_pyramid(prefix, os.path.join(out_dir, "wall.dzi"),
                                    os.path.join(out_dir, "wall_files"))
-        # flat composite for the Save Wall button (print-grade single jpg)
-        with open(os.path.join(out_dir, "wall.jpg"), "rb") as fh:
-            s3.put_object(Bucket=BUCKET, Key=prefix + "wall.jpg", Body=fh.read(),
-                          ContentType="image/jpeg", CacheControl=CACHE_IMMUTABLE)
+        # Flat composite for the Save Wall button is OPTIONAL: wall_dz skips it
+        # for a wall past the JPEG dimension cap (code-review-28 F19) and still
+        # produces the DZI, so upload wall.jpg only when it was actually
+        # written. image_key is "" when absent; the UI hides Save Wall then.
+        flat_jpeg_key = ""
+        wall_jpg_local = os.path.join(out_dir, "wall.jpg")
+        if dims.get("flat_jpeg") and os.path.exists(wall_jpg_local):
+            with open(wall_jpg_local, "rb") as fh:
+                s3.put_object(Bucket=BUCKET, Key=prefix + "wall.jpg", Body=fh.read(),
+                              ContentType="image/jpeg", CacheControl=CACHE_IMMUTABLE)
+            flat_jpeg_key = prefix + "wall.jpg"
         wall = {
             "manifest_type": "artifact_wall_pyramid",
             "kind": kind,
             "refresh_id": refresh_id,
             "dzi_key": prefix + "wall.dzi",
-            "image_key": prefix + "wall.jpg",
+            "image_key": flat_jpeg_key,
+            "flat_jpeg": bool(flat_jpeg_key),
             "width": int(dims["width"]),
             "height": int(dims["height"]),
             "cols": cols,
@@ -208,6 +263,7 @@ def handle_build_wall_pyramid(params):
             "cell_px": CELL_PX,
             "count": len(tiles),
             "placeholders": placeholders,
+            "reason_counts": reason_counts,
             "sort": "created",
             "tiles": tiles,
             "download_ms": dl_ms,
@@ -222,7 +278,7 @@ def handle_build_wall_pyramid(params):
                       CacheControl="no-cache, max-age=0")
         _set_wall_state(kind, refresh_id, "ready", wall_json_key=wall_json_key)
         return ok_response({"wall_json_key": wall_json_key, "tiles_uploaded": uploaded,
-                            "placeholders": placeholders})
+                            "placeholders": placeholders, "reason_counts": reason_counts})
     except Exception as exc:  # noqa: BLE001 — wall is best-effort; manifest already ready
         _set_wall_state(kind, refresh_id, "error", error=str(exc))
         return ok_response({"error": str(exc)})

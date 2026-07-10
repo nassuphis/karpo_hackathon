@@ -2727,6 +2727,10 @@ def _palette_entry_from_prefix(job_id, prefix, *, presign=True, s3_client=None, 
     meta["solve_score_omega_enabled"] = _parse_bool(meta.get("solve_score_omega_enabled"), True)
     meta["solve_score_chain"] = meta.get("solve_score_chain", [])
     meta["derived_from_palette_id"] = meta.get("derived_from_palette_id", "")
+    # Authoritative owner of a palette artifact — written by palette finalize
+    # (code-review-28 F17). AllPal "Add to Book" must read this, never infer the
+    # color id by stripping a 'pal_' prefix off the display id.
+    meta["derived_from_color_artifact_id"] = meta.get("derived_from_color_artifact_id", "")
     if presign:
         meta["image_url"] = client.generate_presigned_url(
             "get_object", Params={"Bucket": BUCKET, "Key": image_key},
@@ -3779,6 +3783,9 @@ def _build_palette_mosaic_manifest(refresh_id, *, progress_cb=None):
                 "color_interpretation": entry.get("color_interpretation", ""),
                 "score_output_channel_count": entry.get("score_output_channel_count", 1),
                 "derived_from_palette_id": entry.get("derived_from_palette_id", ""),
+                # F17: the exact color artifact this palette derives from, so the
+                # AllPal book action never guesses ownership from the display id.
+                "derived_from_color_artifact_id": entry.get("derived_from_color_artifact_id", ""),
             })
         return tile, status
 

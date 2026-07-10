@@ -56,10 +56,11 @@ class BuildWallPyramidTests(unittest.TestCase):
     REFRESH_ID = "mosaic_20260709T120000Z_abcdef01"
     MANIFEST_KEY = "renders/_index/color_mosaic/mosaic_20260709T120000Z_abcdef01/all.json"
 
-    def _run(self, *, fail_download=False, fail_subprocess=False):
+    def _run(self, *, fail_download=False, fail_subprocess=False,
+             download_side_effect=None, tiles=None, flat_jpeg=True):
         import handler_wall_pyramid as mod
 
-        manifest = {"tiles": [
+        manifest = {"tiles": tiles if tiles is not None else [
             _tile("2026-02-01T00:00:00Z", "j1", "a1", "renders/j1/color/a1/preview.jpg"),
             _tile("2026-01-01T00:00:00Z", "j2", "a2", "renders/j2/color/a2/preview.jpg"),
         ]}
@@ -71,6 +72,8 @@ class BuildWallPyramidTests(unittest.TestCase):
             "Body": io.BytesIO(json.dumps(manifest).encode())}
 
         def download_file(bucket, key, path):
+            if download_side_effect is not None:
+                return download_side_effect(bucket, key, path)
             if fail_download and key.endswith("a2/preview.jpg"):
                 raise RuntimeError("boom")
             with open(path, "wb") as fh:
@@ -88,16 +91,19 @@ class BuildWallPyramidTests(unittest.TestCase):
                 return MagicMock(returncode=1, stdout="", stderr="vips exploded")
             listfile, cols, outbase = cmd[1], cmd[2], cmd[3]
             lines = [l for l in open(listfile).read().splitlines() if l]
-            assert cols == "2"  # ceil(sqrt(2))
             os.makedirs(outbase + "_files/0", exist_ok=True)
             with open(outbase + ".dzi", "w") as fh:
                 fh.write("<dzi/>")
-            with open(outbase + ".jpg", "wb") as fh:
-                fh.write(b"flatjpg")
+            # wall_dz writes the flat jpg only when the wall is within the JPEG
+            # dimension cap (code-review-28 F19); mirror that in the fake.
+            if flat_jpeg:
+                with open(outbase + ".jpg", "wb") as fh:
+                    fh.write(b"flatjpg")
             with open(outbase + "_files/0/0_0.jpg", "wb") as fh:
                 fh.write(b"tile")
             return MagicMock(returncode=0, stdout=json.dumps(
-                {"width": 1024, "height": 512, "count": len(lines), "across": 2}), stderr="")
+                {"width": 1024, "height": 512, "count": len(lines), "across": 2,
+                 "flat_jpeg": bool(flat_jpeg)}), stderr="")
 
         with patch.object(mod, "s3", fake_s3), \
              patch.object(mod, "boto3") as fake_boto3, \
@@ -141,7 +147,8 @@ class BuildWallPyramidTests(unittest.TestCase):
             open(outbase + ".jpg", "wb").write(b"flatjpg")
             open(outbase + "_files/0/0_0.jpg", "wb").write(b"tile")
             return MagicMock(returncode=0, stdout=json.dumps(
-                {"width": 1024, "height": 512, "count": 2, "across": 2}), stderr="")
+                {"width": 1024, "height": 512, "count": 2, "across": 2,
+                 "flat_jpeg": True}), stderr="")
 
         with patch.object(mod, "s3", fake_s3), \
              patch.object(mod, "boto3") as fb, \
@@ -198,10 +205,84 @@ class BuildWallPyramidTests(unittest.TestCase):
         self.assertEqual(body["placeholders"], 0)
 
     def test_download_failure_becomes_placeholder(self):
-        body, puts, _ = self._run(fail_download=True)
+        # One tile failing out of many is tolerated (single bad artifact), and
+        # its reason is surfaced in wall.json (code-review-28 F14).
+        tiles = [_tile(f"2026-02-{i:02d}T00:00:00Z", "j", f"a{i}",
+                       f"renders/j/color/a{i}/preview.jpg") for i in range(1, 6)]
+
+        def one_missing(bucket, key, path):
+            if key.endswith("a3/preview.jpg"):
+                from botocore.exceptions import ClientError
+                raise ClientError({"Error": {"Code": "NoSuchKey"},
+                                   "ResponseMetadata": {"HTTPStatusCode": 404}}, "GetObject")
+            open(path, "wb").write(b"jpg")
+
+        body, puts, _ = self._run(tiles=tiles, download_side_effect=one_missing)
         self.assertEqual(body["placeholders"], 1)
         wall = json.loads(next(p for p in puts if p["Key"].endswith("wall.json"))["Body"])
         self.assertEqual(wall["placeholders"], 1)
+        self.assertEqual(wall["reason_counts"], {"missing": 1})
+
+    def test_all_tiles_fail_aborts_not_ready(self):
+        # code-review-28 F14: a wall where every tile fails must NOT be
+        # advertised as ready — it's a systemic outage, not one bad artifact.
+        def all_fail(bucket, key, path):
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "AccessDenied"},
+                               "ResponseMetadata": {"HTTPStatusCode": 403}}, "GetObject")
+
+        body, puts, ddb_updates = self._run(download_side_effect=all_fail)
+        self.assertIn("aborted", body["error"])
+        self.assertEqual(body["reason_counts"], {"access_denied": 2})
+        self.assertEqual(ddb_updates[-1]["ExpressionAttributeValues"][":ws"], {"S": "error"})
+        self.assertFalse(any(p["Key"].endswith("wall.json") for p in puts))
+
+    def test_fail_ratio_over_cap_aborts(self):
+        # 3 of 4 tiles fail (75% > 50% cap) -> abort with reason counts.
+        tiles = [_tile(f"2026-02-0{i}T00:00:00Z", "j", f"a{i}",
+                       f"renders/j/color/a{i}/preview.jpg") for i in range(1, 5)]
+
+        def mostly_fail(bucket, key, path):
+            if key.endswith("a1/preview.jpg"):
+                open(path, "wb").write(b"jpg")
+                return
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "SlowDown"},
+                               "ResponseMetadata": {"HTTPStatusCode": 503}}, "GetObject")
+
+        body, puts, ddb_updates = self._run(tiles=tiles, download_side_effect=mostly_fail)
+        self.assertIn("aborted", body["error"])
+        self.assertEqual(body["reason_counts"].get("throttled"), 3)
+        self.assertEqual(ddb_updates[-1]["ExpressionAttributeValues"][":ws"], {"S": "error"})
+
+    def test_transient_download_is_retried_then_succeeds(self):
+        # A throttle that clears on retry must NOT become a placeholder (F14).
+        state = {"a2": 0}
+
+        def flaky(bucket, key, path):
+            if key.endswith("a2/preview.jpg"):
+                state["a2"] += 1
+                if state["a2"] <= 2:  # fail twice, succeed on the 3rd attempt
+                    from botocore.exceptions import ClientError
+                    raise ClientError({"Error": {"Code": "SlowDown"},
+                                       "ResponseMetadata": {"HTTPStatusCode": 503}}, "GetObject")
+            open(path, "wb").write(b"jpg")
+
+        body, puts, _ = self._run(download_side_effect=flaky)
+        self.assertEqual(body["placeholders"], 0)
+        self.assertGreaterEqual(state["a2"], 3)
+
+    def test_large_wall_skips_flat_jpeg_but_still_publishes_dzi(self):
+        # code-review-28 F19: a wall past the JPEG cap has no wall.jpg; the DZI
+        # and wall.json must still publish, with image_key empty.
+        body, puts, ddb_updates = self._run(flat_jpeg=False)
+        self.assertNotIn("error", body)
+        self.assertTrue(any(p["Key"].endswith("wall.dzi") for p in puts))
+        self.assertFalse(any(p["Key"].endswith("/wall.jpg") for p in puts))
+        wall = json.loads(next(p for p in puts if p["Key"].endswith("wall.json"))["Body"])
+        self.assertEqual(wall["image_key"], "")
+        self.assertFalse(wall["flat_jpeg"])
+        self.assertEqual(ddb_updates[-1]["ExpressionAttributeValues"][":ws"], {"S": "ready"})
 
     def test_subprocess_failure_marks_wall_error(self):
         body, puts, ddb_updates = self._run(fail_subprocess=True)

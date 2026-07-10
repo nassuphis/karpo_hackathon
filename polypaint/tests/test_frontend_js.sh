@@ -2501,7 +2501,7 @@ const els = {
         count: 2,
         sizes: [500, 512],
         tiles: [
-          {key:'renders/j/palettes/pal_a/preview.png', image_key:'renders/j/palettes/pal_a/image.jpeg', job_id:'j', artifact_id:'pal_a', palette_id:'pal_a', created_at:'2026', preview_width:512, preview_height:512, N:512},
+          {key:'renders/j/palettes/pal_a/preview.png', image_key:'renders/j/palettes/pal_a/image.jpeg', job_id:'j', artifact_id:'pal_a', palette_id:'pal_a', derived_from_color_artifact_id:'a', created_at:'2026', preview_width:512, preview_height:512, N:512},
           {key:'renders/j/palettes/pal_b/preview.png', image_key:'renders/j/palettes/pal_b/image.jpeg', job_id:'j', artifact_id:'pal_b', palette_id:'pal_b', created_at:'2025', preview_width:500, preview_height:500, N:1024},
         ],
       }) : ({
@@ -2527,12 +2527,16 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  assert(opened[0].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/a/preview.png', 'tile 0 URL mismatch');
 	  await ctx.loadAllCol();
 	  assert(opened.length === 1, 'same manifest and controls should not reopen/reset the viewer');
-	  els['allcol-size-filter'].value = '1024';
+	  // code-review-28 F21: Color offers only 512 now (previews are normalised
+	  // to 512). Selecting 512 reopens with a 512 tile source; the obsolete 1024
+	  // option is gone (old 1024 objects still appear under 'all' — backend
+	  // tolerance retained).
+	  els['allcol-size-filter'].value = '512';
 	  ctx._allColRebuild();
 	  assert(opened.length === 2, 'size filter should reopen tile source');
-	  assert(opened[1].tileSize === 1024, '1024 filter should use 1024 tileSize');
-	  assert(opened[1].width === 1024 && opened[1].height === 1024, '1024 tile source dimensions should match 1024 tile size');
-	  assert(opened[1].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/b/preview.png', '1024 filter should select 1024 tile');
+	  assert(opened[1].tileSize === 512, '512 filter should use 512 tileSize');
+	  assert(opened[1].width === 512 && opened[1].height === 512, '512 tile source dimensions should match 512 tile size');
+	  assert(opened[1].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/a/preview.png', '512 filter should select the 512 tile');
 	  els['allcol-size-filter'].value = 'all';
 	  els['allcol-cols'].value = '1';
 	  ctx._allColRebuild();
@@ -2623,12 +2627,14 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  assert(els['artifact-mosaic-context-menu'].innerHTML.includes('data-mosaic-action="add-book">Add Source to Book'),
 	    'palette context menu should offer an ENABLED Add Source to Book');
 	  const palA = ctx._mosaicState('palette').tiles.find(t => t.palette_id === 'pal_a')
-	    || {job_id: 'j', artifact_id: 'pal_a', palette_id: 'pal_a', key: 'renders/j/palettes/pal_a/preview.png'};
+	    || {job_id: 'j', artifact_id: 'pal_a', palette_id: 'pal_a', derived_from_color_artifact_id: 'a', key: 'renders/j/palettes/pal_a/preview.png'};
 	  ctx._openMosaicContextMenu('palette', palA, {clientX: 15, clientY: 25});
 	  await ctx._runMosaicContextAction('add-book');
+	  // code-review-28 F17: resolves via the authoritative derived_from_color_
+	  // artifact_id in the manifest, NOT by stripping a 'pal_' prefix.
 	  assert(bookAddRef && bookAddRef.jobId === 'j' && bookAddRef.artifactId === 'a'
 	    && bookAddRef.imageKey === 'renders/j/color/a/image.jpeg',
-	    'palette Add Source to Book should resolve pal_a to color artifact a');
+	    'palette Add Source to Book should resolve via derived_from_color_artifact_id');
 	  bookAddRef = null;
 	  ctx._openMosaicContextMenu('palette', {job_id: 'j', artifact_id: 'solo', palette_id: 'solo', key: 'k'}, {clientX: 15, clientY: 25});
 	  await ctx._runMosaicContextAction('add-book');

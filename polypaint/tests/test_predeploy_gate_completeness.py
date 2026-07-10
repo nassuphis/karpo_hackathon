@@ -52,8 +52,10 @@ REQUIRED_GATED = {
 # predate the gate. Gating any of these later just means deleting its line.
 ALLOWED_UNGATED = {
     "test_ae_mt.py",
-    "test_assemble_greyscale.py",
-    "test_attach_palette_to_color_handler.py",
+    # test_assemble_greyscale.py and test_attach_palette_to_color_handler.py were
+    # promoted into the predeploy gate (code-review-28 F20): each is now the sole
+    # coverage of load-bearing hardening (native retry semantics; palette
+    # identity), so they must not remain optional bookkeeping.
     "test_autolevels_render_native.py",
     "test_bench_solve_hist_batch.py",
     "test_cfpv.py",

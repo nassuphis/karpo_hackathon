@@ -27,6 +27,9 @@
 #include <vips/vips.h>
 
 #define CELL_PX 512   /* must match handler_wall_pyramid.CELL_PX / viewer cell */
+#ifndef JPEG_MAX_PX
+#define JPEG_MAX_PX 65500  /* libjpeg's 65,535px dimension cap, with headroom */
+#endif
 
 int main(int argc, char **argv) {
     if (argc < 4) {
@@ -72,9 +75,27 @@ int main(int argc, char **argv) {
             fclose(lf);
             return 1;
         }
-        /* arrayjoin requires matching band counts; previews are RGB but a
-         * placeholder or odd artifact could differ. */
-        if (img->Bands != 3) {
+        /* arrayjoin requires matching band counts AND that alpha is resolved.
+         * vips_colourspace(sRGB) PRESERVES alpha, so an RGBA/GA preview would
+         * stay 4/2 bands and break the join (code-review-28 F15). Normalise in
+         * three explicit steps: flatten alpha against a chosen background,
+         * convert any colourspace (grayscale/CMYK/...) to sRGB, then force
+         * exactly three bands. */
+        if (vips_image_hasalpha(img)) {
+            VipsImage *flat;
+            double bg[3] = {0.0, 0.0, 0.0};   /* explicit black backdrop */
+            VipsArrayDouble *bgArr = vips_array_double_new(bg, 3);
+            int rc = vips_flatten(img, &flat, "background", bgArr, NULL);
+            vips_area_unref(VIPS_AREA(bgArr));
+            if (rc) {
+                fprintf(stderr, "Cannot flatten alpha of %s: %s\n", line, vips_error_buffer());
+                fclose(lf);
+                return 1;
+            }
+            g_object_unref(img);
+            img = flat;
+        }
+        if (img->Type != VIPS_INTERPRETATION_sRGB || img->Bands != 3) {
             VipsImage *rgb;
             if (vips_colourspace(img, &rgb, VIPS_INTERPRETATION_sRGB, NULL)) {
                 fprintf(stderr, "Cannot normalise %s: %s\n", line, vips_error_buffer());
@@ -83,6 +104,17 @@ int main(int argc, char **argv) {
             }
             g_object_unref(img);
             img = rgb;
+        }
+        if (img->Bands != 3) {
+            /* CMYK->sRGB and odd inputs can still land off 3 bands; keep RGB. */
+            VipsImage *three;
+            if (vips_extract_band(img, &three, 0, "n", 3, NULL)) {
+                fprintf(stderr, "Cannot extract RGB bands of %s: %s\n", line, vips_error_buffer());
+                fclose(lf);
+                return 1;
+            }
+            g_object_unref(img);
+            img = three;
         }
         /* Normalise every tile to a CELL_PX square so the grid stays uniform
          * even when a preview is not 512px (small-N renders are <=512 and
@@ -118,16 +150,28 @@ int main(int argc, char **argv) {
         g_object_unref(images[i]);
     g_free(images);
 
-    /* flat full-resolution composite alongside the pyramid — the Save Wall
-     * button downloads it and it's print-grade (well under JPEG's 65,535px
-     * cap). Written first so a dzsave failure can't leave a half wall.jpg. */
-    char jpgPath[4096];
-    snprintf(jpgPath, sizeof(jpgPath), "%s.jpg", outBase);
-    if (vips_jpegsave(wall, jpgPath, "Q", 90, NULL)) {
-        fprintf(stderr, "vips_jpegsave failed: %s\n", vips_error_buffer());
-        g_object_unref(wall);
-        vips_shutdown();
-        return 1;
+    /* Optional flat full-resolution composite alongside the pyramid — the Save
+     * Wall button downloads it. A big wall exceeds JPEG's dimension cap, and
+     * the whole point of the DZI is images larger than that, so the flat
+     * export must be OPTIONAL: skip it above the limit rather than aborting and
+     * starving DZI generation (code-review-28 F19). Written before dzsave so a
+     * dzsave failure can't leave a half wall.jpg. */
+    int wrote_jpeg = 0;
+    if (wall->Xsize <= JPEG_MAX_PX && wall->Ysize <= JPEG_MAX_PX) {
+        char jpgPath[4096];
+        snprintf(jpgPath, sizeof(jpgPath), "%s.jpg", outBase);
+        if (vips_jpegsave(wall, jpgPath, "Q", 90, NULL)) {
+            fprintf(stderr, "vips_jpegsave failed: %s\n", vips_error_buffer());
+            g_object_unref(wall);
+            vips_shutdown();
+            return 1;
+        }
+        wrote_jpeg = 1;
+    } else {
+        fprintf(stderr,
+                "wall %dx%d exceeds JPEG %dpx cap; skipping flat wall.jpg, "
+                "DZI still generated\n",
+                wall->Xsize, wall->Ysize, JPEG_MAX_PX);
     }
 
     if (vips_dzsave(wall, outBase,
@@ -142,8 +186,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("{\"width\":%d,\"height\":%d,\"count\":%d,\"across\":%d}\n",
-           wall->Xsize, wall->Ysize, count, across);
+    printf("{\"width\":%d,\"height\":%d,\"count\":%d,\"across\":%d,\"flat_jpeg\":%s}\n",
+           wall->Xsize, wall->Ysize, count, across, wrote_jpeg ? "true" : "false");
 
     g_object_unref(wall);
     vips_shutdown();

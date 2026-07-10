@@ -10,7 +10,10 @@ const ARTIFACT_MOSAICS = {
         label: 'AllCol',
         statusPath: '/list-color-mosaic',
         family: 'color',
-        fixedSizes: ['512', '1024'],
+        // Previews are normalised to 512 (migration complete); 1024 is obsolete
+        // and selecting it produced an empty view (code-review-28 F21). Backend
+        // tolerance for old non-512 objects is unchanged.
+        fixedSizes: ['512'],
         selectArtifactId(tile) { return tile && tile.artifact_id; },
     },
     palette: {
@@ -500,18 +503,31 @@ function _mosaicWallEligible(kind) {
     return true;
 }
 
+function _wallLoadedForStatus(kind) {
+    const state = _mosaicState(kind);
+    const status = state.status || {};
+    return !!(state.wall && String(state.wall.refresh_id || '') === String(status.wall_refresh_id || ''));
+}
+
 async function _maybeLoadMosaicWall(kind) {
     const state = _mosaicState(kind);
     const status = state.status || {};
     const key = String(status.wall_json_key || '');
-    if (String(status.wall_state || '') !== 'ready' || !key) return;
-    if (state.wall && String(state.wall.refresh_id || '') === String(status.wall_refresh_id || '')) return;
+    if (String(status.wall_state || '') !== 'ready' || !key) return false;
+    if (_wallLoadedForStatus(kind)) return true;
     try {
         const resp = await fetch(_mosaicPublicUrl(kind, key) + '?ts=' + Date.now());
         if (!resp.ok) throw new Error(`wall.json HTTP ${resp.status}`);
         state.wall = await resp.json();
+        return _wallLoadedForStatus(kind);
     } catch (e) {
+        // Ready status but a transient metadata fetch failure. Do NOT strand the
+        // UI on the slow per-tile grid (code-review-28 F18): null the wall and
+        // report; the poll below keeps retrying with bounded backoff.
         state.wall = null;
+        _logMosaic(kind, `${_mosaicConfig(kind).label} wall ready but metadata fetch failed (${e.message}); retrying…`,
+                   '', `wall-json-retry|${status.wall_refresh_id || ''}`);
+        return false;
     }
 }
 
@@ -546,7 +562,12 @@ function _logMosaicWallState(kind) {
     if (ws === 'computing') {
         _logMosaic(kind, `${cfg.label} wall pyramid: building…`, '', `wall-computing|${rid}`);
     } else if (ws === 'ready') {
-        _logMosaic(kind, `${cfg.label} wall pyramid ready (zoomed-out loads are now a handful of tiles)`, 'ok', `wall-ready|${rid}`);
+        // Surface how many tiles fell back to a placeholder (code-review-28
+        // F14) so a partially-degraded wall doesn't read as fully healthy.
+        const ph = Number((state.wall || {}).placeholders || 0);
+        const suffix = ph > 0 ? ` · ${ph.toLocaleString()} tile${ph === 1 ? '' : 's'} unavailable (placeholder)` : '';
+        _logMosaic(kind, `${cfg.label} wall pyramid ready${suffix} (zoomed-out loads are now a handful of tiles)`,
+                   ph > 0 ? '' : 'ok', `wall-ready|${rid}|${ph}`);
     } else if (ws === 'error') {
         _logMosaic(kind, `${cfg.label} wall pyramid failed: ${status.wall_error || 'unknown'} · using per-tile grid`, 'err', `wall-error|${rid}`);
     }
@@ -564,7 +585,22 @@ function _mosaicSaveWall(kind) {
     const wall = state.wall;
     const key = wall && String(wall.image_key || '');
     const rid = String(((state.status || {}).wall_refresh_id) || '');
-    if (!key || String(wall.refresh_id || '') !== rid) {
+    const wallForRefresh = wall && String(wall.refresh_id || '') === rid;
+    // A wall past the JPEG dimension cap has no flat composite (code-review-28
+    // F19): it is ready and zoomable, just not downloadable as one image. Say
+    // so instead of the misleading "not ready yet".
+    if (wallForRefresh && !key && wall.flat_jpeg === false) {
+        const px = `${Number(wall.width) || 0}×${Number(wall.height) || 0}`;
+        _setMosaicStatus(kind, `Wall is too large for a single JPEG (${px}px) — use the zoom view.`, 'error');
+        const btn = document.getElementById(`btn-${_mosaicConfig(kind).tabName}-save`);
+        if (btn) {
+            const label = btn.textContent;
+            btn.textContent = 'Too large';
+            setTimeout(() => { btn.textContent = label; }, 1800);
+        }
+        return;
+    }
+    if (!key || !wallForRefresh) {
         _setMosaicStatus(kind, 'Wall composite not ready yet — Refresh and wait for "wall pyramid ready".', 'error');
         const btn = document.getElementById(`btn-${_mosaicConfig(kind).tabName}-save`);
         if (btn) {
@@ -606,20 +642,49 @@ function _stopMosaicWallPoll(kind) {
         clearTimeout(state.wallPollTimer);
         state.wallPollTimer = null;
     }
+    state.wallPollPhase = '';
 }
+
+// ~960s of computing polls (8s each) exceeds the 900s wall-worker timeout, so
+// the UI always observes a terminal state instead of giving up early
+// (code-review-28 F18). A ready wall whose metadata is transiently unreachable
+// gets a shorter, backed-off retry budget rather than being abandoned.
+const _WALL_POLL_MS = 8000;
+const _WALL_COMPUTE_MAX = 120;
+const _WALL_READY_FETCH_MAX = 8;
 
 function _scheduleMosaicWallPoll(kind, attempt = 0) {
     const state = _mosaicState(kind);
     _stopMosaicWallPoll(kind);
     const wallState = String((state.status || {}).wall_state || '');
-    if (wallState !== 'computing' || attempt >= 40) return;
+    // Keep polling while the wall is building, OR while it is ready but its
+    // metadata has not loaded yet (transient wall.json fetch). Phase changes
+    // reset the attempt counter so the ready-fetch budget is independent of how
+    // long the build took.
+    const readyButUnloaded = wallState === 'ready' && !_wallLoadedForStatus(kind);
+    const phase = wallState === 'computing' ? 'computing'
+                : (readyButUnloaded ? 'ready-fetch' : 'stop');
+    if (phase === 'stop') return;
+    if (state.wallPollPhase !== phase) { state.wallPollPhase = phase; attempt = 0; }
+    const cap = phase === 'ready-fetch' ? _WALL_READY_FETCH_MAX : _WALL_COMPUTE_MAX;
+    if (attempt >= cap) {
+        if (phase === 'ready-fetch') {
+            _logMosaic(kind, `${_mosaicConfig(kind).label} wall ready but metadata unreachable after ${cap} tries · using per-tile grid`,
+                       'err', `wall-json-giveup|${(state.status || {}).wall_refresh_id || ''}`);
+            _mosaicRailUpsert(kind, 'failed', 'wall metadata unreachable · grid fallback');
+        }
+        return;
+    }
+    const delay = phase === 'ready-fetch'
+        ? Math.min(_WALL_POLL_MS, 1000 * Math.pow(2, attempt))  // 1s,2s,4s,8s… bounded backoff
+        : _WALL_POLL_MS;
     state.wallPollTimer = setTimeout(async () => {
         state.wallPollTimer = null;
         try {
             state.status = (await _fetchMosaicStatus(kind)) || state.status;
-            await _maybeLoadMosaicWall(kind);
+            const loaded = await _maybeLoadMosaicWall(kind);
             const ws = String((state.status || {}).wall_state || '');
-            if (ws === 'ready') {
+            if (ws === 'ready' && loaded) {
                 _rebuildArtifactMosaic(kind);
                 _logMosaicWallState(kind);
                 _mosaicRailUpsert(kind, 'done', `${Number((state.status || {}).count || 0).toLocaleString()} tiles · wall ready`);
@@ -632,7 +697,7 @@ function _scheduleMosaicWallPoll(kind, attempt = 0) {
             }
         } catch (e) { /* transient status fetch failure: keep polling */ }
         _scheduleMosaicWallPoll(kind, attempt + 1);
-    }, 8000);
+    }, delay);
 }
 
 function _rebuildArtifactMosaic(kind) {
@@ -976,11 +1041,13 @@ async function _runMosaicContextAction(action) {
         } else if (action === 'add-book') {
             let ref;
             if (kind === 'palette') {
-                // books hold COLOR artifacts: a derived palette maps to its
-                // source via the pal_{color_artifact_id} naming; standalone
-                // palettes have no source and cannot join a book
-                const pid = String(tile.palette_id || artifactId || '');
-                const sourceId = pid.startsWith('pal_') ? pid.slice(4) : '';
+                // books hold COLOR artifacts: a derived palette names its source
+                // via the authoritative derived_from_color_artifact_id carried in
+                // the manifest (code-review-28 F17). NEVER infer it by stripping
+                // a 'pal_' prefix — current ids are pal_<metric>_<interp>_<digest>
+                // so that guess names a nonexistent artifact. Standalone palettes
+                // have no source and cannot join a book.
+                const sourceId = String(tile.derived_from_color_artifact_id || '');
                 if (!sourceId) throw new Error('This palette has no source color artifact');
                 const summary = await lambdaPost('storage', { job_id: tile.job_id }, '/render-summary');
                 const match = (((summary || {}).families || {}).color || []).find(r => r.artifact_id === sourceId);

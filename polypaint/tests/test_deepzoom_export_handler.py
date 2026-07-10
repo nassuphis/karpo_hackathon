@@ -64,6 +64,35 @@ class TestInternalActionBoundary(unittest.TestCase):
                  "source_key": "renders/OTHERJOB/color/color_src/image.jpeg"})
         mock_s3.get_object.assert_not_called()
 
+    @patch("handler_deepzoom_export.report_status")
+    @patch("handler_deepzoom_export.s3")
+    def test_raw_sidecars_must_match_source_artifact_not_just_job(self, mock_s3, _report):
+        # code-review-28 F12: raw sidecars were tied only to the job prefix. A
+        # raw_key under a DIFFERENT artifact of the same job must now be refused
+        # before any GET — the sidecars belong to the source artifact.
+        import handler_deepzoom_export as mod
+        with self.assertRaises(ValueError):
+            mod.handle_deepzoom_export_request(
+                {"job_id": "test_dz",
+                 "source_key": "renders/test_dz/color/color_src/image.jpeg",
+                 "raw_key": "renders/test_dz/color/OTHER_ART/greyscale.raw",
+                 "raw_meta_key": "renders/test_dz/color/color_src/greyscale.meta.json"},
+                require_raw_sidecar=True)
+        mock_s3.get_object.assert_not_called()
+
+    @patch("handler_deepzoom_export.report_status")
+    @patch("handler_deepzoom_export.s3")
+    def test_source_ref_parser_extracts_exact_artifact(self, mock_s3, _report):
+        # The unified render-key parser (code-review-28 F12) must return the
+        # exact artifact segment, not a substring coincidence.
+        import handler_deepzoom_export as mod
+        ref = mod._source_ref_from_key("renders/j/palettes/pal_7/image.jpeg")
+        self.assertEqual(ref["job_id"], "j")
+        self.assertEqual(ref["family"], "palette")
+        self.assertEqual(ref["artifact_id"], "pal_7")
+        # a non-canonical (legacy root) key yields an empty ref, not a guess
+        self.assertEqual(mod._source_ref_from_key("renders/j/image.jpeg")["artifact_id"], "")
+
 
 class TestDeepZoomExportRaw(unittest.TestCase):
     @patch("handler_deepzoom_export.report_status")

@@ -9,7 +9,7 @@ import json
 
 from coeff_program_source import coeff_source_text_from_payload, parse_coeff_program_source
 from param_program_source import param_source_text_from_payload, parse_param_program_source
-from shared import BUCKET
+from shared import BUCKET, is_missing_s3_error  # noqa: F401 (re-exported below)
 
 PARAM_PROGRAMS_PREFIX = "polypaint/param-programs/"
 COEFF_PROGRAMS_PREFIX = "polypaint/coeff-programs/"
@@ -45,10 +45,9 @@ def compiled_param_program_payload(compiled):
     return payload
 
 
-def is_missing_s3_error(exc):
-    response = getattr(exc, "response", {}) or {}
-    code = str((response.get("Error") or {}).get("Code") or "")
-    return code in {"NoSuchKey", "NoSuchBucket", "404", "NotFound"}
+# is_missing_s3_error is re-exported from shared (code-review-28 F13): one
+# policy for S3 absence. NoSuchBucket is intentionally NOT absence — it is a
+# configuration error and must propagate, not be swallowed as "object missing".
 
 
 def _resolve_s3_client(s3_client=None, s3_client_factory=None):

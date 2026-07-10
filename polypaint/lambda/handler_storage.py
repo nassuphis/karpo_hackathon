@@ -42,7 +42,7 @@ from logical_sections import (
 )
 from shared import (BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response,
                     _get_ddb, parse_boolish, assert_safe_render_image_key,
-                    assert_render_identity)
+                    assert_render_identity, is_missing_s3_error, s3_error_reason)
 from coeff_program_chain import (
     PROGRAM_KIND as COEFF_PROGRAM_KIND,
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
@@ -329,15 +329,41 @@ def _coeff_program_v2_key(program_id):
     return f"{COEFF_PROGRAMS_PREFIX}v2/{_normalize_program_id(program_id)}.json"
 
 
-def _drop_stale_program_v2_key(v2_key):
+def _drop_stale_program_v2_key(v2_key, *, s3_client=None, bucket=None):
     """Remove the migrated v2 copy when its v1 source is re-saved.
 
     Fetch prefers the v2 key, so a stale v2 copy would shadow every later
     edit forever (and re-migration would 409 on the conflict). A v1 re-save
     supersedes the derived v2 artifact; migration can recreate it.
+
+    Deletes unconditionally: S3 DELETE is idempotent (a no-op on a missing
+    key), so a preceding HEAD probe added nothing but a failure mode — a
+    transient throttle on that HEAD used to skip the delete and leave the
+    stale v2 shadowing the new v1 (code-review-28 F8). A transient DELETE
+    error now propagates so the save fails and is retried, rather than
+    silently leaving a zombie v2.
     """
-    if _key_exists(v2_key):
-        s3.delete_object(Bucket=BUCKET, Key=v2_key)
+    client = s3_client or s3
+    client.delete_object(Bucket=bucket or BUCKET, Key=v2_key)
+
+
+def _put_program_v1_object(v1_key, v2_key, body, *, content_type="application/json",
+                           metadata=None, s3_client=None, bucket=None):
+    """Single primitive for writing a saved-program v1 object.
+
+    Writes the v1 body, then idempotently drops any migrated v2 copy so fetch
+    (which prefers v2) cannot keep serving stale bytes after a v1 re-save
+    (code-review-28 F8). Both the API save handlers and the offline
+    uploader/seed scripts route through this (the scripts pass their own
+    client/bucket), so no writer can forget the v2 cleanup and report a
+    successful overwrite while fetch shadows it."""
+    client = s3_client or s3
+    target_bucket = bucket or BUCKET
+    kwargs = {"Bucket": target_bucket, "Key": v1_key, "Body": body, "ContentType": content_type}
+    if metadata is not None:
+        kwargs["Metadata"] = metadata
+    client.put_object(**kwargs)
+    _drop_stale_program_v2_key(v2_key, s3_client=client, bucket=target_bucket)
 
 
 def _delete_program_keys(key, v2_key):
@@ -1158,11 +1184,9 @@ def _results_list_s3_client(max_workers):
 
 
 def _is_missing_s3_error(exc):
-    code = getattr(exc, "response", {}).get("Error", {}).get("Code")
-    if code in {"NoSuchKey", "404", "NotFound"}:
-        return True
-    msg = str(exc)
-    return "NoSuchKey" in msg or "NotFound" in msg
+    # Canonical policy lives in shared.is_missing_s3_error (code-review-28 F13);
+    # this module-private alias keeps existing call sites terse.
+    return is_missing_s3_error(exc)
 
 
 def _favorite_task_id(job_id, artifact_id):
@@ -1565,14 +1589,11 @@ def handle_save_solve_score_program(event):
     )
     key = _solve_score_program_key(program["id"])
     overwritten = _key_exists(key)
-    s3.put_object(
-        Bucket=BUCKET,
-        Key=key,
-        Body=(json.dumps(program, indent=2) + "\n").encode("utf-8"),
-        ContentType="application/json",
-        Metadata=_solve_score_program_put_metadata(program),
+    _put_program_v1_object(
+        key, _solve_score_program_v2_key(program["id"]),
+        (json.dumps(program, indent=2) + "\n").encode("utf-8"),
+        metadata=_solve_score_program_put_metadata(program),
     )
-    _drop_stale_program_v2_key(_solve_score_program_v2_key(program["id"]))
     return ok_response({"program": program, "overwritten": overwritten})
 
 
@@ -1734,14 +1755,11 @@ def handle_save_param_program(event):
     )
     key = _param_program_key(program["id"])
     overwritten = _key_exists(key)
-    s3.put_object(
-        Bucket=BUCKET,
-        Key=key,
-        Body=(json.dumps(program, indent=2) + "\n").encode("utf-8"),
-        ContentType="application/json",
-        Metadata=_param_program_put_metadata(program),
+    _put_program_v1_object(
+        key, _param_program_v2_key(program["id"]),
+        (json.dumps(program, indent=2) + "\n").encode("utf-8"),
+        metadata=_param_program_put_metadata(program),
     )
-    _drop_stale_program_v2_key(_param_program_v2_key(program["id"]))
     return ok_response({"program": program, "overwritten": overwritten})
 
 
@@ -1885,14 +1903,11 @@ def handle_save_coeff_program(event):
     )
     key = _coeff_program_key(program["id"])
     overwritten = _key_exists(key)
-    s3.put_object(
-        Bucket=BUCKET,
-        Key=key,
-        Body=(json.dumps(program, indent=2) + "\n").encode("utf-8"),
-        ContentType="application/json",
-        Metadata=_coeff_program_put_metadata(program),
+    _put_program_v1_object(
+        key, _coeff_program_v2_key(program["id"]),
+        (json.dumps(program, indent=2) + "\n").encode("utf-8"),
+        metadata=_coeff_program_put_metadata(program),
     )
-    _drop_stale_program_v2_key(_coeff_program_v2_key(program["id"]))
     return ok_response({"program": program, "overwritten": overwritten})
 
 
@@ -2835,12 +2850,19 @@ def _load_color_artifact_overlay(job_id, artifact_id, *, s3_client=None):
     client = s3_client or s3
     try:
         obj = client.get_object(Bucket=BUCKET, Key=color_artifact_meta_key(job_id, artifact_id))
-    except Exception:
-        return None
+    except Exception as exc:
+        # Genuine absence -> no overlay (expected). A throttle/5xx/access error
+        # is NOT absence: propagate so the summary retries rather than silently
+        # dropping this artifact's provenance overlay (code-review-28 F13).
+        if is_missing_s3_error(exc):
+            return None
+        raise
     try:
         body = obj["Body"].read()
         data = json.loads(body)
     except Exception:
+        # Object exists but is unreadable/corrupt JSON — genuinely unusable, so
+        # skip the overlay (distinct from a transient fetch failure above).
         return None
     return data if isinstance(data, dict) else None
 
@@ -4263,12 +4285,20 @@ def handle_delete_render_artifact(event):
 
 
 def _key_exists(key):
-    """Check if an S3 key exists via HEAD (fast, no data transfer)."""
+    """Check if an S3 key exists via HEAD (fast, no data transfer).
+
+    Returns False ONLY for a genuine 404/NoSuchKey. A throttle, 5xx, transport
+    error, or AccessDenied propagates (code-review-28 F13): a transient failure
+    must never be reported as 'absent', because callers use this for v1/v2
+    program lifecycle and overwrite decisions where a false 'absent' skips
+    required cleanup or mislabels a save."""
     try:
         s3.head_object(Bucket=BUCKET, Key=key)
         return True
-    except Exception:
-        return False
+    except Exception as exc:
+        if is_missing_s3_error(exc):
+            return False
+        raise
 
 
 def handle_delete(event):
@@ -4896,8 +4926,18 @@ def _head_artifact_keys(keys, presign=True, *, s3_client=None):
                     Params={"Bucket": BUCKET, "Key": key},
                     ExpiresIn=PRESIGN_EXPIRY)
             return key, info
-        except Exception:
-            return key, {"exists": False, "key": key, "size": 0, "type": "", "width": None, "height": None, "url": None, "modified_at": None, "user_meta": {}}
+        except Exception as exc:
+            # Fail-soft is intentional here (one bad key must not 500 the whole
+            # batch), but a transient/throttle/access error is NOT absence
+            # (code-review-28 F13). Only a genuine 404 is a clean "missing";
+            # otherwise surface the reason so a summary can retry or show
+            # "unknown" rather than silently dropping a real artifact.
+            absent = {"exists": False, "key": key, "size": 0, "type": "", "width": None,
+                      "height": None, "url": None, "modified_at": None, "user_meta": {}}
+            if not is_missing_s3_error(exc):
+                absent["error"] = True
+                absent["error_reason"] = s3_error_reason(exc)
+            return key, absent
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(keys), 20)) as pool:
         results = dict(pool.map(check, keys))

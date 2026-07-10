@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Dict
 
-from shared import parse_boolish
+from shared import parse_boolish, is_missing_s3_error, s3_error_reason
 from solve_score_chain import emit_solve_score_metadata
 
 
@@ -96,7 +96,17 @@ def load_color_artifact_head(s3_client, bucket: str, job_id: str, artifact_id: s
     for key in color_artifact_image_candidates(job_id, artifact_id):
         try:
             head = s3_client.head_object(Bucket=bucket, Key=key)
-        except Exception as exc:  # boto3 client-specific exception types are awkward to share
+        except Exception as exc:
+            # Only a genuine 404/NoSuchKey means "this candidate isn't the one,
+            # try the next" (code-review-28 F13). A throttle, 5xx, transport
+            # error, or AccessDenied is NOT absence: propagate it instead of
+            # walking to the next candidate and eventually raising a misleading
+            # "not found" for an artifact that may well exist.
+            if not is_missing_s3_error(exc):
+                raise RuntimeError(
+                    f"Color artifact HEAD failed for {key} "
+                    f"({s3_error_reason(exc)}: {type(exc).__name__})"
+                ) from exc
             errors.append(f"{key}: {type(exc).__name__}")
             continue
         meta = dict(head.get("Metadata", {}) or {})

@@ -16,7 +16,8 @@ import struct
 import boto3
 from botocore.exceptions import ClientError
 
-from shared import BUCKET, PRESIGN_EXPIRY, parse_body, ok_response, compute_viewport_from_bin, encode_png_gray
+from shared import (BUCKET, PRESIGN_EXPIRY, parse_body, ok_response,
+                    compute_viewport_from_bin, encode_png_gray, is_missing_s3_error)
 
 s3 = boto3.client("s3")
 
@@ -30,11 +31,8 @@ def _error_response(status_code, message):
 
 
 def _is_missing_s3_error(exc):
-    code = getattr(exc, "response", {}).get("Error", {}).get("Code")
-    if code in {"NoSuchKey", "404", "NotFound"}:
-        return True
-    msg = str(exc)
-    return "NoSuchKey" in msg or "NotFound" in msg
+    # Canonical policy: shared.is_missing_s3_error (code-review-28 F13).
+    return is_missing_s3_error(exc)
 
 
 def handler(event, context):

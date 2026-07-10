@@ -2086,10 +2086,12 @@ def upload(program, existing_keys, force=False):
     if key in existing_keys and not force:
         return key, "exists (skipped; use --force to overwrite)"
     body = (json.dumps(program, indent=2) + "\n").encode("utf-8")
-    hs.s3.put_object(
-        Bucket=hs.BUCKET, Key=key, Body=body,
-        ContentType="application/json",
-        Metadata=hs._coeff_program_put_metadata(program),
+    # Route through the single save primitive so a forced overwrite of an
+    # already-migrated program also drops the stale v2 copy (code-review-28
+    # F8) — a raw put_object left fetch serving the old v2 body forever.
+    hs._put_program_v1_object(
+        key, hs._coeff_program_v2_key(program["id"]), body,
+        metadata=hs._coeff_program_put_metadata(program),
     )
     return key, "uploaded"
 

@@ -9,7 +9,6 @@ Public access via bucket policy on deepzoom/ prefix (no per-object ACL).
 """
 import json
 import os
-import re
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -18,12 +17,12 @@ import boto3
 
 from color_artifact_meta import load_color_artifact_head
 from shared import (BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status,
-                    imgpipe_env, assert_render_source, assert_safe_id)
+                    imgpipe_env, assert_render_source, assert_safe_id, parse_render_key)
 
 s3 = boto3.client("s3")
 DZ_EXPORT = os.path.join(os.path.dirname(__file__), "dz_export")
 VIEWER_TEMPLATE = os.path.join(os.path.dirname(__file__), "deepzoom_viewer_template.html")
-_SOURCE_ARTIFACT_KEY_RE = re.compile(r"^renders/([^/]+)/(color|bilevel|coeffs|palettes)/([^/]+)/[^/]+$")
+# dir token (from the structured render-key parser) -> semantic source family.
 _SOURCE_FAMILY_DIR_MAP = {"color": "color", "bilevel": "bilevel", "coeffs": "coeffs", "palettes": "palette"}
 
 
@@ -59,20 +58,18 @@ def _read_json_key(key):
 
 
 def _source_ref_from_key(source_key):
-    match = _SOURCE_ARTIFACT_KEY_RE.match(str(source_key or "").strip())
-    if not match:
-        return {
-            "job_id": "",
-            "family_dir": "",
-            "family": "",
-            "artifact_id": "",
-        }
-    family_dir = match.group(2)
+    # One structured render-key parser for the whole codebase (code-review-28
+    # F12): exact renders/<job>/<family>/<artifact>/<leaf> components, never a
+    # substring guess.
+    parsed = parse_render_key(str(source_key or "").strip())
+    if parsed["variant"] != "canonical":
+        return {"job_id": "", "family_dir": "", "family": "", "artifact_id": ""}
+    family_dir = parsed["family"]
     return {
-        "job_id": match.group(1),
+        "job_id": parsed["job"],
         "family_dir": family_dir,
         "family": _SOURCE_FAMILY_DIR_MAP.get(family_dir, ""),
-        "artifact_id": match.group(3),
+        "artifact_id": parsed["artifact_id"],
     }
 
 
@@ -151,9 +148,23 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
         # code-review-27 F5: pin the source (and raw sidecars) to this job
         # before the download, so the export can't pull another job's bytes
         assert_render_source(source_key, job_id, None, "source_key")
-        for k in (raw_key, raw_meta_key):
-            if k and not k.startswith(f"renders/{job_id}/"):
-                raise ValueError(f"key {k!r} is not under renders/{job_id}/ (job mismatch)")
+        # Tie the raw sidecars to the SAME artifact as the source, not merely
+        # the job (code-review-28 F12). In the from-raw flow the client sends
+        # the artifact's own raw_key/raw_meta_key, which live beside its image
+        # under renders/<job>/<family>/<artifact>/. Fall back to a job-scope pin
+        # only for a legacy/non-canonical source key with no artifact segment.
+        _src = parse_render_key(source_key)
+        if _src["variant"] == "canonical":
+            artifact_prefix = f"renders/{_src['job']}/{_src['family']}/{_src['artifact_id']}/"
+            for label, k in (("raw_key", raw_key), ("raw_meta_key", raw_meta_key)):
+                if k and not k.startswith(artifact_prefix):
+                    raise ValueError(
+                        f"{label} {k!r} is not under the source artifact prefix "
+                        f"{artifact_prefix} (artifact mismatch)")
+        else:
+            for label, k in (("raw_key", raw_key), ("raw_meta_key", raw_meta_key)):
+                if k and not k.startswith(f"renders/{job_id}/"):
+                    raise ValueError(f"{label} {k!r} is not under renders/{job_id}/ (job mismatch)")
         source_kind = "image"
         suffix = os.path.splitext(source_key)[1] or ".img"
         source_path = f"/tmp/deepzoom_source{suffix}"

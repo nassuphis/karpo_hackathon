@@ -63,16 +63,27 @@ class TestRootProgramPersistence(unittest.TestCase):
             self.meta[Key] = Metadata or {}
             return {}
 
+        # Missing objects must raise like real boto3 — a ClientError whose
+        # Error.Code is NoSuchKey/404 — not a bare KeyError. shared's S3 policy
+        # only treats a genuine NoSuchKey/404 as absence and propagates
+        # anything else (code-review-28 F13), so an unrealistic KeyError would
+        # now (correctly) be re-raised as a real error.
+        from botocore.exceptions import ClientError
+
+        def _missing(op):
+            return ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."},
+                 "ResponseMetadata": {"HTTPStatusCode": 404}}, op)
+
         def get_object(Bucket, Key):
             if Key not in self.store:
-                raise self.hs.s3.exceptions.NoSuchKey({"Error": {"Code": "NoSuchKey"}}, "GetObject") \
-                    if hasattr(self.hs.s3, "exceptions") else KeyError(Key)
+                raise _missing("GetObject")
             import io
             return {"Body": io.BytesIO(self.store[Key])}
 
         def head_object(Bucket, Key):
             if Key not in self.store:
-                raise KeyError(Key)
+                raise _missing("HeadObject")
             return {"Metadata": self.meta.get(Key, {})}
 
         def delete_object(Bucket, Key):

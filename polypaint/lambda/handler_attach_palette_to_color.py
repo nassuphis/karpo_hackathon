@@ -24,6 +24,7 @@ from shared import (
     ok_response,
     parse_body,
     parse_boolish,
+    parse_render_key,
     report_status,
 )
 
@@ -70,17 +71,23 @@ def handler(event, context):
     assert_safe_render_image_key(image_key, "associated_palette_image_key")
     if preview_key:
         assert_safe_render_image_key(preview_key, "associated_palette_preview_key")
-    # identity (code-review-27 F8): the keys must NAME the declared palette id,
-    # and a same-job (generated) palette must live under this job's palette
-    # namespace, so the overlay can't claim palette X while pointing at Y's
-    # swatch. dependency palettes may be cross-job but still id-matched.
+    # identity (code-review-27 F8, tightened per code-review-28 F12): the keys
+    # must NAME the declared palette id as the EXACT artifact segment of a
+    # renders/<job>/palettes/<palette_id>/ key, and a same-job (generated)
+    # palette must live under this job. The old `/<palette_id>/ in key`
+    # substring test let palette_id='palettes' satisfy any palette path.
+    # dependency palettes may be cross-job but still id-matched.
     for label, key in (("associated_palette_image_key", image_key),
                        ("associated_palette_preview_key", preview_key)):
         if not key:
             continue
-        if f"/{palette_id}/" not in key:
-            raise RuntimeError(f"{label} {key!r} does not name palette {palette_id!r}")
-        if mode == "generated" and not key.startswith(f"renders/{job_id}/palettes/"):
+        parsed = parse_render_key(key)
+        if (parsed["variant"] != "canonical" or parsed["family"] != "palettes"
+                or parsed["artifact_id"] != palette_id):
+            raise RuntimeError(
+                f"{label} {key!r} does not name palette {palette_id!r} "
+                f"as a renders/<job>/palettes/<palette_id>/ artifact")
+        if mode == "generated" and parsed["job"] != job_id:
             raise RuntimeError(
                 f"{label} {key!r} is not under renders/{job_id}/palettes/ for a generated palette")
 

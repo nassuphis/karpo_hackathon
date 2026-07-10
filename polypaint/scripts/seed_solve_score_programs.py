@@ -12,8 +12,9 @@ LAMBDA_DIR = ROOT / "lambda"
 if str(LAMBDA_DIR) not in sys.path:
     sys.path.insert(0, str(LAMBDA_DIR))
 
-from handler_storage import _compile_solve_score_program_payload, _solve_score_program_key
-from shared import BUCKET
+from handler_storage import (_compile_solve_score_program_payload, _solve_score_program_key,
+                             _solve_score_program_v2_key, _put_program_v1_object)
+from shared import BUCKET, is_missing_s3_error
 
 
 def _catalog_entries():
@@ -40,11 +41,16 @@ def _load_seed_program(entry):
 
 
 def _key_exists(s3_client, bucket, key):
+    # Only a genuine 404 is "absent"; a transient/throttle/access error
+    # propagates so the seed never mis-reads an existing program as missing
+    # (code-review-28 F13).
     try:
         s3_client.head_object(Bucket=bucket, Key=key)
         return True
-    except Exception:
-        return False
+    except Exception as exc:
+        if is_missing_s3_error(exc):
+            return False
+        raise
 
 
 def main():
@@ -75,11 +81,13 @@ def main():
             else:
                 created += 1
             continue
-        s3.put_object(
-            Bucket=args.bucket,
-            Key=key,
-            Body=(json.dumps(program, indent=2) + "\n").encode("utf-8"),
-            ContentType="application/json",
+        # Route through the single save primitive so an overwrite of an
+        # already-migrated program also drops the stale v2 copy that fetch
+        # prefers (code-review-28 F8).
+        _put_program_v1_object(
+            key, _solve_score_program_v2_key(program["id"]),
+            (json.dumps(program, indent=2) + "\n").encode("utf-8"),
+            s3_client=s3, bucket=args.bucket,
         )
         print(f"{action:<9} s3://{args.bucket}/{key}  ({source_path})")
         if exists:

@@ -252,6 +252,11 @@ _SAFE_RENDER_IMAGE_KEY = re.compile(r"renders/[A-Za-z0-9._/-]+\.(?:jpe?g|png)")
 # for book image_key + QR payloads.
 _SAFE_RENDER_OBJECT_KEY = re.compile(r"renders/[A-Za-z0-9._/-]+\.(?:jpe?g|png|tiff?)")
 
+# Canonical render family directories under renders/<job>/. 'palettes' holds
+# per-job palette artifacts. A canonical artifact key is always
+# renders/<job>/<family>/<artifact>/<leaf> — every artifact has a family dir.
+RENDER_FAMILY_DIRS = ("color", "bilevel", "coeffs", "pdf", "palettes")
+
 
 def is_safe_render_image_key(key):
     k = str(key or "")
@@ -304,19 +309,61 @@ def assert_render_source(key, job_id, artifact_id=None, label="source_key"):
     return str(key)
 
 
+def parse_render_key(key):
+    """Parse an S3 render key into structured identity components.
+
+    A canonical render artifact key is renders/<job>/<family>/<artifact>/<leaf>.
+    Returns a dict {job, family, artifact_id, leaf, variant, segments}. variant:
+      'canonical'   renders/<job>/<family>/<artifact>/<leaf...>  (family known)
+      'legacy_root' renders/<job>/<leaf>   (single legacy artifact-per-job file)
+      'job_scoped'  renders/<job>/<other>/...  (job files, chunk dirs, etc.)
+      'invalid'     not under renders/<job>/
+
+    Identity checks must compare EXACT components, never a substring: a
+    substring test accepts artifact id 'color'/'palettes' or the job id for an
+    unrelated key (code-review-28 F12). Never raises."""
+    k = str(key or "")
+    parts = k.split("/")
+    base = {"job": None, "family": None, "artifact_id": None, "leaf": None,
+            "variant": "invalid", "segments": parts}
+    if len(parts) < 3 or parts[0] != "renders" or not parts[1]:
+        return base
+    job = parts[1]
+    leaf = parts[-1]
+    if len(parts) >= 5 and parts[2] in RENDER_FAMILY_DIRS and parts[3] and leaf:
+        return {"job": job, "family": parts[2], "artifact_id": parts[3],
+                "leaf": leaf, "variant": "canonical", "segments": parts}
+    if len(parts) == 3 and parts[2]:
+        return {"job": job, "family": None, "artifact_id": None,
+                "leaf": leaf, "variant": "legacy_root", "segments": parts}
+    return {"job": job,
+            "family": parts[2] if parts[2] in RENDER_FAMILY_DIRS else None,
+            "artifact_id": None, "leaf": leaf, "variant": "job_scoped",
+            "segments": parts}
+
+
 def assert_render_identity(key, job_id, artifact_id, label="image_key"):
     """A render image key must belong to the same artifact its sibling fields
-    name, so a book/PDF page can't pair image B with metadata A. Ties the key
-    to renders/<job_id>/ and to a /<artifact_id>/ path segment
-    (code-review-26 F3). Assumes the key already passed
-    assert_safe_render_image_key."""
+    name, so a book/PDF page can't pair image B with metadata A.
+
+    Parses the key into renders/<job>/<family>/<artifact>/<leaf> and compares
+    EXACT components (code-review-26 F3, tightened per code-review-28 F12): the
+    old substring test (`/<artifact_id>/ in key`) accepted artifact id 'color'
+    or 'palettes' or the literal job id for an unrelated key. Assumes the key
+    already passed assert_safe_render_image_key."""
     k = str(key or "")
     jid = str(job_id or "")
     aid = str(artifact_id or "")
-    if not jid or not k.startswith(f"renders/{jid}/"):
+    parsed = parse_render_key(k)
+    if not jid or parsed["job"] != jid:
         raise ValueError(f"{label} {k!r} is not under renders/{jid}/ (job_id mismatch)")
-    if not aid or f"/{aid}/" not in k:
-        raise ValueError(f"{label} {k!r} does not contain /{aid}/ (artifact_id mismatch)")
+    if parsed["variant"] != "canonical":
+        raise ValueError(
+            f"{label} {k!r} is not a canonical renders/<job>/<family>/<artifact>/... key")
+    if not aid or parsed["artifact_id"] != aid:
+        raise ValueError(
+            f"{label} {k!r} artifact segment {parsed['artifact_id']!r} "
+            f"does not equal declared artifact_id {aid!r}")
     return k
 
 
@@ -350,6 +397,100 @@ def png_dimensions_from_path(path):
 
 def is_enospc(exc):
     return isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ENOSPC
+
+
+# ── S3 error taxonomy (code-review-28 F13) ─────────────────────────────────
+# Exactly one policy decides whether an S3 exception means "the object is
+# genuinely absent" versus a transient or configuration failure that must NOT
+# be silently relabeled as missing. A throttled HEAD (503 SlowDown / 429), a
+# 5xx, a transport error, and AccessDenied are all "present-or-unknown": the
+# caller must retry or propagate, never treat them as "not there". Turning any
+# of those into absence is what lets render summaries drop real artifacts,
+# mosaic refresh publish incomplete manifests, and program cleanup get skipped.
+
+def s3_error_code(exc):
+    """Best-effort S3/botocore error code for exc as a string ('' if none).
+
+    Prefers the structured ClientError code; falls back to the HTTP status so a
+    bare 404/403/503 is still classifiable when no error code is present."""
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = (response.get("Error") or {}).get("Code")
+        if code:
+            return str(code)
+        status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+        if status:
+            return str(status)
+    return ""
+
+
+def is_missing_s3_error(exc):
+    """True only when exc means the object is genuinely absent (404/NoSuchKey).
+
+    Everything else — throttling, 5xx, transport failures, AccessDenied,
+    NoSuchBucket, malformed responses — returns False so the caller retries or
+    propagates instead of reporting a real object as missing. NoSuchBucket is a
+    configuration error, not an absent object, so it is deliberately excluded."""
+    code = s3_error_code(exc)
+    if code in {"NoSuchKey", "404", "NotFound"}:
+        return True
+    if code:
+        # A real S3/HTTP code that is not absence (403, 503, 5xx, SlowDown, ...).
+        return False
+    # No structured code (a non-ClientError wrapper): match explicit absence
+    # markers in the message only — never a blanket True.
+    msg = str(exc)
+    return "NoSuchKey" in msg or "NotFound" in msg
+
+
+_S3_ACCESS_DENIED_CODES = {
+    "AccessDenied", "403", "AllAccessDisabled",
+    "InvalidAccessKeyId", "SignatureDoesNotMatch",
+}
+_S3_THROTTLE_CODES = {
+    "SlowDown", "429", "503", "ServiceUnavailable",
+    "RequestLimitExceeded", "Throttling", "ThrottlingException",
+}
+_S3_TRANSPORT_EXC_NAMES = {
+    "EndpointConnectionError", "ConnectTimeoutError", "ReadTimeoutError",
+    "ConnectionClosedError", "ConnectionError", "IncompleteReadError",
+}
+
+
+_S3_SERVER_ERROR_CODES = {"InternalError", "InternalServerError", "ServiceUnavailable"}
+
+
+def s3_http_status(exc):
+    """Numeric HTTP status for an S3 exception, or 0 if none is present."""
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        try:
+            return int((response.get("ResponseMetadata") or {}).get("HTTPStatusCode") or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def s3_error_reason(exc):
+    """Coarse reason bucket for a failed S3 op, for surfacing per-reason error
+    counts where a fail-soft read still wants to say *why* a key was
+    unavailable: 'missing' | 'access_denied' | 'throttled' | 'server_error' |
+    'transport' | 'error'."""
+    code = s3_error_code(exc)
+    status = s3_http_status(exc)
+    if code in {"NoSuchKey", "404", "NotFound"} or status == 404:
+        return "missing"
+    if code in _S3_ACCESS_DENIED_CODES or status == 403:
+        return "access_denied"
+    if code in _S3_THROTTLE_CODES or status in (429, 503):
+        return "throttled"
+    if code in _S3_SERVER_ERROR_CODES or code[:1] == "5" or 500 <= status < 600:
+        return "server_error"
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return "transport"
+    if type(exc).__name__ in _S3_TRANSPORT_EXC_NAMES:
+        return "transport"
+    return "error"
 
 
 def build_tmp_enospc_message(*, solver_label, phase, tmp_file, coeffs_key,

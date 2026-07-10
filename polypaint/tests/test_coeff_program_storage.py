@@ -169,6 +169,91 @@ class TestCoeffProgramStorage(unittest.TestCase):
         self.assertIn("const", json.dumps(prog2["chain"]))  # v1 fallback
 
     @patch("handler_storage.s3")
+    def test_force_resave_after_migration_drops_stale_v2(self, mock_s3):
+        # code-review-28 F8: a v1 re-save must drop the migrated v2 copy that
+        # fetch prefers, or the edit is invisible forever. Exercises the single
+        # save primitive (_put_program_v1_object) used by both API and scripts.
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        self._patch_s3(mock_s3, fake_s3)
+
+        first = handler_storage.handler(
+            self._event("/save-coeff-program", {"name": "Migrated", "chain": [["const", "35", "p1+p2"], ["emit"]]}),
+            None,
+        )
+        program_id = json.loads(first["body"])["program"]["id"]
+
+        # Simulate migration: a v2 object now shadows the v1 body on fetch.
+        v2_key = f"polypaint/coeff-programs/v2/{program_id}.json"
+        fake_s3.objects[v2_key] = (json.dumps({
+            "program_kind": "coeff_program", "version": 2, "id": program_id,
+            "name": "Migrated", "source_text": "poly = cf\n", "chain": [["set", "poly", "cf"]],
+        }) + "\n").encode("utf-8")
+        fake_s3.metadata[v2_key] = {}
+        prefer_v2 = json.loads(
+            handler_storage.handler(self._event("/fetch-coeff-program", {"id": program_id}), None)["body"]
+        )["program"]
+        self.assertNotIn("const", json.dumps(prefer_v2["chain"]))  # v2 shadows v1
+
+        # Force-overwrite the v1 program with a new chain.
+        resave = handler_storage.handler(
+            self._event("/save-coeff-program", {"name": "Migrated", "chain": [["const", "42", "p1*p2"], ["emit"]]}),
+            None,
+        )
+        self.assertEqual(resave["statusCode"], 200)
+        self.assertTrue(json.loads(resave["body"])["overwritten"])
+
+        # The stale v2 shadow is gone, and fetch now serves the new v1 body.
+        self.assertNotIn(v2_key, fake_s3.objects, "stale v2 copy must be dropped on v1 re-save")
+        after = json.loads(
+            handler_storage.handler(self._event("/fetch-coeff-program", {"id": program_id}), None)["body"]
+        )["program"]
+        self.assertIn("42", json.dumps(after["chain"]))  # new v1 body served
+
+    @patch("handler_storage.s3")
+    def test_stale_v2_drop_is_unconditional_no_head_probe(self, mock_s3):
+        # code-review-28 F8/F13: the v2 delete must NOT be gated on a HEAD probe.
+        # A transient throttle on that HEAD used to skip the delete and leave the
+        # stale v2 shadowing the new v1. Assert the v2 key is deleted and never
+        # HEAD-probed during the save.
+        import handler_storage
+        from botocore.exceptions import ClientError
+
+        fake_s3 = _FakeS3()
+
+        def head_object(Bucket=None, Key=None):
+            # A HEAD on the v2 key would be a throttle in the wild; the save must
+            # never issue it. v1 key HEADs (overwrite check) still resolve normally.
+            if "/v2/" in (Key or ""):
+                raise ClientError({"Error": {"Code": "SlowDown"},
+                                   "ResponseMetadata": {"HTTPStatusCode": 503}}, "HeadObject")
+            if Key not in fake_s3.objects:
+                raise Exception("NoSuchKey")
+            return {"Metadata": dict(fake_s3.metadata.get(Key) or {})}
+
+        self._patch_s3(mock_s3, fake_s3)
+        mock_s3.head_object.side_effect = head_object
+
+        first = handler_storage.handler(
+            self._event("/save-coeff-program", {"name": "NoProbe", "chain": [["const", "35", "p1+p2"], ["emit"]]}),
+            None,
+        )
+        program_id = json.loads(first["body"])["program"]["id"]
+        v2_key = f"polypaint/coeff-programs/v2/{program_id}.json"
+        fake_s3.objects[v2_key] = b"{}\n"
+        fake_s3.metadata[v2_key] = {}
+
+        resave = handler_storage.handler(
+            self._event("/save-coeff-program", {"name": "NoProbe", "chain": [["const", "42", "p1*p2"], ["emit"]]}),
+            None,
+        )
+        self.assertEqual(resave["statusCode"], 200, resave)
+        self.assertNotIn(v2_key, fake_s3.objects, "v2 must be deleted despite a throttling HEAD")
+        v2_heads = [c for c in mock_s3.head_object.call_args_list if "/v2/" in (c.kwargs.get("Key") or "")]
+        self.assertEqual(v2_heads, [], "the v2 key must never be HEAD-probed before delete")
+
+    @patch("handler_storage.s3")
     def test_source_text_save_fetch_and_compile_route(self, mock_s3):
         import handler_storage
 

@@ -15,7 +15,18 @@ let _galleryState = {
     doc: null,              // the loaded editable gallery (source of truth while editing)
     revision: '',           // ETag CAS token from fetch/save
     dirty: false,           // unsaved reorder/title/name edits
+    baseIds: new Set(),     // piece identities at the last server sync (three-way merge base)
+    epoch: 0,               // bumped on every selection/load/adopt; async ops must match
 };
+
+function _galleryPieceKey(p) {
+    return (p.job_id || '') + '::' + (p.family || 'color') + '::' + (p.artifact_id || '');
+}
+
+function _gallerySyncBase(gallery, revision) {
+    _galleryState.revision = revision || '';
+    _galleryState.baseIds = new Set(((gallery && gallery.pieces) || []).map(_galleryPieceKey));
+}
 
 // Read by the DeepZoom tab's "Add to Gallery" (js/12). Reads localStorage (the
 // persistent source of truth) so it is correct even before this tab has loaded.
@@ -25,6 +36,7 @@ function _galleryActiveId() {
 
 function _gallerySetActive(id) {
     _galleryState.activeId = id || '';
+    _galleryState.epoch++;   // invalidate in-flight loads/saves for the old selection
     try { localStorage.setItem(GALLERY_ACTIVE_KEY, _galleryState.activeId); } catch (e) {}
 }
 
@@ -85,26 +97,30 @@ function _galleryModalKey(e) {
 // revision + append the added pieces, keeping local order/titles) so a later
 // Save succeeds instead of hitting a stale-revision conflict; when it is clean
 // we just adopt the server version.
-function _galleryNotifyChanged(galleryId, gallery, revision, addedPick) {
+function _galleryNotifyChanged(galleryId, gallery, revision) {
     if (!galleryId || galleryId !== _galleryState.activeId) return;
     const sameDoc = gallery && gallery.gallery_id === galleryId;
     if (_galleryState.dirty && _galleryState.doc && sameDoc) {
-        // Merge ONLY the piece that was just added — diffing the whole server
-        // list would resurrect pieces the user removed locally but hasn't saved.
-        const key = (p) => p.job_id + '::' + p.artifact_id;
-        const localIds = new Set((_galleryState.doc.pieces || []).map(key));
+        // THREE-WAY merge against the base snapshot: anything on the server that
+        // was NOT in our base was added since we loaded (this add AND any
+        // concurrent client's adds) and must be kept; anything in the base but
+        // not local was removed locally and stays removed. Adopting the newest
+        // revision is then safe — Save can no longer delete concurrent adds.
+        const baseIds = _galleryState.baseIds || new Set();
+        const localIds = new Set((_galleryState.doc.pieces || []).map(_galleryPieceKey));
         const added = (gallery.pieces || []).filter((p) =>
-            !localIds.has(key(p)) && (!addedPick || key(p) === key(addedPick)));
+            !baseIds.has(_galleryPieceKey(p)) && !localIds.has(_galleryPieceKey(p)));
         if (added.length) _galleryState.doc.pieces = (_galleryState.doc.pieces || []).concat(added);
-        if (revision) _galleryState.revision = revision;   // adopt so Save won't 409
+        _gallerySyncBase(gallery, revision || _galleryState.revision);
         _renderGalleryTab();
-        _galleryStatus(`Added ${added.length} piece${added.length === 1 ? '' : 's'} from the DeepZoom tab; Save to keep your changes.`);
+        _galleryStatus(`Merged ${added.length} added piece${added.length === 1 ? '' : 's'}; Save to keep your changes.`);
         return;
     }
     if (sameDoc) {
         _galleryState.doc = gallery;
-        if (revision) _galleryState.revision = revision;
         _galleryState.dirty = false;
+        _gallerySyncBase(gallery, revision || _galleryState.revision);
+        _galleryState.epoch++;
         _renderGalleryTab();
     } else {
         void _galleryLoadActive().then(_renderGalleryTab);
@@ -142,20 +158,29 @@ async function _galleryRefreshList() {
 
 async function _galleryLoadActive() {
     const id = _galleryState.activeId;
-    if (!id) { _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false; return; }
+    if (!id) { _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false; _galleryState.baseIds = new Set(); return; }
     try {
         const resp = await lambdaPost('storage', { gallery_id: id }, '/fetch-gallery');
         if (id !== _galleryState.activeId) return;   // a newer selection superseded this load
         if (resp && resp.error) throw new Error(resp.error);
         _galleryState.doc = resp.gallery;
-        _galleryState.revision = resp.revision || '';
         _galleryState.dirty = false;
+        _gallerySyncBase(resp.gallery, resp.revision);
+        _galleryState.epoch++;                        // a fresh load supersedes older saves
     } catch (e) {
         if (id !== _galleryState.activeId) return;   // stale error for a superseded selection
+        // INVARIANT: doc.gallery_id === activeId. If the failed load was a
+        // SWITCH (doc still holds the previous gallery), clear it — otherwise
+        // the selector says B while edits silently target A.
+        if (_galleryState.doc && _galleryState.doc.gallery_id !== id) {
+            _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false;
+            _galleryState.baseIds = new Set();
+        }
         // Clear the selection ONLY on a genuine 404 (the gallery is gone). A
         // network/5xx blip keeps the selection so it isn't lost spuriously.
         if (/HTTP 404/i.test(e.message || '')) {
             _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false;
+            _galleryState.baseIds = new Set();
             _gallerySetActive('');
             _galleryStatus('That gallery no longer exists — pick or create another.', true);
         } else {
@@ -178,8 +203,8 @@ async function galleryNew() {
         if (resp && resp.error) throw new Error(resp.error);
         _gallerySetActive(resp.gallery.gallery_id);
         _galleryState.doc = resp.gallery;
-        _galleryState.revision = resp.revision || '';
         _galleryState.dirty = false;
+        _gallerySyncBase(resp.gallery, resp.revision);
         await _galleryRefreshList();
         _galleryStatus('Created “' + resp.gallery.name + '”. Add color renders from the DeepZoom tab.');
     } catch (e) {
@@ -230,13 +255,20 @@ async function galleryDelete() {
 // Persist the current doc (CAS via revision). Throws on failure so callers can
 // abort (e.g. Open won't snapshot a gallery whose save just failed).
 async function _gallerySavePersist() {
+    // Bind the operation to the gallery + epoch it started under: a save for A
+    // must never stamp its revision/doc onto B (or onto a fresher load of A).
+    const gid = _galleryState.doc && _galleryState.doc.gallery_id;
+    const epoch = _galleryState.epoch;
     // Snapshot what we submit: if the user keeps editing during the roundtrip
     // (inputs stay live), do NOT clobber those edits with the server copy.
     const submitted = JSON.stringify(_galleryState.doc);
     const resp = await lambdaPost('storage',
         { gallery: JSON.parse(submitted), expected_revision: _galleryState.revision }, '/save-gallery');
     if (resp && resp.error) throw new Error(resp.error);
-    _galleryState.revision = resp.revision || '';
+    if (_galleryState.epoch !== epoch || !_galleryState.doc || _galleryState.doc.gallery_id !== gid) {
+        return resp;   // superseded — do not touch global state with a stale response
+    }
+    _gallerySyncBase(resp.gallery, resp.revision);
     if (JSON.stringify(_galleryState.doc) === submitted) {
         _galleryState.doc = resp.gallery;
         _galleryState.dirty = false;
@@ -253,7 +285,7 @@ async function gallerySave() {
     try {
         await _gallerySavePersist();
         await _galleryRefreshList();
-        _galleryStatus('Saved.');
+        if (!_galleryState.dirty) _galleryStatus('Saved.');
     } catch (e) {
         // Only a genuine CONFLICT (409) means the server moved under us — reload.
         // Any other failure (network, 5xx) keeps the local edits so nothing is lost.
@@ -271,6 +303,7 @@ async function gallerySave() {
 
 async function galleryOpen() {
     const doc = _galleryState.doc;
+    const gid = doc && doc.gallery_id;
     if (!doc || !(doc.pieces || []).length) { _galleryStatus('Add pieces before opening.', true); return; }
     _galleryBtnBusy('btn-gallery-open', true, 'Opening…');
     // Open a blank window synchronously (popup-safe) and navigate after the POST.
@@ -278,9 +311,17 @@ async function galleryOpen() {
     try {
         // Persist any pending edits first so the snapshot matches what is shown.
         if (_galleryState.dirty) await _gallerySavePersist();
+        // If edits landed DURING the autosave (or the selection moved), the
+        // snapshot would show older state than the screen — stop and let the
+        // user review instead of silently sharing the stale save.
+        if (_galleryState.dirty || _galleryState.activeId !== gid) {
+            if (win) win.close();
+            _galleryStatus('Edits changed while saving — review, then press Open Gallery again.', true);
+            return;
+        }
         // Pin the share to the reviewed revision (the server refuses if it moved).
         const resp = await lambdaPost('storage',
-            { gallery_id: _galleryState.activeId, expected_revision: _galleryState.revision }, '/create-gallery-share');
+            { gallery_id: gid, expected_revision: _galleryState.revision }, '/create-gallery-share');
         if (resp && resp.error) throw new Error(resp.error);
         const manifestUrl = String((resp && resp.manifest_url) || '');
         if (!manifestUrl) throw new Error('no manifest_url returned');

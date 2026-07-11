@@ -131,4 +131,12 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_deepzoom_export_handler.py \
     -q
 bash tests/test_frontend_js.sh
+# Gallery browser regression specs (review demand: browser protection in the
+# gate). Focused on the gallery suites to keep the gate fast (~10s).
+npx playwright test \
+    tests/e2e/gallery-logic.spec.js \
+    tests/e2e/gallery-tab.spec.js \
+    tests/e2e/gallery-viewer-smoke.spec.js \
+    tests/e2e/gallery-texture-manager.spec.js \
+    tests/e2e/gallery-curation.spec.js
 echo "Predeploy contract gate passed."

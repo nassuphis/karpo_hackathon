@@ -66,7 +66,8 @@ test.describe('Gallery curation (DeepZoom tab: add-only)', () => {
     await expect(page.locator('#deepzoom-status')).toContainText('Added');
     const posts = await page.evaluate(() => window._addPosts);
     expect(posts).toEqual([
-      { gallery_id: 'gal_1', job_id: 'rjobC', artifact_id: 'bC', export_id: 'dz_C' },
+      // job_id = render-source job; export_job_id = the export OWNER (finding 1)
+      { gallery_id: 'gal_1', job_id: 'rjobC', export_job_id: 'compute_c', artifact_id: 'bC', export_id: 'dz_C' },
     ]);
   });
 
@@ -80,7 +81,7 @@ test.describe('Gallery curation (DeepZoom tab: add-only)', () => {
     await expect(page.locator('#deepzoom-status')).toContainText('Show');
     const posts = await page.evaluate(() => window._addPosts);
     expect(posts).toEqual([
-      { gallery_id: 'gal_1', job_id: 'rjobB', artifact_id: 'cB', export_id: 'dz_B' },
+      { gallery_id: 'gal_1', job_id: 'rjobB', export_job_id: 'compute_b', artifact_id: 'cB', export_id: 'dz_B' },
     ]);
   });
 

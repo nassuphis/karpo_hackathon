@@ -200,7 +200,7 @@ class GalleryViewer {
 
   _buildScene() {
     const seed = (this.spec.layout && this.spec.layout.seed) || 1;
-    const coverage = (this.spec.settings && this.spec.settings.wall_coverage) || 35;
+    const coverage = this.spec.settings ? this.spec.settings.wall_coverage : null;   // null -> legacy sizing
     this.maze = computeMaze(this.pieces, { seed, coverage });
     this.placements = this.maze.placements;
 
@@ -752,7 +752,10 @@ class GalleryViewer {
 
   _updateDebug() {
     const s = this.tm.stats();
-    $('debug').textContent = `pieces ${this.pieces.length}${this._dropped ? `  (+${this._dropped} not shown)` : ''}\nqueued ${s.queued}  inflight ${s.inFlight}\n` +
+    const eff = Math.round(100 * this.maze.placedCount / Math.max(1, this.maze.faceCount));
+    $('debug').textContent = `pieces ${this.pieces.length}${this._dropped ? `  (+${this._dropped} not shown)` : ''}\n` +
+      `art on ${this.maze.placedCount}/${this.maze.faceCount} faces (${eff}% effective)\n` +
+      `queued ${s.queued}  inflight ${s.inFlight}\n` +
       `resident ${s.resident}/${TEXTURE_LIMITS.MAX_RESIDENT}  gpu ${this.renderer.info.memory.textures}`;
   }
 

@@ -89,11 +89,14 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
   test('re-validates deepzoom identity and rejects type/path disagreement', async ({ page }) => {
     const r = await withModules(page, (M, L, doc, ORIGIN) => {
       const base = { export_id: 'dz_A', dzi_key: 'deepzoom/compute_a/dz_A/image.dzi', source_key: 'renders/compute_a/color/cA/image.jpeg', source_artifact_id: 'cA' };
-      const ctx = { jobId: 'compute_a', artifactId: 'cA', imageKey: base.source_key, trustedOrigin: ORIGIN };
+      const ctx = { dziJobId: 'compute_a', artifactId: 'cA', trustedOrigin: ORIGIN };
       return {
         good: M.validateDeepzoom(base, ctx) !== null,
         badArtifact: M.validateDeepzoom({ ...base, source_artifact_id: 'WRONG' }, ctx),
-        badKey: M.validateDeepzoom({ ...base, source_key: 'renders/compute_a/color/cB/image.jpeg' }, ctx),
+        // source_key is OPAQUE provenance now (never fetched) — any string passes
+        opaqueSource: M.validateDeepzoom({ ...base, source_key: 'renders/legacy/root_key.tif' }, ctx) !== null,
+        // the dzi key is owned by the EXPORT job — a different owner must not match
+        crossOwner: M.validateDeepzoom(base, { ...ctx, dziJobId: 'someone_else' }),
         forgedDzi: M.validateDeepzoom({ ...base, dzi_key: 'deepzoom/compute_a/dz_A/EVIL.dzi' }, ctx),
         typeMismatch: M.normalizeManifest({ ...doc, manifest_type: 'artifact_mosaic' }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).ok,
         wrongKind: M.normalizeManifest({ ...doc, artifact_kind: 'bilevel' }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).ok,
@@ -103,7 +106,8 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
     }, galleryDoc());
     expect(r.good).toBe(true);
     expect(r.badArtifact).toBeNull();
-    expect(r.badKey).toBeNull();
+    expect(r.opaqueSource).toBe(true);
+    expect(r.crossOwner).toBeNull();
     expect(r.forgedDzi).toBeNull();
     expect(r.typeMismatch).toBe(false);
     expect(r.wrongKind).toBe(false);
@@ -111,14 +115,34 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
     expect(r.explicitLayout).toBe(false);        // auto-only until explicit layout ships
   });
 
+  test('cross-job export pieces + image-key degrade normalize correctly', async ({ page }) => {
+    const r = await withModules(page, (M, L, doc, ORIGIN) => {
+      const piece = {
+        ordinal: 0, job_id: 'rjobX', export_job_id: 'compute_x', family: 'color', artifact_id: 'cX',
+        preview_key: 'deepzoom/compute_x/dz_X/image_files/7/0_0.jpeg',     // pyramid-tile preview under the OWNER
+        image_key: 'renders/legacy_root.tif',                              // invalid shape -> degrade, not drop
+        preview_width: 128, preview_height: 128, function: 'f', title: '',
+        deepzoom: { export_id: 'dz_X', dzi_key: 'deepzoom/compute_x/dz_X/image.dzi',
+                    source_key: 'renders/legacy_root.tif', source_artifact_id: 'cX' },
+      };
+      const n = M.normalizeManifest({ ...doc, pieces: [piece] }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN });
+      const p = n.pieces[0];
+      return { ok: n.ok, count: n.pieces.length, image: p && p.image_url, dzi: p && p.deepzoom && p.deepzoom.dzi_url };
+    }, galleryDoc());
+    expect(r.ok).toBe(true);
+    expect(r.count).toBe(1);                     // piece KEPT despite the bad image key
+    expect(r.image).toBeNull();                  // ...but the original is not linked
+    expect(r.dzi).toBe(ORIGIN + '/deepzoom/compute_x/dz_X/image.dzi');   // owner-scoped DZI
+  });
+
   test('carries validated scene settings; defaults bad/missing values', async ({ page }) => {
     const r = await withModules(page, (M, L, doc, ORIGIN) => {
       const norm = (s) => M.normalizeManifest(s ? { ...doc, settings: s } : { ...doc }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).settings;
-      return { good: norm({ sky: 'dark', wall_color: '#123ABC' }), bad: norm({ sky: 'weird', wall_color: 'nope' }), none: norm(null) };
+      return { good: norm({ sky: 'dark', wall_color: '#123ABC', wall_coverage: 250 }), bad: norm({ sky: 'weird', wall_color: 'nope', wall_coverage: 'junk' }), none: norm(null) };
     }, galleryDoc());
-    expect(r.good).toEqual({ sky: 'dark', wall_color: '#123abc', wall_coverage: 35 });   // valid kept, lower-cased
-    expect(r.bad).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: 35 });   // invalid -> defaults
-    expect(r.none).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: 35 });  // absent -> defaults
+    expect(r.good).toEqual({ sky: 'dark', wall_color: '#123abc', wall_coverage: 100 });  // valid kept + clamped
+    expect(r.bad).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null }); // junk -> null (legacy sizing)
+    expect(r.none).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null });// absent -> null (legacy sizing)
   });
 
   test('enforces the manifest row cap', async ({ page }) => {
@@ -127,10 +151,11 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
       for (let i = 0; i < M.GALLERY_LIMITS.MAX_MANIFEST_TILES + 1; i++) {
         rows.push({ job_id: 'j', artifact_id: 'a', preview_key: 'renders/j/color/a/preview.jpg', image_key: 'renders/j/color/a/image.jpeg', preview_width: 512, preview_height: 512 });
       }
-      const doc = { schema_version: 1, manifest_type: 'virtual_gallery', artifact_kind: 'color', pieces: rows };
-      return M.normalizeManifest(doc, { pathKind: 'virtual_gallery', trustedOrigin: 'https://x' }).ok;
+      const doc = { schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color', pieces: rows };
+      const res = M.normalizeManifest(doc, { pathKind: 'virtual_gallery', trustedOrigin: 'https://x' });
+      return res.ok === false && /row count/.test(res.error);   // rejected BY THE CAP, not earlier
     });
-    expect(over).toBe(false);
+    expect(over).toBe(true);
   });
 });
 

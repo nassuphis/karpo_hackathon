@@ -28,7 +28,9 @@ const LEAF_RE = /^[A-Za-z0-9._-]{1,96}$/;
 const PREVIEW_LEAF_RE = /^preview[A-Za-z0-9._-]{0,90}\.(png|jpe?g)$/i;
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const SKY_MODES = new Set(['stars', 'dark']);
-const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: 35 });
+// wall_coverage: null = "not specified" -> the viewer uses the LEGACY maze
+// sizing, so shares written before the knob existed keep their layout.
+const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null });
 
 // Scene settings the viewer applies (untrusted → validated). Only two knobs:
 // sky mode and wall colour.
@@ -39,7 +41,7 @@ export function validateGallerySettings(raw) {
     wall_color: (typeof s.wall_color === 'string' && HEX_COLOR_RE.test(s.wall_color))
       ? s.wall_color.toLowerCase() : DEFAULT_SETTINGS.wall_color,
     wall_coverage: Number.isFinite(s.wall_coverage)
-      ? Math.max(5, Math.min(100, Math.round(s.wall_coverage))) : DEFAULT_SETTINGS.wall_coverage,
+      ? Math.max(5, Math.min(100, Math.round(s.wall_coverage))) : null,
   };
 }
 
@@ -106,21 +108,21 @@ function validExportPreviewKey(key, jobId, exportId) {
 // manifest blindly (§13.1). Returns a normalized zoom descriptor or null
 // (zoomless). The dzi_key is reconstructed from validated ids, never read as a
 // free string, and any absolute URL in the document is ignored.
-export function validateDeepzoom(dz, { jobId, artifactId, imageKey, trustedOrigin }) {
+export function validateDeepzoom(dz, { dziJobId, artifactId, trustedOrigin }) {
   if (!dz || typeof dz !== 'object') return null;
   const exportId = dz.export_id;
   if (!isValidId(exportId)) return null;
-  if (dz.source_artifact_id !== artifactId) return null;
-  // DZI-built pieces may have no linkable original: source_key mirrors image_key
-  // (both null when the source object is gone).
-  if (imageKey != null ? dz.source_key !== imageKey : dz.source_key != null) return null;
-  const expectedDziKey = `deepzoom/${jobId}/${exportId}/image.dzi`;
+  if (dz.source_artifact_id != null && dz.source_artifact_id !== artifactId) return null;
+  // The DZI lives under the export OWNER's job (which can differ from the
+  // piece's render job); the key is rebuilt from validated ids, never read free.
+  const expectedDziKey = `deepzoom/${dziJobId}/${exportId}/image.dzi`;
   if (dz.dzi_key !== expectedDziKey) return null;
   return {
     export_id: exportId,
     dzi_key: expectedDziKey,
     dzi_url: originAbsolute(trustedOrigin, expectedDziKey),
-    source_key: imageKey,
+    // Opaque provenance: never used to build a URL, so any string/null is safe.
+    source_key: typeof dz.source_key === 'string' ? dz.source_key : null,
     source_artifact_id: artifactId,
   };
 }
@@ -227,18 +229,20 @@ function normalizeGalleryPiece(row, index, trustedOrigin) {
   const jobId = row.job_id;
   const artifactId = row.artifact_id;
   if (!isValidId(jobId) || !isValidId(artifactId)) return { ok: false, error: 'bad job/artifact id' };
+  // The export OWNER's job can differ from the render job (cross-job exports);
+  // it scopes the DZI + pyramid-tile preview keys.
+  const exportJobId = isValidId(row.export_job_id) ? row.export_job_id : jobId;
+  const family = (typeof row.family === 'string' && /^[a-z]{1,24}$/.test(row.family)) ? row.family : '';
   const dzExportId = row.deepzoom && typeof row.deepzoom === 'object' && isValidId(row.deepzoom.export_id)
     ? row.deepzoom.export_id : null;
   const previewLeaf = validateColorKey(row.preview_key, jobId, artifactId);
   const previewOk = (previewLeaf && PREVIEW_LEAF_RE.test(previewLeaf))
-    || validExportPreviewKey(row.preview_key, jobId, dzExportId);
+    || validExportPreviewKey(row.preview_key, exportJobId, dzExportId);
   if (!previewOk) return { ok: false, error: 'invalid preview_key' };
-  // The original is optional ("link if linkable"); when present it must be a
-  // well-formed render key for this job+artifact (any family).
-  const hasImage = row.image_key != null && row.image_key !== '';
-  if (hasImage && !validateRenderKey(row.image_key, jobId, artifactId)) {
-    return { ok: false, error: 'invalid image_key' };
-  }
+  // The original is optional ("link if linkable"); an invalid/legacy-shaped
+  // image key DEGRADES to "no original" instead of dropping the whole piece.
+  const hasImage = row.image_key != null && row.image_key !== ''
+    && !!validateRenderKey(row.image_key, jobId, artifactId);
   if (!isFinitePositive(row.preview_width) || !isFinitePositive(row.preview_height)) {
     return { ok: false, error: 'invalid preview dimensions' };
   }
@@ -261,7 +265,9 @@ function normalizeGalleryPiece(row, index, trustedOrigin) {
       times: Number.isFinite(row.times) ? row.times : null,
       created_at: typeof row.created_at === 'string' ? row.created_at : '',
       title: typeof row.title === 'string' ? row.title : '',
-      deepzoom: validateDeepzoom(row.deepzoom, { jobId, artifactId, imageKey: hasImage ? row.image_key : null, trustedOrigin }),
+      export_job_id: exportJobId,
+      family,
+      deepzoom: validateDeepzoom(row.deepzoom, { dziJobId: exportJobId, artifactId, trustedOrigin }),
     },
   };
 }

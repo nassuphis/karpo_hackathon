@@ -4509,11 +4509,12 @@ def _gallery_resolve_color_tile(job_id, artifact_id, calc_cache, *, client):
     return tile, "ready", ""
 
 
-def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, client):
+def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, client, export_job_id=None):
     """Validate a caller-named DeepZoom export for a piece (virtual-gallery.md
     §3.1 step 4): exact identity match + canonical dzi_key + a live DZI. Returns
     (deepzoom_ref|None, reason). A transient error propagates."""
-    meta = _read_deepzoom_export_meta(job_id, export_id, client)
+    export_job_id = export_job_id or job_id
+    meta = _read_deepzoom_export_meta(export_job_id, export_id, client)
     if meta is None:
         return None, "export_not_found"
     # Identity is (job, color, artifact) — NOT the exact source file. An artifact
@@ -4531,17 +4532,14 @@ def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, clien
     # those, the parsed source_key (required above) carries the identity; the
     # meta was already read from deepzoom/<job>/<export>/ so its location pins
     # job+export. An absent field must not read as a mismatched field.
-    mjob = str(meta.get("job_id") or "")
     mexp = str(meta.get("export_id") or "")
     fam = str(meta.get("source_family") or "")
-    art = str(meta.get("source_artifact_id") or "")
-    if ((mjob and mjob != job_id)
-            or (mexp and mexp != export_id)
+    if ((mexp and mexp != export_id)
             or (fam and fam != "color")
-            or (art and art != artifact_id)
-            or not src_matches):
+            or not src_matches
+            or _export_identity_conflicts(meta, job_id, artifact_id, export_job_id)):
         return None, "export_identity_mismatch"
-    dzi_key = f"deepzoom/{job_id}/{export_id}/image.dzi"
+    dzi_key = f"deepzoom/{export_job_id}/{export_id}/image.dzi"
     if str(meta.get("dzi_key") or "") != dzi_key:
         return None, "export_dzi_key_mismatch"
     try:
@@ -4551,72 +4549,121 @@ def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, clien
             return None, "export_dzi_absent"
         raise
     return {"export_id": export_id, "dzi_key": dzi_key,
-            "source_key": image_key, "source_artifact_id": artifact_id}, ""
+            "source_key": str(meta.get("source_key") or "") or image_key,   # true provenance
+            "source_artifact_id": artifact_id}, ""
 
 
-def _read_dzi_descriptor(job_id, export_id, client):
-    """Parse the export's image.dzi XML: (format, tile_size, width, height) or None."""
+def _read_dzi_descriptor(export_job_id, export_id, client):
+    """Parse + validate the export's image.dzi XML. Returns (desc, reason):
+    desc = (format, tile_size, width, height) with reason "", or (None, reason).
+    Validation matches what the viewer accepts: positive TileSize/Size and a
+    jpeg/jpg/png tile format (anything else would 500 in the level math here or
+    be silently dropped by the viewer's preview-tile allowlist later)."""
     try:
-        obj = client.get_object(Bucket=BUCKET, Key=f"deepzoom/{job_id}/{export_id}/image.dzi")
+        obj = client.get_object(Bucket=BUCKET, Key=f"deepzoom/{export_job_id}/{export_id}/image.dzi")
         xml = obj["Body"].read().decode("utf-8", "replace")
     except Exception as exc:
         if is_missing_s3_error(exc):
-            return None
+            return None, "export_dzi_absent"
         raise
     fmt = re.search(r'Format="(\w+)"', xml)
     ts = re.search(r'TileSize="(\d+)"', xml)
     w = re.search(r'Width="(\d+)"', xml)
     h = re.search(r'Height="(\d+)"', xml)
     if not (fmt and ts and w and h):
-        return None
-    return fmt.group(1), int(ts.group(1)), int(w.group(1)), int(h.group(1))
+        return None, "export_dzi_invalid"
+    fmt_v = fmt.group(1).lower()
+    ts_v, w_v, h_v = int(ts.group(1)), int(w.group(1)), int(h.group(1))
+    if fmt_v not in ("jpeg", "jpg", "png") or ts_v <= 0 or w_v <= 0 or h_v <= 0:
+        return None, "export_dzi_invalid"
+    return (fmt_v, ts_v, w_v, h_v), ""
 
 
-def _dzi_piece_from_export(job_id, artifact_id, export_id, calc_cache, *, client):
+def _export_identity_conflicts(meta, job_id, artifact_id, export_job_id):
+    """Cross-check an export meta against the caller-claimed identity. Explicit
+    fields are authoritative WHEN PRESENT; absent fields (older metas) impose no
+    constraint. A 5-part source_key must name the same render job + artifact
+    (any family); legacy root-shaped source keys carry no identity. Returns
+    "export_identity_mismatch" on contradiction, else None."""
+    mjob = str(meta.get("job_id") or "")
+    art = str(meta.get("source_artifact_id") or "")
+    if mjob and mjob != export_job_id:
+        return "export_identity_mismatch"
+    if art and art != artifact_id:
+        return "export_identity_mismatch"
+    src = str(meta.get("source_key") or "")
+    parts = src.split("/")
+    if len(parts) == 5 and parts[0] == "renders":
+        if parts[1] != job_id or parts[3] != artifact_id:
+            return "export_identity_mismatch"
+    return None
+
+
+def _dzi_piece_from_export(job_id, artifact_id, export_id, calc_cache, *, client, export_job_id=None):
     """Build a gallery piece purely from a DeepZoom export — the user rule is
-    "has a DZI => curatable". Preview = the largest single-tile pyramid level
-    (fits in one TileSize tile); zoom = the DZI; the original is linked only if
-    its source object still exists. Returns (piece|None, reason)."""
+    "has a DZI => curatable". Preview = the largest single-tile pyramid level;
+    zoom = the DZI (under the export OWNER's prefix); the original is linked only
+    if the source object still exists AND is a key shape the viewer accepts.
+    Identity is meta-gated: a meta that CONTRADICTS the claimed identity is
+    terminal — this fallback covers legacy/absent fields, never mislabeling.
+    Returns (piece|None, reason)."""
     import math
-    meta = _read_deepzoom_export_meta(job_id, export_id, client) or {}
-    desc = _read_dzi_descriptor(job_id, export_id, client)
+    export_job_id = export_job_id or job_id
+    meta = _read_deepzoom_export_meta(export_job_id, export_id, client)
+    if meta is None:
+        return None, "export_not_found"
+    conflict = _export_identity_conflicts(meta, job_id, artifact_id, export_job_id)
+    if conflict:
+        return None, conflict
+    desc, desc_reason = _read_dzi_descriptor(export_job_id, export_id, client)
     if desc is None:
-        return None, "export_dzi_absent"
+        return None, desc_reason
     fmt, tile_size, width, height = desc
-    if width <= 0 or height <= 0:
-        return None, "export_bad_dimensions"
     max_dim = max(width, height)
     max_level = max(0, math.ceil(math.log2(max_dim)) if max_dim > 1 else 0)
     off = math.ceil(math.log2(max_dim / tile_size)) if max_dim > tile_size else 0
     level = max(0, max_level - off)
     scale = 2 ** (max_level - level)
     pw, ph = math.ceil(width / scale), math.ceil(height / scale)
-    preview_key = f"deepzoom/{job_id}/{export_id}/image_files/{level}/0_0.{fmt}"
+    preview_key = f"deepzoom/{export_job_id}/{export_id}/image_files/{level}/0_0.{fmt}"
     try:
         client.head_object(Bucket=BUCKET, Key=preview_key)
     except Exception as exc:
         if is_missing_s3_error(exc):
             return None, "export_preview_tile_missing"
         raise
-    # Link the original only when it is still there ("if this is linkable").
+    # Link the original only when it is still there AND its key is a shape the
+    # standalone viewer accepts (renders/<job>/<family>/<artifact>/<leaf> naming
+    # this artifact) — linking a legacy root-shaped key would make the viewer
+    # drop the piece's original at share load. The RAW source_key still travels
+    # in the deepzoom ref as opaque provenance.
     image_key = None
-    src = str(meta.get("source_key") or "")
-    if src:
-        try:
-            client.head_object(Bucket=BUCKET, Key=src)
-            image_key = src
-        except Exception as exc:
-            if not is_missing_s3_error(exc):
-                raise
+    src_key = str(meta.get("source_key") or "")
+    src_parts = src_key.split("/")
+    family = ""
+    if len(src_parts) == 5 and src_parts[0] == "renders" and re.fullmatch(r"[a-z]{1,24}", src_parts[2] or ""):
+        family = src_parts[2]
+        if src_parts[3] == artifact_id:
+            try:
+                client.head_object(Bucket=BUCKET, Key=src_key)
+                image_key = src_key
+            except Exception as exc:
+                if not is_missing_s3_error(exc):
+                    raise
+    if not family:
+        fam_meta = str(meta.get("source_family") or "")
+        family = fam_meta if re.fullmatch(r"[a-z]{1,24}", fam_meta) else ""
     if job_id not in calc_cache:
         try:
             calc_cache[job_id] = _read_mosaic_calc_meta(client, job_id)
         except Exception:
             calc_cache[job_id] = {}
     calc = calc_cache[job_id] or {}
-    dzi_key = f"deepzoom/{job_id}/{export_id}/image.dzi"
+    dzi_key = f"deepzoom/{export_job_id}/{export_id}/image.dzi"
     return {
         "job_id": job_id,
+        "export_job_id": export_job_id,
+        "family": family,
         "artifact_id": artifact_id,
         "preview_key": preview_key,
         "image_key": image_key,
@@ -4628,38 +4675,41 @@ def _dzi_piece_from_export(job_id, artifact_id, export_id, calc_cache, *, client
         "times": calc.get("times", 1),
         "created_at": str(meta.get("created_at") or ""),
         "deepzoom": {"export_id": export_id, "dzi_key": dzi_key,
-                      "source_key": image_key, "source_artifact_id": artifact_id},
+                      "source_key": src_key or None,   # true provenance, opaque to the viewer
+                      "source_artifact_id": artifact_id},
     }, ""
 
 
-def _enrich_gallery_pick(job_id, artifact_id, export_id, calc_cache, *, client):
+def _enrich_gallery_pick(job_id, artifact_id, export_id, calc_cache, *, client, export_job_id=None):
     """Validate + enrich ONE gallery pick to a piece dict (no ordinal/title yet).
     Returns (piece|None, reason|None, fatal). Prefers the rich color-artifact
-    path; when that can't resolve but the pick names a DeepZoom export, falls
-    back to building the piece FROM the export (rule: has a DZI => curatable)."""
+    path; ONLY when no color artifact exists at all does it fall back to building
+    the piece from the export (rule: has a DZI => curatable, for classified
+    legacy cases). When the color artifact resolves, export validation is
+    authoritative — an explicit identity mismatch is TERMINAL, never fail-open."""
+    export_job_id = export_job_id or job_id
     tile, state, reason = _gallery_resolve_color_tile(job_id, artifact_id, calc_cache, client=client)
     if state == "error":
         return None, reason, True
     if tile is None:
         if export_id:
-            piece, dz_reason = _dzi_piece_from_export(job_id, artifact_id, export_id, calc_cache, client=client)
+            piece, dz_reason = _dzi_piece_from_export(
+                job_id, artifact_id, export_id, calc_cache, client=client, export_job_id=export_job_id)
             if piece is not None:
                 return piece, None, False
             return None, dz_reason or reason or "missing", False
         return None, reason or "missing", False
     deepzoom = None
     if export_id:
-        dz, dz_reason = _validate_gallery_export(job_id, artifact_id, export_id, tile["image_key"], client=client)
+        dz, dz_reason = _validate_gallery_export(
+            job_id, artifact_id, export_id, tile["image_key"], client=client, export_job_id=export_job_id)
         if dz is None:
-            # The export exists but its identity fields don't line up with the
-            # color artifact (legacy metas): still honor "has a DZI => curatable".
-            piece, dz2_reason = _dzi_piece_from_export(job_id, artifact_id, export_id, calc_cache, client=client)
-            if piece is not None:
-                return piece, None, False
             return None, dz_reason, False
         deepzoom = dz
     piece = {
         "job_id": job_id,
+        "export_job_id": export_job_id,
+        "family": "color",
         "artifact_id": artifact_id,
         "preview_key": tile["key"],
         "image_key": tile["image_key"],
@@ -4684,7 +4734,8 @@ def _write_gallery_share_manifest(pieces, *, source_kind, seed, settings=None):
     out_pieces = []
     for i, p in enumerate(pieces):
         piece = {k: p.get(k) for k in (
-            "job_id", "artifact_id", "preview_key", "image_key", "preview_width",
+            "job_id", "export_job_id", "family", "artifact_id", "preview_key",
+            "image_key", "preview_width",
             "preview_height", "function", "degree", "N", "times", "created_at", "deepzoom")}
         piece["ordinal"] = i
         title = str(p.get("title") or "").strip()
@@ -4905,7 +4956,8 @@ def handle_save_gallery(event):
     if expected_revision != current:
         raise GalleryConflictError(
             f"gallery {gallery_id} changed since revision {expected_revision!r}; refetch and retry")
-    stored_by_id = {(p.get("job_id"), p.get("artifact_id")): p for p in (existing.get("pieces") or [])}
+    stored_by_id = {(p.get("job_id"), p.get("family") or "color", p.get("artifact_id")): p
+                    for p in (existing.get("pieces") or [])}
 
     raw_pieces = incoming.get("pieces")
     if not isinstance(raw_pieces, list):
@@ -4919,7 +4971,8 @@ def handle_save_gallery(event):
             raise ValueError("gallery piece must be an object")
         job_id = assert_safe_id(raw.get("job_id"), "job_id")
         artifact_id = assert_safe_id(raw.get("artifact_id"), "artifact_id")
-        ident = (job_id, artifact_id)
+        family = str(raw.get("family") or "") or "color"
+        ident = (job_id, family, artifact_id)
         stored = stored_by_id.get(ident)
         if stored is None:
             raise ValueError(f"unknown piece {job_id}/{artifact_id}: add pieces via the DeepZoom tab")
@@ -4963,20 +5016,28 @@ def handle_add_to_gallery(event):
     artifact_id = assert_safe_id(params.get("artifact_id"), "artifact_id")
     export_id = params.get("export_id")
     export_id = assert_safe_id(export_id, "export_id") if export_id not in (None, "") else None
+    # The export OWNER's job (deepzoom/<export_job_id>/<export_id>/...) can differ
+    # from the render-source job (renders/<job_id>/...): carry both identities.
+    export_job_id = params.get("export_job_id")
+    export_job_id = assert_safe_id(export_job_id, "export_job_id") if export_job_id not in (None, "") else job_id
 
     doc, revision = _read_gallery_doc_with_etag(gallery_id)
     pieces = doc.get("pieces") or []
-    if any(p.get("job_id") == job_id and p.get("artifact_id") == artifact_id for p in pieces):
-        return ok_response({"gallery": doc, "revision": revision, "added": False, "reason": "duplicate"})
-    if len(pieces) >= GALLERY_MAX_PIECES:
-        return ok_response({"gallery": doc, "revision": revision, "added": False, "reason": "gallery_full"})
 
     client = _results_list_s3_client(1)
-    piece, reason, fatal = _enrich_gallery_pick(job_id, artifact_id, export_id, {}, client=client)
+    piece, reason, fatal = _enrich_gallery_pick(
+        job_id, artifact_id, export_id, {}, client=client, export_job_id=export_job_id)
     if piece is None:
         if fatal:
             return ok_response({"error": f"could not resolve {job_id}/{artifact_id}: {reason}"})
         return ok_response({"gallery": doc, "revision": revision, "added": False, "reason": reason})
+    # Dedup on (job, family, artifact): color and non-color exports sharing ids
+    # are distinct pieces. Legacy stored pieces without family count as color.
+    ident = (job_id, piece.get("family") or "color", artifact_id)
+    if any((p.get("job_id"), p.get("family") or "color", p.get("artifact_id")) == ident for p in pieces):
+        return ok_response({"gallery": doc, "revision": revision, "added": False, "reason": "duplicate"})
+    if len(pieces) >= GALLERY_MAX_PIECES:
+        return ok_response({"gallery": doc, "revision": revision, "added": False, "reason": "gallery_full"})
     piece["ordinal"] = len(pieces)
     piece["title"] = ""
     pieces.append(piece)

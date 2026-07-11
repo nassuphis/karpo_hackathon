@@ -52,14 +52,16 @@ function _dzGalleryPickForExport(ex) {
     if (!ex) return null;
     const exportId = String((ex && ex.export_id) || '').trim();
     if (!exportId) return null;
-    // Rule: has a DZI => curatable. Prefer the parsed render source identity;
-    // fall back to the export's own ids so legacy/non-color exports still add
-    // (the backend builds the piece from the DZI itself when needed).
+    // Rule: has a DZI => curatable. TWO distinct jobs travel with a pick: the
+    // export OWNER (deepzoom/<export_job_id>/<export_id>/ — the row's own job)
+    // and the render-source job (renders/<job_id>/ — parsed from source_key).
+    // Collapsing them broke cross-job exports (review finding 1).
     const ref = _dzRenderSourceRef(ex);
-    const jobId = ref.jobId || String(ex.job_id || '').trim();
+    const exportJobId = String(ex.job_id || '').trim();
+    const jobId = ref.jobId || exportJobId;
     const artifactId = ref.artifactId || String(ex.source_artifact_id || '').trim() || exportId;
-    if (!jobId) return null;
-    return { job_id: jobId, artifact_id: artifactId, export_id: exportId };
+    if (!jobId || !exportJobId) return null;
+    return { job_id: jobId, export_job_id: exportJobId, artifact_id: artifactId, export_id: exportId };
 }
 
 // The active gallery id is owned by the Gallery tab (js/15); fall back to the
@@ -116,7 +118,8 @@ async function _dzAddSelectedToGallery() {
     };
     try {
         const resp = await lambdaPost('storage',
-            { gallery_id: galleryId, job_id: pick.job_id, artifact_id: pick.artifact_id, export_id: pick.export_id },
+            { gallery_id: galleryId, job_id: pick.job_id, export_job_id: pick.export_job_id,
+              artifact_id: pick.artifact_id, export_id: pick.export_id },
             '/add-to-gallery', { idempotent: false });
         if (resp && resp.error) throw new Error(resp.error);
         const name = (resp && resp.gallery && resp.gallery.name) || 'gallery';
@@ -137,6 +140,8 @@ async function _dzAddSelectedToGallery() {
                 export_identity_mismatch: 'export belongs to a different render',
                 export_dzi_key_mismatch: 'export DZI key mismatch',
                 export_dzi_absent: 'export DZI file is missing',
+                export_dzi_invalid: 'export DZI descriptor is malformed',
+                export_preview_tile_missing: 'export preview tile is missing',
             }[reason] || reason;
             if (reason === 'duplicate') { flash('✓ Already added'); setStatus('Not added: ' + human, 'status'); }
             else { flash('✗ Not added'); setStatus('Not added: ' + human, 'status error'); }
@@ -144,7 +149,7 @@ async function _dzAddSelectedToGallery() {
         // Hand the updated gallery + its new revision to the Gallery tab so it
         // can merge the added piece without a stale-revision conflict.
         if (typeof _galleryNotifyChanged === 'function') {
-            _galleryNotifyChanged(galleryId, resp && resp.gallery, resp && resp.revision, pick);
+            _galleryNotifyChanged(galleryId, resp && resp.gallery, resp && resp.revision);
         }
     } catch (e) {
         flash('✗ Failed');

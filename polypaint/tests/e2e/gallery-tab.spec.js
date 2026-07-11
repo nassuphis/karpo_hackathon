@@ -177,6 +177,29 @@ test('a DeepZoom add while editing merges without losing edits or conflicting', 
   expect(saved.body.gallery.pieces.map((p) => p.artifact_id)).toContain('artC');
 });
 
+test('FINDING 3 REGRESSION: concurrent adds survive a dirty merge + save', async ({ page }) => {
+  // Base = {A}. Locally retitle A (dirty). Server meanwhile has {A, B(concurrent), C(this add)}.
+  const one = pieces().slice(0, 1);
+  await setup(page, { docs: { gal_x: { gallery_id: 'gal_x', name: 'Show', document_kind: 'editable', pieces: one } }, active: 'gal_x' });
+  await page.locator('#gallery-piece-list input[type="text"]').nth(0).fill('Kept title');
+  await page.evaluate(() => {
+    const mk = (job, art) => ({ job_id: job, artifact_id: art, family: 'color', title: '',
+      preview_key: `renders/${job}/color/${art}/preview.jpg`, image_key: `renders/${job}/color/${art}/image.jpeg`,
+      preview_width: 512, preview_height: 512, deepzoom: null });
+    const server = JSON.parse(JSON.stringify(window.__docs.gal_x));
+    server.pieces.push(mk('jobB', 'artB'), mk('jobC', 'artC'));   // B = concurrent client, C = this add
+    _galleryNotifyChanged('gal_x', server, 'r-after-adds');
+  });
+  await expect(page.locator('#gallery-piece-list > div')).toHaveCount(3);   // A + B + C all present
+  await page.click('#btn-gallery-save');
+  const saved = await page.evaluate(() => window._galleryPosts.filter((p) => p.path === '/save-gallery').pop());
+  const ids = saved.body.gallery.pieces.map((p) => p.artifact_id);
+  expect(ids).toContain('artB');                                  // the concurrent add is NOT deleted
+  expect(ids).toContain('artC');
+  expect(saved.body.gallery.pieces[0].title).toBe('Kept title');  // local edit preserved
+  expect(saved.body.expected_revision).toBe('r-after-adds');
+});
+
 test('a network error on load keeps the active gallery (only 404 clears it)', async ({ page }) => {
   await setup(page, docWith(pieces()));
   await page.evaluate(async () => {

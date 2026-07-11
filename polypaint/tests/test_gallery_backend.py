@@ -116,14 +116,21 @@ class GalleryBackendTests(unittest.TestCase):
             "function": function, "degree": degree, "N": N, "times": times}).encode()}
 
     def _seed_export(self, job, art, export_id, *, image_key=None, dzi_key=None,
-                     source_family="color", source_artifact_id=None):
+                     source_family="color", source_artifact_id=None, export_job=None):
+        export_job = export_job or job
         image_key = image_key or f"renders/{job}/color/{art}/image.jpeg"
-        canonical_dzi = f"deepzoom/{job}/{export_id}/image.dzi"
-        self.s3.objects[f"deepzoom/{job}/{export_id}/meta.json"] = {"body": json.dumps({
-            "job_id": job, "export_id": export_id, "source_family": source_family,
+        canonical_dzi = f"deepzoom/{export_job}/{export_id}/image.dzi"
+        self.s3.objects[f"deepzoom/{export_job}/{export_id}/meta.json"] = {"body": json.dumps({
+            "job_id": export_job, "export_id": export_id, "source_family": source_family,
             "source_artifact_id": source_artifact_id or art, "source_key": image_key,
             "dzi_key": dzi_key or canonical_dzi}).encode()}
-        self.s3.objects[canonical_dzi] = {"Metadata": {}, "ContentLength": 200, "ContentType": "application/xml"}
+        # a REAL parseable descriptor + single-tile preview level, so tests that
+        # expect rejection prove fail-CLOSED against a fully usable pyramid
+        self.s3.objects[canonical_dzi] = {"Metadata": {}, "ContentLength": 200, "ContentType": "application/xml",
+            "body": ('<?xml version="1.0"?><Image Format="jpeg" Overlap="1" TileSize="254">'
+                     '<Size Width="512" Height="512"/></Image>').encode()}
+        self.s3.objects[f"deepzoom/{export_job}/{export_id}/image_files/7/0_0.jpeg"] = {
+            "Metadata": {}, "ContentLength": 900, "ContentType": "image/jpeg"}
 
     def _event(self, body):
         return {"body": json.dumps(body)}
@@ -135,10 +142,12 @@ class GalleryBackendTests(unittest.TestCase):
     def _create(self, name="My gallery"):
         return json.loads(hs.handle_create_gallery(self._event({"name": name}))["body"])
 
-    def _add(self, gid, job, art, export=None):
+    def _add(self, gid, job, art, export=None, export_job=None):
         body = {"gallery_id": gid, "job_id": job, "artifact_id": art}
         if export:
             body["export_id"] = export
+        if export_job:
+            body["export_job_id"] = export_job
         return json.loads(hs.handle_add_to_gallery(self._event(body))["body"])
 
     # ── create / fetch / list ────────────────────────────────────────────
@@ -452,7 +461,8 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertEqual(p["preview_width"], 128)
         self.assertIsNone(p["image_key"])                       # original not linkable
         self.assertEqual(p["deepzoom"]["dzi_key"], "deepzoom/jobL/dz_L/image.dzi")
-        self.assertIsNone(p["deepzoom"]["source_key"])
+        # true provenance is preserved even when the original is gone
+        self.assertEqual(p["deepzoom"]["source_key"], "renders/jobL/color/cL/image.jpeg")
 
     def test_add_dzi_fallback_links_original_when_it_exists(self):
         gid = self._create()["gallery"]["gallery_id"]
@@ -469,6 +479,62 @@ class GalleryBackendTests(unittest.TestCase):
         p = body["gallery"]["pieces"][0]
         self.assertEqual(p["image_key"], "renders/jobM/bilevel/bM/image.tif")
         self.assertEqual(p["deepzoom"]["source_key"], "renders/jobM/bilevel/bM/image.tif")
+
+    def test_add_cross_job_export(self):
+        # FINDING 1 REGRESSION: the export OWNER (compute_x) differs from the
+        # render-source job (rjobX). Both identities travel; the DZI is looked
+        # up under the owner and the piece enriches from the render job.
+        gid = self._create()["gallery"]["gallery_id"]
+        self._seed_color("rjobX", "cX")
+        self._seed_export("rjobX", "cX", "dz_X", export_job="compute_x")
+        body = self._add(gid, "rjobX", "cX", "dz_X", export_job="compute_x")
+        self.assertTrue(body["added"], body)
+        p = body["gallery"]["pieces"][0]
+        self.assertEqual(p["job_id"], "rjobX")
+        self.assertEqual(p["export_job_id"], "compute_x")
+        self.assertEqual(p["deepzoom"]["dzi_key"], "deepzoom/compute_x/dz_X/image.dzi")
+
+    def test_dzi_fallback_rejects_contradicting_meta(self):
+        # FINDING 2 REGRESSION: no color artifact, fully USABLE pyramid, but the
+        # meta names a DIFFERENT artifact — the fallback must stay fail-closed.
+        gid = self._create()["gallery"]["gallery_id"]
+        self._seed_export("jobZ", "cZ", "dz_Z", source_artifact_id="OTHER")
+        body = self._add(gid, "jobZ", "cZ", "dz_Z")
+        self.assertFalse(body["added"])
+        self.assertEqual(body["reason"], "export_identity_mismatch")
+
+    def test_add_legacy_root_source_key_not_linked_but_curated(self):
+        # FINDING 5: a legacy root-shaped source key exists but is not a shape the
+        # viewer accepts — curate the piece, keep the raw key as provenance, and
+        # do NOT link it as the original.
+        gid = self._create()["gallery"]["gallery_id"]
+        self.s3.objects["renders/jobR/image_bilevel.tif"] = {"Metadata": {}, "ContentLength": 10, "ContentType": "image/tiff"}
+        self.s3.objects["deepzoom/jobR/dz_R/meta.json"] = {"body": json.dumps({
+            "source_key": "renders/jobR/image_bilevel.tif"}).encode()}
+        self.s3.objects["deepzoom/jobR/dz_R/image.dzi"] = {"body": (
+            '<?xml version="1.0"?><Image Format="png" Overlap="1" TileSize="254">'
+            '<Size Width="512" Height="512"/></Image>').encode()}
+        self.s3.objects["deepzoom/jobR/dz_R/image_files/7/0_0.png"] = {
+            "Metadata": {}, "ContentLength": 900, "ContentType": "image/png"}
+        body = self._add(gid, "jobR", "aR", "dz_R")
+        self.assertTrue(body["added"], body)
+        p = body["gallery"]["pieces"][0]
+        self.assertIsNone(p["image_key"])                                          # viewer-safe
+        self.assertEqual(p["deepzoom"]["source_key"], "renders/jobR/image_bilevel.tif")  # provenance
+
+    def test_malformed_dzi_descriptor_rejected_not_500(self):
+        # FINDING 7: TileSize="0" (division bomb) and unsupported formats must be
+        # classified rejections, never a 500 or a piece the viewer later drops.
+        gid = self._create()["gallery"]["gallery_id"]
+        for export_id, xml in (
+            ("dz_zero", '<Image Format="jpeg" Overlap="1" TileSize="0"><Size Width="512" Height="512"/></Image>'),
+            ("dz_tiff", '<Image Format="tiff" Overlap="1" TileSize="254"><Size Width="512" Height="512"/></Image>'),
+        ):
+            self.s3.objects[f"deepzoom/jobQ/{export_id}/meta.json"] = {"body": b"{}"}
+            self.s3.objects[f"deepzoom/jobQ/{export_id}/image.dzi"] = {"body": xml.encode()}
+            body = self._add(gid, "jobQ", "cQ", export_id)
+            self.assertFalse(body["added"], body)
+            self.assertEqual(body["reason"], "export_dzi_invalid")
 
     def test_add_rejects_unknown_preview_dimensions(self):
         # No meta.json dims and an unparseable preview: the viewer could not lay

@@ -4760,7 +4760,11 @@ def _clean_gallery_settings(raw):
     wall = str(raw.get("wall_color") or "").strip()
     if not _GALLERY_HEX.match(wall):
         wall = "#ece4d6"
-    return {"sky": sky, "wall_color": wall.lower()}
+    coverage = _parse_int(raw.get("wall_coverage"))
+    if coverage is None:
+        coverage = 35
+    coverage = max(5, min(100, coverage))
+    return {"sky": sky, "wall_color": wall.lower(), "wall_coverage": coverage}
 
 
 def _new_gallery_doc(gallery_id, name, pieces=None):

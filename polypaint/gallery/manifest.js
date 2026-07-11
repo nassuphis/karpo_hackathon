@@ -28,7 +28,7 @@ const LEAF_RE = /^[A-Za-z0-9._-]{1,96}$/;
 const PREVIEW_LEAF_RE = /^preview[A-Za-z0-9._-]{0,90}\.(png|jpe?g)$/i;
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const SKY_MODES = new Set(['stars', 'dark']);
-const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6' });
+const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: 35 });
 
 // Scene settings the viewer applies (untrusted → validated). Only two knobs:
 // sky mode and wall colour.
@@ -38,6 +38,8 @@ export function validateGallerySettings(raw) {
     sky: SKY_MODES.has(s.sky) ? s.sky : DEFAULT_SETTINGS.sky,
     wall_color: (typeof s.wall_color === 'string' && HEX_COLOR_RE.test(s.wall_color))
       ? s.wall_color.toLowerCase() : DEFAULT_SETTINGS.wall_color,
+    wall_coverage: Number.isFinite(s.wall_coverage)
+      ? Math.max(5, Math.min(100, Math.round(s.wall_coverage))) : DEFAULT_SETTINGS.wall_coverage,
   };
 }
 

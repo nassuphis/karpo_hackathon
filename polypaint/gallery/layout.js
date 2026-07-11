@@ -132,9 +132,14 @@ function pieceSizeOnWall(previewWidth, previewHeight) {
 // Build a maze sized to the piece count and place each piece on its own interior
 // wall face. Returns grid (for collision), wall segments (for meshes), piece
 // placements (world position + rotationY + inward normal), spawn, and bounds.
-export function computeMaze(pieces, { seed = 1 } = {}) {
+export function computeMaze(pieces, { seed = 1, coverage = 35 } = {}) {
   const n = Math.max(1, pieces.length);
-  const G = Math.max(MAZE.MIN_GRID, Math.min(MAZE.MAX_GRID, Math.ceil(Math.sqrt(n)) + 2));
+  // coverage = desired % of interior wall faces carrying art. Interior faces
+  // ~= 2*(G-1)^2, so solve 2*(G-1)^2 >= n/frac for G. Lower coverage -> bigger,
+  // emptier maze; 100% -> the smallest maze that still fits every piece.
+  const frac = Math.max(5, Math.min(100, Number(coverage) || 35)) / 100;
+  const G = Math.max(MAZE.MIN_GRID, Math.min(MAZE.MAX_GRID,
+    Math.ceil(Math.sqrt(n / (2 * frac))) + 1));
   const cols = G, rows = G, CELL = MAZE.CELL_M;
   const rnd = mulberry32(hashSeed(seed));
   const grid = [];

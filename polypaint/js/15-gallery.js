@@ -341,6 +341,14 @@ function _galleryOnWallHex(value) {
     _galleryState.dirty = true; _galleryUpdateActionButtons();
 }
 
+function _galleryOnWallCoverage(value) {
+    const s = _gallerySettings(); if (!s) return;
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n) || n < 5 || n > 100) return;   // wait for a valid value
+    s.wall_coverage = n;
+    _galleryState.dirty = true; _galleryUpdateActionButtons();
+}
+
 function _galleryOnSkyToggle(on) {
     const s = _gallerySettings(); if (!s) return;
     s.sky = on ? 'stars' : 'dark';
@@ -353,10 +361,12 @@ function _galleryRenderSceneControls() {
     const wc = document.getElementById('gallery-wall-color');
     const wh = document.getElementById('gallery-wall-hex');
     const sk = document.getElementById('gallery-sky-stars');
+    const cov = document.getElementById('gallery-wall-coverage');
     const color = (s && s.wall_color) || '#ece4d6';
     if (wc) { wc.disabled = !doc; wc.value = color; }
     if (wh) { wh.disabled = !doc; wh.value = color; }
     if (sk) { sk.disabled = !doc; sk.checked = !s || s.sky !== 'dark'; }
+    if (cov) { cov.disabled = !doc; cov.value = (s && s.wall_coverage) || 35; }
 }
 
 function _galleryMovePiece(index, dir) {

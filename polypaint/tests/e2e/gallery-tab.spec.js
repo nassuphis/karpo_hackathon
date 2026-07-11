@@ -114,6 +114,15 @@ test('editing wall colour marks dirty and Save carries the scene settings', asyn
   expect(saved.body.gallery.settings.wall_color).toBe('#a1b2c3');
 });
 
+test('wall coverage input marks dirty and Save carries it', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.fill('#gallery-wall-coverage', '15');
+  await expect(page.locator('#btn-gallery-save')).toBeEnabled();
+  await page.click('#btn-gallery-save');
+  const saved = await page.evaluate(() => window._galleryPosts.filter((p) => p.path === '/save-gallery').pop());
+  expect(saved.body.gallery.settings.wall_coverage).toBe(15);
+});
+
 test('remove piece shrinks the list', async ({ page }) => {
   await setup(page, docWith(pieces()));
   await expect(page.locator('#gallery-piece-list > div')).toHaveCount(2);

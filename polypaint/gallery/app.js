@@ -200,7 +200,8 @@ class GalleryViewer {
 
   _buildScene() {
     const seed = (this.spec.layout && this.spec.layout.seed) || 1;
-    this.maze = computeMaze(this.pieces, { seed });
+    const coverage = (this.spec.settings && this.spec.settings.wall_coverage) || 35;
+    this.maze = computeMaze(this.pieces, { seed, coverage });
     this.placements = this.maze.placements;
 
     this.scene = new THREE.Scene();

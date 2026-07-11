@@ -116,9 +116,9 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
       const norm = (s) => M.normalizeManifest(s ? { ...doc, settings: s } : { ...doc }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).settings;
       return { good: norm({ sky: 'dark', wall_color: '#123ABC' }), bad: norm({ sky: 'weird', wall_color: 'nope' }), none: norm(null) };
     }, galleryDoc());
-    expect(r.good).toEqual({ sky: 'dark', wall_color: '#123abc' });   // valid kept, lower-cased
-    expect(r.bad).toEqual({ sky: 'stars', wall_color: '#ece4d6' });   // invalid -> defaults
-    expect(r.none).toEqual({ sky: 'stars', wall_color: '#ece4d6' });  // absent -> defaults
+    expect(r.good).toEqual({ sky: 'dark', wall_color: '#123abc', wall_coverage: 35 });   // valid kept, lower-cased
+    expect(r.bad).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: 35 });   // invalid -> defaults
+    expect(r.none).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: 35 });  // absent -> defaults
   });
 
   test('enforces the manifest row cap', async ({ page }) => {
@@ -170,6 +170,18 @@ test.describe('Gallery viewer layout (pure)', () => {
     expect(r.connected).toBe(true);
     expect(r.placedAll).toBe(true);
     expect(r.uniquePos).toBe(true);
+  });
+
+  test('wall coverage sizes the maze (lower coverage -> bigger maze)', async ({ page }) => {
+    const r = await withModules(page, (M, L, pieces) => {
+      const dense = L.computeMaze(pieces, { seed: 3, coverage: 100 });
+      const sparse = L.computeMaze(pieces, { seed: 3, coverage: 10 });
+      return { dense: dense.cols, sparse: sparse.cols,
+               densePlaced: dense.placedCount, sparsePlaced: sparse.placedCount };
+    }, eightPieces());
+    expect(r.sparse).toBeGreaterThan(r.dense);   // 10% coverage -> larger grid
+    expect(r.densePlaced).toBe(8);               // every piece still placed
+    expect(r.sparsePlaced).toBe(8);
   });
 
   test('swept collision blocks crossing a closed interior wall but passes open sides', async ({ page }) => {

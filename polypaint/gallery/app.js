@@ -19,6 +19,33 @@ const MOVE_SPEED = 3.2;              // metres / second
 const VIEW_DISTANCE_M = 2.4;        // guided-mode standoff from a piece
 const VIEWER_MAX_PIECES = 64;       // hard cap on meshes/queued previews (§5/§8)
 const ART_PLACEHOLDER_COLOR = 0x3a332a;
+const DEFAULT_WALL_COLOR = 0xece4d6;
+
+// Deterministic [0,1) noise (Math.random is unavailable/undesired) for the
+// scattered background stars, and a point on the sky dome from azimuth/altitude.
+function _hash01(n) { const s = Math.sin(n) * 43758.5453; return s - Math.floor(s); }
+function _domePoint(az, alt, R) {
+  const h = Math.cos(alt) * R, y = Math.sin(alt) * R;
+  return new THREE.Vector3(Math.cos(az) * h, y, Math.sin(az) * h);
+}
+
+// A few recognizable constellations, one over each cardinal wall, as fixed
+// landmarks for orientation. Star coords are local (x right, y up), roughly
+// centered; `over` picks the wall, `alt` the altitude.
+const CONSTELLATIONS = [
+  { name: 'Big Dipper', over: 'north', alt: 1.05,
+    stars: [[-3, -0.7], [-0.6, -0.5], [-0.3, 0.9], [-2.8, 0.8], [0.9, 1.3], [2.2, 1.6], [3.4, 1.4]],
+    edges: [[0, 1], [1, 2], [2, 3], [3, 0], [2, 4], [4, 5], [5, 6]] },
+  { name: 'Orion', over: 'south', alt: 0.62,
+    stars: [[-1.1, 1.5], [1.1, 1.6], [-0.4, 0.1], [0, 0], [0.4, -0.1], [-0.9, -1.5], [1.3, -1.4]],
+    edges: [[0, 2], [1, 4], [2, 3], [3, 4], [2, 5], [4, 6]] },
+  { name: 'Cassiopeia', over: 'east', alt: 0.92,
+    stars: [[-2, 0.1], [-1, 1], [0, 0], [1, 1.1], [2, 0.05]],
+    edges: [[0, 1], [1, 2], [2, 3], [3, 4]] },
+  { name: 'Southern Cross', over: 'west', alt: 0.55,
+    stars: [[0, 1.6], [0, -1.6], [-1.1, 0.1], [1.1, -0.1]],
+    edges: [[0, 1], [2, 3]] },
+];
 
 const $ = (id) => document.getElementById(id);
 
@@ -138,19 +165,22 @@ class GalleryViewer {
     this.placements = placements;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x14110d);
+    this.scene.background = new THREE.Color(0x05060d);   // night
 
-    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 200);
+    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 400);
     this.camera.position.set(0, ROOM.EYE_HEIGHT_M, Math.min(room.depth_m / 2 - 1.2, room.depth_m / 4));
     this.scene.add(this.camera);
     this._spawn = this.camera.position.clone();
 
-    // Quiet, deliberate lighting — art is unlit (MeshBasic), room is softly lit.
-    this.scene.add(new THREE.HemisphereLight(0xfdf6ea, 0x20140c, 0.9));
-    const key = new THREE.DirectionalLight(0xfff4e0, 0.35);
+    // Night lighting — art is unlit (MeshBasic); walls/floor/frames get a soft,
+    // cool moonlight so the room reads as night under the open sky.
+    this.scene.add(new THREE.HemisphereLight(0x2b3564, 0x120d08, 0.75));
+    const key = new THREE.DirectionalLight(0xbfd0ff, 0.3);
     key.position.set(2, 6, 3);
     this.scene.add(key);
 
+    this._skyMats = [];
+    this._buildSky(room);
     this._buildRoomShell(room);
 
     this.controls = new PointerLockControls(this.camera, this.renderer.domElement);
@@ -162,17 +192,16 @@ class GalleryViewer {
 
   _buildRoomShell(room) {
     const hw = room.width_m / 2, hd = room.depth_m / 2, h = room.height_m;
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0xece4d6, roughness: 0.95, metalness: 0 });
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x1b1712, roughness: 1, metalness: 0 });
-    const ceilMat = new THREE.MeshStandardMaterial({ color: 0x0f0d0a, roughness: 1, metalness: 0 });
-    this._roomMats = [wallMat, floorMat, ceilMat];
+    const wallColor = (this.spec.settings && this.spec.settings.wall_color) || DEFAULT_WALL_COLOR;
+    const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(wallColor), roughness: 0.95, metalness: 0 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x14110c, roughness: 1, metalness: 0 });
+    this._wallMat = wallMat;                    // exposed so a wall-color setting can retint
+    this._roomMats = [wallMat, floorMat];
 
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(room.width_m, room.depth_m), floorMat);
     floor.rotation.x = -Math.PI / 2;
     this.scene.add(floor);
-    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(room.width_m, room.depth_m), ceilMat);
-    ceil.rotation.x = Math.PI / 2; ceil.position.y = h;
-    this.scene.add(ceil);
+    // No ceiling: the room is open to the night sky (walls hold the art).
 
     const mkWall = (w, x, z, ry) => {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), wallMat);
@@ -182,6 +211,50 @@ class GalleryViewer {
     mkWall(room.width_m, 0, hd, Math.PI);       // south
     mkWall(room.depth_m, -hw, 0, Math.PI / 2);  // west
     mkWall(room.depth_m, hw, 0, -Math.PI / 2);  // east
+  }
+
+  // A starfield dome plus a few recognizable constellations placed toward the
+  // cardinal directions, so they work as fixed landmarks for orientation.
+  _buildSky(room) {
+    const R = 300;
+    const group = new THREE.Group();
+    this._skyGroup = group;
+
+    // Scattered background stars over the upper hemisphere.
+    const N = 1600;
+    const pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const az = _hash01(i * 2.13 + 1) * Math.PI * 2;
+      const alt = 0.04 + _hash01(i * 7.71 + 3) * (Math.PI / 2 - 0.04);
+      const p = _domePoint(az, alt, R);
+      pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const starMat = new THREE.PointsMaterial({ color: 0xdfe6ff, size: 1.1, sizeAttenuation: true, transparent: true, opacity: 0.85, depthWrite: false });
+    group.add(new THREE.Points(starGeo, starMat));
+    this._skyMats.push(starMat);
+
+    // az convention here: +x = east (az 0), +z = south (az +90), -z = north.
+    const N_AZ = -Math.PI / 2, S_AZ = Math.PI / 2, E_AZ = 0, W_AZ = Math.PI;
+    for (const c of CONSTELLATIONS) this._addConstellation(group, c, R,
+      { north: N_AZ, south: S_AZ, east: E_AZ, west: W_AZ }[c.over]);
+
+    this.scene.add(group);
+  }
+
+  _addConstellation(group, c, R, az0) {
+    const alt0 = c.alt, scale = 0.085;
+    const pts = c.stars.map(([x, y]) => _domePoint(az0 + x * scale, alt0 + y * scale, R));
+    const starGeo = new THREE.BufferGeometry().setFromPoints(pts);
+    const starMat = new THREE.PointsMaterial({ color: 0xfff2cf, size: 3.2, sizeAttenuation: true, transparent: true, opacity: 1, depthWrite: false });
+    group.add(new THREE.Points(starGeo, starMat));
+    const linePts = [];
+    for (const [i, j] of c.edges) { linePts.push(pts[i], pts[j]); }
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
+    const lineMat = new THREE.LineBasicMaterial({ color: 0x6f80b8, transparent: true, opacity: 0.45 });
+    group.add(new THREE.LineSegments(lineGeo, lineMat));
+    this._skyMats.push(starMat, lineMat);
   }
 
   _buildPieces() {
@@ -237,7 +310,13 @@ class GalleryViewer {
   _bindEvents() {
     const on = (target, type, fn, opts) => { target.addEventListener(type, fn, opts); this._listeners.push([target, type, fn, opts]); };
     on(window, 'resize', () => this._onResize());
-    on(this.renderer.domElement, 'click', () => { if (!this.controls.isLocked && !this._overlayOpen()) this.controls.lock(); });
+    on(this.renderer.domElement, 'click', () => {
+      if (this._overlayOpen()) return;
+      // Locked: left click inspects the crosshair piece (same as Enter). Unlocked:
+      // a click (re)enters pointer lock.
+      if (this.controls.isLocked) { if (this._focusIndex >= 0) this._inspectFocused(); }
+      else this.controls.lock();
+    });
     on(document, 'keydown', (e) => this._onKey(e, true));
     on(document, 'keyup', (e) => this._onKey(e, false));
     on(window, 'blur', () => this._keys.clear());
@@ -543,6 +622,7 @@ class GalleryViewer {
       mesh.userData.material && mesh.userData.material.dispose();
     }
     (this._roomMats || []).forEach((m) => m.dispose());
+    (this._skyMats || []).forEach((m) => m.dispose());
     this._frameMat && this._frameMat.dispose();
     this._focusFrameMat && this._focusFrameMat.dispose();
     this.scene && this.scene.traverse((o) => { if (o.geometry && o.geometry !== this._sharedPlane) o.geometry.dispose(); });

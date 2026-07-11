@@ -66,10 +66,17 @@ function docWith(pcs) {
   return { docs: { gal_x: { gallery_id: 'gal_x', name: 'Show', document_kind: 'editable', pieces: pcs } }, active: 'gal_x' };
 }
 
-test('New creates a gallery and makes it active', async ({ page }) => {
-  page.on('dialog', (d) => d.accept('My Show'));
+test('New creates a gallery via the app-styled modal (not a native prompt)', async ({ page }) => {
+  // Fail loudly if any native prompt/confirm sneaks back in.
+  let nativeDialog = false;
+  page.on('dialog', (d) => { nativeDialog = true; d.dismiss(); });
   await setup(page, {});
   await page.click('#btn-gallery-new');
+  await expect(page.locator('#gallery-modal-overlay')).toBeVisible();   // styled modal, not prompt()
+  await page.fill('#gallery-modal-input', 'My Show');
+  await page.click('#gallery-modal-ok');
+  await expect(page.locator('#gallery-modal-overlay')).toBeHidden();
+  expect(nativeDialog).toBe(false);
   await expect(page.locator('#gallery-name')).toHaveValue('My Show');
   // Save must be usable immediately after creating (not a mysterious grey button).
   await expect(page.locator('#btn-gallery-save')).toBeEnabled();

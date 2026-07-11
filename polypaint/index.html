@@ -2263,6 +2263,25 @@ button {
     <div id="gallery-piece-list" style="display:flex; flex-direction:column; gap:6px; max-height:60vh; overflow-y:auto"></div>
     <div id="gallery-status" class="status" style="margin-top:8px; font-size:12px"></div>
         </div>
+        <!-- Gallery name / confirm modal (app-styled, replaces native prompt/confirm) -->
+        <div id="gallery-modal-overlay" class="tri-popup-overlay" aria-hidden="true" style="z-index:1600">
+            <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="gallery-modal-title" style="width:min(440px, calc(100vw - 32px))">
+                <div class="tri-popup-head">
+                    <div id="gallery-modal-title" class="tri-popup-title">New gallery</div>
+                    <button type="button" class="tri-popup-close" onclick="_galleryModalCancel()">Close</button>
+                </div>
+                <div style="padding:16px 18px">
+                    <label id="gallery-modal-label" for="gallery-modal-input" style="display:block; font-size:12px; color:#9aa0b4; margin-bottom:6px">Gallery name</label>
+                    <input id="gallery-modal-input" type="text" spellcheck="false" onkeydown="_galleryModalKey(event)"
+                           style="width:100%; box-sizing:border-box; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:8px 10px; font-size:13px">
+                    <div id="gallery-modal-message" style="font-size:12px; color:#c8cee0; margin-top:8px; line-height:1.5"></div>
+                </div>
+                <div style="display:flex; gap:8px; justify-content:flex-end; padding:12px 18px; border-top:1px solid rgba(255,255,255,0.1)">
+                    <button type="button" class="btn-secondary" onclick="_galleryModalCancel()" style="padding:6px 14px">Cancel</button>
+                    <button id="gallery-modal-ok" type="button" class="btn-primary" onclick="_galleryModalConfirm()" style="padding:6px 14px">Create</button>
+                </div>
+            </div>
+        </div>
         <!-- DeepZoom tab -->
         <div id="tab-deepzoom" class="tab-content">
             <div id="deepzoom-viewer" style="width:min(100%, 70vh); aspect-ratio:1 / 1; margin:0 auto; background:#000; border:1px solid #333; display:none"></div>

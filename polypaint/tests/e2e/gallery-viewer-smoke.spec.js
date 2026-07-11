@@ -184,9 +184,13 @@ test('builds a maze with settings applied and collision that clamps to bounds', 
     const v = window.__galleryViewer;
     let n = 0;
     v.scene.traverse((o) => { if (o.userData && o.userData.wallEdge) n++; });
-    return { n, walls: v.maze.wallSegments.length };
+    // fat lines: ONE merged LineSegments2 with 12 edges per wall box
+    const segs = v._wallEdgeGeo ? v._wallEdgeGeo.attributes.instanceStart.count : 0;
+    return { n, walls: v.maze.wallSegments.length, segs, width: v._wallEdgeMat && v._wallEdgeMat.linewidth };
   });
-  expect(edges.n).toBe(edges.walls);    // every wall box carries its edge accent
+  expect(edges.n).toBe(1);                        // single merged edge object
+  expect(edges.segs).toBe(edges.walls * 12);      // every box edge represented
+  expect(edges.width).toBe(1);                    // default thickness honored
 });
 
 test('over the resident cap, only the top working set is queued (no thrash)', async ({ page }) => {

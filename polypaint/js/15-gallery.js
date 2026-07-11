@@ -438,6 +438,14 @@ function _galleryOnWallCoverage(value) {
     _galleryState.dirty = true; _galleryUpdateActionButtons();
 }
 
+function _galleryOnWallEdge(value) {
+    const s = _gallerySettings(); if (!s) return;
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n) || n < 0 || n > 12) return;   // wait for a valid value
+    s.wall_edge_px = n;
+    _galleryState.dirty = true; _galleryUpdateActionButtons();
+}
+
 function _galleryOnSkyToggle(on) {
     const s = _gallerySettings(); if (!s) return;
     s.sky = on ? 'stars' : 'dark';
@@ -464,6 +472,8 @@ function _galleryRenderSceneControls() {
     if (cov) { cov.disabled = !doc; cov.value = (s && s.wall_coverage) || 35; }
     const st = document.getElementById('gallery-wall-selftint');
     if (st) { st.disabled = !doc; st.checked = !s || s.wall_self_tint !== false; }
+    const ew = document.getElementById('gallery-wall-edge');
+    if (ew) { ew.disabled = !doc; ew.value = (s && Number.isFinite(s.wall_edge_px)) ? s.wall_edge_px : 1; }
 }
 
 function _galleryMovePiece(index, dir) {

@@ -390,7 +390,7 @@ class GalleryBackendTests(unittest.TestCase):
     # ── scene settings (sky + wall colour) ───────────────────────────────
     def test_create_has_default_settings(self):
         g = self._create()["gallery"]
-        self.assertEqual(g["settings"], {"sky": "stars", "wall_color": "#ece4d6", "wall_coverage": 35, "wall_self_tint": True})
+        self.assertEqual(g["settings"], {"sky": "stars", "wall_color": "#ece4d6", "wall_coverage": 35, "wall_self_tint": True, "wall_edge_px": 1})
 
     def test_save_persists_settings_and_open_snapshots_them(self):
         gid = self._create("G")["gallery"]["gallery_id"]
@@ -398,13 +398,13 @@ class GalleryBackendTests(unittest.TestCase):
         self._add(gid, "jobA", "cA")
         fetched = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
         doc, rev = fetched["gallery"], fetched["revision"]
-        doc["settings"] = {"sky": "dark", "wall_color": "#AABBCC", "wall_coverage": 250, "wall_self_tint": False}
+        doc["settings"] = {"sky": "dark", "wall_color": "#AABBCC", "wall_coverage": 250, "wall_self_tint": False, "wall_edge_px": 40}
         _, saved = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=rev)
-        self.assertEqual(saved["gallery"]["settings"], {"sky": "dark", "wall_color": "#aabbcc", "wall_coverage": 100, "wall_self_tint": False})
+        self.assertEqual(saved["gallery"]["settings"], {"sky": "dark", "wall_color": "#aabbcc", "wall_coverage": 100, "wall_self_tint": False, "wall_edge_px": 12})
         _, _share = self._route(hs.handle_create_gallery_share, gallery_id=gid, expected_revision=saved["revision"])
         put = next(p for p in self.s3.puts if p["Key"].startswith("renders/_shared_mosaic/gallery/")
                    and p["Key"].endswith("manifest.json"))
-        self.assertEqual(json.loads(put["Body"])["settings"], {"sky": "dark", "wall_color": "#aabbcc", "wall_coverage": 100, "wall_self_tint": False})
+        self.assertEqual(json.loads(put["Body"])["settings"], {"sky": "dark", "wall_color": "#aabbcc", "wall_coverage": 100, "wall_self_tint": False, "wall_edge_px": 12})
 
     def test_save_defaults_invalid_settings(self):
         gid = self._create("G")["gallery"]["gallery_id"]
@@ -414,7 +414,7 @@ class GalleryBackendTests(unittest.TestCase):
         doc = fetched["gallery"]
         doc["settings"] = {"sky": "rainbow", "wall_color": "not-a-hex", "wall_coverage": "junk"}
         _, saved = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=fetched["revision"])
-        self.assertEqual(saved["gallery"]["settings"], {"sky": "stars", "wall_color": "#ece4d6", "wall_coverage": 35, "wall_self_tint": True})
+        self.assertEqual(saved["gallery"]["settings"], {"sky": "stars", "wall_color": "#ece4d6", "wall_coverage": 35, "wall_self_tint": True, "wall_edge_px": 1})
 
 
     def test_add_accepts_export_from_other_image_variant(self):

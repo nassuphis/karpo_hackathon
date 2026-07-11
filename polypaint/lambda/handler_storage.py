@@ -4824,8 +4824,12 @@ def _clean_gallery_settings(raw):
     # white reads white. Default ON; explicit false gives fully-lit walls.
     self_tint = raw.get("wall_self_tint")
     self_tint = True if self_tint is None else bool(self_tint)
+    edge_px = _parse_int(raw.get("wall_edge_px"))
+    if edge_px is None:
+        edge_px = 1
+    edge_px = max(0, min(12, edge_px))
     return {"sky": sky, "wall_color": wall.lower(), "wall_coverage": coverage,
-            "wall_self_tint": self_tint}
+            "wall_self_tint": self_tint, "wall_edge_px": edge_px}
 
 
 def _new_gallery_doc(gallery_id, name, pieces=None):

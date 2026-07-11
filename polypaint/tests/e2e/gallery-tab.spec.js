@@ -134,6 +134,15 @@ test('wall coverage input marks dirty and Save carries it', async ({ page }) => 
   expect(saved.body.gallery.settings.wall_coverage).toBe(15);
 });
 
+test('edge-line thickness input marks dirty and Save carries it', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.fill('#gallery-wall-edge', '4');
+  await expect(page.locator('#btn-gallery-save')).toBeEnabled();
+  await page.click('#btn-gallery-save');
+  const saved = await page.evaluate(() => window._galleryPosts.filter((p) => p.path === '/save-gallery').pop());
+  expect(saved.body.gallery.settings.wall_edge_px).toBe(4);
+});
+
 test('remove piece shrinks the list', async ({ page }) => {
   await setup(page, docWith(pieces()));
   await expect(page.locator('#gallery-piece-list > div')).toHaveCount(2);

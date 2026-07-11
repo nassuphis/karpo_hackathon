@@ -9,6 +9,9 @@
 
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { parseTrustedManifestUrl, normalizeManifest, GALLERY_LIMITS, isValidId } from './manifest.js';
 import { computeMaze, mazeClamp, mazeClampMove, MAZE, selectAndSort } from './layout.js';
 import { GalleryTextureManager, TEXTURE_LIMITS } from './texture-manager.js';
@@ -264,15 +267,6 @@ class GalleryViewer {
     this.scene.add(floor);
     // Open to the sky (no ceiling). One shared unit box scaled per wall segment.
     this._wallGeo = new THREE.BoxGeometry(1, 1, 1);
-    // Edge accent: line overlays along every wall-box edge so corners and
-    // junctions read instead of merging into one flat colour mass. Colour is
-    // derived from the wall colour — darker on light walls, lighter on dark.
-    this._wallEdgeGeo = new THREE.EdgesGeometry(this._wallGeo);
-    const wc = new THREE.Color(wallColor);
-    const lum = wc.r * 0.299 + wc.g * 0.587 + wc.b * 0.114;
-    const edgeColor = lum < 0.25 ? wc.clone().lerp(new THREE.Color(0xffffff), 0.45)
-                                 : wc.clone().multiplyScalar(0.35);
-    this._wallEdgeMat = new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.85 });
     this._wallMeshes = [];
     const T = MAZE.WALL_THICKNESS_M, H = maze.height;
     for (const seg of maze.wallSegments) {
@@ -282,12 +276,45 @@ class GalleryViewer {
       m.position.set(seg.x, H / 2, seg.z);
       this._wallMeshes.push(m);
       this.scene.add(m);
-      const edges = new THREE.LineSegments(this._wallEdgeGeo, this._wallEdgeMat);
-      edges.scale.copy(m.scale);
-      edges.position.copy(m.position);
-      edges.userData.wallEdge = true;
-      this.scene.add(edges);
     }
+    this._buildWallEdges(maze, wallColor);
+  }
+
+  // Edge accent: fat lines (LineSegments2 — real pixel width; native GL lines
+  // are stuck at 1px) along every wall-box edge, merged into ONE draw call, so
+  // corners and junctions read instead of blending into a flat colour mass.
+  // Width comes from settings.wall_edge_px; 0 disables the accent entirely.
+  _buildWallEdges(maze, wallColor) {
+    const widthPx = this.spec.settings && Number.isFinite(this.spec.settings.wall_edge_px)
+      ? this.spec.settings.wall_edge_px : 1;
+    if (widthPx <= 0) return;
+    const unit = new THREE.EdgesGeometry(this._wallGeo);   // 12 edges of the unit box
+    const pts = unit.getAttribute('position');
+    unit.dispose();
+    const T = MAZE.WALL_THICKNESS_M, H = maze.height;
+    const positions = [];
+    for (const seg of maze.wallSegments) {
+      const sx = seg.axis === 'z' ? T : seg.len + T;
+      const sz = seg.axis === 'z' ? seg.len + T : T;
+      for (let i = 0; i < pts.count; i++) {
+        positions.push(pts.getX(i) * sx + seg.x, pts.getY(i) * H + H / 2, pts.getZ(i) * sz + seg.z);
+      }
+    }
+    const geo = new LineSegmentsGeometry();
+    geo.setPositions(positions);
+    const wc = new THREE.Color(wallColor);
+    const lum = wc.r * 0.299 + wc.g * 0.587 + wc.b * 0.114;
+    const edgeColor = lum < 0.25 ? wc.clone().lerp(new THREE.Color(0xffffff), 0.45)
+                                 : wc.clone().multiplyScalar(0.35);
+    this._wallEdgeMat = new LineMaterial({
+      color: edgeColor.getHex(), linewidth: widthPx, worldUnits: false,
+      transparent: true, opacity: 0.85,
+    });
+    this._wallEdgeMat.resolution.set(window.innerWidth, window.innerHeight);
+    this._wallEdgeGeo = geo;
+    const edges = new LineSegments2(geo, this._wallEdgeMat);
+    edges.userData.wallEdge = true;
+    this.scene.add(edges);
   }
 
   // Museum-style title placard: the piece title rendered to a small canvas,
@@ -498,6 +525,7 @@ class GalleryViewer {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    if (this._wallEdgeMat && this._wallEdgeMat.resolution) this._wallEdgeMat.resolution.set(window.innerWidth, window.innerHeight);
   }
 
   // WebGL context loss (§10): preventDefault so the browser will fire 'restored',

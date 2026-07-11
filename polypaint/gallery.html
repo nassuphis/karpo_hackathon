@@ -60,11 +60,11 @@
   #guided button:disabled { opacity: .4; cursor: default; }
 
   /* Debug HUD (texture counters). */
-  #debug { position: fixed; right: 16px; top: 14px; z-index: 5; font-size: 11px; opacity: .55;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; white-space: pre; }
+  #debug { position: fixed; left: 14px; top: 14px; z-index: 5; font-size: 11px; opacity: .55;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: left; white-space: pre; }
 
-  /* Minimap: maze overview with a red you-are-here dot. */
-  #minimap { position: fixed; left: 14px; top: 14px; z-index: 5; width: 156px; height: 156px;
+  /* Minimap upper-right; render/debug text upper-left (user preference). */
+  #minimap { position: fixed; right: 14px; top: 14px; z-index: 5; width: 156px; height: 156px;
     border: 1px solid rgba(255,255,255,.18); border-radius: 6px; background: rgba(10,14,26,.55); }
 
   /* Full-window inspection overlay. */
@@ -101,7 +101,7 @@
   <div id="gl-root"></div>
   <div id="crosshair"></div>
 
-  <div id="hint">Click to enter · WASD to move · mouse to look · click or Enter to inspect · Esc to release · map top-left</div>
+  <div id="hint">Click to enter · WASD to move · mouse to look · click or Enter to inspect · Esc to release · map top-right</div>
   <div id="hud"><div class="title" id="hud-title"></div><div class="sub" id="hud-sub"></div></div>
   <div id="debug"></div>
   <canvas id="minimap" width="156" height="156"></canvas>

@@ -190,3 +190,22 @@ test('over the resident cap, only the top working set is queued (no thrash)', as
   expect(st.pieces).toBe(60);
   expect(st.queued).toBeLessThanOrEqual(48);   // desired capped to the resident budget — no eviction thrash
 });
+
+test('scene has moonlight, a moon disc, and a distinct textured floor', async ({ page }) => {
+  await routeManifest(page, validManifest());
+  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(MANIFEST_URL));
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  const st = await page.evaluate(() => {
+    const v = window.__galleryViewer; let dir = 0, moon = false, floorMap = false;
+    v.scene.traverse((o) => {
+      if (o.isDirectionalLight) dir++;
+      if (o.geometry && o.geometry.type === 'SphereGeometry' && o.position.y > 50) moon = true;   // moon high in the sky
+      if (o.material && o.material.map && o.geometry && o.geometry.type === 'PlaneGeometry' && o.rotation.x < 0) floorMap = true;
+    });
+    return { dir, moon, floorMap };
+  });
+  expect(st.dir).toBeGreaterThanOrEqual(1);   // a directional (moon) light
+  expect(st.moon).toBe(true);                 // the moon disc
+  expect(st.floorMap).toBe(true);             // floor has a distinct grid texture
+});

@@ -20,6 +20,8 @@ const VIEW_DISTANCE_M = 2.4;        // guided-mode standoff from a piece
 const VIEWER_MAX_PIECES = 64;       // hard cap on meshes/queued previews (§5/§8)
 const ART_PLACEHOLDER_COLOR = 0x3a332a;
 const DEFAULT_WALL_COLOR = 0xece4d6;
+const MOON_AZ = -Math.PI * 0.32;    // moon direction (a touch N of E), high in the sky
+const MOON_ALT = 0.82;
 
 // Deterministic [0,1) noise (Math.random is unavailable/undesired) for the
 // scattered background stars, and a point on the sky dome from azimuth/altitude.
@@ -165,7 +167,7 @@ class GalleryViewer {
     this.placements = this.maze.placements;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x05060d);   // night
+    this.scene.background = new THREE.Color(0x090c16);   // deep night, not pure black
 
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 500);
     this.camera.position.set(this.maze.spawn.x, MAZE.EYE_HEIGHT_M, this.maze.spawn.z);
@@ -173,13 +175,18 @@ class GalleryViewer {
     this.scene.add(this.camera);
     this._spawn = this.camera.position.clone();
 
-    // Night lighting — art is unlit (MeshBasic); walls/floor get soft moonlight.
-    this.scene.add(new THREE.HemisphereLight(0x2b3564, 0x120d08, 0.75));
-    const key = new THREE.DirectionalLight(0xbfd0ff, 0.3);
-    key.position.set(2, 6, 3);
-    this.scene.add(key);
+    // Moonlit night — art is unlit (MeshBasic) so it stays true-colour; walls and
+    // floor take the moonlight. A bright directional comes FROM the moon, plus a
+    // soft sky/ground fill so nothing reads as pure black.
+    this.scene.add(new THREE.HemisphereLight(0x5566a0, 0x1a1712, 0.95));
+    this.scene.add(new THREE.AmbientLight(0x223047, 0.35));
+    const moon = new THREE.DirectionalLight(0xdfe6ff, 1.25);
+    const md = _domePoint(MOON_AZ, MOON_ALT, 60);
+    moon.position.set(md.x, md.y, md.z);
+    this.scene.add(moon);
 
     this._skyMats = [];
+    this._buildMoon();                                    // the moon disc + halo (always)
     if ((this.spec.settings && this.spec.settings.sky) !== 'dark') this._buildSky();
 
     this.controls = new PointerLockControls(this.camera, this.renderer.domElement);
@@ -193,7 +200,14 @@ class GalleryViewer {
   _buildMazeShell(maze) {
     const wallColor = (this.spec.settings && this.spec.settings.wall_color) || DEFAULT_WALL_COLOR;
     const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(wallColor), roughness: 0.95, metalness: 0.02 });
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x14110c, roughness: 1, metalness: 0 });
+    // Floor: a distinct cool slate with a grid aligned to the maze cells (one
+    // tile per cell), emissive so the grid stays legible in the dark — clearly
+    // different from the warm walls, and a strong orientation aid.
+    this._floorTex = this._makeFloorTexture();
+    this._floorTex.repeat.set(maze.cols, maze.rows);
+    const floorMat = new THREE.MeshStandardMaterial({
+      map: this._floorTex, emissiveMap: this._floorTex, emissive: 0x1c2740,
+      emissiveIntensity: 0.5, roughness: 0.9, metalness: 0.0 });
     this._wallMat = wallMat;                    // exposed so a wall-color control can retint
     this._roomMats = [wallMat, floorMat];
 
@@ -212,6 +226,36 @@ class GalleryViewer {
       m.position.set(seg.x, H / 2, seg.z);
       this.scene.add(m);
     }
+  }
+
+  // A cool slate floor with a grid (one tile per maze cell), drawn to a small
+  // canvas and tiled — distinct from the walls and readable in the dark.
+  _makeFloorTexture() {
+    const S = 128;
+    const c = document.createElement('canvas'); c.width = c.height = S;
+    const g = c.getContext('2d');
+    g.fillStyle = '#232c40'; g.fillRect(0, 0, S, S);           // cool slate base
+    g.strokeStyle = '#5a678c'; g.lineWidth = 4; g.strokeRect(0, 0, S, S);   // cell grid
+    g.strokeStyle = '#333e5a'; g.lineWidth = 1;                // faint centre cross
+    g.beginPath(); g.moveTo(S / 2, 0); g.lineTo(S / 2, S); g.moveTo(0, S / 2); g.lineTo(S, S / 2); g.stroke();
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = this._maxAniso;
+    return tex;
+  }
+
+  // A large moon disc + soft halo (the actual light is a directional from the
+  // same direction, set in _buildScene). Present even when the starfield is off.
+  _buildMoon() {
+    const p = _domePoint(MOON_AZ, MOON_ALT, 285);
+    const moonMat = new THREE.MeshBasicMaterial({ color: 0xf6f2e6, toneMapped: false });
+    const moon = new THREE.Mesh(new THREE.SphereGeometry(13, 28, 18), moonMat);
+    moon.position.copy(p); this.scene.add(moon);
+    const haloMat = new THREE.MeshBasicMaterial({ color: 0xb6c2e6, transparent: true, opacity: 0.13, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+    const halo = new THREE.Mesh(new THREE.SphereGeometry(24, 28, 18), haloMat);
+    halo.position.copy(p); this.scene.add(halo);
+    this._skyMats.push(moonMat, haloMat);
   }
 
   // A starfield dome plus a few recognizable constellations placed toward the
@@ -631,6 +675,7 @@ class GalleryViewer {
     }
     (this._roomMats || []).forEach((m) => m.dispose());
     (this._skyMats || []).forEach((m) => m.dispose());
+    this._floorTex && this._floorTex.dispose();
     this._frameMat && this._frameMat.dispose();
     this._focusFrameMat && this._focusFrameMat.dispose();
     this._wallGeo && this._wallGeo.dispose();

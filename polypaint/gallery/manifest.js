@@ -22,6 +22,20 @@ export const GALLERY_LIMITS = Object.freeze({
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const LEAF_RE = /^[A-Za-z0-9._-]{1,96}$/;
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const SKY_MODES = new Set(['stars', 'dark']);
+const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6' });
+
+// Scene settings the viewer applies (untrusted → validated). Only two knobs:
+// sky mode and wall colour.
+export function validateGallerySettings(raw) {
+  const s = (raw && typeof raw === 'object') ? raw : {};
+  return {
+    sky: SKY_MODES.has(s.sky) ? s.sky : DEFAULT_SETTINGS.sky,
+    wall_color: (typeof s.wall_color === 'string' && HEX_COLOR_RE.test(s.wall_color))
+      ? s.wall_color.toLowerCase() : DEFAULT_SETTINGS.wall_color,
+  };
+}
 
 // The two accepted document types, each pinned to an exact same-origin path
 // shape with a single {share_id} segment. The PATH decides which type is
@@ -172,7 +186,11 @@ export function normalizeManifest(doc, { pathKind, trustedOrigin }) {
   // Re-assign dense ordinals so a partially-skipped share stays 0..n-1.
   pieces.forEach((p, idx) => { p.ordinal = idx; });
 
-  return { ok: true, kind: pathKind, artifactKind: 'color', pieces, skipped };
+  return {
+    ok: true, kind: pathKind, artifactKind: 'color', pieces, skipped,
+    settings: validateGallerySettings(doc.settings),
+    layout: (doc.layout && typeof doc.layout === 'object') ? { seed: Number.isFinite(doc.layout.seed) ? doc.layout.seed : 1 } : { seed: 1 },
+  };
 }
 
 function normalizeGalleryPiece(row, index, trustedOrigin) {

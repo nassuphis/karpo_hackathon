@@ -371,6 +371,35 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertIn("error", body)
         self.assertFalse(any(p["Key"].startswith("renders/_shared_mosaic/gallery/") for p in self.s3.puts))
 
+    # ── scene settings (sky + wall colour) ───────────────────────────────
+    def test_create_has_default_settings(self):
+        g = self._create()["gallery"]
+        self.assertEqual(g["settings"], {"sky": "stars", "wall_color": "#ece4d6"})
+
+    def test_save_persists_settings_and_open_snapshots_them(self):
+        gid = self._create("G")["gallery"]["gallery_id"]
+        self._seed_color("jobA", "cA")
+        self._add(gid, "jobA", "cA")
+        fetched = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
+        doc, rev = fetched["gallery"], fetched["revision"]
+        doc["settings"] = {"sky": "dark", "wall_color": "#AABBCC"}
+        _, saved = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=rev)
+        self.assertEqual(saved["gallery"]["settings"], {"sky": "dark", "wall_color": "#aabbcc"})
+        _, _share = self._route(hs.handle_create_gallery_share, gallery_id=gid)
+        put = next(p for p in self.s3.puts if p["Key"].startswith("renders/_shared_mosaic/gallery/")
+                   and p["Key"].endswith("manifest.json"))
+        self.assertEqual(json.loads(put["Body"])["settings"], {"sky": "dark", "wall_color": "#aabbcc"})
+
+    def test_save_defaults_invalid_settings(self):
+        gid = self._create("G")["gallery"]["gallery_id"]
+        self._seed_color("jobA", "cA")
+        self._add(gid, "jobA", "cA")
+        fetched = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
+        doc = fetched["gallery"]
+        doc["settings"] = {"sky": "rainbow", "wall_color": "not-a-hex"}
+        _, saved = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=fetched["revision"])
+        self.assertEqual(saved["gallery"]["settings"], {"sky": "stars", "wall_color": "#ece4d6"})
+
 
 if __name__ == "__main__":
     unittest.main()

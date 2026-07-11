@@ -142,3 +142,32 @@ test('Zoom opens OpenSeadragon on the piece DZI without forcing CORS', async ({ 
   expect(opts.tileSources).toContain('/deepzoom/compute_a/dz_A/image.dzi');  // the piece's DZI
   expect(opts.crossOriginPolicy).toBeUndefined();   // must NOT force CORS — the bucket has none
 });
+
+test('builds a maze with settings applied and collision that clamps to bounds', async ({ page }) => {
+  const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/mz/manifest.json';
+  const mk = (j, a) => ({ ordinal: 0, job_id: j, artifact_id: a, preview_key: `renders/${j}/color/${a}/preview.jpg`, image_key: `renders/${j}/color/${a}/image.jpeg`, preview_width: 512, preview_height: 512, function: 'f', title: '', deepzoom: null });
+  const pieces = Array.from({ length: 8 }, (_, i) => mk('j' + i, 'a' + i)); pieces.forEach((p, i) => (p.ordinal = i));
+  await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color',
+    layout: { mode: 'auto', seed: 2 }, settings: { sky: 'dark', wall_color: '#3366cc' }, pieces }) }));
+  await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(url));
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  const st = await page.evaluate(() => {
+    const v = window.__galleryViewer, m = v.maze;
+    v.camera.position.set(1e6, 1.65, 1e6); v._clampCamera();   // shove far — must clamp inside the maze
+    return {
+      wallHex: '#' + v._wallMat.color.getHexString(), sky: v.spec.settings.sky, skyBuilt: !!v._skyGroup,
+      walls: m.wallSegments.length, placed: m.placedCount, artMeshes: v._artMeshes.length,
+      inBounds: v.camera.position.x <= m.bounds.maxX && v.camera.position.z <= m.bounds.maxZ,
+    };
+  });
+  expect(st.wallHex).toBe('#3366cc');   // wall colour from settings
+  expect(st.sky).toBe('dark');
+  expect(st.skyBuilt).toBe(false);      // sky:'dark' -> no constellations built
+  expect(st.walls).toBeGreaterThan(0);  // maze walls exist
+  expect(st.placed).toBe(8);
+  expect(st.artMeshes).toBe(8);
+  expect(st.inBounds).toBe(true);       // corridor collision clamps inside the maze
+});

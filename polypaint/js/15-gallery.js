@@ -270,6 +270,52 @@ function _galleryOnNameInput(value) {
     _galleryUpdateActionButtons();
 }
 
+// Scene settings (wall colour + sky) live on the gallery doc and snapshot into
+// the share manifest the viewer reads.
+function _gallerySettings() {
+    const doc = _galleryState.doc;
+    if (!doc) return null;
+    if (!doc.settings || typeof doc.settings !== 'object') doc.settings = { sky: 'stars', wall_color: '#ece4d6' };
+    return doc.settings;
+}
+
+function _galleryOnWallColor(value) {
+    const s = _gallerySettings(); if (!s) return;
+    const hex = String(value || '').toLowerCase();
+    if (!/^#[0-9a-f]{6}$/.test(hex)) return;
+    s.wall_color = hex;
+    const hexInp = document.getElementById('gallery-wall-hex'); if (hexInp) hexInp.value = hex;
+    _galleryState.dirty = true; _galleryUpdateActionButtons();
+}
+
+function _galleryOnWallHex(value) {
+    const s = _gallerySettings(); if (!s) return;
+    let hex = String(value || '').trim().toLowerCase();
+    if (hex && hex[0] !== '#') hex = '#' + hex;
+    if (!/^#[0-9a-f]{6}$/.test(hex)) return;   // wait for a complete 6-digit value
+    s.wall_color = hex;
+    const picker = document.getElementById('gallery-wall-color'); if (picker) picker.value = hex;
+    _galleryState.dirty = true; _galleryUpdateActionButtons();
+}
+
+function _galleryOnSkyToggle(on) {
+    const s = _gallerySettings(); if (!s) return;
+    s.sky = on ? 'stars' : 'dark';
+    _galleryState.dirty = true; _galleryUpdateActionButtons();
+}
+
+function _galleryRenderSceneControls() {
+    const doc = _galleryState.doc;
+    const s = (doc && doc.settings) || null;
+    const wc = document.getElementById('gallery-wall-color');
+    const wh = document.getElementById('gallery-wall-hex');
+    const sk = document.getElementById('gallery-sky-stars');
+    const color = (s && s.wall_color) || '#ece4d6';
+    if (wc) { wc.disabled = !doc; wc.value = color; }
+    if (wh) { wh.disabled = !doc; wh.value = color; }
+    if (sk) { sk.disabled = !doc; sk.checked = !s || s.sky !== 'dark'; }
+}
+
 function _galleryMovePiece(index, dir) {
     const pieces = _galleryState.doc && _galleryState.doc.pieces;
     if (!pieces) return;
@@ -397,6 +443,7 @@ function _renderGalleryPieceRow(piece, index, total) {
 
 function _renderGalleryTab() {
     _renderGallerySelector();
+    _galleryRenderSceneControls();
     const nameInp = document.getElementById('gallery-name');
     const info = document.getElementById('gallery-info');
     const list = document.getElementById('gallery-piece-list');

@@ -111,6 +111,16 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
     expect(r.explicitLayout).toBe(false);        // auto-only until explicit layout ships
   });
 
+  test('carries validated scene settings; defaults bad/missing values', async ({ page }) => {
+    const r = await withModules(page, (M, L, doc, ORIGIN) => {
+      const norm = (s) => M.normalizeManifest(s ? { ...doc, settings: s } : { ...doc }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).settings;
+      return { good: norm({ sky: 'dark', wall_color: '#123ABC' }), bad: norm({ sky: 'weird', wall_color: 'nope' }), none: norm(null) };
+    }, galleryDoc());
+    expect(r.good).toEqual({ sky: 'dark', wall_color: '#123abc' });   // valid kept, lower-cased
+    expect(r.bad).toEqual({ sky: 'stars', wall_color: '#ece4d6' });   // invalid -> defaults
+    expect(r.none).toEqual({ sky: 'stars', wall_color: '#ece4d6' });  // absent -> defaults
+  });
+
   test('enforces the manifest row cap', async ({ page }) => {
     const over = await withModules(page, (M) => {
       const rows = [];

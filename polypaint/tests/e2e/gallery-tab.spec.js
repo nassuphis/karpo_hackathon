@@ -105,6 +105,15 @@ test('retitle + save carries the title', async ({ page }) => {
   expect(saved.body.gallery.pieces[0].title).toBe('Opening Work');
 });
 
+test('editing wall colour marks dirty and Save carries the scene settings', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.fill('#gallery-wall-hex', '#a1b2c3');
+  await expect(page.locator('#btn-gallery-save')).toBeEnabled();
+  await page.click('#btn-gallery-save');
+  const saved = await page.evaluate(() => window._galleryPosts.filter((p) => p.path === '/save-gallery').pop());
+  expect(saved.body.gallery.settings.wall_color).toBe('#a1b2c3');
+});
+
 test('remove piece shrinks the list', async ({ page }) => {
   await setup(page, docWith(pieces()));
   await expect(page.locator('#gallery-piece-list > div')).toHaveCount(2);

@@ -4563,7 +4563,7 @@ def _enrich_gallery_pick(job_id, artifact_id, export_id, calc_cache, *, client):
     return piece, None, False
 
 
-def _write_gallery_share_manifest(pieces, *, source_kind, seed):
+def _write_gallery_share_manifest(pieces, *, source_kind, seed, settings=None):
     """Write an immutable virtual_gallery SHARE manifest (the document the viewer
     loads) and return (public_url, key, share_id, count). `pieces` order is
     authoritative; ordinals are assigned here and curator titles carried through."""
@@ -4589,6 +4589,7 @@ def _write_gallery_share_manifest(pieces, *, source_kind, seed):
         "manifest_key": snapshot_key,
         "source": {"kind": source_kind, "share_id": share_id},
         "layout": {"mode": "auto", "seed": seed},
+        "settings": _clean_gallery_settings(settings),
         "pieces": out_pieces,
     }
     s3.put_object(
@@ -4634,6 +4635,22 @@ def _clean_gallery_title(value):
     return title
 
 
+GALLERY_SKY_MODES = ("stars", "dark")
+_GALLERY_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _clean_gallery_settings(raw):
+    """Scene settings the viewer applies: sky mode + wall colour (validated)."""
+    raw = raw if isinstance(raw, dict) else {}
+    sky = str(raw.get("sky") or "stars")
+    if sky not in GALLERY_SKY_MODES:
+        sky = "stars"
+    wall = str(raw.get("wall_color") or "").strip()
+    if not _GALLERY_HEX.match(wall):
+        wall = "#ece4d6"
+    return {"sky": sky, "wall_color": wall.lower()}
+
+
 def _new_gallery_doc(gallery_id, name, pieces=None):
     now = _utc_now_iso()
     return {
@@ -4647,6 +4664,7 @@ def _new_gallery_doc(gallery_id, name, pieces=None):
         "updated_at": now,
         "source": {"kind": "deepzoom_selection"},
         "layout": {"mode": "auto", "seed": 1},
+        "settings": _clean_gallery_settings(None),
         "pieces": pieces or [],
     }
 
@@ -4791,6 +4809,9 @@ def handle_save_gallery(event):
     doc["updated_at"] = _utc_now_iso()
     seed = _parse_int((incoming.get("layout") or {}).get("seed")) or (existing.get("layout") or {}).get("seed") or 1
     doc["layout"] = {"mode": "auto", "seed": seed}
+    # Scene settings (sky, wall colour) are client-editable; fall back to the
+    # stored ones when the client omits them.
+    doc["settings"] = _clean_gallery_settings(incoming.get("settings") or existing.get("settings"))
     revision = _put_gallery_doc(doc, expected_revision=expected_revision)   # IfMatch -> 409
     return ok_response({"gallery": doc, "revision": revision})
 
@@ -4857,7 +4878,7 @@ def handle_create_gallery_share(event):
     source_kind = str((doc.get("source") or {}).get("kind") or "deepzoom_selection")
     seed = _parse_int((doc.get("layout") or {}).get("seed")) or 1
     manifest_url, manifest_key, share_id, count = _write_gallery_share_manifest(
-        pieces, source_kind=source_kind, seed=seed)
+        pieces, source_kind=source_kind, seed=seed, settings=doc.get("settings"))
     return ok_response({
         "manifest_url": manifest_url,
         "manifest_key": manifest_key,

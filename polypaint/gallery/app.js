@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { parseTrustedManifestUrl, normalizeManifest, GALLERY_LIMITS } from './manifest.js';
-import { computeRoom, wallToWorld, ROOM, selectAndSort } from './layout.js';
+import { computeMaze, mazeClamp, MAZE, selectAndSort } from './layout.js';
 import { GalleryTextureManager, TEXTURE_LIMITS } from './texture-manager.js';
 
 const PREVIEW_FETCH_TIMEOUT_MS = 12_000;
@@ -160,62 +160,63 @@ class GalleryViewer {
   }
 
   _buildScene() {
-    const { room, placements } = computeRoom(this.pieces);
-    this.room = room;
-    this.placements = placements;
+    const seed = (this.spec.layout && this.spec.layout.seed) || 1;
+    this.maze = computeMaze(this.pieces, { seed });
+    this.placements = this.maze.placements;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x05060d);   // night
 
-    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 400);
-    this.camera.position.set(0, ROOM.EYE_HEIGHT_M, Math.min(room.depth_m / 2 - 1.2, room.depth_m / 4));
+    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 500);
+    this.camera.position.set(this.maze.spawn.x, MAZE.EYE_HEIGHT_M, this.maze.spawn.z);
+    this.camera.lookAt(0, MAZE.EYE_HEIGHT_M, 0);         // face into the maze
     this.scene.add(this.camera);
     this._spawn = this.camera.position.clone();
 
-    // Night lighting — art is unlit (MeshBasic); walls/floor/frames get a soft,
-    // cool moonlight so the room reads as night under the open sky.
+    // Night lighting — art is unlit (MeshBasic); walls/floor get soft moonlight.
     this.scene.add(new THREE.HemisphereLight(0x2b3564, 0x120d08, 0.75));
     const key = new THREE.DirectionalLight(0xbfd0ff, 0.3);
     key.position.set(2, 6, 3);
     this.scene.add(key);
 
     this._skyMats = [];
-    this._buildSky(room);
-    this._buildRoomShell(room);
+    if ((this.spec.settings && this.spec.settings.sky) !== 'dark') this._buildSky();
 
     this.controls = new PointerLockControls(this.camera, this.renderer.domElement);
     this._raycaster = new THREE.Raycaster();
     this._artMeshes = [];
     this._sharedPlane = new THREE.PlaneGeometry(1, 1);
+    this._buildMazeShell(this.maze);
     this._buildPieces();
   }
 
-  _buildRoomShell(room) {
-    const hw = room.width_m / 2, hd = room.depth_m / 2, h = room.height_m;
+  _buildMazeShell(maze) {
     const wallColor = (this.spec.settings && this.spec.settings.wall_color) || DEFAULT_WALL_COLOR;
-    const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(wallColor), roughness: 0.95, metalness: 0 });
+    const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(wallColor), roughness: 0.95, metalness: 0.02 });
     const floorMat = new THREE.MeshStandardMaterial({ color: 0x14110c, roughness: 1, metalness: 0 });
-    this._wallMat = wallMat;                    // exposed so a wall-color setting can retint
+    this._wallMat = wallMat;                    // exposed so a wall-color control can retint
     this._roomMats = [wallMat, floorMat];
 
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(room.width_m, room.depth_m), floorMat);
-    floor.rotation.x = -Math.PI / 2;
+    const W = maze.bounds.maxX - maze.bounds.minX, D = maze.bounds.maxZ - maze.bounds.minZ;
+    const cx = (maze.bounds.minX + maze.bounds.maxX) / 2, cz = (maze.bounds.minZ + maze.bounds.maxZ) / 2;
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), floorMat);
+    floor.rotation.x = -Math.PI / 2; floor.position.set(cx, 0, cz);
     this.scene.add(floor);
-    // No ceiling: the room is open to the night sky (walls hold the art).
-
-    const mkWall = (w, x, z, ry) => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), wallMat);
-      m.position.set(x, h / 2, z); m.rotation.y = ry; this.scene.add(m);
-    };
-    mkWall(room.width_m, 0, -hd, 0);            // north
-    mkWall(room.width_m, 0, hd, Math.PI);       // south
-    mkWall(room.depth_m, -hw, 0, Math.PI / 2);  // west
-    mkWall(room.depth_m, hw, 0, -Math.PI / 2);  // east
+    // Open to the sky (no ceiling). One shared unit box scaled per wall segment.
+    this._wallGeo = new THREE.BoxGeometry(1, 1, 1);
+    const T = MAZE.WALL_THICKNESS_M, H = maze.height;
+    for (const seg of maze.wallSegments) {
+      const m = new THREE.Mesh(this._wallGeo, wallMat);
+      if (seg.axis === 'z') m.scale.set(T, H, seg.len + T);   // wall runs along z
+      else m.scale.set(seg.len + T, H, T);                    // wall runs along x
+      m.position.set(seg.x, H / 2, seg.z);
+      this.scene.add(m);
+    }
   }
 
   // A starfield dome plus a few recognizable constellations placed toward the
   // cardinal directions, so they work as fixed landmarks for orientation.
-  _buildSky(room) {
+  _buildSky() {
     const R = 300;
     const group = new THREE.Group();
     this._skyGroup = group;
@@ -260,17 +261,16 @@ class GalleryViewer {
   _buildPieces() {
     const frameMat = new THREE.MeshStandardMaterial({ color: 0x0c0a08, roughness: 0.7, metalness: 0.1 });
     this._frameMat = frameMat;
-    this.pieces.forEach((piece, i) => {
-      const pl = this.placements[i];
-      if (!pl) return;
-      const w = wallToWorld(pl, this.room);
+    this.maze.placements.forEach((pl) => {
+      const i = pl.piece_index;
+      const piece = this.pieces[i];
       const group = new THREE.Group();
-      group.position.set(w.position.x, w.position.y, w.position.z);
-      group.rotation.y = w.rotationY;
+      group.position.set(pl.position.x, pl.position.y, pl.position.z);
+      group.rotation.y = pl.rotationY;
 
       const frame = new THREE.Mesh(this._sharedPlane, frameMat);
-      frame.scale.set(pl.width_m + 0.08, pl.height_m + 0.08, 1);
-      frame.position.z = -0.006;
+      frame.scale.set(pl.width_m + 0.1, pl.height_m + 0.1, 1);
+      frame.position.z = -0.01;
       group.add(frame);
 
       const artMat = new THREE.MeshBasicMaterial({ color: ART_PLACEHOLDER_COLOR, toneMapped: false });
@@ -414,11 +414,11 @@ class GalleryViewer {
   }
 
   _clampCamera() {
-    const hw = this.room.width_m / 2 - ROOM.COLLISION_RADIUS_M;
-    const hd = this.room.depth_m / 2 - ROOM.COLLISION_RADIUS_M;
-    this.camera.position.x = Math.max(-hw, Math.min(hw, this.camera.position.x));
-    this.camera.position.z = Math.max(-hd, Math.min(hd, this.camera.position.z));
-    this.camera.position.y = ROOM.EYE_HEIGHT_M;
+    // Corridor collision: cannot cross a closed maze wall of the current cell.
+    const p = mazeClamp(this.maze, this.camera.position.x, this.camera.position.z, MAZE.COLLISION_RADIUS_M);
+    this.camera.position.x = p.x;
+    this.camera.position.z = p.z;
+    this.camera.position.y = MAZE.EYE_HEIGHT_M;
   }
 
   // Rank pieces by proximity + focus and hand the working set to the manager.
@@ -497,16 +497,17 @@ class GalleryViewer {
   }
 
   _guidedStep(dir) {
-    if (!this.pieces.length) return;
-    this._guidedIndex = (this._guidedIndex + dir + this.pieces.length) % this.pieces.length;
+    const placements = this.maze.placements;
+    if (!placements.length) return;
+    // placements[i].piece_index === i, so this index is also the piece index.
+    this._guidedIndex = ((this._guidedIndex < 0 ? (dir < 0 ? 0 : -1) : this._guidedIndex) + dir + placements.length) % placements.length;
     if (this.controls.isLocked) this.controls.unlock();
-    const pl = this.placements[this._guidedIndex];
-    const w = wallToWorld(pl, this.room);
-    const normal = new THREE.Vector3(w.normal.x, 0, w.normal.z);
-    const target = new THREE.Vector3(w.position.x, ROOM.EYE_HEIGHT_M, w.position.z).add(normal.multiplyScalar(VIEW_DISTANCE_M));
-    const lookAt = new THREE.Vector3(w.position.x, ROOM.EYE_HEIGHT_M, w.position.z);
-    this._moveCameraTo(target, lookAt);
-    this._setFocus(this._guidedIndex);
+    const pl = placements[this._guidedIndex];
+    const normal = new THREE.Vector3(pl.normal.x, 0, pl.normal.z);
+    const artPos = new THREE.Vector3(pl.position.x, MAZE.EYE_HEIGHT_M, pl.position.z);
+    const target = artPos.clone().add(normal.clone().multiplyScalar(VIEW_DISTANCE_M));
+    this._moveCameraTo(target, artPos);
+    this._setFocus(pl.piece_index);
   }
 
   _moveCameraTo(target, lookAt) {
@@ -625,7 +626,10 @@ class GalleryViewer {
     (this._skyMats || []).forEach((m) => m.dispose());
     this._frameMat && this._frameMat.dispose();
     this._focusFrameMat && this._focusFrameMat.dispose();
-    this.scene && this.scene.traverse((o) => { if (o.geometry && o.geometry !== this._sharedPlane) o.geometry.dispose(); });
+    this._wallGeo && this._wallGeo.dispose();
+    this.scene && this.scene.traverse((o) => {
+      if (o.geometry && o.geometry !== this._sharedPlane && o.geometry !== this._wallGeo) o.geometry.dispose();
+    });
     if (this.renderer) { this.renderer.dispose(); this.renderer.domElement.remove(); }
   }
 }

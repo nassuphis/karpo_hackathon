@@ -418,6 +418,19 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertTrue(body["added"])
         self.assertEqual(body["gallery"]["pieces"][0]["deepzoom"]["dzi_key"], "deepzoom/jobA/dz_v/image.dzi")
 
+    def test_add_accepts_legacy_export_meta_without_identity_fields(self):
+        # Older exports lack source_family/source_artifact_id (added later); the
+        # source_key parse is the identity. Absent fields must not be mismatches.
+        gid = self._create()["gallery"]["gallery_id"]
+        self._seed_color("jobA", "cA")
+        self.s3.objects["deepzoom/jobA/dz_old/meta.json"] = {"body": json.dumps({
+            "source_key": "renders/jobA/color/cA/image.jpeg",
+            "dzi_key": "deepzoom/jobA/dz_old/image.dzi"}).encode()}
+        self.s3.objects["deepzoom/jobA/dz_old/image.dzi"] = {"Metadata": {}, "ContentLength": 200, "ContentType": "application/xml"}
+        body = self._add(gid, "jobA", "cA", "dz_old")
+        self.assertTrue(body["added"], body)
+        self.assertEqual(body["gallery"]["pieces"][0]["deepzoom"]["dzi_key"], "deepzoom/jobA/dz_old/image.dzi")
+
     def test_add_rejects_unknown_preview_dimensions(self):
         # No meta.json dims and an unparseable preview: the viewer could not lay
         # this piece out, so the add must fail loudly instead of succeeding and

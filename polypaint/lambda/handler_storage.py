@@ -4526,10 +4526,19 @@ def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, clien
     src_matches = (len(src_parts) == 5 and src_parts[0] == "renders"
                    and src_parts[1] == job_id and src_parts[2] == "color"
                    and src_parts[3] == artifact_id)
-    if (str(meta.get("job_id") or "") != job_id
-            or str(meta.get("export_id") or "") != export_id
-            or str(meta.get("source_family") or "") != "color"
-            or str(meta.get("source_artifact_id") or "") != artifact_id
+    # Explicit identity fields are authoritative WHEN PRESENT — older export
+    # metas predate them (source_family/source_artifact_id added later). For
+    # those, the parsed source_key (required above) carries the identity; the
+    # meta was already read from deepzoom/<job>/<export>/ so its location pins
+    # job+export. An absent field must not read as a mismatched field.
+    mjob = str(meta.get("job_id") or "")
+    mexp = str(meta.get("export_id") or "")
+    fam = str(meta.get("source_family") or "")
+    art = str(meta.get("source_artifact_id") or "")
+    if ((mjob and mjob != job_id)
+            or (mexp and mexp != export_id)
+            or (fam and fam != "color")
+            or (art and art != artifact_id)
             or not src_matches):
         return None, "export_identity_mismatch"
     dzi_key = f"deepzoom/{job_id}/{export_id}/image.dzi"

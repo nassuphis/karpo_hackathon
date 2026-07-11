@@ -1221,9 +1221,17 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
     if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
     const rawKey = options && typeof options === 'object' ? String(options.rawKey || '') : '';
     const rawMetaKey = options && typeof options === 'object' ? String(options.rawMetaKey || '') : '';
+    const skipRenderRefresh = !!(options && options.skipRenderRefresh);
     const useExactSource = !!String(sourceKey || '').trim();
     const dispatchTarget = useExactSource ? 'deepzoom_export' : ((rawKey && rawMetaKey) ? 'deepzoom_from_raw' : 'deepzoom_export');
     const taskId = dispatchTarget;
+    // Every dispatched job rides the jobs rail (user rule): card up before the
+    // dispatch so even an immediate failure is visible, ticked while polling.
+    const railId = 'deepzoom:' + jobId + ':' + Date.now().toString(36);
+    const rail = (patch) => { if (typeof _jobsRailUpsert === 'function') _jobsRailUpsert({
+        id: railId, kind: 'deepzoom', label: 'deepzoom · ' + jobId, jobId,
+        tab: 'deepzoom', ...patch }); };
+    rail({ state: 'running', startedAt: Date.now(), detail: 'dispatching' });
     log(`DeepZoom: exporting ${sourceKey}...`, '', 'render-log');
     try {
         // Clear any stale DeepZoom status row before dispatching,
@@ -1248,6 +1256,7 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
             throw new Error(`DeepZoom dispatch failed: fired ${dispResult.fired || 0}/1`);
         if (dispResult.non_202 && dispResult.non_202.length > 0)
             throw new Error(`DeepZoom invoke rejected: status ${dispResult.non_202[0].status}`);
+        rail({ detail: 'dispatched' });
 
         // Poll DynamoDB for completion (task_id matches the dispatch target)
         const t0 = performance.now();
@@ -1266,11 +1275,14 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
             if (elapsed > TIMEOUT_MS)
                 throw new Error(`DeepZoom timed out after ${_fmtMs(elapsed)}`);
             if (btn) btn.textContent = `Creating... ${check.status_counts?.started ? '(running)' : `(${_fmtMs(elapsed)})`}`;
+            if (typeof _jobsRailProgress === 'function') _jobsRailProgress(railId, `tiling ${_fmtMs(elapsed)}`);
         }
         log(`  DeepZoom export complete (${_fmtMs(performance.now() - t0)})`, 'ok', 'render-log');
-        await refreshRenderArtifacts(jobId);
+        rail({ state: 'done', detail: `export complete (${_fmtMs(performance.now() - t0)})` });
+        if (!skipRenderRefresh) await refreshRenderArtifacts(jobId);
     } catch (e) {
         log(`  DeepZoom failed: ${e.message}`, 'err', 'render-log');
+        rail({ state: 'failed', detail: String(e.message || e) });
         if (btn) { btn.textContent = 'DeepZoom failed'; btn.disabled = false; }
     }
 }

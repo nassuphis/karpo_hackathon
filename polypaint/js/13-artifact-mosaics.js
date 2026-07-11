@@ -1068,20 +1068,14 @@ async function _runMosaicContextAction(action) {
             _logMosaic(kind, `${cfg.label}: ${(ok ? ctx.message : ctx.error) || 'Add to Book'} ${ref.artifactId}`,
                        ok ? 'ok' : 'err', `add-book|${tile.job_id}|${ref.artifactId}`);
         } else if (action === 'deepzoom') {
-            // Make a DeepZoom export of the SELECTED tile's full image — the same
-            // dispatch the Render tab uses. Async on purpose (exports take
-            // 30-120s): dispatch, confirm, and let it land in the DeepZoom tab.
+            // Make a DeepZoom export of the SELECTED tile's full image through
+            // the ONE canonical flow (runDeepZoomExport): it dispatches, puts a
+            // card on the jobs rail, and polls to completion there. Fire without
+            // awaiting — exports take 30-120s and the rail is the tracker.
             const sourceKey = tile.image_key || tile.key || '';
             if (!sourceKey) throw new Error('Tile has no source image');
-            await lambdaPost('storage', { job_id: tile.job_id, task_id: 'deepzoom_export' }, '/delete-task').catch(() => {});
-            const disp = await lambdaPost('dispatch', {
-                target: 'deepzoom_export',
-                jobs: [{ job_id: tile.job_id, source_key: sourceKey }],
-                expected_keys: [],
-            });
-            if ((disp.fired || 0) !== 1) throw new Error(`DeepZoom dispatch failed: fired ${disp.fired || 0}/1`);
-            if (disp.non_202 && disp.non_202.length > 0) throw new Error(`DeepZoom invoke rejected: status ${disp.non_202[0].status}`);
-            ctx.message = 'DeepZoom dispatched — appears in the DeepZoom tab in ~1-2 min';
+            void runDeepZoomExport(tile.job_id, sourceKey, null, { skipRenderRefresh: true });
+            ctx.message = 'DeepZoom dispatched — track it on the jobs rail';
             _logMosaic(kind, `${cfg.label}: DeepZoom dispatched for ${tile.job_id}/${artifactId}`, 'ok', `deepzoom|${tile.job_id}|${artifactId}`);
         } else if (action === 'download') {
             const key = tile.image_key || tile.key || '';

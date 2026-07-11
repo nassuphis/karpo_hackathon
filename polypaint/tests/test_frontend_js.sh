@@ -141,7 +141,9 @@ assertIncludes("function _renderPreviewImageRect(stage, img) {", 'render preview
 assertIncludes("const imageRect = _renderPreviewImageRect(stage, img);", 'render preview marquee should align to displayed image rect');
 assertIncludes("target: 'color_repalette'", 'Color RePalette UI should dispatch through the Color RePalette target');
 assertIncludes("_mosaicContextButton('DeepZoom', 'deepzoom', ctx.busy)", 'AllCol/AllPal tile menu should offer a DeepZoom action');
-assertIncludes("jobs: [{ job_id: tile.job_id, source_key: sourceKey }],", 'mosaic DeepZoom action should dispatch the selected tile source');
+assertIncludes("void runDeepZoomExport(tile.job_id, sourceKey, null, { skipRenderRefresh: true });", 'mosaic DeepZoom must go through the ONE canonical export flow');
+assertIncludes("id: railId, kind: 'deepzoom', label: 'deepzoom · ' + jobId, jobId,", 'DeepZoom exports must ride the jobs rail (all dispatched jobs do)');
+assertIncludes("rail({ state: 'failed', detail: String(e.message || e) });", 'a failed DeepZoom export must mark its rail card failed');
 assertIncludes("new_interpretation: newInterpretation", 'Color RePalette UI should forward the selected 3-channel interpretation');
 assertIncludes("id=\"color-repalette-interpretation-row\"", 'Color RePalette popup should expose the interpretation row');
 assertIncludes("id=\"color-repalette-interpretation\"", 'Color RePalette popup should expose the 3-channel interpretation selector');

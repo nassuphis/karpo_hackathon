@@ -230,6 +230,7 @@ class GalleryViewer {
     this.controls = new PointerLockControls(this.camera, this.renderer.domElement);
     this._raycaster = new THREE.Raycaster();
     this._artMeshes = [];
+    this._labelMats = [];
     this._sharedPlane = new THREE.PlaneGeometry(1, 1);
     this._buildMazeShell(this.maze);
     this._buildPieces();
@@ -273,6 +274,29 @@ class GalleryViewer {
       this._wallMeshes.push(m);
       this.scene.add(m);
     }
+  }
+
+  // Museum-style title placard: the piece title rendered to a small canvas,
+  // centered, transparent background — hung beneath the artwork.
+  _makeLabelTexture(text) {
+    const label = String(text || '').slice(0, 60);
+    const font = '500 44px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    const measure = document.createElement('canvas').getContext('2d');
+    measure.font = font;
+    const pad = 28;
+    const w = Math.ceil(Math.min(1400, Math.max(120, measure.measureText(label).width + pad * 2)));
+    const h = 72;
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d');
+    g.font = font;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.shadowColor = 'rgba(0,0,0,0.85)'; g.shadowBlur = 6;
+    g.fillStyle = '#efe9df';
+    g.fillText(label, w / 2, h / 2 + 2);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = this._maxAniso;
+    return { texture: tex, aspect: w / h };
   }
 
   // A cool slate floor with a grid (one tile per maze cell), drawn to a small
@@ -369,6 +393,16 @@ class GalleryViewer {
       art.scale.set(pl.width_m, pl.height_m, 1);
       art.userData = { pieceIndex: i, id: this._pieceId(piece), material: artMat, frame, baseFrame: 0x0c0a08 };
       group.add(art);
+      // Centered title placard beneath the image (curator title or "image N").
+      const labelInfo = this._makeLabelTexture(this._pieceTitle(piece));
+      const labelH = 0.11;
+      const labelW = Math.min(pl.width_m, labelH * labelInfo.aspect);
+      const labelMat = new THREE.MeshBasicMaterial({ map: labelInfo.texture, transparent: true, toneMapped: false, depthWrite: false });
+      const labelMesh = new THREE.Mesh(this._sharedPlane, labelMat);
+      labelMesh.scale.set(labelW, labelH, 1);
+      labelMesh.position.set(0, -(pl.height_m / 2 + 0.055 + labelH / 2), 0.004);
+      group.add(labelMesh);
+      this._labelMats.push(labelMat);
       this._artMeshes.push(art);
       this.scene.add(group);
     });
@@ -785,6 +819,7 @@ class GalleryViewer {
     }
     (this._roomMats || []).forEach((m) => m.dispose());
     (this._skyMats || []).forEach((m) => m.dispose());
+    (this._labelMats || []).forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); });
     this._floorTex && this._floorTex.dispose();
     this._frameMat && this._frameMat.dispose();
     this._focusFrameMat && this._focusFrameMat.dispose();

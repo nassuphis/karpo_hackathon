@@ -83,6 +83,14 @@ test('accepts a valid share: builds the scene or shows a WebGL fallback', async 
     expect(state.hasCanvas).toBe(true);
     expect(state.pieces).toBe(2);        // two valid rows; the cross-job row skipped
     expect(state.skipped).toBe('1');
+    // every piece hangs with a centered title placard beneath it
+    const labels = await page.evaluate(() => ({
+      count: window.__galleryViewer._labelMats.length,
+      below: window.__galleryViewer.scene.children.some((g) =>
+        g.children && g.children.length >= 3 && g.children[2].position.y < 0),
+    }));
+    expect(labels.count).toBe(2);
+    expect(labels.below).toBe(true);
   } else {
     // WebGL genuinely unavailable in this browser: the fallback, not a crash.
     expect(state.msg).toMatch(/WebGL/i);

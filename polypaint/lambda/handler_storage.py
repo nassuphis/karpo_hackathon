@@ -4626,68 +4626,12 @@ def _clean_gallery_name(value):
     return name or "Untitled gallery"
 
 
-def _valid_color_artifact_key(key, job_id, artifact_id):
-    """A piece key must be EXACTLY renders/<job>/color/<artifact>/<leaf> built
-    from the piece's own declared ids — no traversal, no cross-identity."""
-    if not isinstance(key, str) or not key:
-        return False
-    if any(bad in key for bad in ("..", "\\", "{", "}", "?", "#", "//")):
-        return False
-    parts = key.split("/")
-    if len(parts) != 5:
-        return False
-    return (parts[0] == "renders" and parts[1] == job_id
-            and parts[2] == "color" and parts[3] == artifact_id
-            and bool(re.fullmatch(r"[A-Za-z0-9._-]{1,96}", parts[4])))
-
-
-def _validate_gallery_piece(raw):
-    """Structurally validate one piece from a client-supplied gallery doc (save).
-    Keys must belong to the declared identity; a deepzoom (if present) must carry
-    the canonical dzi_key + matching source. Returns a normalized piece dict."""
-    if not isinstance(raw, dict):
-        raise ValueError("gallery piece must be an object")
-    job_id = assert_safe_id(raw.get("job_id"), "job_id")
-    artifact_id = assert_safe_id(raw.get("artifact_id"), "artifact_id")
-    preview_key = raw.get("preview_key")
-    image_key = raw.get("image_key")
-    if not _valid_color_artifact_key(preview_key, job_id, artifact_id):
-        raise ValueError(f"invalid preview_key for {job_id}/{artifact_id}")
-    if not _valid_color_artifact_key(image_key, job_id, artifact_id):
-        raise ValueError(f"invalid image_key for {job_id}/{artifact_id}")
-    deepzoom = raw.get("deepzoom")
-    dz_out = None
-    if deepzoom:
-        if not isinstance(deepzoom, dict):
-            raise ValueError("deepzoom must be an object or null")
-        export_id = assert_safe_id(deepzoom.get("export_id"), "export_id")
-        dzi_key = f"deepzoom/{job_id}/{export_id}/image.dzi"
-        if str(deepzoom.get("dzi_key") or "") != dzi_key:
-            raise ValueError("deepzoom dzi_key mismatch")
-        if str(deepzoom.get("source_key") or "") != image_key:
-            raise ValueError("deepzoom source_key mismatch")
-        if str(deepzoom.get("source_artifact_id") or "") != artifact_id:
-            raise ValueError("deepzoom source_artifact_id mismatch")
-        dz_out = {"export_id": export_id, "dzi_key": dzi_key,
-                  "source_key": image_key, "source_artifact_id": artifact_id}
-    title = str(raw.get("title") or "").strip()
+def _clean_gallery_title(value):
+    """The one client-editable piece field on save — a curator title, clamped."""
+    title = str(value or "").strip()
     if len(title) > GALLERY_TITLE_MAX:
         title = title[:GALLERY_TITLE_MAX].rstrip()
-    return {
-        "job_id": job_id,
-        "artifact_id": artifact_id,
-        "preview_key": preview_key,
-        "image_key": image_key,
-        "preview_width": raw.get("preview_width"),
-        "preview_height": raw.get("preview_height"),
-        "function": str(raw.get("function") or "?"),
-        "degree": raw.get("degree", 0),
-        "N": raw.get("N", 0),
-        "times": raw.get("times", 1),
-        "created_at": str(raw.get("created_at") or ""),
-        "title": title,
-        "deepzoom": dz_out,
-    }
+    return title
 
 
 def _new_gallery_doc(gallery_id, name, pieces=None):
@@ -4800,15 +4744,24 @@ def handle_fetch_gallery(event):
 
 
 def handle_save_gallery(event):
-    """Persist the curated gallery (rename, reorder, retitle, remove). The client
-    sends the full ordered piece list; each piece is structurally re-validated,
-    dedup'd, and re-numbered. ETag CAS via expected_revision (like save-book)."""
+    """Persist CURATION of an existing gallery: rename, reorder, retitle, remove.
+    The gallery must already exist and the caller must pass the CAS revision it
+    read. Piece IDENTITY, order, and title come from the client; every other
+    piece field (keys, dims, function/degree/N/times, deepzoom) is PRESERVED from
+    the stored document — a save cannot inject or rewrite server-owned data, and
+    cannot ADD a piece (adds go through /add-to-gallery)."""
     params = parse_body(event)
     incoming = params.get("gallery")
     if not isinstance(incoming, dict):
         raise ValueError("save-gallery requires a gallery object")
     gallery_id = assert_safe_id(incoming.get("gallery_id"), "gallery_id")
-    name = _clean_gallery_name(incoming.get("name"))
+    expected_revision = str(params.get("expected_revision") or "").strip()
+    if not expected_revision:
+        raise ValueError("save-gallery requires expected_revision (refetch the gallery)")
+    # Must already exist — save never creates a gallery.
+    existing, _current = _read_gallery_doc_with_etag(gallery_id)   # _GalleryNotFound -> 404
+    stored_by_id = {(p.get("job_id"), p.get("artifact_id")): p for p in (existing.get("pieces") or [])}
+
     raw_pieces = incoming.get("pieces")
     if not isinstance(raw_pieces, list):
         raise ValueError("gallery pieces must be a list")
@@ -4817,25 +4770,28 @@ def handle_save_gallery(event):
     pieces = []
     seen = set()
     for raw in raw_pieces:
-        piece = _validate_gallery_piece(raw)
-        ident = (piece["job_id"], piece["artifact_id"])
+        if not isinstance(raw, dict):
+            raise ValueError("gallery piece must be an object")
+        job_id = assert_safe_id(raw.get("job_id"), "job_id")
+        artifact_id = assert_safe_id(raw.get("artifact_id"), "artifact_id")
+        ident = (job_id, artifact_id)
+        stored = stored_by_id.get(ident)
+        if stored is None:
+            raise ValueError(f"unknown piece {job_id}/{artifact_id}: add pieces via the DeepZoom tab")
         if ident in seen:
             continue
         seen.add(ident)
-        piece["ordinal"] = len(pieces)
+        piece = dict(stored)                                  # server-owned fields preserved
+        piece["ordinal"] = len(pieces)                        # client order
+        piece["title"] = _clean_gallery_title(raw.get("title"))  # client title (only)
         pieces.append(piece)
-    created_at = _utc_now_iso()
-    try:
-        existing, _ = _read_gallery_doc_with_etag(gallery_id)
-        created_at = existing.get("created_at") or created_at
-    except _GalleryNotFound:
-        pass
-    doc = _new_gallery_doc(gallery_id, name, pieces)
-    doc["created_at"] = created_at
+
+    doc = _new_gallery_doc(gallery_id, _clean_gallery_name(incoming.get("name")), pieces)
+    doc["created_at"] = existing.get("created_at") or _utc_now_iso()
     doc["updated_at"] = _utc_now_iso()
-    doc["layout"] = {"mode": "auto", "seed": _parse_int((incoming.get("layout") or {}).get("seed")) or 1}
-    expected_revision = str(params.get("expected_revision") or "").strip() or None
-    revision = _put_gallery_doc(doc, expected_revision=expected_revision)
+    seed = _parse_int((incoming.get("layout") or {}).get("seed")) or (existing.get("layout") or {}).get("seed") or 1
+    doc["layout"] = {"mode": "auto", "seed": seed}
+    revision = _put_gallery_doc(doc, expected_revision=expected_revision)   # IfMatch -> 409
     return ok_response({"gallery": doc, "revision": revision})
 
 
@@ -4888,7 +4844,13 @@ def handle_create_gallery_share(event):
     loads (the 'Open Gallery' action) — sequence + titles preserved."""
     params = parse_body(event)
     gallery_id = assert_safe_id(params.get("gallery_id") or params.get("id"), "gallery_id")
-    doc, _ = _read_gallery_doc_with_etag(gallery_id)
+    doc, revision = _read_gallery_doc_with_etag(gallery_id)
+    # Pin the share to the revision the user reviewed: if the gallery moved since
+    # (e.g. a concurrent add), refuse rather than silently share a different set.
+    expected_revision = str(params.get("expected_revision") or "").strip()
+    if expected_revision and expected_revision != revision:
+        raise GalleryConflictError(
+            f"gallery {gallery_id} changed since revision {expected_revision!r}; refetch and re-open")
     pieces = doc.get("pieces") or []
     if not pieces:
         return ok_response({"error": "gallery is empty"})

@@ -266,42 +266,63 @@ class GalleryBackendTests(unittest.TestCase):
         fetched = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
         doc = fetched["gallery"]
         doc["pieces"] = [doc["pieces"][0]]     # keep only the first
-        _, saved = self._route(hs.handle_save_gallery, gallery=doc)
+        _, saved = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=fetched["revision"])
         self.assertEqual(len(saved["gallery"]["pieces"]), 1)
+
+    def test_save_requires_revision(self):
+        gid = self._create("G")["gallery"]["gallery_id"]
+        resp, _ = self._route(hs.handle_save_gallery, gallery={"gallery_id": gid, "name": "x", "pieces": []})
+        self.assertEqual(resp["statusCode"], 400)   # expected_revision is required
+
+    def test_save_never_creates_a_missing_gallery(self):
+        resp, _ = self._route(hs.handle_save_gallery,
+                              gallery={"gallery_id": "gallery_nope", "name": "x", "pieces": []},
+                              expected_revision="whatever")
+        self.assertEqual(resp["statusCode"], 404)   # save never creates a caller-chosen id
 
     def test_save_stale_revision_is_409(self):
         gid = self._create("G")["gallery"]["gallery_id"]
-        stale = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
-        # a concurrent save bumps the etag
-        self._route(hs.handle_save_gallery, gallery={"gallery_id": gid, "name": "other", "pieces": []})
-        # saving with the stale revision must conflict
+        stale = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])["revision"]
+        # a concurrent save (valid revision) bumps the etag
+        self._route(hs.handle_save_gallery, gallery={"gallery_id": gid, "name": "other", "pieces": []}, expected_revision=stale)
+        # saving again with the now-stale revision must conflict
         resp, body = self._route(hs.handle_save_gallery,
                                  gallery={"gallery_id": gid, "name": "mine", "pieces": []},
-                                 expected_revision=stale["revision"])
+                                 expected_revision=stale)
         self.assertEqual(resp["statusCode"], 409)
         self.assertEqual(body["conflict"], "gallery_revision")
 
-    def test_save_rejects_cross_identity_key(self):
+    def test_save_rejects_unknown_piece(self):
+        # save can reorder/retitle/remove but NOT add — an identity not already in
+        # the stored gallery is rejected (adds go through /add-to-gallery).
         gid = self._create("G")["gallery"]["gallery_id"]
-        bad = {"gallery_id": gid, "name": "G", "pieces": [{
-            "job_id": "jobA", "artifact_id": "cA",
-            "preview_key": "renders/OTHERJOB/color/cA/preview.jpg",   # wrong job
-            "image_key": "renders/jobA/color/cA/image.jpeg",
-            "preview_width": 512, "preview_height": 512}]}
-        resp, _ = self._route(hs.handle_save_gallery, gallery=bad)
-        self.assertEqual(resp["statusCode"], 400)
-
-    def test_save_rejects_forged_deepzoom(self):
-        gid = self._create("G")["gallery"]["gallery_id"]
+        rev = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])["revision"]
         bad = {"gallery_id": gid, "name": "G", "pieces": [{
             "job_id": "jobA", "artifact_id": "cA",
             "preview_key": "renders/jobA/color/cA/preview.jpg",
-            "image_key": "renders/jobA/color/cA/image.jpeg",
-            "preview_width": 512, "preview_height": 512,
-            "deepzoom": {"export_id": "dz_1", "dzi_key": "deepzoom/jobA/dz_1/EVIL.dzi",
-                         "source_key": "renders/jobA/color/cA/image.jpeg", "source_artifact_id": "cA"}}]}
-        resp, _ = self._route(hs.handle_save_gallery, gallery=bad)
+            "image_key": "renders/jobA/color/cA/image.jpeg", "preview_width": 512, "preview_height": 512}]}
+        resp, _ = self._route(hs.handle_save_gallery, gallery=bad, expected_revision=rev)
         self.assertEqual(resp["statusCode"], 400)
+
+    def test_save_preserves_server_fields_takes_only_title_and_order(self):
+        # Add a server-enriched piece, then save with a TAMPERED image_key, dims,
+        # and function. The stored fields must be preserved; only title + order
+        # are taken from the client (review finding 7).
+        gid = self._create("G")["gallery"]["gallery_id"]
+        self._seed_color("jobA", "cA", function="poly_real", degree=12)
+        self._add(gid, "jobA", "cA")
+        fetched = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
+        doc, rev = fetched["gallery"], fetched["revision"]
+        doc["pieces"][0]["title"] = "Curator title"
+        doc["pieces"][0]["image_key"] = "renders/EVIL/color/cA/image.jpeg"   # tamper
+        doc["pieces"][0]["preview_width"] = -1                                # tamper
+        doc["pieces"][0]["function"] = "HACKED"                               # tamper
+        _, saved = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=rev)
+        p = saved["gallery"]["pieces"][0]
+        self.assertEqual(p["title"], "Curator title")                         # client title kept
+        self.assertEqual(p["image_key"], "renders/jobA/color/cA/image.jpeg")  # server value preserved
+        self.assertEqual(p["preview_width"], 512)                             # server value preserved
+        self.assertEqual(p["function"], "poly_real")                          # server value preserved
 
     # ── delete ────────────────────────────────────────────────────────────
     def test_delete_gallery(self):
@@ -332,6 +353,17 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertEqual([p["ordinal"] for p in m["pieces"]], [0, 1])
         self.assertEqual(m["pieces"][0]["title"], "First")
         self.assertEqual(m["pieces"][1]["title"], "Second")
+
+    def test_open_with_stale_revision_is_409(self):
+        # Open pins the share to the reviewed revision: a concurrent change must
+        # block the snapshot rather than silently share a different set (finding 6).
+        gid = self._seed_two_piece_gallery()
+        stale = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])["revision"]
+        self._route(hs.handle_save_gallery, gallery={"gallery_id": gid, "name": "moved", "pieces": []},
+                    expected_revision=stale)   # moves the gallery
+        resp, body = self._route(hs.handle_create_gallery_share, gallery_id=gid, expected_revision=stale)
+        self.assertEqual(resp["statusCode"], 409)
+        self.assertEqual(body["conflict"], "gallery_revision")
 
     def test_open_empty_gallery_errors(self):
         gid = self._create("G")["gallery"]["gallery_id"]

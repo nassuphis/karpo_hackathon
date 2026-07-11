@@ -566,5 +566,61 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertEqual(body["conflict"], "gallery_revision")
 
 
+    # ── describe-gallery (vision titles, book engine reuse) ──────────────
+    def _seed_dzi_piece_gallery(self):
+        gid = self._create("G")["gallery"]["gallery_id"]
+        self.s3.objects["deepzoom/jobT/dz_T/meta.json"] = {"body": json.dumps({
+            "source_key": "renders/jobT/color/cT/image.jpeg"}).encode()}
+        self.s3.objects["deepzoom/jobT/dz_T/image.dzi"] = {"body": (
+            '<?xml version="1.0"?><Image Format="png" Overlap="1" TileSize="254">'
+            '<Size Width="512" Height="512"/></Image>').encode()}
+        self.s3.objects["deepzoom/jobT/dz_T/image_files/7/0_0.png"] = {
+            "Metadata": {}, "ContentLength": 900, "ContentType": "image/png",
+            "body": b"fakepng"}
+        self._add(gid, "jobT", "cT", "dz_T")
+        return gid
+
+    def test_describe_gallery_titles_selection(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        with patch.object(book_describe, "_vision_call", return_value='noise {"title": "Night Lattice"} tail') as vc, \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
+            resp, body = self._route(hs.handle_describe_gallery, gallery_id=gid,
+                                     pieces=[{"job_id": "jobT", "artifact_id": "cT"}], overwrite=True)
+        self.assertEqual(body["described"], 1, body)
+        self.assertEqual(body["errors"], [])
+        self.assertEqual(body["gallery"]["pieces"][0]["title"], "Night Lattice")
+        # per-piece persistence: the doc was CAS-saved with the title
+        gput = [p for p in self.s3.puts if p["Key"].endswith(gid + ".json")][-1]
+        self.assertIsNotNone(gput["IfMatch"])
+        self.assertIn("Night Lattice", str(gput["Body"]))
+        # the thumbnail sent to the model is the piece's pyramid preview
+        self.assertEqual(vc.call_args[0][2], b"fakepng")
+
+    def test_describe_gallery_isolates_failures(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        with patch.object(book_describe, "_vision_call", side_effect=RuntimeError("model exploded")), \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
+            _, body = self._route(hs.handle_describe_gallery, gallery_id=gid, overwrite=True)
+        self.assertEqual(body["described"], 0)
+        self.assertEqual(len(body["errors"]), 1)
+        self.assertIn("model exploded", body["errors"][0]["error"])
+        self.assertEqual(body["gallery"]["pieces"][0]["title"], "")   # unchanged
+
+    def test_describe_gallery_without_key_is_clean_error(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        with patch.object(book_describe, "_load_vision_config", return_value={}), \
+             patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
+            _, body = self._route(hs.handle_describe_gallery, gallery_id=gid, overwrite=True)
+        self.assertIn("error", body)
+        self.assertIn("vision API key", body["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

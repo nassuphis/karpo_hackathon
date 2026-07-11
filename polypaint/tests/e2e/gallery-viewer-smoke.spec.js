@@ -232,6 +232,28 @@ test('minimap renders the maze with a red you-are-here dot; textures are pre-fli
   expect(st.flipY).toBe(false);             // textures pre-flipped -> art is right-side up
 });
 
+test('inspect goes STRAIGHT to zoom; overlay has only Copy link + Close', async ({ page }) => {
+  const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/dz/manifest.json';
+  await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color', layout: { mode: 'auto', seed: 1 },
+    pieces: [{ ordinal: 0, job_id: 'compute_a', artifact_id: 'cA',
+      preview_key: 'renders/compute_a/color/cA/preview.jpg', image_key: 'renders/compute_a/color/cA/image.jpeg',
+      preview_width: 512, preview_height: 512, function: 'f', title: '',
+      deepzoom: { export_id: 'dz_A', dzi_key: 'deepzoom/compute_a/dz_A/image.dzi', source_key: 'renders/compute_a/color/cA/image.jpeg', source_artifact_id: 'cA' } }],
+  }) }));
+  await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(GALLERY + '?share=dz');
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  await page.evaluate(() => { const v = window.__galleryViewer; v._guidedIndex = 0; v._inspectFocused(); });
+  await expect(page.locator('#overlay')).toBeVisible();
+  await expect(page.locator('#osd')).toBeVisible();               // zoom surface immediately
+  await expect(page.locator('#overlay-img')).toBeHidden();        // no intermediate preview step
+  await expect(page.locator('#overlay-bar button')).toHaveCount(2);   // Copy link + Close only
+  await expect(page.locator('#overlay-copy')).toHaveText('Copy link');
+  await expect(page.locator('#overlay-meta')).toContainText('image 1');  // default title
+});
+
 test('REGRESSION: inline zoom renders real DZI pixels with the vendored OpenSeadragon', async ({ page }) => {
   // The "empty zoom" bug: OSD rewrites its element's position to "relative", and
   // an inset-sized #osd collapsed to 0 height -> a 1px-tall canvas -> nothing

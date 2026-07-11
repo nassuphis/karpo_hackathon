@@ -2272,6 +2272,11 @@ button {
             <input type="number" id="gallery-wall-coverage" min="5" max="100" step="5" value="35" oninput="_galleryOnWallCoverage(this.value)" style="width:56px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:4px 6px; font-size:12px" disabled> %
         </label>
     </div>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
+        <button id="btn-gallery-godz" type="button" class="btn-secondary" onclick="galleryGoDeepZoom()" style="padding:5px 12px; font-size:12px">Go DeepZoom</button>
+        <button id="btn-gallery-describe" type="button" class="btn-secondary" onclick="galleryDescribeSelection()" style="padding:5px 12px; font-size:12px" title="Generate a title for the selected piece from its thumbnail (vision model from the Book tab gear panel)">Describe Selection</button>
+        <span style="font-size:11px; color:#666">Click a row to select it.</span>
+    </div>
     <div id="gallery-piece-list" style="display:flex; flex-direction:column; gap:6px; max-height:60vh; overflow-y:auto"></div>
     <div id="gallery-status" class="status" style="margin-top:8px; font-size:12px"></div>
         </div>

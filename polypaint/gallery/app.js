@@ -376,6 +376,9 @@ class GalleryViewer {
 
   _pieceId(piece) { return piece.job_id + '/' + piece.artifact_id; }
 
+  // Display title: the curator title, else a stable default ("image 1", …).
+  _pieceTitle(piece) { return piece.title || ('image ' + ((piece.ordinal ?? 0) + 1)); }
+
   _buildTextureManager() {
     this.tm = new GalleryTextureManager({
       loadImage: makePreviewLoader(),
@@ -423,8 +426,6 @@ class GalleryViewer {
     on($('btn-inspect'), 'click', () => this._inspectFocused());
     on($('overlay-close'), 'click', () => this._closeOverlay());
     on($('overlay-copy'), 'click', () => this._copyFocusedRef());
-    on($('overlay-original'), 'click', () => this._openOriginal());
-    on($('overlay-zoom'), 'click', () => this._openDeepZoom());
   }
 
   _onKey(e, down) {
@@ -616,7 +617,7 @@ class GalleryViewer {
         mesh.userData.frame.material = this._focusFrameMat;
       }
       const p = this.pieces[index];
-      hud.title = p.title || p.function || p.artifact_id;
+      hud.title = this._pieceTitle(p);
       hud.sub = [p.job_id, p.degree != null ? 'deg ' + p.degree : '', p.N != null ? 'N=' + p.N : ''].filter(Boolean).join(' · ');
     }
     $('hud-title').textContent = hud.title;
@@ -660,20 +661,25 @@ class GalleryViewer {
     // Background guided controls must not be keyboard-activatable behind the modal.
     $('btn-prev').disabled = true; $('btn-next').disabled = true; $('btn-inspect').disabled = true;
 
-    $('overlay-meta').textContent = [p.title || p.function || p.artifact_id, p.job_id, p.artifact_id,
+    $('overlay-meta').textContent = [this._pieceTitle(p), p.job_id, p.artifact_id,
       p.degree != null ? 'deg ' + p.degree : '', p.N != null ? 'N=' + p.N : '',
       p.times != null ? '×' + p.times : '', p.created_at].filter(Boolean).join('  ·  ');
     const img = $('overlay-img');
-    img.style.display = 'block';
-    img.src = p.preview_url;
-    img.alt = p.title || p.function || p.artifact_id;
-    $('osd').style.display = 'none';
     $('overlay-status').textContent = '';
-    $('overlay-zoom').style.display = p.deepzoom ? '' : 'none';
-    $('overlay-original').style.display = p.image_url ? '' : 'none';
     $('overlay').classList.add('open');
     $('overlay').setAttribute('aria-hidden', 'false');
     $('overlay-close').focus();
+    if (p.deepzoom) {
+      // Straight into DeepZoom — no intermediate preview step.
+      img.style.display = 'none';
+      img.src = '';
+      this._openDeepZoom();
+    } else {
+      img.style.display = 'block';
+      img.src = p.preview_url;
+      img.alt = this._pieceTitle(p);
+      $('osd').style.display = 'none';
+    }
   }
 
   _closeOverlay() {
@@ -694,11 +700,7 @@ class GalleryViewer {
     $('osd').style.display = 'block';
     $('overlay-status').textContent = 'loading zoom…';
     const dziUrl = p.deepzoom.dzi_url;
-    // Button feedback: busy while the DZI opens, restored on success/failure.
-    const zoomBtn = $('overlay-zoom');
-    const zoomLabel = zoomBtn.textContent;
-    zoomBtn.disabled = true; zoomBtn.textContent = 'Loading zoom…';
-    const done = (ok) => { zoomBtn.disabled = false; zoomBtn.textContent = zoomLabel; if (ok) $('overlay-status').textContent = ''; };
+    const done = (ok) => { if (ok) $('overlay-status').textContent = ''; };
     const openToken = (this._osdOpenToken = (this._osdOpenToken || 0) + 1);
     // Defer creation one frame so the just-shown #osd container is laid out.
     // Same setup the DeepZoom tab uses (js/12 viewDeepZoom): the piece's own DZI,
@@ -737,23 +739,21 @@ class GalleryViewer {
     $('osd').innerHTML = '';
   }
 
-  _openOriginal() {
-    const p = this.pieces[this._inspecting != null ? this._inspecting : this._focusIndex];
-    if (!p || !p.image_url) return;
-    // Full images can be enormous; never decode inline. Open in a new tab.
-    window.open(p.image_url, '_blank', 'noopener');
-  }
-
   _copyFocusedRef() {
     const p = this.pieces[this._inspecting != null ? this._inspecting : this._focusIndex];
     if (!p) return;
-    const ref = p.job_id + ' / ' + p.artifact_id;
+    // "Copy link": the piece's standalone DeepZoom viewer (each export ships a
+    // viewer.html next to its image.dzi) — a directly shareable per-image link.
+    // Fallback (no DZI): this gallery's own share link.
+    const link = p.deepzoom
+      ? location.origin + '/deepzoom/' + (p.export_job_id || p.job_id) + '/' + p.deepzoom.export_id + '/viewer.html'
+      : location.href;
     const btn = $('overlay-copy');
     const orig = btn.textContent;
     const flash = (label) => { btn.textContent = label; setTimeout(() => { btn.textContent = orig; }, 1400); };
     if (!navigator.clipboard) { flash('✗ No clipboard'); $('overlay-status').textContent = 'copy unavailable (insecure context)'; return; }
-    navigator.clipboard.writeText(ref).then(
-      () => { flash('✓ Copied'); $('overlay-status').textContent = 'copied ' + ref; },
+    navigator.clipboard.writeText(link).then(
+      () => { flash('✓ Copied'); $('overlay-status').textContent = 'copied ' + link; },
       () => { flash('✗ Copy failed'); $('overlay-status').textContent = 'copy failed'; });
   }
 
@@ -844,6 +844,11 @@ async function boot() {
     window.__galleryViewer = VIEWER;              // handle for manual inspection
     const dropped = norm.skipped.length + truncated;
     VIEWER._dropped = dropped;
+    if (dropped) {
+      const b = $('dropped-banner');
+      b.textContent = dropped + ' piece' + (dropped === 1 ? '' : 's') + ' could not be shown (invalid entries — re-add or re-open after updating)';
+      b.style.display = 'block';
+    }
     if (dropped) {
       // Non-fatal: surface how many rows were dropped/truncated.
       $('debug').setAttribute('data-skipped', String(dropped));

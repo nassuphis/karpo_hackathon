@@ -17,8 +17,10 @@ async function setup(page, { docs = {}, active = '' } = {}) {
     window._galleryNav = '';
     if (active) localStorage.setItem('polypaint_active_gallery', active);
     else localStorage.removeItem('polypaint_active_gallery');
-    window.open = function () {
-      const win = { closed: false, close() { this.closed = true; } };
+    window._opened = [];
+    window.open = function (url) {
+      if (url) window._opened.push(String(url));
+      const win = { closed: false, close() { this.closed = true; }, set opener(v) {} };
       Object.defineProperty(win, 'location', { set(v) { window._galleryNav = String(v); }, configurable: true });
       return win;
     };
@@ -40,6 +42,15 @@ async function setup(page, { docs = {}, active = '' } = {}) {
       if (path === '/save-gallery') {
         window.__docs[body.gallery.gallery_id] = JSON.parse(JSON.stringify(body.gallery));
         return { gallery: window.__docs[body.gallery.gallery_id], revision: 'r' + (++window._rev) };
+      }
+      if (path === '/describe-gallery') {
+        const d = JSON.parse(JSON.stringify(window.__docs[body.gallery_id]));
+        const t = body.pieces && body.pieces[0];
+        for (const p of d.pieces) {
+          if (t && p.job_id === t.job_id && p.artifact_id === t.artifact_id) p.title = 'Night Lattice';
+        }
+        window.__docs[body.gallery_id] = d;
+        return { gallery: d, revision: 'r' + (++window._rev), described: 1, errors: [] };
       }
       if (path === '/create-gallery-share') {
         const d = window.__docs[body.gallery_id];
@@ -198,6 +209,43 @@ test('FINDING 3 REGRESSION: concurrent adds survive a dirty merge + save', async
   expect(ids).toContain('artC');
   expect(saved.body.gallery.pieces[0].title).toBe('Kept title');  // local edit preserved
   expect(saved.body.expected_revision).toBe('r-after-adds');
+});
+
+test('untitled pieces default to "image N" placeholders', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await expect(page.locator('#gallery-piece-list input[type="text"]').nth(0)).toHaveAttribute('placeholder', 'image 1');
+  await expect(page.locator('#gallery-piece-list input[type="text"]').nth(1)).toHaveAttribute('placeholder', 'image 2');
+});
+
+test('Describe Selection titles the selected piece via the vision route', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.locator('#gallery-piece-list > div').nth(0).click();          // select row 1
+  await page.click('#btn-gallery-describe');
+  await expect(page.locator('#gallery-piece-list input[type="text"]').nth(0)).toHaveValue('Night Lattice');
+  await expect(page.locator('#gallery-status')).toContainText('Night Lattice');
+  const post = await page.evaluate(() => window._galleryPosts.find((p) => p.path === '/describe-gallery'));
+  expect(post.body.pieces).toEqual([{ job_id: 'jobA', family: 'color', artifact_id: 'artA' }]);
+  expect(post.body.overwrite).toBe(true);
+});
+
+test('Describe Selection without a selection flashes, never posts', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.click('#btn-gallery-describe');
+  await expect(page.locator('#btn-gallery-describe')).toContainText('Select a piece');
+  const post = await page.evaluate(() => window._galleryPosts.find((p) => p.path === '/describe-gallery'));
+  expect(post).toBeFalsy();
+});
+
+test('Go DeepZoom opens the selected piece standalone viewer', async ({ page }) => {
+  const pcs = pieces();
+  pcs[0].deepzoom = { export_id: 'dzA', dzi_key: 'deepzoom/compute_a/dzA/image.dzi', source_key: null, source_artifact_id: 'artA' };
+  pcs[0].export_job_id = 'compute_a';
+  await setup(page, docWith(pcs));
+  await page.locator('#gallery-piece-list > div').nth(0).click();
+  await page.click('#btn-gallery-godz');
+  const opened = await page.evaluate(() => window._opened);
+  expect(opened[0]).toContain('/deepzoom/compute_a/dzA/viewer.html');
+  await expect(page.locator('#btn-gallery-godz')).toContainText('Opened');
 });
 
 test('a network error on load keeps the active gallery (only 404 clears it)', async ({ page }) => {

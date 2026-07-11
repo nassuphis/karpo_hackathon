@@ -1580,6 +1580,8 @@ def handler(event, context):
         return _handle_storage_route(handle_share_mosaic, event)
     elif path.endswith("/create-gallery-share"):
         return _handle_storage_route(handle_create_gallery_share, event)
+    elif path.endswith("/describe-gallery"):
+        return _handle_storage_route(handle_describe_gallery, event)
     elif path.endswith("/create-gallery"):
         return _handle_storage_route(handle_create_gallery, event)
     elif path.endswith("/list-galleries"):
@@ -5054,6 +5056,92 @@ def handle_add_to_gallery(event):
     new_revision = _put_gallery_doc(doc, expected_revision=revision)
     return ok_response({"gallery": doc, "revision": new_revision, "added": True,
                         "job_id": job_id, "artifact_id": artifact_id})
+
+
+def _gallery_title_from_reply(raw):
+    """Extract {"title": ...} from a vision reply (same tolerant scan the book
+    engine uses: first complete JSON object wins)."""
+    idx = raw.find("{")
+    while idx != -1:
+        for end in range(len(raw), idx, -1):
+            try:
+                data = json.loads(raw[idx:end])
+                break
+            except ValueError:
+                continue
+        else:
+            data = None
+        if isinstance(data, dict) and str(data.get("title") or "").strip():
+            return str(data["title"]).strip()
+        idx = raw.find("{", idx + 1)
+    raise RuntimeError(f"no title in vision reply: {raw[:160]!r}")
+
+
+def handle_describe_gallery(event):
+    """Generate short curator titles for gallery pieces from their thumbnails,
+    reusing the Book tab's vision engine + model/key config (lambda/book_describe).
+    Synchronous, SMALL-BATCH (Describe Selection): at most 4 pieces per call —
+    each success is CAS-saved immediately so progress survives later failures."""
+    from book_describe import _vision_call, _load_vision_config, _downscale_for_vision
+    from shared import vision_provider
+    params = parse_body(event)
+    gallery_id = assert_safe_id(params.get("gallery_id"), "gallery_id")
+    raw_targets = params.get("pieces")
+    overwrite = bool(params.get("overwrite"))
+    doc, revision = _read_gallery_doc_with_etag(gallery_id)
+    pieces = doc.get("pieces") or []
+
+    def key3(p):
+        return (str(p.get("job_id") or ""), str(p.get("family") or "") or "color",
+                str(p.get("artifact_id") or ""))
+
+    if isinstance(raw_targets, list) and raw_targets:
+        want = set()
+        for t in raw_targets[:8]:
+            if not isinstance(t, dict):
+                raise ValueError("pieces entries must be objects")
+            want.add((assert_safe_id(t.get("job_id"), "job_id"),
+                      str(t.get("family") or "") or "color",
+                      assert_safe_id(t.get("artifact_id"), "artifact_id")))
+        targets = [p for p in pieces if key3(p) in want]
+    else:
+        targets = list(pieces)
+    if not overwrite:
+        targets = [p for p in targets if not str(p.get("title") or "").strip()]
+    targets = targets[:4]   # sync route — stay well inside the API gateway budget
+    if not targets:
+        return ok_response({"gallery": doc, "revision": revision, "described": 0, "errors": []})
+
+    cfg = _load_vision_config()
+    model = str(cfg.get("model") or "") or "gemini-2.5-flash"
+    prov = vision_provider(model)
+    api_key = cfg.get(f"api_key_{prov}") or (os.environ.get("GEMINI_API_KEY", "") if prov == "gemini" else "")
+    if not api_key:
+        return ok_response({"error": "no vision API key configured — set one in the Book tab gear panel"})
+
+    used = [str(p.get("title") or "").strip() for p in pieces if str(p.get("title") or "").strip()]
+    described, errors = 0, []
+    for p in targets:
+        try:
+            obj = s3.get_object(Bucket=BUCKET, Key=str(p.get("preview_key") or ""))
+            img = _downscale_for_vision(obj["Body"].read())
+            prompt = (
+                "You are titling one abstract mathematical artwork for a gallery wall. "
+                "Look at the image and reply with ONLY a JSON object: {\"title\": \"...\"}. "
+                "2-4 words, evocative but concrete, no colons, no quotes inside. "
+                + ("Do not reuse any of these existing titles: " + "; ".join(used[-20:]) + ". " if used else "")
+            )
+            title = _gallery_title_from_reply(_vision_call(model, api_key, img, prompt))
+            p["title"] = _clean_gallery_title(title)
+            doc["updated_at"] = _utc_now_iso()
+            revision = _put_gallery_doc(doc, expected_revision=revision)   # per-piece persistence
+            used.append(p["title"])
+            described += 1
+        except Exception as exc:   # per-piece isolation: one failure never voids the rest
+            if isinstance(exc, GalleryConflictError):
+                raise
+            errors.append({"artifact_id": str(p.get("artifact_id") or ""), "error": str(exc)[:200]})
+    return ok_response({"gallery": doc, "revision": revision, "described": described, "errors": errors})
 
 
 def handle_create_gallery_share(event):

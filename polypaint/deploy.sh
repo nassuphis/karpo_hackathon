@@ -1129,7 +1129,7 @@ echo "  Viewport: $(du -h /tmp/polypaint-viewport.zip | cut -f1)  (pure Python)"
 STORAGE_DIR=/tmp/polypaint-storage
 rm -rf "$STORAGE_DIR"
 mkdir -p "$STORAGE_DIR"
-cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/book_describe.py \
    lambda/solve_score_program_source.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \

@@ -2911,6 +2911,7 @@ const mutations = [
   // misreported as a duplicate, save/delete are mutations (review finding 5).
   ['storage', '/create-gallery'], ['storage', '/create-gallery-share'],
   ['storage', '/add-to-gallery'], ['storage', '/save-gallery'], ['storage', '/delete-gallery'],
+  ['storage', '/describe-gallery'],
 ];
 for (const [n, p] of mutations) {
   if (!isMut(n, p)) { console.error(`FATAL: ${n}${p||''} must be classified as a mutation`); process.exit(1); }

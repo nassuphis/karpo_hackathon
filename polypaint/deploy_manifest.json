@@ -150,6 +150,7 @@
     "/delete-gallery",
     "/add-to-gallery",
     "/create-gallery-share",
+    "/describe-gallery",
     "/delete-prefix",
     "/list-deepzoom",
     "/list-books",

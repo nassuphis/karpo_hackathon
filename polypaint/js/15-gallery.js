@@ -17,6 +17,7 @@ let _galleryState = {
     dirty: false,           // unsaved reorder/title/name edits
     baseIds: new Set(),     // piece identities at the last server sync (three-way merge base)
     epoch: 0,               // bumped on every selection/load/adopt; async ops must match
+    selectedKey: '',        // selected piece (row click) for Go DeepZoom / Describe Selection
 };
 
 function _galleryPieceKey(p) {
@@ -348,6 +349,51 @@ async function galleryOpen() {
     }
 }
 
+// Open the selected piece's standalone DeepZoom viewer (every export ships a
+// viewer.html next to its image.dzi — the DeepZoom tab's Share column artifact).
+function galleryGoDeepZoom() {
+    const p = _gallerySelectedPiece();
+    if (!p) { _galleryBtnFlash('btn-gallery-godz', '✗ Select a piece'); _galleryStatus('Click a row first, then Go DeepZoom.', true); return; }
+    if (!p.deepzoom || !p.deepzoom.export_id) { _galleryBtnFlash('btn-gallery-godz', '✗ No DeepZoom'); _galleryStatus('This piece has no DeepZoom export.', true); return; }
+    const url = _publicStorageUrl(`deepzoom/${p.export_job_id || p.job_id}/${p.deepzoom.export_id}/viewer.html`);
+    _galleryBtnFlash('btn-gallery-godz', '✓ Opened');
+    const win = window.open(url, '_blank');
+    try { if (win) win.opener = null; } catch (e) {}
+}
+
+// Vision-generated title for the SELECTED piece (same model/key config as the
+// Book tab's Describe; server-side via /describe-gallery, saved per piece).
+async function galleryDescribeSelection() {
+    const p = _gallerySelectedPiece();
+    if (!p) { _galleryBtnFlash('btn-gallery-describe', '✗ Select a piece'); _galleryStatus('Click a row first, then Describe Selection.', true); return; }
+    if (_galleryState.dirty) { _galleryBtnFlash('btn-gallery-describe', '✗ Save first'); _galleryStatus('Save your changes before describing (describe writes server-side).', true); return; }
+    const gid = _galleryState.activeId;
+    const epoch = _galleryState.epoch;
+    _galleryBtnBusy('btn-gallery-describe', true, 'Describing…');
+    try {
+        const resp = await lambdaPost('storage', {
+            gallery_id: gid, overwrite: true,
+            pieces: [{ job_id: p.job_id, family: p.family || 'color', artifact_id: p.artifact_id }],
+        }, '/describe-gallery', { idempotent: false });
+        if (resp && resp.error) throw new Error(resp.error);
+        if ((resp.errors || []).length) throw new Error(resp.errors[0].error || 'describe failed');
+        if (_galleryState.epoch === epoch && _galleryState.activeId === gid && resp.gallery) {
+            _galleryState.doc = resp.gallery;
+            _galleryState.dirty = false;
+            _gallerySyncBase(resp.gallery, resp.revision);
+            _renderGalleryTab();
+        }
+        const titled = (resp.gallery.pieces || []).find((q) => _galleryPieceKey(q) === _galleryPieceKey(p));
+        _galleryBtnBusy('btn-gallery-describe', false);
+        _galleryBtnFlash('btn-gallery-describe', '✓ Titled');
+        _galleryStatus('Titled: “' + ((titled && titled.title) || '?') + '”');
+    } catch (e) {
+        _galleryBtnBusy('btn-gallery-describe', false);
+        _galleryBtnFlash('btn-gallery-describe', '✗ Failed');
+        _galleryStatus('Describe failed: ' + e.message, true);
+    }
+}
+
 // ── in-memory edits (persisted on Save) ─────────────────────────────────────
 function _galleryOnNameInput(value) {
     if (!_galleryState.doc) return;
@@ -501,9 +547,43 @@ function _renderGallerySelector() {
     }
 }
 
+function _galleryRepaintSelection() {
+    const list = document.getElementById('gallery-piece-list');
+    if (!list) return;
+    for (const row of list.children) {
+        if (!row.dataset || !row.dataset.pieceKey) continue;
+        row.style.borderColor = row.dataset.pieceKey === _galleryState.selectedKey ? '#e0b877' : '#2b3a5e';
+    }
+}
+
+function _gallerySelectedPiece() {
+    const pieces = (_galleryState.doc && _galleryState.doc.pieces) || [];
+    return pieces.find((p) => _galleryPieceKey(p) === _galleryState.selectedKey) || null;
+}
+
+function _galleryBtnFlash(id, label, ms = 1600) {
+    const b = document.getElementById(id);
+    if (!b) return;
+    const orig = b.dataset.orig || b.textContent;
+    b.dataset.orig = orig;
+    b.textContent = label;
+    setTimeout(() => { b.textContent = orig; delete b.dataset.orig; }, ms);
+}
+
 function _renderGalleryPieceRow(piece, index, total) {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex; gap:10px; align-items:center; padding:6px; background:#121829; border:1px solid #2b3a5e; border-radius:6px';
+    const selected = _galleryPieceKey(piece) === _galleryState.selectedKey;
+    row.dataset.pieceKey = _galleryPieceKey(piece);
+    row.style.cssText = 'display:flex; gap:10px; align-items:center; padding:6px; background:#121829; border-radius:6px; cursor:pointer; border:1px solid ' + (selected ? '#e0b877' : '#2b3a5e');
+    row.addEventListener('click', (e) => {
+        if (e.target && e.target.tagName === 'BUTTON') return;   // move/remove keep their own action
+        _galleryState.selectedKey = _galleryPieceKey(piece);
+        if (e.target && e.target.tagName === 'INPUT') {
+            _galleryRepaintSelection();   // select, but keep the typing focus (no re-render)
+            return;
+        }
+        _renderGalleryTab();
+    });
 
     const img = document.createElement('img');
     img.src = (typeof _publicStorageUrl === 'function' ? _publicStorageUrl(piece.preview_key) : '');
@@ -520,7 +600,7 @@ function _renderGalleryPieceRow(piece, index, total) {
     const titleInp = document.createElement('input');
     titleInp.type = 'text';
     titleInp.value = piece.title || '';
-    titleInp.placeholder = 'Title (optional)';
+    titleInp.placeholder = 'image ' + (index + 1);   // the display default when untitled
     titleInp.style.cssText = 'width:100%; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:4px 6px; font-size:12px';
     titleInp.addEventListener('input', () => _gallerySetTitle(index, titleInp.value));
     meta.appendChild(id);

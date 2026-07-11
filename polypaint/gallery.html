@@ -101,7 +101,9 @@
   <div id="gl-root"></div>
   <div id="crosshair"></div>
 
-  <div id="hint">Click to enter · WASD to move · mouse to look · click or Enter to inspect · Esc to release · map top-right</div>
+  <div id="hint">Click to enter · WASD to move · mouse to look · click or Enter to zoom into a piece · Esc to release · map top-right</div>
+  <div id="dropped-banner" style="display:none; position:fixed; left:50%; top:56px; transform:translateX(-50%); z-index:5;
+    font-size:12px; color:#ffd9a0; background:rgba(60,30,0,.55); padding:5px 12px; border-radius:16px; pointer-events:none"></div>
   <div id="hud"><div class="title" id="hud-title"></div><div class="sub" id="hud-sub"></div></div>
   <div id="debug"></div>
   <canvas id="minimap" width="156" height="156"></canvas>
@@ -115,9 +117,7 @@
     <div id="overlay-bar">
       <span class="meta" id="overlay-meta"></span>
       <span class="spacer"></span>
-      <button id="overlay-zoom" type="button" style="display:none">Zoom (DeepZoom)</button>
-      <button id="overlay-original" type="button">Open original ↗</button>
-      <button id="overlay-copy" type="button">Copy ref</button>
+      <button id="overlay-copy" type="button">Copy link</button>
       <button id="overlay-close" type="button">Close ✕</button>
     </div>
     <div id="overlay-stage">

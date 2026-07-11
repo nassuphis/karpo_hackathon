@@ -138,7 +138,7 @@ test('Open Gallery snapshots (revision-pinned) and navigates to the viewer', asy
   expect(shared.body.gallery_id).toBe('gal_x');
   expect(shared.body.expected_revision).toBeTruthy();   // share pinned to the reviewed revision
   const nav = await page.evaluate(() => window._galleryNav);
-  expect(nav).toContain('https://polypaint.s3.us-east-1.amazonaws.com/gallery.html?manifest=');
+  expect(nav).toBe('https://polypaint.s3.us-east-1.amazonaws.com/gallery.html?share=s1');   // SHORT link
 });
 
 test('Open with unsaved edits auto-saves first, then snapshots', async ({ page }) => {

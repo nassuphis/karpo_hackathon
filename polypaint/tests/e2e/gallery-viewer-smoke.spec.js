@@ -47,19 +47,19 @@ test('module graph loads and a missing manifest shows a readable message', async
   expect(errors, 'no uncaught module/runtime errors').toEqual([]);
 });
 
-test('rejects a cross-origin manifest link', async ({ page }) => {
-  await page.goto(GALLERY + '?manifest=' + encodeURIComponent('https://evil.example/renders/_shared_mosaic/gallery/x/manifest.json'));
+test('rejects a malformed share id (traversal)', async ({ page }) => {
+  await page.goto(GALLERY + '?share=' + encodeURIComponent('../evil'));
   await expect(page.locator('#message-box h1')).toHaveText('That gallery link is not valid');
 });
 
-test('rejects a same-origin manifest at a non-gallery path', async ({ page }) => {
-  await page.goto(GALLERY + '?manifest=' + encodeURIComponent('http://localhost:8765/renders/_shared_mosaic/color/a/b/c/manifest.json'));
+test('rejects an overlong share id', async ({ page }) => {
+  await page.goto(GALLERY + '?share=' + 'a'.repeat(80));
   await expect(page.locator('#message-box h1')).toHaveText('That gallery link is not valid');
 });
 
 test('accepts a valid share: builds the scene or shows a WebGL fallback', async ({ page }) => {
   await routeManifest(page, validManifest());
-  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(MANIFEST_URL));
+  await page.goto(GALLERY + '?share=smoke');
 
   // Wait until boot resolves to one of its two acceptable terminal states.
   await page.waitForFunction(() => {
@@ -91,7 +91,7 @@ test('accepts a valid share: builds the scene or shows a WebGL fallback', async 
 
 test('guided Next keeps focus, enables Inspect, and does not accumulate pins', async ({ page }) => {
   await routeManifest(page, validManifest());
-  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(MANIFEST_URL));
+  await page.goto(GALLERY + '?share=smoke');
   const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
   test.skip(!built, 'WebGL scene not built in this browser');
   // Advance guided navigation several times (unlocked) — focus must persist and
@@ -126,7 +126,7 @@ test('Zoom opens OpenSeadragon on the piece DZI without forcing CORS', async ({ 
       deepzoom: { export_id: 'dz_A', dzi_key: 'deepzoom/compute_a/dz_A/image.dzi', source_key: 'renders/compute_a/color/cA/image.jpeg', source_artifact_id: 'cA' } }],
   }) }));
   await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
-  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(url));
+  await page.goto(GALLERY + '?share=dz');
   const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
   test.skip(!built, 'WebGL scene not built in this browser');
   // Capture the OpenSeadragon options the viewer passes at Zoom time. OSD init is
@@ -153,7 +153,7 @@ test('builds a maze with settings applied and collision that clamps to bounds', 
     schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color',
     layout: { mode: 'auto', seed: 2 }, settings: { sky: 'dark', wall_color: '#3366cc' }, pieces }) }));
   await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
-  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(url));
+  await page.goto(GALLERY + '?share=mz');
   const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
   test.skip(!built, 'WebGL scene not built in this browser');
   const st = await page.evaluate(() => {
@@ -181,7 +181,7 @@ test('over the resident cap, only the top working set is queued (no thrash)', as
   await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
     schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color', layout: { mode: 'auto', seed: 1 }, pieces }) }));
   await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
-  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(url));
+  await page.goto(GALLERY + '?share=big');
   const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
   test.skip(!built, 'WebGL scene not built in this browser');
   const st = await page.evaluate(() => {
@@ -195,7 +195,7 @@ test('over the resident cap, only the top working set is queued (no thrash)', as
 
 test('scene has moonlight, a moon disc, and a distinct textured floor', async ({ page }) => {
   await routeManifest(page, validManifest());
-  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(MANIFEST_URL));
+  await page.goto(GALLERY + '?share=smoke');
   const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
   test.skip(!built, 'WebGL scene not built in this browser');
   const st = await page.evaluate(() => {
@@ -214,7 +214,7 @@ test('scene has moonlight, a moon disc, and a distinct textured floor', async ({
 
 test('minimap renders the maze with a red you-are-here dot; textures are pre-flipped', async ({ page }) => {
   await routeManifest(page, validManifest());
-  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(MANIFEST_URL));
+  await page.goto(GALLERY + '?share=smoke');
   const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
   test.skip(!built, 'WebGL scene not built in this browser');
   const st = await page.evaluate(() => {
@@ -255,7 +255,7 @@ test('REGRESSION: inline zoom renders real DZI pixels with the vendored OpenSead
     route.fulfill({ status: 200, contentType: rel.endsWith('.dzi') ? 'application/xml' : 'image/jpeg', body: fs.readFileSync(file) });
   });
   await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
-  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(url));
+  await page.goto(GALLERY + '?share=dzreal');
   const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
   test.skip(!built, 'WebGL scene not built in this browser');
   await page.evaluate(() => {

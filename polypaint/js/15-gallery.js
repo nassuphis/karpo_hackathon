@@ -324,10 +324,12 @@ async function galleryOpen() {
             { gallery_id: gid, expected_revision: _galleryState.revision }, '/create-gallery-share');
         if (resp && resp.error) throw new Error(resp.error);
         const manifestUrl = String((resp && resp.manifest_url) || '');
-        if (!manifestUrl) throw new Error('no manifest_url returned');
-        // Derive gallery.html from the MANIFEST origin (the HTTPS REST endpoint).
+        const shareId = String((resp && resp.share_id) || '');
+        if (!manifestUrl || !shareId) throw new Error('no share returned');
+        // SHORT link: gallery.html?share=<id> on the manifest's origin (the
+        // HTTPS REST endpoint) — the viewer reconstructs the manifest path.
         const galleryUrl = new URL('/gallery.html', new URL(manifestUrl).origin);
-        galleryUrl.searchParams.set('manifest', manifestUrl);
+        galleryUrl.searchParams.set('share', shareId);
         if (win) {
             win.location = galleryUrl.toString();
             _galleryStatus('Opened gallery — ' + resp.count + ' piece' + (resp.count === 1 ? '' : 's') + '.');
@@ -396,6 +398,12 @@ function _galleryOnSkyToggle(on) {
     _galleryState.dirty = true; _galleryUpdateActionButtons();
 }
 
+function _galleryOnWallSelfTint(on) {
+    const s = _gallerySettings(); if (!s) return;
+    s.wall_self_tint = !!on;
+    _galleryState.dirty = true; _galleryUpdateActionButtons();
+}
+
 function _galleryRenderSceneControls() {
     const doc = _galleryState.doc;
     const s = (doc && doc.settings) || null;
@@ -408,6 +416,8 @@ function _galleryRenderSceneControls() {
     if (wh) { wh.disabled = !doc; wh.value = color; }
     if (sk) { sk.disabled = !doc; sk.checked = !s || s.sky !== 'dark'; }
     if (cov) { cov.disabled = !doc; cov.value = (s && s.wall_coverage) || 35; }
+    const st = document.getElementById('gallery-wall-selftint');
+    if (st) { st.disabled = !doc; st.checked = !s || s.wall_self_tint !== false; }
 }
 
 function _galleryMovePiece(index, dir) {

@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { parseTrustedManifestUrl, normalizeManifest, GALLERY_LIMITS } from './manifest.js';
+import { parseTrustedManifestUrl, normalizeManifest, GALLERY_LIMITS, isValidId } from './manifest.js';
 import { computeMaze, mazeClamp, mazeClampMove, MAZE, selectAndSort } from './layout.js';
 import { GalleryTextureManager, TEXTURE_LIMITS } from './texture-manager.js';
 
@@ -238,6 +238,13 @@ class GalleryViewer {
   _buildMazeShell(maze) {
     const wallColor = (this.spec.settings && this.spec.settings.wall_color) || DEFAULT_WALL_COLOR;
     const wallMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(wallColor), roughness: 0.95, metalness: 0.02 });
+    // Self-tinted walls (default ON): the picked colour glows through the cool
+    // moonlight, so white reads white instead of moon-blue — while the lit
+    // component still shades corridors for depth. OFF = fully moonlit walls.
+    if (!this.spec.settings || this.spec.settings.wall_self_tint !== false) {
+      wallMat.emissive = new THREE.Color(wallColor);
+      wallMat.emissiveIntensity = 0.45;
+    }
     // Floor: a distinct cool slate with a grid aligned to the maze cells (one
     // tile per cell), emissive so the grid stays legible in the dark — clearly
     // different from the warm walls, and a strong orientation aid.
@@ -794,10 +801,17 @@ let VIEWER = null;
 
 async function boot() {
   const params = new URLSearchParams(location.search);
-  const raw = params.get('manifest');
-  if (!raw) {
-    return failMessage('No gallery specified', 'This viewer needs a ?manifest= share link produced by “Create Gallery”.');
+  // Short links: gallery.html?share=<id>. The id is the ONLY payload — the
+  // manifest path is reconstructed here, same-origin, at the fixed share
+  // location (strictly less URL surface than accepting a full manifest URL).
+  const shareId = String(params.get('share') || '').trim();
+  if (!shareId) {
+    return failMessage('No gallery specified', 'This viewer needs a ?share= link produced by “Open Gallery”.');
   }
+  if (!isValidId(shareId)) {
+    return failMessage('That gallery link is not valid', 'malformed share id');
+  }
+  const raw = location.origin + '/renders/_shared_mosaic/gallery/' + shareId + '/manifest.json';
   const requireHttps = location.protocol === 'https:';
   const parsed = parseTrustedManifestUrl(raw, { origin: location.origin, requireHttps });
   if (!parsed.ok) {

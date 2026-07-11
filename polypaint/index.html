@@ -2267,6 +2267,7 @@ button {
             <input type="text" id="gallery-wall-hex" value="#ece4d6" maxlength="7" spellcheck="false" oninput="_galleryOnWallHex(this.value)" style="width:74px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:4px 6px; font-size:12px" disabled>
         </label>
         <label style="display:flex; align-items:center; gap:6px"><input type="checkbox" id="gallery-sky-stars" onchange="_galleryOnSkyToggle(this.checked)" disabled> Starry sky</label>
+        <label style="display:flex; align-items:center; gap:6px" title="Show the picked wall colour true-to-selection (the colour glows through the moonlight). Off: walls take the blue moonlight fully."><input type="checkbox" id="gallery-wall-selftint" onchange="_galleryOnWallSelfTint(this.checked)" checked disabled> True wall colour</label>
         <label style="display:flex; align-items:center; gap:6px" title="Percentage of maze wall faces that carry art. Lower = bigger, emptier maze to explore; higher = smaller, denser hang.">Wall coverage
             <input type="number" id="gallery-wall-coverage" min="5" max="100" step="5" value="35" oninput="_galleryOnWallCoverage(this.value)" style="width:56px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:4px 6px; font-size:12px" disabled> %
         </label>

@@ -30,7 +30,7 @@ const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const SKY_MODES = new Set(['stars', 'dark']);
 // wall_coverage: null = "not specified" -> the viewer uses the LEGACY maze
 // sizing, so shares written before the knob existed keep their layout.
-const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null });
+const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null, wall_self_tint: true });
 
 // Scene settings the viewer applies (untrusted → validated). Only two knobs:
 // sky mode and wall colour.
@@ -42,6 +42,7 @@ export function validateGallerySettings(raw) {
       ? s.wall_color.toLowerCase() : DEFAULT_SETTINGS.wall_color,
     wall_coverage: Number.isFinite(s.wall_coverage)
       ? Math.max(5, Math.min(100, Math.round(s.wall_coverage))) : null,
+    wall_self_tint: s.wall_self_tint !== false,   // default ON; only explicit false disables
   };
 }
 

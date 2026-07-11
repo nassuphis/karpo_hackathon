@@ -4729,7 +4729,10 @@ def _write_gallery_share_manifest(pieces, *, source_kind, seed, settings=None):
     """Write an immutable virtual_gallery SHARE manifest (the document the viewer
     loads) and return (public_url, key, share_id, count). `pieces` order is
     authoritative; ordinals are assigned here and curator titles carried through."""
-    share_id = f"share_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    # SHORT id: the share link is gallery.html?share=<id> and the viewer
+    # reconstructs the manifest path from the id alone, so the id is the whole
+    # payload of the link. 10 hex chars ~ 1e12 space — collision-safe here.
+    share_id = uuid.uuid4().hex[:10]
     snapshot_key = f"{GALLERY_SHARE_PREFIX}{share_id}/manifest.json"
     out_pieces = []
     for i, p in enumerate(pieces):
@@ -4815,7 +4818,12 @@ def _clean_gallery_settings(raw):
     if coverage is None:
         coverage = 35
     coverage = max(5, min(100, coverage))
-    return {"sky": sky, "wall_color": wall.lower(), "wall_coverage": coverage}
+    # Self-tinted walls: the picked colour glows through the blue moonlight so
+    # white reads white. Default ON; explicit false gives fully-lit walls.
+    self_tint = raw.get("wall_self_tint")
+    self_tint = True if self_tint is None else bool(self_tint)
+    return {"sky": sky, "wall_color": wall.lower(), "wall_coverage": coverage,
+            "wall_self_tint": self_tint}
 
 
 def _new_gallery_doc(gallery_id, name, pieces=None):

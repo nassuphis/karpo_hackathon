@@ -70,9 +70,31 @@ async function _dzAddSelectedToGallery() {
     const pick = _dzGalleryPickForExport(ex);
     const statusEl = document.getElementById('deepzoom-status');
     const setStatus = (msg, cls) => { if (statusEl) { statusEl.textContent = msg; statusEl.className = cls || 'status'; } };
-    if (!pick) { setStatus('Add to Gallery needs a color DeepZoom export.', 'status error'); return; }
+    if (!pick) {
+        // NEVER silent: flash the button and say exactly what is missing.
+        const btn0 = document.getElementById('btn-dz-add-gallery');
+        if (btn0) {
+            const orig0 = btn0.textContent;
+            btn0.textContent = '✗ Not addable';
+            setTimeout(() => { btn0.textContent = orig0; }, 1600);
+        }
+        const ref0 = ex ? _dzRenderSourceRef(ex) : {};
+        let why;
+        if (!ex) why = 'select a DeepZoom export first.';
+        else if (!String(ex.export_id || '').trim()) why = 'this export has no export id (very old export) — re-export it from the Render tab.';
+        else if (!ref0.jobId || !ref0.artifactId) why = 'this export predates per-artifact color renders (no color artifact id in its source) — re-export this render from the Render tab, then Add.';
+        else if (ref0.family !== 'color') why = 'only COLOR renders can hang in a gallery (this export is ' + (ref0.family || 'unknown') + ').';
+        else why = 'this export is missing its render source reference.';
+        setStatus('Cannot add: ' + why, 'status error');
+        return;
+    }
     const galleryId = _dzActiveGalleryId();
-    if (!galleryId) { setStatus('No active gallery. Create or select one in the Gallery tab first.', 'status error'); return; }
+    if (!galleryId) {
+        const btn1 = document.getElementById('btn-dz-add-gallery');
+        if (btn1) { const o1 = btn1.textContent; btn1.textContent = '✗ No gallery'; setTimeout(() => { btn1.textContent = o1; }, 1600); }
+        setStatus('No active gallery. Create or select one in the Gallery tab first.', 'status error');
+        return;
+    }
 
     const btn = document.getElementById('btn-dz-add-gallery');
     const origLabel = btn ? btn.textContent : '';

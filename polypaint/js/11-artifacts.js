@@ -1532,10 +1532,11 @@ function _dzSetButtonsEnabled(enabled) {
     if (gotoRenderBtn) gotoRenderBtn.disabled = !_dzRenderSourceRef(ex).jobId;
     if (populateBtn) populateBtn.disabled = !ex || !String(ex.job_id || '').trim();
     if (deleteBtn) deleteBtn.disabled = !ex || !String(ex.export_id || '').trim();
-    // "Add to Gallery" enables only for a COLOR export with a resolvable
-    // artifact + export id; it appends to the active gallery (Gallery tab).
+    // "Add to Gallery" stays ENABLED for any selected row — a silently disabled
+    // button is a dead click with no explanation (forbidden). When the export
+    // can't be added, the click explains exactly why.
     const addGalleryBtn = document.getElementById('btn-dz-add-gallery');
-    if (addGalleryBtn) addGalleryBtn.disabled = !(typeof _dzGalleryPickForExport === 'function' && _dzGalleryPickForExport(ex));
+    if (addGalleryBtn) addGalleryBtn.disabled = !ex;
 }
 
 function _dzClearViewer() {

@@ -4554,20 +4554,108 @@ def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, clien
             "source_key": image_key, "source_artifact_id": artifact_id}, ""
 
 
+def _read_dzi_descriptor(job_id, export_id, client):
+    """Parse the export's image.dzi XML: (format, tile_size, width, height) or None."""
+    try:
+        obj = client.get_object(Bucket=BUCKET, Key=f"deepzoom/{job_id}/{export_id}/image.dzi")
+        xml = obj["Body"].read().decode("utf-8", "replace")
+    except Exception as exc:
+        if is_missing_s3_error(exc):
+            return None
+        raise
+    fmt = re.search(r'Format="(\w+)"', xml)
+    ts = re.search(r'TileSize="(\d+)"', xml)
+    w = re.search(r'Width="(\d+)"', xml)
+    h = re.search(r'Height="(\d+)"', xml)
+    if not (fmt and ts and w and h):
+        return None
+    return fmt.group(1), int(ts.group(1)), int(w.group(1)), int(h.group(1))
+
+
+def _dzi_piece_from_export(job_id, artifact_id, export_id, calc_cache, *, client):
+    """Build a gallery piece purely from a DeepZoom export — the user rule is
+    "has a DZI => curatable". Preview = the largest single-tile pyramid level
+    (fits in one TileSize tile); zoom = the DZI; the original is linked only if
+    its source object still exists. Returns (piece|None, reason)."""
+    import math
+    meta = _read_deepzoom_export_meta(job_id, export_id, client) or {}
+    desc = _read_dzi_descriptor(job_id, export_id, client)
+    if desc is None:
+        return None, "export_dzi_absent"
+    fmt, tile_size, width, height = desc
+    if width <= 0 or height <= 0:
+        return None, "export_bad_dimensions"
+    max_dim = max(width, height)
+    max_level = max(0, math.ceil(math.log2(max_dim)) if max_dim > 1 else 0)
+    off = math.ceil(math.log2(max_dim / tile_size)) if max_dim > tile_size else 0
+    level = max(0, max_level - off)
+    scale = 2 ** (max_level - level)
+    pw, ph = math.ceil(width / scale), math.ceil(height / scale)
+    preview_key = f"deepzoom/{job_id}/{export_id}/image_files/{level}/0_0.{fmt}"
+    try:
+        client.head_object(Bucket=BUCKET, Key=preview_key)
+    except Exception as exc:
+        if is_missing_s3_error(exc):
+            return None, "export_preview_tile_missing"
+        raise
+    # Link the original only when it is still there ("if this is linkable").
+    image_key = None
+    src = str(meta.get("source_key") or "")
+    if src:
+        try:
+            client.head_object(Bucket=BUCKET, Key=src)
+            image_key = src
+        except Exception as exc:
+            if not is_missing_s3_error(exc):
+                raise
+    if job_id not in calc_cache:
+        try:
+            calc_cache[job_id] = _read_mosaic_calc_meta(client, job_id)
+        except Exception:
+            calc_cache[job_id] = {}
+    calc = calc_cache[job_id] or {}
+    dzi_key = f"deepzoom/{job_id}/{export_id}/image.dzi"
+    return {
+        "job_id": job_id,
+        "artifact_id": artifact_id,
+        "preview_key": preview_key,
+        "image_key": image_key,
+        "preview_width": pw,
+        "preview_height": ph,
+        "function": calc.get("function", "?"),
+        "degree": calc.get("degree", 0),
+        "N": calc.get("N", 0),
+        "times": calc.get("times", 1),
+        "created_at": str(meta.get("created_at") or ""),
+        "deepzoom": {"export_id": export_id, "dzi_key": dzi_key,
+                      "source_key": image_key, "source_artifact_id": artifact_id},
+    }, ""
+
+
 def _enrich_gallery_pick(job_id, artifact_id, export_id, calc_cache, *, client):
     """Validate + enrich ONE gallery pick to a piece dict (no ordinal/title yet).
-    Returns (piece|None, reason|None, fatal): fatal True means a transient/systemic
-    S3 error (the caller should FAIL, never silently drop); fatal False with a None
-    piece means the pick is genuinely unusable and should be skipped with reason."""
+    Returns (piece|None, reason|None, fatal). Prefers the rich color-artifact
+    path; when that can't resolve but the pick names a DeepZoom export, falls
+    back to building the piece FROM the export (rule: has a DZI => curatable)."""
     tile, state, reason = _gallery_resolve_color_tile(job_id, artifact_id, calc_cache, client=client)
     if state == "error":
         return None, reason, True
     if tile is None:
+        if export_id:
+            piece, dz_reason = _dzi_piece_from_export(job_id, artifact_id, export_id, calc_cache, client=client)
+            if piece is not None:
+                return piece, None, False
+            return None, dz_reason or reason or "missing", False
         return None, reason or "missing", False
     deepzoom = None
     if export_id:
         dz, dz_reason = _validate_gallery_export(job_id, artifact_id, export_id, tile["image_key"], client=client)
         if dz is None:
+            # The export exists but its identity fields don't line up with the
+            # color artifact (legacy metas): still honor "has a DZI => curatable".
+            piece, dz2_reason = _dzi_piece_from_export(job_id, artifact_id, export_id, calc_cache, client=client)
+            if piece is not None:
+                return piece, None, False
             return None, dz_reason, False
         deepzoom = dz
     piece = {

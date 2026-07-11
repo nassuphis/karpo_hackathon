@@ -50,10 +50,16 @@ function _dzRenderSourceLabel(ex) {
 
 function _dzGalleryPickForExport(ex) {
     if (!ex) return null;
-    const ref = _dzRenderSourceRef(ex);
     const exportId = String((ex && ex.export_id) || '').trim();
-    if (ref.family !== 'color' || !ref.jobId || !ref.artifactId || !exportId) return null;
-    return { job_id: ref.jobId, artifact_id: ref.artifactId, export_id: exportId };
+    if (!exportId) return null;
+    // Rule: has a DZI => curatable. Prefer the parsed render source identity;
+    // fall back to the export's own ids so legacy/non-color exports still add
+    // (the backend builds the piece from the DZI itself when needed).
+    const ref = _dzRenderSourceRef(ex);
+    const jobId = ref.jobId || String(ex.job_id || '').trim();
+    const artifactId = ref.artifactId || String(ex.source_artifact_id || '').trim() || exportId;
+    if (!jobId) return null;
+    return { job_id: jobId, artifact_id: artifactId, export_id: exportId };
 }
 
 // The active gallery id is owned by the Gallery tab (js/15); fall back to the
@@ -82,9 +88,7 @@ async function _dzAddSelectedToGallery() {
         let why;
         if (!ex) why = 'select a DeepZoom export first.';
         else if (!String(ex.export_id || '').trim()) why = 'this export has no export id (very old export) — re-export it from the Render tab.';
-        else if (!ref0.jobId || !ref0.artifactId) why = 'this export predates per-artifact color renders (no color artifact id in its source) — re-export this render from the Render tab, then Add.';
-        else if (ref0.family !== 'color') why = 'only COLOR renders can hang in a gallery (this export is ' + (ref0.family || 'unknown') + ').';
-        else why = 'this export is missing its render source reference.';
+        else why = 'this export has no job id — re-export it from the Render tab.';
         setStatus('Cannot add: ' + why, 'status error');
         return;
     }

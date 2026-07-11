@@ -431,6 +431,45 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertTrue(body["added"], body)
         self.assertEqual(body["gallery"]["pieces"][0]["deepzoom"]["dzi_key"], "deepzoom/jobA/dz_old/image.dzi")
 
+    def test_add_builds_piece_from_dzi_when_no_color_artifact(self):
+        # THE RULE: has a DZI => curatable. No color artifact exists at all
+        # (legacy/deleted render): the piece is built from the export itself —
+        # preview = the largest single-tile pyramid level, zoom = the DZI, and
+        # no original link (source object gone).
+        gid = self._create()["gallery"]["gallery_id"]
+        self.s3.objects["deepzoom/jobL/dz_L/meta.json"] = {"body": json.dumps({
+            "source_key": "renders/jobL/color/cL/image.jpeg",   # deleted since
+            "created_at": "2026-06-01T00:00:00Z"}).encode()}
+        self.s3.objects["deepzoom/jobL/dz_L/image.dzi"] = {"body": (
+            '<?xml version="1.0"?><Image Format="jpeg" Overlap="1" TileSize="254">'
+            '<Size Width="4096" Height="4096"/></Image>').encode()}
+        self.s3.objects["deepzoom/jobL/dz_L/image_files/7/0_0.jpeg"] = {
+            "Metadata": {}, "ContentLength": 900, "ContentType": "image/jpeg"}
+        body = self._add(gid, "jobL", "cL", "dz_L")
+        self.assertTrue(body["added"], body)
+        p = body["gallery"]["pieces"][0]
+        self.assertEqual(p["preview_key"], "deepzoom/jobL/dz_L/image_files/7/0_0.jpeg")
+        self.assertEqual(p["preview_width"], 128)
+        self.assertIsNone(p["image_key"])                       # original not linkable
+        self.assertEqual(p["deepzoom"]["dzi_key"], "deepzoom/jobL/dz_L/image.dzi")
+        self.assertIsNone(p["deepzoom"]["source_key"])
+
+    def test_add_dzi_fallback_links_original_when_it_exists(self):
+        gid = self._create()["gallery"]["gallery_id"]
+        self.s3.objects["renders/jobM/bilevel/bM/image.tif"] = {"Metadata": {}, "ContentLength": 10, "ContentType": "image/tiff"}
+        self.s3.objects["deepzoom/jobM/dz_M/meta.json"] = {"body": json.dumps({
+            "source_key": "renders/jobM/bilevel/bM/image.tif"}).encode()}
+        self.s3.objects["deepzoom/jobM/dz_M/image.dzi"] = {"body": (
+            '<?xml version="1.0"?><Image Format="png" Overlap="1" TileSize="254">'
+            '<Size Width="512" Height="512"/></Image>').encode()}
+        self.s3.objects["deepzoom/jobM/dz_M/image_files/7/0_0.png"] = {
+            "Metadata": {}, "ContentLength": 900, "ContentType": "image/png"}
+        body = self._add(gid, "jobM", "bM", "dz_M")
+        self.assertTrue(body["added"], body)
+        p = body["gallery"]["pieces"][0]
+        self.assertEqual(p["image_key"], "renders/jobM/bilevel/bM/image.tif")
+        self.assertEqual(p["deepzoom"]["source_key"], "renders/jobM/bilevel/bM/image.tif")
+
     def test_add_rejects_unknown_preview_dimensions(self):
         # No meta.json dims and an unparseable preview: the viewer could not lay
         # this piece out, so the add must fail loudly instead of succeeding and

@@ -662,6 +662,7 @@ class GalleryViewer {
     $('osd').style.display = 'none';
     $('overlay-status').textContent = '';
     $('overlay-zoom').style.display = p.deepzoom ? '' : 'none';
+    $('overlay-original').style.display = p.image_url ? '' : 'none';
     $('overlay').classList.add('open');
     $('overlay').setAttribute('aria-hidden', 'false');
     $('overlay-close').focus();
@@ -730,7 +731,7 @@ class GalleryViewer {
 
   _openOriginal() {
     const p = this.pieces[this._inspecting != null ? this._inspecting : this._focusIndex];
-    if (!p) return;
+    if (!p || !p.image_url) return;
     // Full images can be enormous; never decode inline. Open in a new tab.
     window.open(p.image_url, '_blank', 'noopener');
   }

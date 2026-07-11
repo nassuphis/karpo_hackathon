@@ -57,17 +57,17 @@ test.describe('Gallery curation (DeepZoom tab: add-only)', () => {
   }
 
   // date-desc sort => rows are [bC (bilevel), cB (color), cA (color)].
-  test('Add is NEVER a dead click: non-color exports explain why on click', async ({ page }) => {
+  test('ANY export with a DZI is addable — bilevel posts too', async ({ page }) => {
+    await page.evaluate(() => localStorage.setItem('polypaint_active_gallery', 'gal_1'));
     await openTab(page);
-    await page.locator('.dz-inv-row').nth(0).click();   // bilevel — still clickable
+    await page.locator('.dz-inv-row').nth(0).click();   // bilevel — addable now
     await expect(page.locator('#btn-dz-add-gallery')).toBeEnabled();
     await page.click('#btn-dz-add-gallery');
-    await expect(page.locator('#btn-dz-add-gallery')).toContainText('Not addable');
-    await expect(page.locator('#deepzoom-status')).toContainText('only COLOR renders');
+    await expect(page.locator('#deepzoom-status')).toContainText('Added');
     const posts = await page.evaluate(() => window._addPosts);
-    expect(posts).toHaveLength(0);                       // nothing was posted
-    await page.locator('.dz-inv-row').nth(1).click();   // color
-    await expect(page.locator('#btn-dz-add-gallery')).toBeEnabled();
+    expect(posts).toEqual([
+      { gallery_id: 'gal_1', job_id: 'rjobC', artifact_id: 'bC', export_id: 'dz_C' },
+    ]);
   });
 
   test('Add posts the pick to the active gallery', async ({ page }) => {

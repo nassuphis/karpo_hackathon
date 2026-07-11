@@ -79,6 +79,27 @@ function validateColorKey(key, jobId, artifactId) {
   return leaf;
 }
 
+// Any-family render key: renders/<job>/<family>/<artifact>/<leaf> (the original
+// may be color/bilevel/greyscale — "link to the original if linkable").
+function validateRenderKey(key, jobId, artifactId) {
+  if (typeof key !== 'string' || !key) return null;
+  if (key.includes('..') || key.includes('\\') || key.includes('{') ||
+      key.includes('}') || key.includes('?') || key.includes('#') || key.includes('//')) return null;
+  const parts = key.split('/');
+  if (parts.length !== 5) return null;
+  if (parts[0] !== 'renders' || parts[1] !== jobId || !/^[a-z]{1,24}$/.test(parts[2]) ||
+      parts[3] !== artifactId) return null;
+  return LEAF_RE.test(parts[4]) ? parts[4] : null;
+}
+
+// A DZI pyramid tile used as the piece preview when the piece was built from
+// the export itself: deepzoom/<job>/<export>/image_files/<level>/0_0.<ext>.
+function validExportPreviewKey(key, jobId, exportId) {
+  if (typeof key !== 'string' || !exportId) return false;
+  const re = new RegExp('^deepzoom/' + jobId + '/' + exportId + '/image_files/\\d{1,3}/0_0\\.(jpeg|jpg|png)$');
+  return re.test(key);
+}
+
 // Re-validate a piece's `deepzoom` on load — the viewer must not trust the
 // manifest blindly (§13.1). Returns a normalized zoom descriptor or null
 // (zoomless). The dzi_key is reconstructed from validated ids, never read as a
@@ -88,7 +109,9 @@ export function validateDeepzoom(dz, { jobId, artifactId, imageKey, trustedOrigi
   const exportId = dz.export_id;
   if (!isValidId(exportId)) return null;
   if (dz.source_artifact_id !== artifactId) return null;
-  if (dz.source_key !== imageKey) return null;
+  // DZI-built pieces may have no linkable original: source_key mirrors image_key
+  // (both null when the source object is gone).
+  if (imageKey != null ? dz.source_key !== imageKey : dz.source_key != null) return null;
   const expectedDziKey = `deepzoom/${jobId}/${exportId}/image.dzi`;
   if (dz.dzi_key !== expectedDziKey) return null;
   return {
@@ -202,10 +225,18 @@ function normalizeGalleryPiece(row, index, trustedOrigin) {
   const jobId = row.job_id;
   const artifactId = row.artifact_id;
   if (!isValidId(jobId) || !isValidId(artifactId)) return { ok: false, error: 'bad job/artifact id' };
+  const dzExportId = row.deepzoom && typeof row.deepzoom === 'object' && isValidId(row.deepzoom.export_id)
+    ? row.deepzoom.export_id : null;
   const previewLeaf = validateColorKey(row.preview_key, jobId, artifactId);
-  const imageLeaf = validateColorKey(row.image_key, jobId, artifactId);
-  if (!previewLeaf || !PREVIEW_LEAF_RE.test(previewLeaf)) return { ok: false, error: 'invalid preview_key' };
-  if (!imageLeaf) return { ok: false, error: 'invalid image_key' };
+  const previewOk = (previewLeaf && PREVIEW_LEAF_RE.test(previewLeaf))
+    || validExportPreviewKey(row.preview_key, jobId, dzExportId);
+  if (!previewOk) return { ok: false, error: 'invalid preview_key' };
+  // The original is optional ("link if linkable"); when present it must be a
+  // well-formed render key for this job+artifact (any family).
+  const hasImage = row.image_key != null && row.image_key !== '';
+  if (hasImage && !validateRenderKey(row.image_key, jobId, artifactId)) {
+    return { ok: false, error: 'invalid image_key' };
+  }
   if (!isFinitePositive(row.preview_width) || !isFinitePositive(row.preview_height)) {
     return { ok: false, error: 'invalid preview dimensions' };
   }
@@ -217,9 +248,9 @@ function normalizeGalleryPiece(row, index, trustedOrigin) {
       job_id: jobId,
       artifact_id: artifactId,
       preview_key: row.preview_key,
-      image_key: row.image_key,
+      image_key: hasImage ? row.image_key : null,
       preview_url: originAbsolute(trustedOrigin, row.preview_key),
-      image_url: originAbsolute(trustedOrigin, row.image_key),
+      image_url: hasImage ? originAbsolute(trustedOrigin, row.image_key) : null,
       preview_width: row.preview_width,
       preview_height: row.preview_height,
       function: typeof row.function === 'string' ? row.function : '',
@@ -228,7 +259,7 @@ function normalizeGalleryPiece(row, index, trustedOrigin) {
       times: Number.isFinite(row.times) ? row.times : null,
       created_at: typeof row.created_at === 'string' ? row.created_at : '',
       title: typeof row.title === 'string' ? row.title : '',
-      deepzoom: validateDeepzoom(row.deepzoom, { jobId, artifactId, imageKey: row.image_key, trustedOrigin }),
+      deepzoom: validateDeepzoom(row.deepzoom, { jobId, artifactId, imageKey: hasImage ? row.image_key : null, trustedOrigin }),
     },
   };
 }

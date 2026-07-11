@@ -180,6 +180,13 @@ test('builds a maze with settings applied and collision that clamps to bounds', 
   expect(st.placed).toBe(8);
   expect(st.artMeshes).toBe(8);
   expect(st.inBounds).toBe(true);       // corridor collision clamps inside the maze
+  const edges = await page.evaluate(() => {
+    const v = window.__galleryViewer;
+    let n = 0;
+    v.scene.traverse((o) => { if (o.userData && o.userData.wallEdge) n++; });
+    return { n, walls: v.maze.wallSegments.length };
+  });
+  expect(edges.n).toBe(edges.walls);    // every wall box carries its edge accent
 });
 
 test('over the resident cap, only the top working set is queued (no thrash)', async ({ page }) => {

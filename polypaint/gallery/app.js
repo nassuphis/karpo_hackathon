@@ -264,6 +264,15 @@ class GalleryViewer {
     this.scene.add(floor);
     // Open to the sky (no ceiling). One shared unit box scaled per wall segment.
     this._wallGeo = new THREE.BoxGeometry(1, 1, 1);
+    // Edge accent: line overlays along every wall-box edge so corners and
+    // junctions read instead of merging into one flat colour mass. Colour is
+    // derived from the wall colour — darker on light walls, lighter on dark.
+    this._wallEdgeGeo = new THREE.EdgesGeometry(this._wallGeo);
+    const wc = new THREE.Color(wallColor);
+    const lum = wc.r * 0.299 + wc.g * 0.587 + wc.b * 0.114;
+    const edgeColor = lum < 0.25 ? wc.clone().lerp(new THREE.Color(0xffffff), 0.45)
+                                 : wc.clone().multiplyScalar(0.35);
+    this._wallEdgeMat = new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.85 });
     this._wallMeshes = [];
     const T = MAZE.WALL_THICKNESS_M, H = maze.height;
     for (const seg of maze.wallSegments) {
@@ -273,6 +282,11 @@ class GalleryViewer {
       m.position.set(seg.x, H / 2, seg.z);
       this._wallMeshes.push(m);
       this.scene.add(m);
+      const edges = new THREE.LineSegments(this._wallEdgeGeo, this._wallEdgeMat);
+      edges.scale.copy(m.scale);
+      edges.position.copy(m.position);
+      edges.userData.wallEdge = true;
+      this.scene.add(edges);
     }
   }
 
@@ -824,8 +838,11 @@ class GalleryViewer {
     this._frameMat && this._frameMat.dispose();
     this._focusFrameMat && this._focusFrameMat.dispose();
     this._wallGeo && this._wallGeo.dispose();
+    this._wallEdgeGeo && this._wallEdgeGeo.dispose();
+    this._wallEdgeMat && this._wallEdgeMat.dispose();
     this.scene && this.scene.traverse((o) => {
-      if (o.geometry && o.geometry !== this._sharedPlane && o.geometry !== this._wallGeo) o.geometry.dispose();
+      if (o.geometry && o.geometry !== this._sharedPlane && o.geometry !== this._wallGeo
+          && o.geometry !== this._wallEdgeGeo) o.geometry.dispose();
     });
     if (this.renderer) { this.renderer.dispose(); this.renderer.domElement.remove(); }
   }

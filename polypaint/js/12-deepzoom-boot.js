@@ -75,11 +75,12 @@ async function _dzAddSelectedToGallery() {
     if (!galleryId) { setStatus('No active gallery. Create or select one in the Gallery tab first.', 'status error'); return; }
 
     const btn = document.getElementById('btn-dz-add-gallery');
-    if (btn) btn.disabled = true;
+    const origLabel = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }   // immediate feedback
     try {
         const resp = await lambdaPost('storage',
             { gallery_id: galleryId, job_id: pick.job_id, artifact_id: pick.artifact_id, export_id: pick.export_id },
-            '/add-to-gallery');
+            '/add-to-gallery', { idempotent: false });
         if (resp && resp.error) throw new Error(resp.error);
         const name = (resp && resp.gallery && resp.gallery.name) || 'gallery';
         const count = (resp && resp.gallery && (resp.gallery.pieces || []).length) || 0;
@@ -92,12 +93,12 @@ async function _dzAddSelectedToGallery() {
                 : reason;
             setStatus(`Not added: ${human}`, 'status');
         }
-        // Let the Gallery tab refresh if it is showing this gallery.
-        if (typeof _galleryNotifyChanged === 'function') _galleryNotifyChanged(galleryId, resp && resp.gallery);
+        // Let the Gallery tab reflect the add if it is showing this gallery.
+        if (typeof _galleryNotifyChanged === 'function') _galleryNotifyChanged(galleryId);
     } catch (e) {
         setStatus('Add to Gallery failed: ' + e.message, 'status error');
     } finally {
-        if (btn) btn.disabled = !_dzGalleryPickForExport(ex);
+        if (btn) { btn.textContent = origLabel; btn.disabled = !_dzGalleryPickForExport(ex); }
     }
 }
 

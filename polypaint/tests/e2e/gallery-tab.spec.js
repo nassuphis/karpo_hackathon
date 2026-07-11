@@ -71,6 +71,8 @@ test('New creates a gallery and makes it active', async ({ page }) => {
   await setup(page, {});
   await page.click('#btn-gallery-new');
   await expect(page.locator('#gallery-name')).toHaveValue('My Show');
+  // Save must be usable immediately after creating (not a mysterious grey button).
+  await expect(page.locator('#btn-gallery-save')).toBeEnabled();
   const active = await page.evaluate(() => localStorage.getItem('polypaint_active_gallery'));
   expect(active).toBe('gal_1');
   const created = await page.evaluate(() => window._galleryPosts.find((p) => p.path === '/create-gallery'));
@@ -103,12 +105,31 @@ test('remove piece shrinks the list', async ({ page }) => {
   await expect(page.locator('#gallery-piece-list > div')).toHaveCount(1);
 });
 
-test('Open Gallery snapshots and navigates to the viewer', async ({ page }) => {
+test('Open Gallery snapshots (revision-pinned) and navigates to the viewer', async ({ page }) => {
   await setup(page, docWith(pieces()));
-  await expect(page.locator('#btn-gallery-open')).toBeEnabled();   // loaded, not dirty
+  await expect(page.locator('#btn-gallery-open')).toBeEnabled();   // loaded
   await page.click('#btn-gallery-open');
   const shared = await page.evaluate(() => window._galleryPosts.find((p) => p.path === '/create-gallery-share'));
   expect(shared.body.gallery_id).toBe('gal_x');
+  expect(shared.body.expected_revision).toBeTruthy();   // share pinned to the reviewed revision
   const nav = await page.evaluate(() => window._galleryNav);
   expect(nav).toContain('https://polypaint.s3.us-east-1.amazonaws.com/gallery.html?manifest=');
+});
+
+test('Open with unsaved edits auto-saves first, then snapshots', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.locator('#gallery-piece-list input[type="text"]').nth(0).fill('Late title');
+  await page.click('#btn-gallery-open');
+  const paths = await page.evaluate(() => window._galleryPosts.map((p) => p.path));
+  const saveIdx = paths.indexOf('/save-gallery');
+  const shareIdx = paths.indexOf('/create-gallery-share');
+  expect(saveIdx).toBeGreaterThanOrEqual(0);        // pending edit was saved
+  expect(shareIdx).toBeGreaterThan(saveIdx);        // ...before the snapshot
+});
+
+test('no active gallery shows a blank selector option', async ({ page }) => {
+  await setup(page, { docs: { gal_x: { gallery_id: 'gal_x', name: 'Show', document_kind: 'editable', pieces: [] } }, active: '' });
+  await expect(page.locator('#gallery-selector')).toHaveValue('');   // blank placeholder, not gal_x
+  const firstText = await page.locator('#gallery-selector option').first().textContent();
+  expect(firstText).toContain('select a gallery');
 });

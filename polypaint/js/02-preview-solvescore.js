@@ -618,7 +618,10 @@ function _formatLambdaRetryAttempt(kind, attempt, detail) {
 function _lambdaEndpointIsMutation(name, path) {
     if (name === 'dispatch') return true;               // fan-out invoke
     const p = String(path || '');
-    return /\/(save|delete|cleanup|migrate)/i.test(p);  // save-*, delete-*, cleanup, migrate-*
+    // save-*, delete-*, cleanup, migrate-*, create-* (non-idempotent: each call
+    // makes a NEW gallery/share), add-to-* (a retried add is misreported as a
+    // duplicate). A retry on an ambiguous network failure would double-apply.
+    return /\/(save|delete|cleanup|migrate|create|add-to)/i.test(p);
 }
 
 // Helper: POST JSON to a Lambda and parse response.

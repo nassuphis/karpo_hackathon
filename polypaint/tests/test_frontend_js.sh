@@ -2885,6 +2885,10 @@ const mutations = [
   ['dispatch', undefined], ['storage', '/save-book'], ['storage', '/save-vision-config'],
   ['storage', '/save-coeff-program'], ['storage', '/delete'], ['storage', '/delete-prefix'],
   ['storage', '/delete-book'], ['storage', '/cleanup'],
+  // gallery mutations: create-* makes a NEW doc each call, add-to-* a retry is
+  // misreported as a duplicate, save/delete are mutations (review finding 5).
+  ['storage', '/create-gallery'], ['storage', '/create-gallery-share'],
+  ['storage', '/add-to-gallery'], ['storage', '/save-gallery'], ['storage', '/delete-gallery'],
 ];
 for (const [n, p] of mutations) {
   if (!isMut(n, p)) { console.error(`FATAL: ${n}${p||''} must be classified as a mutation`); process.exit(1); }
@@ -2894,7 +2898,7 @@ const reads = [
   ['storage', '/detail'], ['storage', '/render-summary'], ['storage', '/render-count'],
   ['storage', '/fetch-book'], ['storage', '/fetch-vision-config'], ['storage', '/list'],
   ['storage', '/list-books'], ['storage', '/presign'], ['compute-preview', undefined],
-  ['coeffgen', undefined],
+  ['coeffgen', undefined], ['storage', '/list-galleries'], ['storage', '/fetch-gallery'],
 ];
 for (const [n, p] of reads) {
   if (isMut(n, p)) { console.error(`FATAL: ${n}${p||''} must NOT be classified as a mutation`); process.exit(1); }

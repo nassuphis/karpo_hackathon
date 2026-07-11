@@ -33,16 +33,15 @@ function _galleryStatus(msg, isError) {
     if (el) { el.textContent = msg || ''; el.className = 'status' + (isError ? ' error' : ''); }
 }
 
-// The DeepZoom tab calls this after an add so the Gallery tab reflects it live.
-function _galleryNotifyChanged(galleryId, gallery) {
+// The DeepZoom tab calls this after an add so the Gallery tab reflects it live —
+// UNLESS there are unsaved edits, which must never be silently discarded.
+function _galleryNotifyChanged(galleryId) {
     if (!galleryId || galleryId !== _galleryState.activeId) return;
-    if (gallery && gallery.gallery_id === galleryId) {
-        // Adopt the server's updated doc + its new revision would be unknown here,
-        // so refetch to keep the CAS token correct for the next Save.
-        void _galleryLoadActive().then(_renderGalleryTab);
-    } else {
-        void _galleryLoadActive().then(_renderGalleryTab);
+    if (_galleryState.dirty) {
+        _galleryStatus('A piece was added on the server. Save to keep your changes, or Refresh to reload.');
+        return;
     }
+    void _galleryLoadActive().then(_renderGalleryTab);
 }
 
 async function loadGalleryTab() {
@@ -50,7 +49,11 @@ async function loadGalleryTab() {
     // module loaded, or changed in another browser tab).
     try { _galleryState.activeId = String(localStorage.getItem(GALLERY_ACTIVE_KEY) || ''); } catch (e) {}
     await _galleryRefreshList();
-    await _galleryLoadActive();
+    // Preserve in-progress edits across tab switches: only refetch (which clears
+    // dirty) when there are no unsaved changes for the active gallery.
+    const keepDirty = _galleryState.dirty && _galleryState.doc &&
+        _galleryState.doc.gallery_id === _galleryState.activeId;
+    if (!keepDirty) await _galleryLoadActive();
     _renderGalleryTab();
 }
 
@@ -83,26 +86,36 @@ async function _galleryLoadActive() {
 }
 
 async function galleryNew() {
+    if (_galleryState.dirty && !confirm('Discard unsaved changes and create a new gallery?')) return;
     const raw = prompt('New gallery name:', 'Untitled gallery');
     if (raw === null) return;
+    _galleryBtnBusy('btn-gallery-new', true, 'Creating…');
     try {
-        const resp = await lambdaPost('storage', { name: raw.trim() || 'Untitled gallery' }, '/create-gallery');
+        const resp = await lambdaPost('storage', { name: raw.trim() || 'Untitled gallery' }, '/create-gallery', { idempotent: false });
         if (resp && resp.error) throw new Error(resp.error);
         _gallerySetActive(resp.gallery.gallery_id);
         _galleryState.doc = resp.gallery;
         _galleryState.revision = resp.revision || '';
         _galleryState.dirty = false;
         await _galleryRefreshList();
-        _renderGalleryTab();
         _galleryStatus('Created “' + resp.gallery.name + '”. Add color renders from the DeepZoom tab.');
     } catch (e) {
         _galleryStatus('Create failed: ' + e.message, true);
+    } finally {
+        _galleryBtnBusy('btn-gallery-new', false);
+        _renderGalleryTab();
     }
 }
 
 async function gallerySelectorChanged() {
     const sel = document.getElementById('gallery-selector');
-    _gallerySetActive(sel ? sel.value : '');
+    const newId = sel ? sel.value : '';
+    if (newId === _galleryState.activeId) return;
+    if (_galleryState.dirty && !confirm('Discard unsaved changes to this gallery?')) {
+        if (sel) sel.value = _galleryState.activeId;   // revert the visual selection
+        return;
+    }
+    _gallerySetActive(newId);
     await _galleryLoadActive();
     _renderGalleryTab();
 }
@@ -111,36 +124,52 @@ async function galleryDelete() {
     const id = _galleryState.activeId;
     if (!id) return;
     if (!confirm('Delete this gallery? This cannot be undone.')) return;
+    _galleryBtnBusy('btn-gallery-delete', true, 'Deleting…');
     try {
         const resp = await lambdaPost('storage', { gallery_id: id }, '/delete-gallery');
         if (resp && resp.error) throw new Error(resp.error);
         _gallerySetActive('');
         _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false;
         await _galleryRefreshList();
-        _renderGalleryTab();
         _galleryStatus('Gallery deleted.');
     } catch (e) {
         _galleryStatus('Delete failed: ' + e.message, true);
+    } finally {
+        _galleryBtnBusy('btn-gallery-delete', false);
+        _renderGalleryTab();
     }
 }
 
+// Persist the current doc (CAS via revision). Throws on failure so callers can
+// abort (e.g. Open won't snapshot a gallery whose save just failed).
+async function _gallerySavePersist() {
+    const resp = await lambdaPost('storage',
+        { gallery: _galleryState.doc, expected_revision: _galleryState.revision }, '/save-gallery');
+    if (resp && resp.error) throw new Error(resp.error);
+    _galleryState.doc = resp.gallery;
+    _galleryState.revision = resp.revision || '';
+    _galleryState.dirty = false;
+    return resp;
+}
+
 async function gallerySave() {
-    const doc = _galleryState.doc;
-    if (!doc) return;
+    if (!_galleryState.doc) return;
+    _galleryBtnBusy('btn-gallery-save', true, 'Saving…');
     try {
-        const resp = await lambdaPost('storage',
-            { gallery: doc, expected_revision: _galleryState.revision }, '/save-gallery');
-        if (resp && resp.error) throw new Error(resp.error);
-        _galleryState.doc = resp.gallery;
-        _galleryState.revision = resp.revision || '';
-        _galleryState.dirty = false;
+        await _gallerySavePersist();
         await _galleryRefreshList();
-        _renderGalleryTab();
         _galleryStatus('Saved.');
     } catch (e) {
-        // A 409 means a concurrent change (e.g. a DeepZoom add) — reload latest.
-        _galleryStatus('Save failed: ' + e.message + ' — reloading the latest version.', true);
-        await _galleryLoadActive();
+        // Only a genuine CONFLICT (409) means the server moved under us — reload.
+        // Any other failure (network, 5xx) keeps the local edits so nothing is lost.
+        if (/HTTP 409|conflict/i.test(e.message || '')) {
+            _galleryStatus('This gallery changed elsewhere — reloaded the latest; re-apply your edits.', true);
+            await _galleryLoadActive();
+        } else {
+            _galleryStatus('Save failed: ' + e.message + ' — your edits are kept, try again.', true);
+        }
+    } finally {
+        _galleryBtnBusy('btn-gallery-save', false);
         _renderGalleryTab();
     }
 }
@@ -148,11 +177,15 @@ async function gallerySave() {
 async function galleryOpen() {
     const doc = _galleryState.doc;
     if (!doc || !(doc.pieces || []).length) { _galleryStatus('Add pieces before opening.', true); return; }
-    if (_galleryState.dirty) { _galleryStatus('Save your changes before opening.', true); return; }
+    _galleryBtnBusy('btn-gallery-open', true, 'Opening…');
     // Open a blank window synchronously (popup-safe) and navigate after the POST.
     const win = window.open('', '_blank');
     try {
-        const resp = await lambdaPost('storage', { gallery_id: _galleryState.activeId }, '/create-gallery-share');
+        // Persist any pending edits first so the snapshot matches what is shown.
+        if (_galleryState.dirty) await _gallerySavePersist();
+        // Pin the share to the reviewed revision (the server refuses if it moved).
+        const resp = await lambdaPost('storage',
+            { gallery_id: _galleryState.activeId, expected_revision: _galleryState.revision }, '/create-gallery-share');
         if (resp && resp.error) throw new Error(resp.error);
         const manifestUrl = String((resp && resp.manifest_url) || '');
         if (!manifestUrl) throw new Error('no manifest_url returned');
@@ -168,6 +201,9 @@ async function galleryOpen() {
     } catch (e) {
         if (win) win.close();
         _galleryStatus('Open failed: ' + e.message, true);
+    } finally {
+        _galleryBtnBusy('btn-gallery-open', false);
+        _renderGalleryTab();
     }
 }
 
@@ -213,10 +249,22 @@ function _galleryUpdateActionButtons() {
     const openBtn = document.getElementById('btn-gallery-open');
     const delBtn = document.getElementById('btn-gallery-delete');
     const nameInp = document.getElementById('gallery-name');
-    if (saveBtn) saveBtn.disabled = !doc || !_galleryState.dirty;
-    if (openBtn) openBtn.disabled = !doc || !pieces.length || _galleryState.dirty;
+    // Save is enabled whenever a gallery is open (no "why is Save grey?" mystery);
+    // a clean re-save is a harmless no-op. Open auto-saves pending edits, so it is
+    // enabled as soon as there are pieces.
+    if (saveBtn) saveBtn.disabled = !doc;
+    if (openBtn) openBtn.disabled = !doc || !pieces.length;
     if (delBtn) delBtn.disabled = !_galleryState.activeId;
     if (nameInp) nameInp.disabled = !doc;
+}
+
+// Immediate button feedback for async actions (mirrors the Book tab's
+// _bookBtnBusy): disable + relabel to a "…ing" verb, restore on completion.
+function _galleryBtnBusy(id, busy, busyLabel) {
+    const b = document.getElementById(id);
+    if (!b) return;
+    if (busy) { b.dataset.orig = b.textContent; b.disabled = true; b.textContent = busyLabel; }
+    else { b.disabled = false; if (b.dataset.orig) b.textContent = b.dataset.orig; }
 }
 
 function _renderGallerySelector() {
@@ -229,11 +277,15 @@ function _renderGallerySelector() {
         const name = (_galleryState.doc && _galleryState.doc.name) || _galleryState.activeId;
         list.unshift({ gallery_id: _galleryState.activeId, name, count: (_galleryState.doc && (_galleryState.doc.pieces || []).length) || 0 });
     }
-    if (!list.length) {
+    // An explicit blank placeholder whenever nothing is active, so the browser
+    // does not visually "select" the first gallery while app state has none —
+    // which made Add-to-Gallery say "no active gallery" (finding 11).
+    if (!_galleryState.activeId) {
         const opt = document.createElement('option');
-        opt.value = ''; opt.textContent = '— no galleries yet —';
+        opt.value = '';
+        opt.textContent = list.length ? '— select a gallery —' : '— no galleries yet —';
+        opt.selected = true;
         sel.appendChild(opt);
-        return;
     }
     for (const g of list) {
         const opt = document.createElement('option');

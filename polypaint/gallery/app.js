@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { parseTrustedManifestUrl, normalizeManifest, GALLERY_LIMITS } from './manifest.js';
-import { computeMaze, mazeClamp, MAZE, selectAndSort } from './layout.js';
+import { computeMaze, mazeClamp, mazeClampMove, MAZE, selectAndSort } from './layout.js';
 import { GalleryTextureManager, TEXTURE_LIMITS } from './texture-manager.js';
 
 const PREVIEW_FETCH_TIMEOUT_MS = 12_000;
@@ -394,12 +394,15 @@ class GalleryViewer {
     if (dt > 0.1) dt = 0.1;                       // clamp after a long stall
 
     if (this.controls.isLocked && !this._overlayOpen()) {
+      const px = this.camera.position.x, pz = this.camera.position.z;   // pre-move position
       const step = MOVE_SPEED * dt;
       if (this._keys.has('f')) this.controls.moveForward(step);
       if (this._keys.has('b')) this.controls.moveForward(-step);
       if (this._keys.has('l')) this.controls.moveRight(-step);
       if (this._keys.has('r')) this.controls.moveRight(step);
-      this._clampCamera();
+      // Swept collision from the pre-move position so a fast frame can't tunnel.
+      const p = mazeClampMove(this.maze, px, pz, this.camera.position.x, this.camera.position.z, MAZE.COLLISION_RADIUS_M);
+      this.camera.position.set(p.x, MAZE.EYE_HEIGHT_M, p.z);
     }
 
     if (now - this._lastSchedule > SCHEDULE_INTERVAL_MS) {
@@ -432,7 +435,11 @@ class GalleryViewer {
       const priority = (focused ? 10_000 : 0) + 1000 / (1 + dist);
       return { id: mesh.userData.id, url: this.pieces[mesh.userData.pieceIndex].preview_url, priority };
     });
-    this.tm.setDesired(desired);
+    // Only queue the highest-priority working set that FITS in the resident
+    // budget — desiring all pieces above the cap makes the lowest-priority ones
+    // load, evict, and reload every pump (thrash) with no benefit.
+    desired.sort((a, b) => b.priority - a.priority);
+    this.tm.setDesired(desired.slice(0, TEXTURE_LIMITS.MAX_RESIDENT));
     this.tm.pump();
     this._updateDebug();
   }

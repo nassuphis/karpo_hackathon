@@ -93,8 +93,11 @@ async function _dzAddSelectedToGallery() {
                 : reason;
             setStatus(`Not added: ${human}`, 'status');
         }
-        // Let the Gallery tab reflect the add if it is showing this gallery.
-        if (typeof _galleryNotifyChanged === 'function') _galleryNotifyChanged(galleryId);
+        // Hand the updated gallery + its new revision to the Gallery tab so it
+        // can merge the added piece without a stale-revision conflict.
+        if (typeof _galleryNotifyChanged === 'function') {
+            _galleryNotifyChanged(galleryId, resp && resp.gallery, resp && resp.revision);
+        }
     } catch (e) {
         setStatus('Add to Gallery failed: ' + e.message, 'status error');
     } finally {

@@ -339,9 +339,9 @@ class GalleryBackendTests(unittest.TestCase):
         doc = fetched["gallery"]
         doc["pieces"][0]["title"] = "First"
         doc["pieces"][1]["title"] = "Second"
-        self._route(hs.handle_save_gallery, gallery=doc, expected_revision=fetched["revision"])
+        _, saved = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=fetched["revision"])
 
-        _, share = self._route(hs.handle_create_gallery_share, gallery_id=gid)
+        _, share = self._route(hs.handle_create_gallery_share, gallery_id=gid, expected_revision=saved["revision"])
         self.assertEqual(share["count"], 2)
         self.assertTrue(share["manifest_url"].endswith("/manifest.json"))
         put = next(p for p in self.s3.puts if p["Key"].startswith("renders/_shared_mosaic/gallery/")
@@ -366,10 +366,16 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertEqual(body["conflict"], "gallery_revision")
 
     def test_open_empty_gallery_errors(self):
-        gid = self._create("G")["gallery"]["gallery_id"]
-        _, body = self._route(hs.handle_create_gallery_share, gallery_id=gid)
+        created = self._create("G")
+        gid = created["gallery"]["gallery_id"]
+        _, body = self._route(hs.handle_create_gallery_share, gallery_id=gid, expected_revision=created["revision"])
         self.assertIn("error", body)
         self.assertFalse(any(p["Key"].startswith("renders/_shared_mosaic/gallery/") for p in self.s3.puts))
+
+    def test_open_requires_revision(self):
+        gid = self._create("G")["gallery"]["gallery_id"]
+        resp, _ = self._route(hs.handle_create_gallery_share, gallery_id=gid)
+        self.assertEqual(resp["statusCode"], 400)   # revision required, like save (finding 6)
 
     # ── scene settings (sky + wall colour) ───────────────────────────────
     def test_create_has_default_settings(self):
@@ -385,7 +391,7 @@ class GalleryBackendTests(unittest.TestCase):
         doc["settings"] = {"sky": "dark", "wall_color": "#AABBCC"}
         _, saved = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=rev)
         self.assertEqual(saved["gallery"]["settings"], {"sky": "dark", "wall_color": "#aabbcc"})
-        _, _share = self._route(hs.handle_create_gallery_share, gallery_id=gid)
+        _, _share = self._route(hs.handle_create_gallery_share, gallery_id=gid, expected_revision=saved["revision"])
         put = next(p for p in self.s3.puts if p["Key"].startswith("renders/_shared_mosaic/gallery/")
                    and p["Key"].endswith("manifest.json"))
         self.assertEqual(json.loads(put["Body"])["settings"], {"sky": "dark", "wall_color": "#aabbcc"})

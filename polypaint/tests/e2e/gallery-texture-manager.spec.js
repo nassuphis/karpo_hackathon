@@ -103,3 +103,18 @@ test('404 negative-cached and never requeued; reset reloads', async ({ page }) =
   expect(r.afterReset).toBe(false);
   expect(r.disposed).toBe(true);
 });
+
+test('reset() invalidates in-flight generations — a late completion is dropped', async ({ page }) => {
+  const r = await run(page, async (TM, harness) => {
+    const h = harness();
+    const tm = new TM({ loadImage: h.loadImage, makeTexture: h.makeTexture, closeBitmap: h.closeBitmap, maxInFlight: 2 });
+    tm.setDesired([{ id: 'a', url: 'ua', priority: 1 }]);
+    tm.pump();                 // 'a' now in flight
+    tm.reset();                // reset while it is still loading
+    h.resolve('ua');           // the load completes AFTER reset
+    await tm.settle();
+    return { resident: tm.stats().resident, hasA: !!tm.get('a') };
+  });
+  expect(r.resident).toBe(0);  // the stale completion did NOT repopulate resident
+  expect(r.hasA).toBe(false);
+});

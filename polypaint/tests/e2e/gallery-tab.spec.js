@@ -149,3 +149,35 @@ test('no active gallery shows a blank selector option', async ({ page }) => {
   const firstText = await page.locator('#gallery-selector option').first().textContent();
   expect(firstText).toContain('select a gallery');
 });
+
+test('a DeepZoom add while editing merges without losing edits or conflicting', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  // start editing -> dirty
+  await page.locator('#gallery-piece-list input[type="text"]').nth(0).fill('My title');
+  // simulate the DeepZoom tab handing over the updated gallery + its new revision
+  await page.evaluate(() => {
+    const updated = JSON.parse(JSON.stringify(window.__docs.gal_x));
+    updated.pieces.push({ job_id: 'jC', artifact_id: 'artC', preview_key: 'renders/jC/color/artC/preview.jpg', image_key: 'renders/jC/color/artC/image.jpeg', preview_width: 512, preview_height: 512, function: 'h', title: '', deepzoom: null });
+    _galleryNotifyChanged('gal_x', updated, 'r-after-add');
+  });
+  await expect(page.locator('#gallery-piece-list > div')).toHaveCount(3);   // added piece merged in
+  await page.click('#btn-gallery-save');
+  const saved = await page.evaluate(() => window._galleryPosts.filter((p) => p.path === '/save-gallery').pop());
+  expect(saved.body.expected_revision).toBe('r-after-add');                 // adopted revision -> no 409
+  expect(saved.body.gallery.pieces[0].title).toBe('My title');             // local edit preserved
+  expect(saved.body.gallery.pieces.map((p) => p.artifact_id)).toContain('artC');
+});
+
+test('a network error on load keeps the active gallery (only 404 clears it)', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.evaluate(async () => {
+    const real = window.lambdaPost;
+    window.lambdaPost = async (n, b, p) => {
+      if (p === '/fetch-gallery') throw new Error('storage/fetch-gallery request failed: HTTP 503');
+      return real(n, b, p);
+    };
+    await _galleryLoadActive();
+  });
+  const active = await page.evaluate(() => localStorage.getItem('polypaint_active_gallery'));
+  expect(active).toBe('gal_x');   // a 503 must NOT clear the selection
+});

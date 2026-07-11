@@ -4741,9 +4741,14 @@ def handle_list_galleries(event):
                 continue
             try:
                 obj = s3.get_object(Bucket=BUCKET, Key=key)
+            except Exception as exc:
+                if is_missing_s3_error(exc):
+                    continue          # deleted between list and get — skip
+                raise                 # throttling / 5xx / other transient — surface it
+            try:
                 doc = json.loads(obj["Body"].read())
-            except Exception:
-                continue
+            except (ValueError, TypeError):
+                continue              # malformed object — skip deliberately
             if str(doc.get("document_kind") or "") != "editable":
                 continue
             galleries.append(_gallery_summary(doc))
@@ -4866,10 +4871,13 @@ def handle_create_gallery_share(event):
     params = parse_body(event)
     gallery_id = assert_safe_id(params.get("gallery_id") or params.get("id"), "gallery_id")
     doc, revision = _read_gallery_doc_with_etag(gallery_id)
-    # Pin the share to the revision the user reviewed: if the gallery moved since
-    # (e.g. a concurrent add), refuse rather than silently share a different set.
+    # Pin the share to the revision the user reviewed (REQUIRED, like save): the
+    # snapshot must be the reviewed set, so a missing or moved revision is refused
+    # rather than silently sharing whatever is current.
     expected_revision = str(params.get("expected_revision") or "").strip()
-    if expected_revision and expected_revision != revision:
+    if not expected_revision:
+        raise ValueError("create-gallery-share requires expected_revision (refetch the gallery)")
+    if expected_revision != revision:
         raise GalleryConflictError(
             f"gallery {gallery_id} changed since revision {expected_revision!r}; refetch and re-open")
     pieces = doc.get("pieces") or []

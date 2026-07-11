@@ -142,31 +142,62 @@ test.describe('Gallery viewer layout (pure)', () => {
     }));
   }
 
-  test('round-robin walls, vertical bounds, non-overlap, inward facing', async ({ page }) => {
+  test('maze is deterministic, fully connected, and places every piece uniquely', async ({ page }) => {
     const r = await withModules(page, (M, L, pieces) => {
-      const { room, placements } = L.computeRoom(pieces);
-      const inBounds = placements.every((p) => {
-        const top = p.center_y_m + p.height_m / 2, bot = p.center_y_m - p.height_m / 2;
-        return bot >= L.ROOM.FLOOR_MARGIN_M && top <= L.ROOM.WALL_HEIGHT_M - L.ROOM.FLOOR_MARGIN_M;
-      });
-      // north holds piece indices 0 and 4; their along-wall gap must exceed both widths
-      const north = placements.filter((p) => p.wall === 'north').sort((a, b) => a.center_offset_m - b.center_offset_m);
-      const noOverlap = Math.abs(north[1].center_offset_m - north[0].center_offset_m) >= Math.max(north[0].width_m, north[1].width_m);
-      const inward = placements.every((p) => {
-        const w = L.wallToWorld(p, room);
-        return (w.normal.x * -w.position.x + w.normal.z * -w.position.z) > 0;
-      });
+      const a = L.computeMaze(pieces, { seed: 5 });
+      const b = L.computeMaze(pieces, { seed: 5 });
+      const c = L.computeMaze(pieces, { seed: 9 });
+      // BFS through open walls must reach every cell (perfect maze).
+      const idx = (rr, cc) => rr * a.cols + cc;
+      const seen = new Set([0]); const q = [[0, 0]];
+      while (q.length) {
+        const [rr, cc] = q.pop(); const w = a.grid[idx(rr, cc)];
+        for (const [k, dr, dc] of [['N', -1, 0], ['S', 1, 0], ['E', 0, 1], ['W', 0, -1]]) {
+          if (!w[k]) { const nr = rr + dr, nc = cc + dc; if (nr >= 0 && nr < a.rows && nc >= 0 && nc < a.cols && !seen.has(idx(nr, nc))) { seen.add(idx(nr, nc)); q.push([nr, nc]); } }
+        }
+      }
+      const posKeys = new Set(a.placements.map((p) => p.position.x.toFixed(2) + ',' + p.position.z.toFixed(2)));
       return {
-        walls: placements.map((p) => p.wall),
-        inBounds, noOverlap, inward,
-        roomSquareish: room.width_m > 0 && room.depth_m > 0,
+        deterministic: JSON.stringify(a.wallSegments) === JSON.stringify(b.wallSegments),
+        seedSensitive: JSON.stringify(a.wallSegments) !== JSON.stringify(c.wallSegments),
+        connected: seen.size === a.cols * a.rows,
+        placedAll: a.placedCount === pieces.length,
+        uniquePos: posKeys.size === a.placements.length,
       };
     }, eightPieces());
-    expect(r.walls.slice(0, 4)).toEqual(['north', 'east', 'south', 'west']);
-    expect(r.inBounds).toBe(true);
-    expect(r.noOverlap).toBe(true);
-    expect(r.inward).toBe(true);
-    expect(r.roomSquareish).toBe(true);
+    expect(r.deterministic).toBe(true);
+    expect(r.seedSensitive).toBe(true);
+    expect(r.connected).toBe(true);
+    expect(r.placedAll).toBe(true);
+    expect(r.uniquePos).toBe(true);
+  });
+
+  test('swept collision blocks crossing a closed interior wall but passes open sides', async ({ page }) => {
+    const r = await withModules(page, (M, L, pieces) => {
+      const m = L.computeMaze(pieces, { seed: 5 });
+      const CELL = m.cell, rad = L.MAZE.COLLISION_RADIUS_M;
+      const findWall = (open) => {
+        for (let rr = 0; rr < m.rows; rr++) for (let cc = 0; cc < m.cols - 1; cc++) {
+          if (m.grid[rr * m.cols + cc].E === !open) return { rr, cc };
+        }
+        return null;
+      };
+      const closed = findWall(false), openc = findWall(true);
+      let blocked = null, passed = null;
+      if (closed) {
+        const wallX = m.origin.x + (closed.cc + 1) * CELL, pz = m.origin.z + (closed.rr + 0.5) * CELL;
+        const s = L.mazeClampMove(m, wallX - 0.05, pz, wallX + 0.1, pz, rad);   // step across a CLOSED wall
+        blocked = s.x <= wallX - rad + 1e-6;
+      }
+      if (openc) {
+        const wallX = m.origin.x + (openc.cc + 1) * CELL, pz = m.origin.z + (openc.rr + 0.5) * CELL;
+        const s = L.mazeClampMove(m, wallX - 0.2, pz, wallX + 0.15, pz, rad);   // step across an OPEN side
+        passed = s.x > wallX;
+      }
+      return { blocked, passed };
+    }, eightPieces());
+    expect(r.blocked).toBe(true);    // cannot tunnel through a closed wall on a fast step
+    expect(r.passed).toBe(true);     // open corridors remain passable
   });
 
   test('selectAndSort is seed-stable, seed-sensitive, and caps after sorting', async ({ page }) => {

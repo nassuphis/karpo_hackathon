@@ -171,3 +171,22 @@ test('builds a maze with settings applied and collision that clamps to bounds', 
   expect(st.artMeshes).toBe(8);
   expect(st.inBounds).toBe(true);       // corridor collision clamps inside the maze
 });
+
+test('over the resident cap, only the top working set is queued (no thrash)', async ({ page }) => {
+  const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/big/manifest.json';
+  const mk = (j, a) => ({ ordinal: 0, job_id: j, artifact_id: a, preview_key: `renders/${j}/color/${a}/preview.jpg`, image_key: `renders/${j}/color/${a}/image.jpeg`, preview_width: 512, preview_height: 512, function: 'f', title: '', deepzoom: null });
+  const pieces = Array.from({ length: 60 }, (_, i) => mk('j' + i, 'a' + i)); pieces.forEach((p, i) => (p.ordinal = i));
+  await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color', layout: { mode: 'auto', seed: 1 }, pieces }) }));
+  await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(url));
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  const st = await page.evaluate(() => {
+    const v = window.__galleryViewer;
+    v._scheduleTextures();
+    return { pieces: v.pieces.length, queued: v.tm.stats().queued };
+  });
+  expect(st.pieces).toBe(60);
+  expect(st.queued).toBeLessThanOrEqual(48);   // desired capped to the resident budget — no eviction thrash
+});

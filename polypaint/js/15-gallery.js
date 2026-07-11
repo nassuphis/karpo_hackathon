@@ -80,15 +80,32 @@ function _galleryModalKey(e) {
     else if (e.key === 'Escape') { e.preventDefault(); _galleryModalCancel(); }
 }
 
-// The DeepZoom tab calls this after an add so the Gallery tab reflects it live —
-// UNLESS there are unsaved edits, which must never be silently discarded.
-function _galleryNotifyChanged(galleryId) {
+// The DeepZoom tab calls this after an add, handing over the updated gallery +
+// its new revision. When the tab has unsaved edits we MERGE (adopt the new
+// revision + append the added pieces, keeping local order/titles) so a later
+// Save succeeds instead of hitting a stale-revision conflict; when it is clean
+// we just adopt the server version.
+function _galleryNotifyChanged(galleryId, gallery, revision) {
     if (!galleryId || galleryId !== _galleryState.activeId) return;
-    if (_galleryState.dirty) {
-        _galleryStatus('A piece was added on the server. Save to keep your changes, or Refresh to reload.');
+    const sameDoc = gallery && gallery.gallery_id === galleryId;
+    if (_galleryState.dirty && _galleryState.doc && sameDoc) {
+        const key = (p) => p.job_id + '::' + p.artifact_id;
+        const localIds = new Set((_galleryState.doc.pieces || []).map(key));
+        const added = (gallery.pieces || []).filter((p) => !localIds.has(key(p)));
+        if (added.length) _galleryState.doc.pieces = (_galleryState.doc.pieces || []).concat(added);
+        if (revision) _galleryState.revision = revision;   // adopt so Save won't 409
+        _renderGalleryTab();
+        _galleryStatus(`Added ${added.length} piece${added.length === 1 ? '' : 's'} from the DeepZoom tab; Save to keep your changes.`);
         return;
     }
-    void _galleryLoadActive().then(_renderGalleryTab);
+    if (sameDoc) {
+        _galleryState.doc = gallery;
+        if (revision) _galleryState.revision = revision;
+        _galleryState.dirty = false;
+        _renderGalleryTab();
+    } else {
+        void _galleryLoadActive().then(_renderGalleryTab);
+    }
 }
 
 async function loadGalleryTab() {
@@ -120,15 +137,22 @@ async function _galleryLoadActive() {
     if (!id) { _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false; return; }
     try {
         const resp = await lambdaPost('storage', { gallery_id: id }, '/fetch-gallery');
+        if (id !== _galleryState.activeId) return;   // a newer selection superseded this load
         if (resp && resp.error) throw new Error(resp.error);
         _galleryState.doc = resp.gallery;
         _galleryState.revision = resp.revision || '';
         _galleryState.dirty = false;
     } catch (e) {
-        // The active gallery is gone (deleted elsewhere): clear the selection.
-        _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false;
-        _gallerySetActive('');
-        _galleryStatus('Active gallery not found — pick or create another.', true);
+        if (id !== _galleryState.activeId) return;   // stale error for a superseded selection
+        // Clear the selection ONLY on a genuine 404 (the gallery is gone). A
+        // network/5xx blip keeps the selection so it isn't lost spuriously.
+        if (/HTTP 404/i.test(e.message || '')) {
+            _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false;
+            _gallerySetActive('');
+            _galleryStatus('That gallery no longer exists — pick or create another.', true);
+        } else {
+            _galleryStatus('Could not load the gallery: ' + e.message + ' (try Refresh).', true);
+        }
     }
 }
 

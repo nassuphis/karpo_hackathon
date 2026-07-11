@@ -128,7 +128,13 @@ export class GalleryTextureManager {
         // upload (Three defers the upload to the next render). The manager must
         // NOT close it here — doing so detaches the source before upload and the
         // artwork renders blank ("source data has been detached").
-        const texture = this._makeTexture(res.bitmap);
+        let texture;
+        try {
+          texture = this._makeTexture(res.bitmap);
+        } catch (err) {
+          this._closeBitmap(res.bitmap);   // ownership never transferred — free it
+          throw err;
+        }
         this._resident.set(id, { texture, bytes: res.bytes || 0 });
         this._bytes += res.bytes || 0;
         this._retry.delete(id);
@@ -203,6 +209,10 @@ export class GalleryTextureManager {
   // Drop every resident texture + clear the negative cache (e.g. after a WebGL
   // context loss, where all GPU textures are gone and must reload).
   reset() {
+    // Invalidate in-flight generations FIRST so an abort-ignoring load that
+    // completes after reset is dropped by the generation guard (it would
+    // otherwise repopulate _resident or recreate the retry cooldown reset clears).
+    for (const id of this._inflight.keys()) this._generation.set(id, (this._generation.get(id) || 0) + 1);
     for (const controller of this._inflight.values()) controller.abort();
     this._inflight.clear();
     for (const [id, entry] of [...this._resident]) this._disposeResident(id, entry);

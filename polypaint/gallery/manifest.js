@@ -22,6 +22,10 @@ export const GALLERY_LIMITS = Object.freeze({
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const LEAF_RE = /^[A-Za-z0-9._-]{1,96}$/;
+// Preview keys must be actual preview files — a crafted manifest pointing
+// preview_key at the full-size image would make the texture loader decode a
+// potentially multi-GB original in a load/evict loop.
+const PREVIEW_LEAF_RE = /^preview[A-Za-z0-9._-]{0,90}\.(png|jpe?g)$/i;
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const SKY_MODES = new Set(['stars', 'dark']);
 const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6' });
@@ -200,7 +204,7 @@ function normalizeGalleryPiece(row, index, trustedOrigin) {
   if (!isValidId(jobId) || !isValidId(artifactId)) return { ok: false, error: 'bad job/artifact id' };
   const previewLeaf = validateColorKey(row.preview_key, jobId, artifactId);
   const imageLeaf = validateColorKey(row.image_key, jobId, artifactId);
-  if (!previewLeaf) return { ok: false, error: 'invalid preview_key' };
+  if (!previewLeaf || !PREVIEW_LEAF_RE.test(previewLeaf)) return { ok: false, error: 'invalid preview_key' };
   if (!imageLeaf) return { ok: false, error: 'invalid image_key' };
   if (!isFinitePositive(row.preview_width) || !isFinitePositive(row.preview_height)) {
     return { ok: false, error: 'invalid preview dimensions' };
@@ -236,7 +240,7 @@ function normalizeMosaicTile(row, index, trustedOrigin) {
   if (!isValidId(jobId) || !isValidId(artifactId)) return { ok: false, error: 'bad job/artifact id' };
   const previewLeaf = validateColorKey(row.key, jobId, artifactId);
   const imageLeaf = validateColorKey(row.image_key, jobId, artifactId);
-  if (!previewLeaf) return { ok: false, error: 'invalid preview key' };
+  if (!previewLeaf || !PREVIEW_LEAF_RE.test(previewLeaf)) return { ok: false, error: 'invalid preview key' };
   if (!imageLeaf) return { ok: false, error: 'invalid image_key' };
   if (!isFinitePositive(row.preview_width) || !isFinitePositive(row.preview_height)) {
     return { ok: false, error: 'invalid preview dimensions' };

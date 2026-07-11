@@ -76,7 +76,18 @@ async function _dzAddSelectedToGallery() {
 
     const btn = document.getElementById('btn-dz-add-gallery');
     const origLabel = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }   // immediate feedback
+    // Immediate feedback while in flight, and a LINGERING result on the button
+    // itself afterwards — a fast roundtrip otherwise flashes the busy label for
+    // <300ms, which reads as "nothing happened".
+    if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+    const flash = (label) => {
+        if (!btn) return;
+        btn.textContent = label;
+        setTimeout(() => {
+            btn.textContent = origLabel;
+            btn.disabled = !_dzGalleryPickForExport(ex);
+        }, 1600);
+    };
     try {
         const resp = await lambdaPost('storage',
             { gallery_id: galleryId, job_id: pick.job_id, artifact_id: pick.artifact_id, export_id: pick.export_id },
@@ -85,23 +96,33 @@ async function _dzAddSelectedToGallery() {
         const name = (resp && resp.gallery && resp.gallery.name) || 'gallery';
         const count = (resp && resp.gallery && (resp.gallery.pieces || []).length) || 0;
         if (resp && resp.added) {
+            flash('✓ Added');
             setStatus(`Added ${pick.artifact_id} to “${name}” (${count})`, 'status ok');
         } else {
             const reason = (resp && resp.reason) || 'not added';
-            const human = reason === 'duplicate' ? 'already in this gallery'
-                : reason === 'gallery_full' ? 'gallery is full'
-                : reason;
-            setStatus(`Not added: ${human}`, 'status');
+            const human = {
+                duplicate: 'already in this gallery',
+                gallery_full: 'gallery is full',
+                non_square: 'render is not square',
+                missing_image: 'render image is missing',
+                missing_preview: 'render preview is missing',
+                unknown_preview_dimensions: 'preview dimensions unreadable',
+                export_not_found: 'DeepZoom export not found',
+                export_identity_mismatch: 'export belongs to a different render',
+                export_dzi_key_mismatch: 'export DZI key mismatch',
+                export_dzi_absent: 'export DZI file is missing',
+            }[reason] || reason;
+            if (reason === 'duplicate') { flash('✓ Already added'); setStatus('Not added: ' + human, 'status'); }
+            else { flash('✗ Not added'); setStatus('Not added: ' + human, 'status error'); }
         }
         // Hand the updated gallery + its new revision to the Gallery tab so it
         // can merge the added piece without a stale-revision conflict.
         if (typeof _galleryNotifyChanged === 'function') {
-            _galleryNotifyChanged(galleryId, resp && resp.gallery, resp && resp.revision);
+            _galleryNotifyChanged(galleryId, resp && resp.gallery, resp && resp.revision, pick);
         }
     } catch (e) {
+        flash('✗ Failed');
         setStatus('Add to Gallery failed: ' + e.message, 'status error');
-    } finally {
-        if (btn) { btn.textContent = origLabel; btn.disabled = !_dzGalleryPickForExport(ex); }
     }
 }
 

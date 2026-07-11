@@ -30,7 +30,9 @@
   html, body { margin: 0; height: 100%; background: #14110d; color: #efe9df;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
   #gl-root { position: fixed; inset: 0; }
-  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  /* Scoped to the WebGL canvas ONLY — a global `canvas` rule also hits
+     OpenSeadragon's internal canvases and distorts them. */
+  #gl-root canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 
   /* Center crosshair (visible only while pointer-locked). */
   #crosshair { position: fixed; left: 50%; top: 50%; width: 14px; height: 14px;
@@ -78,7 +80,10 @@
   #overlay-bar button:hover { background: rgba(60,50,38,1); }
   #overlay-stage { position: relative; flex: 1; min-height: 0; background: #0b0908; }
   #overlay-stage img { position: absolute; inset: 0; margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
-  #osd { position: absolute; inset: 0; }
+  /* Explicit width/height, NOT inset-based sizing: OpenSeadragon overwrites the
+     element's inline position to "relative", and an inset-sized absolute element
+     collapses to 0 height the moment that happens (the "empty zoom" bug). */
+  #osd { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
   #overlay-status { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
     font-size: 13px; opacity: .7; }
 
@@ -96,7 +101,7 @@
   <div id="gl-root"></div>
   <div id="crosshair"></div>
 
-  <div id="hint">Click to enter · WASD to move · mouse to look · Esc to release</div>
+  <div id="hint">Click to enter · WASD to move · mouse to look · click or Enter to inspect · Esc to release · map top-left</div>
   <div id="hud"><div class="title" id="hud-title"></div><div class="sub" id="hud-sub"></div></div>
   <div id="debug"></div>
   <canvas id="minimap" width="156" height="156"></canvas>

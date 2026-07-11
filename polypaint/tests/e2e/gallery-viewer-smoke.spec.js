@@ -231,3 +231,58 @@ test('minimap renders the maze with a red you-are-here dot; textures are pre-fli
   expect(st.red).toBeGreaterThan(0);        // the red you-are-here dot
   expect(st.flipY).toBe(false);             // textures pre-flipped -> art is right-side up
 });
+
+test('REGRESSION: inline zoom renders real DZI pixels with the vendored OpenSeadragon', async ({ page }) => {
+  // The "empty zoom" bug: OSD rewrites its element's position to "relative", and
+  // an inset-sized #osd collapsed to 0 height -> a 1px-tall canvas -> nothing
+  // rendered. This drives the REAL vendored OSD over a real committed DZI
+  // pyramid and asserts actual pixels land on the canvas.
+  const fs = require('fs');
+  const path = require('path');
+  const FIXTURE = path.join(__dirname, '..', 'fixtures', 'dzT');
+  const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/dzreal/manifest.json';
+  await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color', layout: { mode: 'auto', seed: 1 },
+    pieces: [{ ordinal: 0, job_id: 'jobT', artifact_id: 'artT',
+      preview_key: 'renders/jobT/color/artT/preview.jpg', image_key: 'renders/jobT/color/artT/image.jpeg',
+      preview_width: 512, preview_height: 512, function: 't', title: 'T',
+      deepzoom: { export_id: 'dzT', dzi_key: 'deepzoom/jobT/dzT/image.dzi', source_key: 'renders/jobT/color/artT/image.jpeg', source_artifact_id: 'artT' } }],
+  }) }));
+  await page.route('**/deepzoom/jobT/dzT/**', (route) => {
+    const rel = new URL(route.request().url()).pathname.split('/deepzoom/jobT/dzT/')[1];
+    const file = path.join(FIXTURE, rel);
+    if (!fs.existsSync(file)) return route.fulfill({ status: 404, body: '' });
+    route.fulfill({ status: 200, contentType: rel.endsWith('.dzi') ? 'application/xml' : 'image/jpeg', body: fs.readFileSync(file) });
+  });
+  await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(url));
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  await page.evaluate(() => {
+    const v = window.__galleryViewer;
+    v._inspecting = 0;
+    document.getElementById('overlay').classList.add('open');
+    v._openDeepZoom();
+  });
+  // Wait until the OSD canvas exists, is properly sized, and has real pixels.
+  // Sample the CENTER: goHome fits + centers the image, so the corners are
+  // legitimately empty margin.
+  await page.waitForFunction(() => {
+    const c = document.querySelector('#osd canvas');
+    if (!c || c.height < 100) return false;
+    const g = c.getContext('2d');
+    const s = 200;
+    const d = g.getImageData(Math.max(0, c.width / 2 - s / 2), Math.max(0, c.height / 2 - s / 2), s, s).data;
+    let nonBlack = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 30) nonBlack++;
+    return nonBlack > 1000;
+  }, { timeout: 8000 });
+  const st = await page.evaluate(() => ({
+    osdH: document.getElementById('osd').clientHeight,
+    canvasH: document.querySelector('#osd canvas').height,
+    status: document.getElementById('overlay-status').textContent,
+  }));
+  expect(st.osdH).toBeGreaterThan(100);      // #osd keeps its size after OSD rewrites position
+  expect(st.canvasH).toBeGreaterThan(100);   // not the 1px-tall collapsed canvas
+  expect(st.status).toBe('');                // no zoom error surfaced
+});

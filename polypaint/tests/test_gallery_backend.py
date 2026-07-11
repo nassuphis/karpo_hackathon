@@ -46,7 +46,7 @@ class _FakeS3:
         return {"Metadata": o.get("Metadata", {}), "ContentLength": o.get("ContentLength", 0),
                 "ContentType": o.get("ContentType", ""), "ETag": f'"{o.get("etag", "0")}"'}
 
-    def get_object(self, Bucket=None, Key=None):
+    def get_object(self, Bucket=None, Key=None, Range=None):
         if Key in self.fail:
             raise self.fail[Key]
         if Key not in self.objects:
@@ -405,6 +405,46 @@ class GalleryBackendTests(unittest.TestCase):
         doc["settings"] = {"sky": "rainbow", "wall_color": "not-a-hex"}
         _, saved = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=fetched["revision"])
         self.assertEqual(saved["gallery"]["settings"], {"sky": "stars", "wall_color": "#ece4d6"})
+
+
+    def test_add_accepts_export_from_other_image_variant(self):
+        # The artifact has image.jpeg (resolved first) but the export was built
+        # from image.png of the SAME artifact — same picture, must be accepted
+        # (the exact-key equality check wrongly rejected this as a mismatch).
+        gid = self._create()["gallery"]["gallery_id"]
+        self._seed_color("jobA", "cA")
+        self._seed_export("jobA", "cA", "dz_v", image_key="renders/jobA/color/cA/image.png")
+        body = self._add(gid, "jobA", "cA", "dz_v")
+        self.assertTrue(body["added"])
+        self.assertEqual(body["gallery"]["pieces"][0]["deepzoom"]["dzi_key"], "deepzoom/jobA/dz_v/image.dzi")
+
+    def test_add_rejects_unknown_preview_dimensions(self):
+        # No meta.json dims and an unparseable preview: the viewer could not lay
+        # this piece out, so the add must fail loudly instead of succeeding and
+        # being silently dropped by the viewer.
+        gid = self._create()["gallery"]["gallery_id"]
+        prefix = "renders/jobU/color/cU/"
+        self.s3.objects[prefix + "image.jpeg"] = {"Metadata": {}, "ContentLength": 1000, "ContentType": "image/jpeg"}
+        self.s3.objects[prefix + "preview.png"] = {"Metadata": {}, "ContentLength": 50, "ContentType": "image/png"}
+        self.s3.objects["renders/jobU/calc.json"] = {"body": b"{}"}
+        body = self._add(gid, "jobU", "cU")
+        self.assertFalse(body["added"])
+        self.assertEqual(body["reason"], "unknown_preview_dimensions")
+
+    def test_save_stale_revision_with_changed_pieces_is_409_not_400(self):
+        # A stale revision whose piece set changed must be a CONFLICT (409, the
+        # client reloads), not an "unknown piece" validation error (400).
+        gid = self._create("G")["gallery"]["gallery_id"]
+        self._seed_color("jobA", "cA")
+        self._add(gid, "jobA", "cA")
+        fetched = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
+        doc, rev = fetched["gallery"], fetched["revision"]
+        # concurrent save removes the piece (bumps revision)
+        self._route(hs.handle_save_gallery, gallery={"gallery_id": gid, "name": "G", "pieces": []}, expected_revision=rev)
+        # stale save still referencing the removed piece -> 409, not 400
+        resp, body = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=rev)
+        self.assertEqual(resp["statusCode"], 409)
+        self.assertEqual(body["conflict"], "gallery_revision")
 
 
 if __name__ == "__main__":

@@ -4501,6 +4501,11 @@ def _gallery_resolve_color_tile(job_id, artifact_id, calc_cache, *, client):
     tile, status = _mosaic_tile_from_entry(client, job_id, entry, calc_cache[job_id])
     if tile is None:
         return None, "missing", status  # missing_preview / non_square
+    # The 3D viewer requires finite positive preview dims (aspect/layout math);
+    # accepting a dimension-less tile here would let /add-to-gallery report
+    # success for a piece the viewer then silently drops.
+    if not tile.get("preview_width") or not tile.get("preview_height"):
+        return None, "missing", "unknown_preview_dimensions"
     return tile, "ready", ""
 
 
@@ -4511,11 +4516,21 @@ def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, clien
     meta = _read_deepzoom_export_meta(job_id, export_id, client)
     if meta is None:
         return None, "export_not_found"
+    # Identity is (job, color, artifact) — NOT the exact source file. An artifact
+    # can carry both image.jpeg and image.png (png-export/resize variants), and
+    # enrichment resolves the first existing candidate while the export may have
+    # been generated from the other; both depict the same artifact. Requiring
+    # exact source_key equality wrongly rejected those ("export_identity_mismatch").
+    src = str(meta.get("source_key") or "")
+    src_parts = src.split("/")
+    src_matches = (len(src_parts) == 5 and src_parts[0] == "renders"
+                   and src_parts[1] == job_id and src_parts[2] == "color"
+                   and src_parts[3] == artifact_id)
     if (str(meta.get("job_id") or "") != job_id
             or str(meta.get("export_id") or "") != export_id
             or str(meta.get("source_family") or "") != "color"
             or str(meta.get("source_artifact_id") or "") != artifact_id
-            or str(meta.get("source_key") or "") != image_key):
+            or not src_matches):
         return None, "export_identity_mismatch"
     dzi_key = f"deepzoom/{job_id}/{export_id}/image.dzi"
     if str(meta.get("dzi_key") or "") != dzi_key:
@@ -4782,7 +4797,13 @@ def handle_save_gallery(event):
     if not expected_revision:
         raise ValueError("save-gallery requires expected_revision (refetch the gallery)")
     # Must already exist — save never creates a gallery.
-    existing, _current = _read_gallery_doc_with_etag(gallery_id)   # _GalleryNotFound -> 404
+    existing, current = _read_gallery_doc_with_etag(gallery_id)   # _GalleryNotFound -> 404
+    # Conflict check BEFORE piece validation: with a stale revision, the piece
+    # set may legitimately differ (another browser removed a piece) — that must
+    # surface as a 409 (client offers reload), not an "unknown piece" 400.
+    if expected_revision != current:
+        raise GalleryConflictError(
+            f"gallery {gallery_id} changed since revision {expected_revision!r}; refetch and retry")
     stored_by_id = {(p.get("job_id"), p.get("artifact_id")): p for p in (existing.get("pieces") or [])}
 
     raw_pieces = incoming.get("pieces")

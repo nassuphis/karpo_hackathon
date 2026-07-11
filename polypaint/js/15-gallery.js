@@ -85,13 +85,16 @@ function _galleryModalKey(e) {
 // revision + append the added pieces, keeping local order/titles) so a later
 // Save succeeds instead of hitting a stale-revision conflict; when it is clean
 // we just adopt the server version.
-function _galleryNotifyChanged(galleryId, gallery, revision) {
+function _galleryNotifyChanged(galleryId, gallery, revision, addedPick) {
     if (!galleryId || galleryId !== _galleryState.activeId) return;
     const sameDoc = gallery && gallery.gallery_id === galleryId;
     if (_galleryState.dirty && _galleryState.doc && sameDoc) {
+        // Merge ONLY the piece that was just added — diffing the whole server
+        // list would resurrect pieces the user removed locally but hasn't saved.
         const key = (p) => p.job_id + '::' + p.artifact_id;
         const localIds = new Set((_galleryState.doc.pieces || []).map(key));
-        const added = (gallery.pieces || []).filter((p) => !localIds.has(key(p)));
+        const added = (gallery.pieces || []).filter((p) =>
+            !localIds.has(key(p)) && (!addedPick || key(p) === key(addedPick)));
         if (added.length) _galleryState.doc.pieces = (_galleryState.doc.pieces || []).concat(added);
         if (revision) _galleryState.revision = revision;   // adopt so Save won't 409
         _renderGalleryTab();
@@ -109,16 +112,21 @@ function _galleryNotifyChanged(galleryId, gallery, revision) {
 }
 
 async function loadGalleryTab() {
-    // Re-sync the active id from localStorage (it may have been set before this
-    // module loaded, or changed in another browser tab).
-    try { _galleryState.activeId = String(localStorage.getItem(GALLERY_ACTIVE_KEY) || ''); } catch (e) {}
-    await _galleryRefreshList();
-    // Preserve in-progress edits across tab switches: only refetch (which clears
-    // dirty) when there are no unsaved changes for the active gallery.
-    const keepDirty = _galleryState.dirty && _galleryState.doc &&
-        _galleryState.doc.gallery_id === _galleryState.activeId;
-    if (!keepDirty) await _galleryLoadActive();
-    _renderGalleryTab();
+    _galleryBtnBusy('btn-gallery-refresh', true, 'Refreshing…');
+    try {
+        // Re-sync the active id from localStorage (it may have been set before this
+        // module loaded, or changed in another browser tab).
+        try { _galleryState.activeId = String(localStorage.getItem(GALLERY_ACTIVE_KEY) || ''); } catch (e) {}
+        await _galleryRefreshList();
+        // Preserve in-progress edits across tab switches: only refetch (which clears
+        // dirty) when there are no unsaved changes for the active gallery.
+        const keepDirty = _galleryState.dirty && _galleryState.doc &&
+            _galleryState.doc.gallery_id === _galleryState.activeId;
+        if (!keepDirty) await _galleryLoadActive();
+        _renderGalleryTab();
+    } finally {
+        _galleryBtnBusy('btn-gallery-refresh', false);
+    }
 }
 
 async function _galleryRefreshList() {
@@ -222,12 +230,20 @@ async function galleryDelete() {
 // Persist the current doc (CAS via revision). Throws on failure so callers can
 // abort (e.g. Open won't snapshot a gallery whose save just failed).
 async function _gallerySavePersist() {
+    // Snapshot what we submit: if the user keeps editing during the roundtrip
+    // (inputs stay live), do NOT clobber those edits with the server copy.
+    const submitted = JSON.stringify(_galleryState.doc);
     const resp = await lambdaPost('storage',
-        { gallery: _galleryState.doc, expected_revision: _galleryState.revision }, '/save-gallery');
+        { gallery: JSON.parse(submitted), expected_revision: _galleryState.revision }, '/save-gallery');
     if (resp && resp.error) throw new Error(resp.error);
-    _galleryState.doc = resp.gallery;
     _galleryState.revision = resp.revision || '';
-    _galleryState.dirty = false;
+    if (JSON.stringify(_galleryState.doc) === submitted) {
+        _galleryState.doc = resp.gallery;
+        _galleryState.dirty = false;
+    } else {
+        _galleryState.dirty = true;   // keep the newer local edits; revision is fresh
+        _galleryStatus('Saved — new edits made while saving are still unsaved.');
+    }
     return resp;
 }
 
@@ -271,12 +287,15 @@ async function galleryOpen() {
         // Derive gallery.html from the MANIFEST origin (the HTTPS REST endpoint).
         const galleryUrl = new URL('/gallery.html', new URL(manifestUrl).origin);
         galleryUrl.searchParams.set('manifest', manifestUrl);
-        if (win) win.location = galleryUrl.toString();
-        else if (typeof _copyTextToClipboard === 'function') {
+        if (win) {
+            win.location = galleryUrl.toString();
+            _galleryStatus('Opened gallery — ' + resp.count + ' piece' + (resp.count === 1 ? '' : 's') + '.');
+        } else if (typeof _copyTextToClipboard === 'function') {
             await _copyTextToClipboard(galleryUrl.toString());
-            _galleryStatus('Link copied (popup blocked).');
+            _galleryStatus('Popup blocked — gallery link copied to the clipboard instead.');
+        } else {
+            _galleryStatus('Popup blocked — open this link: ' + galleryUrl.toString(), true);
         }
-        _galleryStatus('Opened gallery — ' + resp.count + ' piece' + (resp.count === 1 ? '' : 's') + '.');
     } catch (e) {
         if (win) win.close();
         _galleryStatus('Open failed: ' + e.message, true);

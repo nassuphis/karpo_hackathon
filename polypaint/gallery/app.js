@@ -105,6 +105,27 @@ async function fetchManifestCapped(url, maxBytes, signal) {
   return JSON.parse(new TextDecoder().decode(buf));
 }
 
+// imageOrientation:'flipY' support probe: per WebIDL, browsers that don't know
+// the option IGNORE it (no throw), so a try/catch can't detect it — draw a 1x2
+// probe and check whether the pixels actually flipped.
+let _flipYSupport = null;
+async function bitmapFlipYSupported() {
+  if (_flipYSupport !== null) return _flipYSupport;
+  try {
+    const c = document.createElement('canvas'); c.width = 1; c.height = 2;
+    const g = c.getContext('2d');
+    g.fillStyle = '#f00'; g.fillRect(0, 0, 1, 1);
+    g.fillStyle = '#000'; g.fillRect(0, 1, 1, 1);
+    const bm = await createImageBitmap(c, { imageOrientation: 'flipY' });
+    const c2 = document.createElement('canvas'); c2.width = 1; c2.height = 2;
+    const g2 = c2.getContext('2d');
+    g2.drawImage(bm, 0, 0);
+    _flipYSupport = g2.getImageData(0, 0, 1, 1).data[0] < 128;   // red moved to the bottom
+    try { bm.close(); } catch {}
+  } catch { _flipYSupport = false; }
+  return _flipYSupport;
+}
+
 // Preview loader for the texture manager: cancellable, timed out, 404 -> permanent.
 function makePreviewLoader() {
   return async function loadImage(url, signal) {
@@ -119,10 +140,21 @@ function makePreviewLoader() {
       const blob = await resp.blob();
       // Pre-flip the bitmap (WebGL can't flipY an ImageBitmap on upload, so a
       // plain createImageBitmap + Three's default flipY renders it upside down).
-      // Paired with texture.flipY = false in makeTexture.
+      // Paired with texture.flipY = false in makeTexture. On browsers without
+      // imageOrientation support, flip through a canvas — a plain unflipped
+      // bitmap would silently render inverted again.
       let bitmap;
-      try { bitmap = await createImageBitmap(blob, { imageOrientation: 'flipY' }); }
-      catch { bitmap = await createImageBitmap(blob); }
+      if (await bitmapFlipYSupported()) {
+        bitmap = await createImageBitmap(blob, { imageOrientation: 'flipY' });
+      } else {
+        const raw = await createImageBitmap(blob);
+        const c = document.createElement('canvas');
+        c.width = raw.width; c.height = raw.height;
+        const g = c.getContext('2d');
+        g.translate(0, raw.height); g.scale(1, -1); g.drawImage(raw, 0, 0);
+        try { raw.close(); } catch {}
+        bitmap = await createImageBitmap(c);
+      }
       return { bitmap, bytes: bitmap.width * bitmap.height * 4 };
     } finally {
       clearTimeout(timer);
@@ -223,12 +255,14 @@ class GalleryViewer {
     this.scene.add(floor);
     // Open to the sky (no ceiling). One shared unit box scaled per wall segment.
     this._wallGeo = new THREE.BoxGeometry(1, 1, 1);
+    this._wallMeshes = [];
     const T = MAZE.WALL_THICKNESS_M, H = maze.height;
     for (const seg of maze.wallSegments) {
       const m = new THREE.Mesh(this._wallGeo, wallMat);
       if (seg.axis === 'z') m.scale.set(T, H, seg.len + T);   // wall runs along z
       else m.scale.set(seg.len + T, H, T);                    // wall runs along x
       m.position.set(seg.x, H / 2, seg.z);
+      this._wallMeshes.push(m);
       this.scene.add(m);
     }
   }
@@ -393,7 +427,9 @@ class GalleryViewer {
       case 'KeyS': case 'ArrowDown': this._setKey('b', down); break;
       case 'KeyA': case 'ArrowLeft': this._setKey('l', down); break;
       case 'KeyD': case 'ArrowRight': this._setKey('r', down); break;
-      case 'Enter': if (down && this.controls.isLocked) this._inspectFocused(); break;
+      case 'Enter':
+        if (down && this.controls.isLocked) { this._inspectFocused(); break; }
+        return;   // unlocked: let Enter activate the focused button natively
       default: return;
     }
     if (down) e.preventDefault();
@@ -405,7 +441,6 @@ class GalleryViewer {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    if (this._osd) this._osd.viewport && this._osd.viewport.resize && this._osd.viewport.resize();
   }
 
   // WebGL context loss (§10): preventDefault so the browser will fire 'restored',
@@ -541,9 +576,13 @@ class GalleryViewer {
   }
 
   _updateFocus() {
+    // Raycast art AND walls so a wall occludes art in the corridor beyond it —
+    // otherwise the HUD names, frames, and Enter-inspects pieces you can't see.
     this._raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
-    const hit = this._raycaster.intersectObjects(this._artMeshes, false)[0];
-    this._setFocus(hit ? hit.object.userData.pieceIndex : -1);
+    this._raycaster.far = 8;
+    const hit = this._raycaster.intersectObjects(this._artMeshes.concat(this._wallMeshes || []), false)[0];
+    const isArt = hit && hit.object.userData && hit.object.userData.pieceIndex != null;
+    this._setFocus(isArt ? hit.object.userData.pieceIndex : -1);
   }
 
   _setFocus(index) {
@@ -605,10 +644,13 @@ class GalleryViewer {
   _inspectFocused() {
     const index = this._focusIndex >= 0 ? this._focusIndex : this._guidedIndex;
     if (index < 0) return;
+    if (this._inspecting != null) this.tm.unpin(this._pieceId(this.pieces[this._inspecting]));
     this._inspecting = index;
     const p = this.pieces[index];
     if (this.controls.isLocked) this.controls.unlock();
     this.tm.pin(this._pieceId(p));
+    // Background guided controls must not be keyboard-activatable behind the modal.
+    $('btn-prev').disabled = true; $('btn-next').disabled = true; $('btn-inspect').disabled = true;
 
     $('overlay-meta').textContent = [p.title || p.function || p.artifact_id, p.job_id, p.artifact_id,
       p.degree != null ? 'deg ' + p.degree : '', p.N != null ? 'N=' + p.N : '',
@@ -632,6 +674,8 @@ class GalleryViewer {
     this._destroyOsd();
     if (this._inspecting != null) this.tm.unpin(this._pieceId(this.pieces[this._inspecting]));
     this._inspecting = null;
+    $('btn-prev').disabled = false; $('btn-next').disabled = false;
+    $('btn-inspect').disabled = this._focusIndex < 0 && this._guidedIndex < 0;
   }
 
   _openDeepZoom() {
@@ -640,15 +684,21 @@ class GalleryViewer {
     $('overlay-img').style.display = 'none';
     $('osd').style.display = 'block';
     $('overlay-status').textContent = 'loading zoom…';
-    this._destroyOsd();
     const dziUrl = p.deepzoom.dzi_url;
-    // Defer creation one frame so the just-shown #osd container is laid out and
-    // sized — OpenSeadragon reads the element size at init and renders nothing
-    // into a zero-size container (the likely "empty zoom"). Same setup the
-    // DeepZoom tab uses (js/12 viewDeepZoom): the piece's own DZI, NO
-    // crossOriginPolicy (the public bucket sends no CORS headers).
+    // Button feedback: busy while the DZI opens, restored on success/failure.
+    const zoomBtn = $('overlay-zoom');
+    const zoomLabel = zoomBtn.textContent;
+    zoomBtn.disabled = true; zoomBtn.textContent = 'Loading zoom…';
+    const done = (ok) => { zoomBtn.disabled = false; zoomBtn.textContent = zoomLabel; if (ok) $('overlay-status').textContent = ''; };
+    const openToken = (this._osdOpenToken = (this._osdOpenToken || 0) + 1);
+    // Defer creation one frame so the just-shown #osd container is laid out.
+    // Same setup the DeepZoom tab uses (js/12 viewDeepZoom): the piece's own DZI,
+    // NO crossOriginPolicy (the public bucket sends no CORS headers). #osd is
+    // sized with explicit width/height because OSD rewrites the element's
+    // position to "relative" (see gallery.html).
     requestAnimationFrame(() => {
-      if (this._disposed || !this._overlayOpen()) return;
+      if (this._disposed || !this._overlayOpen() || openToken !== this._osdOpenToken) { done(false); return; }
+      this._destroyOsd();
       let tileErrors = 0;
       this._osd = window.OpenSeadragon({
         element: $('osd'),
@@ -660,10 +710,11 @@ class GalleryViewer {
         gestureSettingsMouse: { clickToZoom: false },
       });
       this._osd.addHandler('open', () => {
-        $('overlay-status').textContent = '';
+        done(true);
         try { this._osd.viewport.goHome(true); } catch {}
       });
       this._osd.addHandler('open-failed', (e) => {
+        done(false);
         $('overlay-status').textContent = 'Zoom unavailable: ' + ((e && e.message) || ('could not load ' + dziUrl));
       });
       this._osd.addHandler('tile-load-failed', () => {
@@ -688,13 +739,18 @@ class GalleryViewer {
     const p = this.pieces[this._inspecting != null ? this._inspecting : this._focusIndex];
     if (!p) return;
     const ref = p.job_id + ' / ' + p.artifact_id;
-    if (navigator.clipboard) navigator.clipboard.writeText(ref).catch(() => {});
-    $('overlay-status').textContent = 'copied ' + ref;
+    const btn = $('overlay-copy');
+    const orig = btn.textContent;
+    const flash = (label) => { btn.textContent = label; setTimeout(() => { btn.textContent = orig; }, 1400); };
+    if (!navigator.clipboard) { flash('✗ No clipboard'); $('overlay-status').textContent = 'copy unavailable (insecure context)'; return; }
+    navigator.clipboard.writeText(ref).then(
+      () => { flash('✓ Copied'); $('overlay-status').textContent = 'copied ' + ref; },
+      () => { flash('✗ Copy failed'); $('overlay-status').textContent = 'copy failed'; });
   }
 
   _updateDebug() {
     const s = this.tm.stats();
-    $('debug').textContent = `pieces ${this.pieces.length}\nqueued ${s.queued}  inflight ${s.inFlight}\n` +
+    $('debug').textContent = `pieces ${this.pieces.length}${this._dropped ? `  (+${this._dropped} not shown)` : ''}\nqueued ${s.queued}  inflight ${s.inFlight}\n` +
       `resident ${s.resident}/${TEXTURE_LIMITS.MAX_RESIDENT}  gpu ${this.renderer.info.memory.textures}`;
   }
 
@@ -768,6 +824,7 @@ async function boot() {
     VIEWER = new GalleryViewer(norm);
     window.__galleryViewer = VIEWER;              // handle for manual inspection
     const dropped = norm.skipped.length + truncated;
+    VIEWER._dropped = dropped;
     if (dropped) {
       // Non-fatal: surface how many rows were dropped/truncated.
       $('debug').setAttribute('data-skipped', String(dropped));

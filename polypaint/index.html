@@ -2272,7 +2272,7 @@ button {
     <div id="gallery-status" class="status" style="margin-top:8px; font-size:12px"></div>
         </div>
         <!-- Gallery name / confirm modal (app-styled, replaces native prompt/confirm) -->
-        <div id="gallery-modal-overlay" class="tri-popup-overlay" aria-hidden="true" style="z-index:1600">
+        <div id="gallery-modal-overlay" class="tri-popup-overlay" aria-hidden="true" style="z-index:1600" onkeydown="_galleryModalKey(event)">
             <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="gallery-modal-title" style="width:min(440px, calc(100vw - 32px))">
                 <div class="tri-popup-head">
                     <div id="gallery-modal-title" class="tri-popup-title">New gallery</div>

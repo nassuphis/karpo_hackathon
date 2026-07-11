@@ -480,16 +480,23 @@ class GalleryViewer {
     $('osd').style.display = 'block';
     $('overlay-status').textContent = 'loading zoom…';
     this._destroyOsd();
+    // Same setup the DeepZoom tab uses (js/12 viewDeepZoom): open the piece's DZI
+    // directly, NO crossOriginPolicy. The public bucket sends no CORS headers, so
+    // forcing 'Anonymous' makes the browser reject the same-origin tiles/.dzi and
+    // zoom silently fails — the DeepZoom tab omits it and works.
     this._osd = window.OpenSeadragon({
       element: $('osd'),
       prefixUrl: 'vendor/openseadragon-r411/images/',
       tileSources: p.deepzoom.dzi_url,
-      showNavigator: false,
-      crossOriginPolicy: 'Anonymous',
+      showNavigator: true,
+      navigatorPosition: 'BOTTOM_RIGHT',
+      maxZoomPixelRatio: 4,
       gestureSettingsMouse: { clickToZoom: false },
     });
     this._osd.addHandler('open', () => { $('overlay-status').textContent = ''; });
-    this._osd.addHandler('open-failed', () => { $('overlay-status').textContent = 'zoom unavailable'; });
+    this._osd.addHandler('open-failed', (e) => {
+      $('overlay-status').textContent = 'Zoom unavailable' + (e && e.message ? ': ' + e.message : '');
+    });
   }
 
   _destroyOsd() {

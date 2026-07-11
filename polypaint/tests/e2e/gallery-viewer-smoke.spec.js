@@ -115,3 +115,30 @@ test('guided Next keeps focus, enables Inspect, and does not accumulate pins', a
   expect(st.inspectDisabled).toBe(false);
   expect(st.pins).toBe(1);                 // exactly one focus pin, refcounted
 });
+
+test('Zoom opens OpenSeadragon on the piece DZI without forcing CORS', async ({ page }) => {
+  const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/dz/manifest.json';
+  await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color', layout: { mode: 'auto', seed: 1 },
+    pieces: [{ ordinal: 0, job_id: 'compute_a', artifact_id: 'cA',
+      preview_key: 'renders/compute_a/color/cA/preview.jpg', image_key: 'renders/compute_a/color/cA/image.jpeg',
+      preview_width: 512, preview_height: 512, function: 'f', title: '',
+      deepzoom: { export_id: 'dz_A', dzi_key: 'deepzoom/compute_a/dz_A/image.dzi', source_key: 'renders/compute_a/color/cA/image.jpeg', source_artifact_id: 'cA' } }],
+  }) }));
+  await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(url));
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  // Capture the OpenSeadragon options the viewer passes at Zoom time.
+  const opts = await page.evaluate(() => {
+    let captured = null;
+    window.OpenSeadragon = function (o) { captured = o; return { addHandler() {}, destroy() {}, viewport: {} }; };
+    const v = window.__galleryViewer;
+    v._inspecting = 0;
+    v._openDeepZoom();
+    return captured;
+  });
+  expect(opts).toBeTruthy();
+  expect(opts.tileSources).toContain('/deepzoom/compute_a/dz_A/image.dzi');  // the piece's DZI
+  expect(opts.crossOriginPolicy).toBeUndefined();   // must NOT force CORS — the bucket has none
+});

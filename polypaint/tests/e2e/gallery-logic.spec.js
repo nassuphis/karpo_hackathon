@@ -97,6 +97,8 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
         forgedDzi: M.validateDeepzoom({ ...base, dzi_key: 'deepzoom/compute_a/dz_A/EVIL.dzi' }, ctx),
         typeMismatch: M.normalizeManifest({ ...doc, manifest_type: 'artifact_mosaic' }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).ok,
         wrongKind: M.normalizeManifest({ ...doc, artifact_kind: 'bilevel' }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).ok,
+        editableAtSharePath: M.normalizeManifest({ ...doc, document_kind: 'editable' }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).ok,
+        explicitLayout: M.normalizeManifest({ ...doc, layout: { mode: 'explicit' } }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).ok,
       };
     }, galleryDoc());
     expect(r.good).toBe(true);
@@ -105,6 +107,8 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
     expect(r.forgedDzi).toBeNull();
     expect(r.typeMismatch).toBe(false);
     expect(r.wrongKind).toBe(false);
+    expect(r.editableAtSharePath).toBe(false);   // editable doc at a share path rejected
+    expect(r.explicitLayout).toBe(false);        // auto-only until explicit layout ships
   });
 
   test('enforces the manifest row cap', async ({ page }) => {

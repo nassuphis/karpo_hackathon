@@ -88,3 +88,30 @@ test('accepts a valid share: builds the scene or shows a WebGL fallback', async 
     expect(state.msg).toMatch(/WebGL/i);
   }
 });
+
+test('guided Next keeps focus, enables Inspect, and does not accumulate pins', async ({ page }) => {
+  await routeManifest(page, validManifest());
+  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(MANIFEST_URL));
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  // Advance guided navigation several times (unlocked) — focus must persist and
+  // the focus pin must stay refcounted at 1, not grow per step.
+  await page.click('#btn-next');
+  await page.click('#btn-next');
+  await page.click('#btn-next');
+  await page.waitForTimeout(250);   // let animation frames run
+  const st = await page.evaluate(() => {
+    const v = window.__galleryViewer;
+    return {
+      guided: v._guidedIndex, focus: v._focusIndex,
+      hud: document.getElementById('hud-title').textContent || '',
+      inspectDisabled: document.getElementById('btn-inspect').disabled,
+      pins: v.tm.stats().pinned,
+    };
+  });
+  expect(st.focus).toBe(st.guided);        // focus is NOT reset to -1 while unlocked
+  expect(st.focus).toBeGreaterThanOrEqual(0);
+  expect(st.hud.length).toBeGreaterThan(0);
+  expect(st.inspectDisabled).toBe(false);
+  expect(st.pins).toBe(1);                 // exactly one focus pin, refcounted
+});

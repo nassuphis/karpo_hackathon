@@ -10,13 +10,15 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { parseTrustedManifestUrl, normalizeManifest, GALLERY_LIMITS } from './manifest.js';
-import { computeRoom, wallToWorld, ROOM } from './layout.js';
+import { computeRoom, wallToWorld, ROOM, selectAndSort } from './layout.js';
 import { GalleryTextureManager, TEXTURE_LIMITS } from './texture-manager.js';
 
 const PREVIEW_FETCH_TIMEOUT_MS = 12_000;
 const SCHEDULE_INTERVAL_MS = 220;
 const MOVE_SPEED = 3.2;              // metres / second
 const VIEW_DISTANCE_M = 2.4;        // guided-mode standoff from a piece
+const VIEWER_MAX_PIECES = 64;       // hard cap on meshes/queued previews (§5/§8)
+const ART_PLACEHOLDER_COLOR = 0x3a332a;
 
 const $ = (id) => document.getElementById(id);
 
@@ -106,7 +108,8 @@ class GalleryViewer {
     this._lastSchedule = 0;
     this._focusIndex = -1;
     this._guidedIndex = -1;
-    this._appliedTex = new Set();
+    this._pinnedFocusId = null;     // the id currently pinned for focus (unpin on change)
+    this._contextLost = false;
     this._abort = new AbortController();
     this._osd = null;
     this._listeners = [];
@@ -197,7 +200,7 @@ class GalleryViewer {
       frame.position.z = -0.006;
       group.add(frame);
 
-      const artMat = new THREE.MeshBasicMaterial({ color: 0x3a332a, toneMapped: false });
+      const artMat = new THREE.MeshBasicMaterial({ color: ART_PLACEHOLDER_COLOR, toneMapped: false });
       const art = new THREE.Mesh(this._sharedPlane, artMat);
       art.scale.set(pl.width_m, pl.height_m, 1);
       art.userData = { pieceIndex: i, id: this._pieceId(piece), material: artMat, frame, baseFrame: 0x0c0a08 };
@@ -220,6 +223,10 @@ class GalleryViewer {
         tex.generateMipmaps = true;
         tex.minFilter = THREE.LinearMipmapLinearFilter;
         tex.needsUpdate = true;
+        // Free the decoded bitmap only AFTER Three has uploaded it to the GPU
+        // (onUpdate fires post-upload). Closing it earlier detaches the source
+        // before the deferred upload and the artwork renders blank.
+        tex.onUpdate = () => { try { tex.image && tex.image.close && tex.image.close(); } catch {} };
         return tex;
       },
       closeBitmap: (bitmap) => { try { bitmap && bitmap.close && bitmap.close(); } catch {} },
@@ -235,6 +242,8 @@ class GalleryViewer {
     on(document, 'keyup', (e) => this._onKey(e, false));
     on(window, 'blur', () => this._keys.clear());
     on(document, 'visibilitychange', () => { this._keys.clear(); this.tm.setHidden(document.hidden); });
+    on(this.renderer.domElement, 'webglcontextlost', (e) => this._onContextLost(e));
+    on(this.renderer.domElement, 'webglcontextrestored', () => this._onContextRestored());
     this.controls.addEventListener('lock', () => document.body.classList.add('locked'));
     this.controls.addEventListener('unlock', () => { document.body.classList.remove('locked'); this._keys.clear(); });
 
@@ -270,6 +279,34 @@ class GalleryViewer {
     if (this._osd) this._osd.viewport && this._osd.viewport.resize && this._osd.viewport.resize();
   }
 
+  // WebGL context loss (§10): preventDefault so the browser will fire 'restored',
+  // stop the loop, and drop the now-invalid GPU textures so they reload. Three
+  // re-uploads geometries/materials itself once rendering resumes.
+  _onContextLost(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    this._contextLost = true;
+    cancelAnimationFrame(this._raf);
+    this._raf = 0;
+    try { this.tm.reset(); } catch {}
+    for (const mesh of this._artMeshes || []) {
+      mesh.userData.material.map = null;
+      mesh.userData.material.color.set(ART_PLACEHOLDER_COLOR);
+      mesh.userData.material.needsUpdate = true;
+    }
+    const box = document.createElement('div');
+    box.appendChild(textEl('h1', 'Restoring graphics…'));
+    box.appendChild(textEl('p', 'The 3D context was lost; it will resume automatically.'));
+    showMessage(box);
+  }
+
+  _onContextRestored() {
+    if (this._disposed) return;
+    this._contextLost = false;
+    hideMessage();
+    this._lastTime = performance.now();
+    if (!this._raf) this._raf = requestAnimationFrame((t) => this._animate(t));
+  }
+
   _animate(now) {
     if (this._disposed) return;
     this._raf = requestAnimationFrame((t) => this._animate(t));
@@ -291,7 +328,9 @@ class GalleryViewer {
       this._scheduleTextures();
     }
     this._applyReadyTextures();
-    this._updateFocus();
+    // Crosshair focus is a pointer-lock concept. While unlocked, leave focus as
+    // guided navigation set it — do NOT raycast it back to nothing every frame.
+    if (this.controls.isLocked) this._updateFocus();
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -314,27 +353,34 @@ class GalleryViewer {
       const priority = (focused ? 10_000 : 0) + 1000 / (1 + dist);
       return { id: mesh.userData.id, url: this.pieces[mesh.userData.pieceIndex].preview_url, priority };
     });
-    if (this._focusIndex >= 0) this.tm.pin(this._pieceId(this.pieces[this._focusIndex]));
     this.tm.setDesired(desired);
     this.tm.pump();
     this._updateDebug();
   }
 
+  // Re-sync every mesh with the manager each frame: bind a newly-resident
+  // texture, and when a texture has been EVICTED (get returns null) restore the
+  // neutral placeholder. This keeps a mesh from holding a disposed texture and
+  // lets a reloaded preview rebind. Cheap: get() has no side effects.
   _applyReadyTextures() {
     for (const mesh of this._artMeshes) {
-      if (this._appliedTex.has(mesh.userData.id)) continue;
+      const mat = mesh.userData.material;
       const tex = this.tm.get(mesh.userData.id);
       if (tex) {
-        mesh.userData.material.map = tex;
-        mesh.userData.material.color.set(0xffffff);
-        mesh.userData.material.needsUpdate = true;
-        this._appliedTex.add(mesh.userData.id);
+        if (mat.map !== tex) {
+          mat.map = tex;
+          mat.color.set(0xffffff);
+          mat.needsUpdate = true;
+        }
+      } else if (mat.map) {
+        mat.map = null;
+        mat.color.set(ART_PLACEHOLDER_COLOR);
+        mat.needsUpdate = true;
       }
     }
   }
 
   _updateFocus() {
-    if (!this.controls.isLocked) { this._setFocus(-1); return; }
     this._raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
     const hit = this._raycaster.intersectObjects(this._artMeshes, false)[0];
     this._setFocus(hit ? hit.object.userData.pieceIndex : -1);
@@ -347,7 +393,14 @@ class GalleryViewer {
       const prev = this._artMeshes.find((m) => m.userData.pieceIndex === this._focusIndex);
       if (prev) prev.userData.frame.material = this._frameMat;
     }
+    // Move the focus texture pin (refcounted, so an overlapping inspection pin is
+    // unaffected). Without this, every piece ever focused stays pinned forever.
+    if (this._pinnedFocusId) { this.tm.unpin(this._pinnedFocusId); this._pinnedFocusId = null; }
     this._focusIndex = index;
+    if (index >= 0) {
+      this._pinnedFocusId = this._pieceId(this.pieces[index]);
+      this.tm.pin(this._pinnedFocusId);
+    }
     const hud = { title: '', sub: '' };
     if (index >= 0) {
       const mesh = this._artMeshes.find((m) => m.userData.pieceIndex === index);
@@ -466,6 +519,7 @@ class GalleryViewer {
   }
 
   destroy() {
+    if (this._disposed) return;     // idempotent: beforeunload + pagehide both fire
     this._disposed = true;
     cancelAnimationFrame(this._raf);
     this._abort.abort();
@@ -514,12 +568,24 @@ async function boot() {
     const norm = normalizeManifest(doc, { pathKind: parsed.pathKind, trustedOrigin: location.origin });
     if (!norm.ok) return failMessage('This gallery could not be loaded', norm.error);
     if (!norm.pieces.length) return failMessage('This gallery is empty', 'No valid pieces remained after validation.');
+    // Hard cap on scene size (§5/§8): a share is already backend-capped, but a
+    // large artifact_mosaic link could otherwise create thousands of meshes and
+    // queue every preview. A gallery keeps curator order (slice); a mosaic has
+    // no stored order (deterministic select).
+    let truncated = 0;
+    if (norm.pieces.length > VIEWER_MAX_PIECES) {
+      truncated = norm.pieces.length - VIEWER_MAX_PIECES;
+      norm.pieces = norm.kind === 'artifact_mosaic'
+        ? selectAndSort(norm.pieces, { size: VIEWER_MAX_PIECES, sort: 'date', seed: 1 })
+        : norm.pieces.slice(0, VIEWER_MAX_PIECES);
+    }
     hideMessage();
     VIEWER = new GalleryViewer(norm);
     window.__galleryViewer = VIEWER;              // handle for manual inspection
-    if (norm.skipped.length) {
-      // Non-fatal: surface how many rows were dropped, without blocking the scene.
-      $('debug').setAttribute('data-skipped', String(norm.skipped.length));
+    const dropped = norm.skipped.length + truncated;
+    if (dropped) {
+      // Non-fatal: surface how many rows were dropped/truncated.
+      $('debug').setAttribute('data-skipped', String(dropped));
     }
   } catch (err) {
     failMessage('This gallery could not be loaded', (err && err.message) || String(err));

@@ -132,6 +132,18 @@ export function normalizeManifest(doc, { pathKind, trustedOrigin }) {
   if (doc.artifact_kind !== 'color') {
     return { ok: false, error: 'only color artifacts are supported' };
   }
+  // The viewer loads immutable SHARES with auto layout. Reject an editable
+  // document copied under a share path, and an explicit-layout share the auto
+  // placement would silently rearrange (§13). Mosaic tiles carry neither field.
+  if (pathKind === 'virtual_gallery') {
+    if (doc.document_kind !== 'share') {
+      return { ok: false, error: `unsupported document_kind: ${doc.document_kind}` };
+    }
+    const mode = doc.layout && doc.layout.mode;
+    if (mode != null && mode !== 'auto') {
+      return { ok: false, error: `unsupported layout mode: ${mode}` };
+    }
+  }
   const rawRows = pathKind === 'virtual_gallery' ? doc.pieces : doc.tiles;
   if (!Array.isArray(rawRows)) {
     return { ok: false, error: 'manifest has no piece/tile array' };

@@ -3380,7 +3380,7 @@ button {
 // Part-consistency check: every split file must have registered, in order.
 // Catches a partial upload or a cached/mixed set of js/ files immediately.
 (function () {
-    var expected = ['01-core-compute', '02-preview-solvescore', '03-program-modals', '04-palette-color', '05-render-popups', '06-popup-init', '07-transform-catalogs', '08-chip-editors', '09-render-orchestration', '10-status-results', '11-artifacts', '12-deepzoom-boot', '13-artifact-mosaics', '14-book'];
+    var expected = ['01-core-compute', '02-preview-solvescore', '03-program-modals', '04-palette-color', '05-render-popups', '06-popup-init', '07-transform-catalogs', '08-chip-editors', '09-render-orchestration', '10-status-results', '11-artifacts', '12-deepzoom-boot', '13-artifact-mosaics', '14-book', '15-gallery'];
     var got = window.__ppParts || [];
     if (expected.length !== got.length || expected.some(function (n, i) { return got[i] !== n; })) {
         console.error('polypaint js parts mismatch — expected', expected, 'got', got,

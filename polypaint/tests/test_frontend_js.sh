@@ -49,6 +49,17 @@ const diskParts = fs.readdirSync(path.join(baseDir, 'js')).filter(f => f.endsWit
 if (JSON.stringify(diskParts) !== JSON.stringify([...partNames].sort())) {
   fail('js/ files on disk do not match index.html script tags: tags=' + partNames.join(',') + ' disk=' + diskParts.join(','));
 }
+// The runtime mixed-deploy guard's expected-parts array must match the loaded
+// parts in order, or it logs a false "parts mismatch" on every load — making a
+// real stale/partial deploy indistinguishable from normal (review finding 10).
+const guardMatch = htmlSrc.match(/var expected = \[([^\]]+)\]/);
+if (!guardMatch) fail('mixed-deploy parts guard (var expected = [...]) not found in index.html');
+const guardParts = [...guardMatch[1].matchAll(/'([^']+)'/g)].map(m => m[1]);
+const tagParts = partNames.map(n => n.replace(/\.js$/, ''));
+if (JSON.stringify(guardParts) !== JSON.stringify(tagParts)) {
+  fail('mixed-deploy parts guard expected[] must match js/ script tags in order: guard=' +
+    guardParts.join(',') + ' tags=' + tagParts.join(','));
+}
 const src = htmlSrc + '\n' + partNames.map(n => fs.readFileSync(path.join(baseDir, 'js', n), 'utf8')).join('\n');
 
 function assertIncludes(snippet, message) {
@@ -1374,6 +1385,17 @@ if (!partNames.length) fail('no js/ part tags found in index.html');
 const diskParts = fs.readdirSync(path.join(baseDir, 'js')).filter(f => f.endsWith('.js')).sort();
 if (JSON.stringify(diskParts) !== JSON.stringify([...partNames].sort())) {
   fail('js/ files on disk do not match index.html script tags: tags=' + partNames.join(',') + ' disk=' + diskParts.join(','));
+}
+// The runtime mixed-deploy guard's expected-parts array must match the loaded
+// parts in order, or it logs a false "parts mismatch" on every load — making a
+// real stale/partial deploy indistinguishable from normal (review finding 10).
+const guardMatch = htmlSrc.match(/var expected = \[([^\]]+)\]/);
+if (!guardMatch) fail('mixed-deploy parts guard (var expected = [...]) not found in index.html');
+const guardParts = [...guardMatch[1].matchAll(/'([^']+)'/g)].map(m => m[1]);
+const tagParts = partNames.map(n => n.replace(/\.js$/, ''));
+if (JSON.stringify(guardParts) !== JSON.stringify(tagParts)) {
+  fail('mixed-deploy parts guard expected[] must match js/ script tags in order: guard=' +
+    guardParts.join(',') + ' tags=' + tagParts.join(','));
 }
 const src = htmlSrc + '\n' + partNames.map(n => fs.readFileSync(path.join(baseDir, 'js', n), 'utf8')).join('\n');
 

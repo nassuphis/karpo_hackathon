@@ -897,6 +897,7 @@ function _renderMosaicContextMenu() {
             ${_mosaicContextButton('Go Result', 'go-result', ctx.busy)}
             ${_mosaicContextButton(favoriteDisabled ? 'Favorite (Color only)' : 'Favorite', 'favorite', ctx.busy || favoriteDisabled)}
             ${_mosaicContextButton(kind === 'palette' ? 'Add Source to Book' : 'Add to Book', 'add-book', ctx.busy)}
+            ${_mosaicContextButton('DeepZoom', 'deepzoom', ctx.busy)}
             ${_mosaicContextButton('Download', 'download', ctx.busy)}
             ${_mosaicContextButton('Copy Link', 'copy-link', ctx.busy)}
             ${_mosaicContextButton('Copy Job ID', 'copy-job', ctx.busy)}
@@ -1066,6 +1067,22 @@ async function _runMosaicContextAction(action) {
             const ok = await _bookAddEntry(ref, (msg, err) => { if (err) ctx.error = msg; else ctx.message = msg; });
             _logMosaic(kind, `${cfg.label}: ${(ok ? ctx.message : ctx.error) || 'Add to Book'} ${ref.artifactId}`,
                        ok ? 'ok' : 'err', `add-book|${tile.job_id}|${ref.artifactId}`);
+        } else if (action === 'deepzoom') {
+            // Make a DeepZoom export of the SELECTED tile's full image — the same
+            // dispatch the Render tab uses. Async on purpose (exports take
+            // 30-120s): dispatch, confirm, and let it land in the DeepZoom tab.
+            const sourceKey = tile.image_key || tile.key || '';
+            if (!sourceKey) throw new Error('Tile has no source image');
+            await lambdaPost('storage', { job_id: tile.job_id, task_id: 'deepzoom_export' }, '/delete-task').catch(() => {});
+            const disp = await lambdaPost('dispatch', {
+                target: 'deepzoom_export',
+                jobs: [{ job_id: tile.job_id, source_key: sourceKey }],
+                expected_keys: [],
+            });
+            if ((disp.fired || 0) !== 1) throw new Error(`DeepZoom dispatch failed: fired ${disp.fired || 0}/1`);
+            if (disp.non_202 && disp.non_202.length > 0) throw new Error(`DeepZoom invoke rejected: status ${disp.non_202[0].status}`);
+            ctx.message = 'DeepZoom dispatched — appears in the DeepZoom tab in ~1-2 min';
+            _logMosaic(kind, `${cfg.label}: DeepZoom dispatched for ${tile.job_id}/${artifactId}`, 'ok', `deepzoom|${tile.job_id}|${artifactId}`);
         } else if (action === 'download') {
             const key = tile.image_key || tile.key || '';
             await _downloadStorageObject({ key, filename: _mosaicDownloadFilename(kind, tile), fallbackUrl: key ? '' : _mosaicPublicUrl(kind, tile.key) });

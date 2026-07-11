@@ -129,15 +129,17 @@ test('Zoom opens OpenSeadragon on the piece DZI without forcing CORS', async ({ 
   await page.goto(GALLERY + '?manifest=' + encodeURIComponent(url));
   const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
   test.skip(!built, 'WebGL scene not built in this browser');
-  // Capture the OpenSeadragon options the viewer passes at Zoom time.
-  const opts = await page.evaluate(() => {
+  // Capture the OpenSeadragon options the viewer passes at Zoom time. OSD init is
+  // deferred one frame (so the container is sized), so await the rAF.
+  const opts = await page.evaluate(() => new Promise((resolve) => {
     let captured = null;
-    window.OpenSeadragon = function (o) { captured = o; return { addHandler() {}, destroy() {}, viewport: {} }; };
+    window.OpenSeadragon = function (o) { captured = o; return { addHandler() {}, destroy() {}, viewport: { goHome() {} } }; };
     const v = window.__galleryViewer;
     v._inspecting = 0;
+    document.getElementById('overlay').classList.add('open');   // deferred init requires the overlay open
     v._openDeepZoom();
-    return captured;
-  });
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(captured)));
+  }));
   expect(opts).toBeTruthy();
   expect(opts.tileSources).toContain('/deepzoom/compute_a/dz_A/image.dzi');  // the piece's DZI
   expect(opts.crossOriginPolicy).toBeUndefined();   // must NOT force CORS — the bucket has none
@@ -208,4 +210,24 @@ test('scene has moonlight, a moon disc, and a distinct textured floor', async ({
   expect(st.dir).toBeGreaterThanOrEqual(1);   // a directional (moon) light
   expect(st.moon).toBe(true);                 // the moon disc
   expect(st.floorMap).toBe(true);             // floor has a distinct grid texture
+});
+
+test('minimap renders the maze with a red you-are-here dot; textures are pre-flipped', async ({ page }) => {
+  await routeManifest(page, validManifest());
+  await page.goto(GALLERY + '?manifest=' + encodeURIComponent(MANIFEST_URL));
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  const st = await page.evaluate(() => {
+    const v = window.__galleryViewer;
+    v._updateMinimap();
+    const cvs = document.getElementById('minimap'); const g = cvs.getContext('2d');
+    const d = g.getImageData(0, 0, cvs.width, cvs.height).data;
+    let painted = 0, red = 0;
+    for (let i = 0; i < d.length; i += 4) { if (d[i + 3] > 0) painted++; if (d[i] > 180 && d[i + 1] < 90 && d[i + 2] < 90 && d[i + 3] > 0) red++; }
+    const tex = v.tm._makeTexture({ width: 4, height: 4, close() {} });   // exercise makeTexture
+    return { painted, red, flipY: tex.flipY };
+  });
+  expect(st.painted).toBeGreaterThan(50);   // the maze is drawn on the minimap
+  expect(st.red).toBeGreaterThan(0);        // the red you-are-here dot
+  expect(st.flipY).toBe(false);             // textures pre-flipped -> art is right-side up
 });

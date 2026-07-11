@@ -117,7 +117,12 @@ function makePreviewLoader() {
       if (resp.status === 404) { const e = new Error('preview 404'); e.permanent = true; throw e; }
       if (!resp.ok) throw new Error('preview HTTP ' + resp.status);
       const blob = await resp.blob();
-      const bitmap = await createImageBitmap(blob);
+      // Pre-flip the bitmap (WebGL can't flipY an ImageBitmap on upload, so a
+      // plain createImageBitmap + Three's default flipY renders it upside down).
+      // Paired with texture.flipY = false in makeTexture.
+      let bitmap;
+      try { bitmap = await createImageBitmap(blob, { imageOrientation: 'flipY' }); }
+      catch { bitmap = await createImageBitmap(blob); }
       return { bitmap, bytes: bitmap.width * bitmap.height * 4 };
     } finally {
       clearTimeout(timer);
@@ -178,9 +183,9 @@ class GalleryViewer {
     // Moonlit night — art is unlit (MeshBasic) so it stays true-colour; walls and
     // floor take the moonlight. A bright directional comes FROM the moon, plus a
     // soft sky/ground fill so nothing reads as pure black.
-    this.scene.add(new THREE.HemisphereLight(0x5566a0, 0x1a1712, 0.95));
-    this.scene.add(new THREE.AmbientLight(0x223047, 0.35));
-    const moon = new THREE.DirectionalLight(0xdfe6ff, 1.25);
+    this.scene.add(new THREE.HemisphereLight(0x6274b0, 0x241c14, 1.1));
+    this.scene.add(new THREE.AmbientLight(0x2b3a54, 0.5));
+    const moon = new THREE.DirectionalLight(0xeaf0ff, 1.6);
     const md = _domePoint(MOON_AZ, MOON_ALT, 60);
     moon.position.set(md.x, md.y, md.z);
     this.scene.add(moon);
@@ -335,6 +340,7 @@ class GalleryViewer {
       makeTexture: (bitmap) => {
         const tex = new THREE.Texture();
         tex.image = bitmap;
+        tex.flipY = false;             // the bitmap is already pre-flipped (loader)
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = this._maxAniso;
         tex.generateMipmaps = true;
@@ -458,6 +464,30 @@ class GalleryViewer {
     // guided navigation set it — do NOT raycast it back to nothing every frame.
     if (this.controls.isLocked) this._updateFocus();
     this.renderer.render(this.scene, this.camera);
+    if (now - (this._lastMinimap || 0) > 100) { this._lastMinimap = now; this._updateMinimap(); }
+  }
+
+  // Top-down maze overview: walls, art dots, and a red you-are-here dot with a
+  // heading line. Cheap to redraw on a small canvas a few times a second.
+  _updateMinimap() {
+    const canvas = $('minimap'); if (!canvas || !this.maze) return;
+    const g = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height, pad = 8, b = this.maze.bounds;
+    const sx = (x) => pad + (x - b.minX) / (b.maxX - b.minX) * (W - 2 * pad);
+    const sy = (z) => pad + (z - b.minZ) / (b.maxZ - b.minZ) * (H - 2 * pad);   // world +z = south = down
+    g.clearRect(0, 0, W, H);
+    g.strokeStyle = 'rgba(150,164,210,0.85)'; g.lineWidth = 1; g.beginPath();
+    for (const s of this.maze.wallSegments) {
+      if (s.axis === 'z') { g.moveTo(sx(s.x), sy(s.z - s.len / 2)); g.lineTo(sx(s.x), sy(s.z + s.len / 2)); }
+      else { g.moveTo(sx(s.x - s.len / 2), sy(s.z)); g.lineTo(sx(s.x + s.len / 2), sy(s.z)); }
+    }
+    g.stroke();
+    g.fillStyle = 'rgba(224,184,119,0.9)';   // art pieces
+    for (const pl of this.maze.placements) { g.beginPath(); g.arc(sx(pl.position.x), sy(pl.position.z), 1.6, 0, 7); g.fill(); }
+    const cx = sx(this.camera.position.x), cy = sy(this.camera.position.z);
+    const dir = new THREE.Vector3(); this.camera.getWorldDirection(dir);
+    g.strokeStyle = '#ff5555'; g.lineWidth = 2; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + dir.x * 11, cy + dir.z * 11); g.stroke();
+    g.fillStyle = '#ff3b3b'; g.beginPath(); g.arc(cx, cy, 3.4, 0, 7); g.fill();   // you-are-here
   }
 
   _clampCamera() {
@@ -611,22 +641,34 @@ class GalleryViewer {
     $('osd').style.display = 'block';
     $('overlay-status').textContent = 'loading zoom…';
     this._destroyOsd();
-    // Same setup the DeepZoom tab uses (js/12 viewDeepZoom): open the piece's DZI
-    // directly, NO crossOriginPolicy. The public bucket sends no CORS headers, so
-    // forcing 'Anonymous' makes the browser reject the same-origin tiles/.dzi and
-    // zoom silently fails — the DeepZoom tab omits it and works.
-    this._osd = window.OpenSeadragon({
-      element: $('osd'),
-      prefixUrl: 'vendor/openseadragon-r411/images/',
-      tileSources: p.deepzoom.dzi_url,
-      showNavigator: true,
-      navigatorPosition: 'BOTTOM_RIGHT',
-      maxZoomPixelRatio: 4,
-      gestureSettingsMouse: { clickToZoom: false },
-    });
-    this._osd.addHandler('open', () => { $('overlay-status').textContent = ''; });
-    this._osd.addHandler('open-failed', (e) => {
-      $('overlay-status').textContent = 'Zoom unavailable' + (e && e.message ? ': ' + e.message : '');
+    const dziUrl = p.deepzoom.dzi_url;
+    // Defer creation one frame so the just-shown #osd container is laid out and
+    // sized — OpenSeadragon reads the element size at init and renders nothing
+    // into a zero-size container (the likely "empty zoom"). Same setup the
+    // DeepZoom tab uses (js/12 viewDeepZoom): the piece's own DZI, NO
+    // crossOriginPolicy (the public bucket sends no CORS headers).
+    requestAnimationFrame(() => {
+      if (this._disposed || !this._overlayOpen()) return;
+      let tileErrors = 0;
+      this._osd = window.OpenSeadragon({
+        element: $('osd'),
+        prefixUrl: 'vendor/openseadragon-r411/images/',
+        tileSources: dziUrl,
+        showNavigator: true,
+        navigatorPosition: 'BOTTOM_RIGHT',
+        maxZoomPixelRatio: 4,
+        gestureSettingsMouse: { clickToZoom: false },
+      });
+      this._osd.addHandler('open', () => {
+        $('overlay-status').textContent = '';
+        try { this._osd.viewport.goHome(true); } catch {}
+      });
+      this._osd.addHandler('open-failed', (e) => {
+        $('overlay-status').textContent = 'Zoom unavailable: ' + ((e && e.message) || ('could not load ' + dziUrl));
+      });
+      this._osd.addHandler('tile-load-failed', () => {
+        if (++tileErrors === 1) $('overlay-status').textContent = 'Zoom tiles failed to load (check the DeepZoom export).';
+      });
     });
   }
 

@@ -61,6 +61,10 @@
   #debug { position: fixed; right: 16px; top: 14px; z-index: 5; font-size: 11px; opacity: .55;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; white-space: pre; }
 
+  /* Minimap: maze overview with a red you-are-here dot. */
+  #minimap { position: fixed; left: 14px; top: 14px; z-index: 5; width: 156px; height: 156px;
+    border: 1px solid rgba(255,255,255,.18); border-radius: 6px; background: rgba(10,14,26,.55); }
+
   /* Full-window inspection overlay. */
   #overlay { position: fixed; inset: 0; z-index: 20; background: rgba(10,8,6,.96);
     display: none; flex-direction: column; }
@@ -95,6 +99,7 @@
   <div id="hint">Click to enter · WASD to move · mouse to look · Esc to release</div>
   <div id="hud"><div class="title" id="hud-title"></div><div class="sub" id="hud-sub"></div></div>
   <div id="debug"></div>
+  <canvas id="minimap" width="156" height="156"></canvas>
   <div id="guided">
     <button id="btn-prev" type="button">‹ Prev</button>
     <button id="btn-next" type="button">Next ›</button>

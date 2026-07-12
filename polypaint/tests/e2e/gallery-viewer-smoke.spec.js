@@ -253,13 +253,19 @@ test('builds a maze with settings applied and collision that clamps to bounds', 
     const v = window.__galleryViewer;
     let n = 0;
     v.scene.traverse((o) => { if (o.userData && o.userData.wallEdge) n++; });
-    // fat lines: ONE merged LineSegments2 with 12 edges per wall box
+    // fat lines: ONE merged LineSegments2, outlining continuous wall RUNS (not
+    // per-cell boxes — construction seams caused the far-wall flicker)
     const segs = v._wallEdgeGeo ? v._wallEdgeGeo.attributes.instanceStart.count : 0;
-    return { n, walls: v.maze.wallSegments.length, segs, width: v._wallEdgeMat && v._wallEdgeMat.linewidth };
+    const mat = v._wallEdgeMat;
+    return { n, walls: v.maze.wallSegments.length, runs: v._wallRuns.length, segs,
+             width: mat && mat.linewidth, world: mat && mat.worldUnits, dw: mat && mat.depthWrite };
   });
   expect(edges.n).toBe(1);                        // single merged edge object
-  expect(edges.segs).toBe(edges.walls * 12);      // every box edge represented
-  expect(edges.width).toBe(1);                    // default thickness honored
+  expect(edges.runs).toBeLessThan(edges.walls);   // collinear pieces actually merged
+  expect(edges.segs).toBe(edges.runs * 12);       // outlines come from runs — no seam edges
+  expect(edges.width).toBeCloseTo(0.004);         // WORLD-unit width (4mm per configured px)
+  expect(edges.world).toBe(true);                 // distant lines shrink with perspective
+  expect(edges.dw).toBe(false);                   // overlay never writes depth
 });
 
 test('over the resident cap, only the top working set is queued (no thrash)', async ({ page }) => {

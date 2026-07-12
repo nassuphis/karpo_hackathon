@@ -281,6 +281,41 @@ test.describe('Gallery viewer layout (pure)', () => {
     expect(r.ordered).toBe(true);
   });
 
+  test('mergeWallRuns: collinear pieces merge, length preserved, no cross-line merges', async ({ page }) => {
+    const r = await withModules(page, (M, L, pieces) => {
+      // hand case: two touching collinear pieces -> ONE run; a gapped piece and
+      // a perpendicular piece stay separate
+      const hand = L.mergeWallRuns([
+        { axis: 'x', x: 1.8, z: 0, len: 3.6 },
+        { axis: 'x', x: 5.4, z: 0, len: 3.6 },   // touches the first at x=3.6
+        { axis: 'x', x: 12.6, z: 0, len: 3.6 },  // gap -> own run
+        { axis: 'z', x: 0, z: 1.8, len: 3.6 },   // perpendicular -> own run
+      ]);
+      const maze = L.computeMaze(pieces, { seed: 5, coverage: 60 });
+      const runs = L.mergeWallRuns(maze.wallSegments);
+      const total = (a) => a.reduce((t, s) => t + s.len, 0);
+      const overlapFree = runs.every((r1, i) => runs.every((r2, j) => {
+        if (i >= j || r1.axis !== r2.axis) return true;
+        const f1 = r1.axis === 'z' ? r1.x : r1.z, f2 = r2.axis === 'z' ? r2.x : r2.z;
+        if (Math.abs(f1 - f2) > 1e-6) return true;
+        const c1 = r1.axis === 'z' ? r1.z : r1.x, c2 = r2.axis === 'z' ? r2.z : r2.x;
+        return Math.abs(c1 - c2) >= (r1.len + r2.len) / 2 - 1e-6;   // disjoint spans
+      }));
+      return {
+        handCount: hand.length,
+        handLens: hand.map((s) => Math.round(s.len * 1e6) / 1e6).sort((a, b) => a - b),
+        merged: runs.length < maze.wallSegments.length,
+        lengthPreserved: Math.abs(total(runs) - total(maze.wallSegments)) < 1e-6,
+        overlapFree,
+      };
+    }, eightPieces());
+    expect(r.handCount).toBe(3);
+    expect(r.handLens).toEqual([3.6, 3.6, 7.2]);   // the touching pair became one 7.2m run
+    expect(r.merged).toBe(true);                    // real mazes always have straight partitions
+    expect(r.lengthPreserved).toBe(true);           // merging never gains or loses wall
+    expect(r.overlapFree).toBe(true);               // no coincident geometry left to z-fight
+  });
+
   test('gridPath: BFS corridor paths never cross a closed wall, all placements reachable', async ({ page }) => {
     const r = await withModules(page, (M, L, pieces) => {
       const maze = L.computeMaze(pieces, { seed: 5, coverage: 60 });

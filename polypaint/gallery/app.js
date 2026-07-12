@@ -13,7 +13,7 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { parseTrustedManifestUrl, normalizeManifest, GALLERY_LIMITS, isValidId } from './manifest.js';
-import { computeLayout, mazeClamp, mazeClampMove, MAZE, selectAndSort, gridPath } from './layout.js';
+import { computeLayout, mazeClamp, mazeClampMove, MAZE, selectAndSort, gridPath, mergeWallRuns } from './layout.js';
 import { GalleryTextureManager, TEXTURE_LIMITS } from './texture-manager.js';
 
 const PREVIEW_FETCH_TIMEOUT_MS = 12_000;
@@ -221,7 +221,10 @@ class GalleryViewer {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x090c16);   // deep night, not pure black
 
-    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 500);
+    // near 0.1 / far 400 (was 0.05/500): nothing sits closer than ~0.2m and the
+    // procedural sky tops out at R=300 — halving the range ratio buys depth
+    // precision exactly where coincident wall/edge geometry needs it.
+    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 400);
     this.camera.position.set(this.maze.spawn.x, MAZE.EYE_HEIGHT_M, this.maze.spawn.z);
     this.camera.lookAt(0, MAZE.EYE_HEIGHT_M, 0);         // face into the maze
     this.scene.add(this.camera);
@@ -287,8 +290,11 @@ class GalleryViewer {
     // Open to the sky (no ceiling). One shared unit box scaled per wall segment.
     this._wallGeo = new THREE.BoxGeometry(1, 1, 1);
     this._wallMeshes = [];
+    // One box per continuous RUN, not per cell face: per-face boxes overlapped
+    // by the wall thickness and z-fought where they met (far-wall flicker).
+    this._wallRuns = mergeWallRuns(maze.wallSegments);
     const T = MAZE.WALL_THICKNESS_M, H = maze.height;
-    for (const seg of maze.wallSegments) {
+    for (const seg of this._wallRuns) {
       const m = new THREE.Mesh(this._wallGeo, wallMat);
       if (seg.axis === 'z') m.scale.set(T, H, seg.len + T);   // wall runs along z
       else m.scale.set(seg.len + T, H, T);                    // wall runs along x
@@ -312,7 +318,7 @@ class GalleryViewer {
     unit.dispose();
     const T = MAZE.WALL_THICKNESS_M, H = maze.height;
     const positions = [];
-    for (const seg of maze.wallSegments) {
+    for (const seg of this._wallRuns) {
       const sx = seg.axis === 'z' ? T : seg.len + T;
       const sz = seg.axis === 'z' ? seg.len + T : T;
       for (let i = 0; i < pts.count; i++) {
@@ -326,8 +332,16 @@ class GalleryViewer {
     const edgeColor = lum < 0.25 ? wc.clone().lerp(new THREE.Color(0xffffff), 0.45)
                                  : wc.clone().multiplyScalar(0.35);
     this._wallEdgeMat = new LineMaterial({
-      color: edgeColor.getHex(), linewidth: widthPx, worldUnits: false,
+      color: edgeColor.getHex(),
+      // WORLD-space width (4mm per configured px): a fixed screen width kept
+      // every distant edge 12px wide — a dense sub-pixel-unstable lattice that
+      // shimmered on any camera motion. World units shrink with perspective.
+      linewidth: widthPx * 0.004, worldUnits: true,
       transparent: true, opacity: 0.85,
+      // Overlay depth policy: test (occlusion stays) but never WRITE, and pull
+      // slightly forward — lines coincident with wall faces otherwise seesaw
+      // the depth test with sub-pixel movement (read as lighting flicker).
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
     });
     this._wallEdgeMat.resolution.set(window.innerWidth, window.innerHeight);
     this._wallEdgeGeo = geo;

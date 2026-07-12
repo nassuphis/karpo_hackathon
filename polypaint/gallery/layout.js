@@ -335,6 +335,40 @@ export function computeSpiral(pieces, { coverage = null } = {}) {
   return _layoutFromGrid(pieces, grid, cols, rows, { placement: 'stride', cellOrder: order });
 }
 
+// Merge collinear, touching wall segments into continuous RUNS. wallSegments
+// dedup by cell FACE, so a straight partition arrives as N cell-length pieces;
+// building a box per piece overlaps neighbours by the wall thickness and
+// outlines every construction seam — at distance those seams + per-box edges
+// became a dense shimmering lattice (the far-wall flicker). Geometry builds
+// from runs; collision is grid-based and unaffected.
+export function mergeWallRuns(segments, eps = 1e-6) {
+  const groups = new Map();
+  for (const s of segments) {
+    const fixed = s.axis === 'z' ? s.x : s.z;
+    const key = s.axis + '@' + fixed.toFixed(5);
+    if (!groups.has(key)) groups.set(key, { axis: s.axis, fixed, spans: [] });
+    const c = s.axis === 'z' ? s.z : s.x;
+    groups.get(key).spans.push([c - s.len / 2, c + s.len / 2]);
+  }
+  const runs = [];
+  for (const g of groups.values()) {
+    g.spans.sort((a, b) => a[0] - b[0]);
+    let lo = g.spans[0][0], hi = g.spans[0][1];
+    const flush = () => {
+      runs.push(g.axis === 'z'
+        ? { axis: 'z', x: g.fixed, z: (lo + hi) / 2, len: hi - lo }
+        : { axis: 'x', x: (lo + hi) / 2, z: g.fixed, len: hi - lo });
+    };
+    for (let i = 1; i < g.spans.length; i++) {
+      const [s0, s1] = g.spans[i];
+      if (s0 <= hi + eps) { hi = Math.max(hi, s1); }
+      else { flush(); lo = s0; hi = s1; }
+    }
+    flush();
+  }
+  return runs;
+}
+
 // BFS shortest corridor path between two cells through OPEN walls. Returns
 // [{r,c}, ...] inclusive of both endpoints, or null when unreachable (layouts
 // are connected, so null only means out-of-bounds/corrupt input). Powers the

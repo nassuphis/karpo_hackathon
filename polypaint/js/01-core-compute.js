@@ -77,6 +77,9 @@ function switchTab(name) {
 
 /* ---- Results management ---- */
 let _resultsCache = [];      // last fetched results
+let _resultsLoaded = false;  // session cache: tab re-entry renders _resultsCache
+                             // with ZERO requests (favorites-speedup idea 1);
+                             // Refresh/compute-completion/missing-job force a fetch
 let _selectedJobId = null;   // currently selected job_id
 let _resultsLoading = false;
 const _resultPreviewInFlight = new Map();
@@ -233,6 +236,8 @@ function openResultsRefreshPopup() {
 
 async function loadResults(options = null) {
     if (_resultsLoading) return;
+    const force = !!(options && options.force);
+    if (_resultsLoaded && !force) return;   // cached — the table DOM is already live
     _resultsLoading = true;
     _syncResultsRefreshPopupLoadingState();
     let countEl = null;
@@ -246,8 +251,11 @@ async function loadResults(options = null) {
         _resultsRefreshPopupState.workers = requestedWorkers;
         if (countEl) countEl.textContent = 'Loading...';
         log(`Results refresh: loading... workers=${requestedWorkers}`, '', 'results-log');
-        const data = await lambdaPost('storage', { list_workers: requestedWorkers }, '/list');
+        const body = { list_workers: requestedWorkers };
+        if (options && options.rebuild) body.rebuild = true;
+        const data = await lambdaPost('storage', body, '/list');
         _resultsCache = data.results || [];
+        _resultsLoaded = true;
         renderResultsTable();
         if (countEl) countEl.textContent = `${data.count} results (${(data.list_us/1e6).toFixed(1)}s)`;
         const fmtUs = (us) => _fmtMs((Number(us) || 0) / 1000);
@@ -256,8 +264,10 @@ async function loadResults(options = null) {
         ];
         const detail = [];
         if (data.prefix_list_us != null) detail.push(`prefix ${fmtUs(data.prefix_list_us)}`);
+        if (data.catalog_read_us != null) detail.push(`catalog ${fmtUs(data.catalog_read_us)}`);
         if (data.calc_fetch_us != null) detail.push(`calc ${fmtUs(data.calc_fetch_us)}`);
         if (data.sort_us != null) detail.push(`sort ${fmtUs(data.sort_us)}`);
+        if (data.catalog_hits != null) detail.push(`hits ${data.catalog_hits}/${data.count || 0}`);
         if (detail.length) parts.push(detail.join(' + '));
         const tune = [];
         if (data.list_workers != null) tune.push(`workers=${data.list_workers}`);
@@ -286,7 +296,7 @@ async function _getResultDetail(jobId) {
 async function _ensureResultsSelection(jobId) {
     if (!jobId) throw new Error('No result selected');
     const hasJob = _resultsCache.some(r => r.job_id === jobId);
-    if (!hasJob) await loadResults();
+    if (!hasJob) await loadResults({ force: true });   // cache miss = stale by definition
     const found = _resultsCache.some(r => r.job_id === jobId);
     if (!found) throw new Error(`Result ${jobId} not found`);
     selectResult(jobId);

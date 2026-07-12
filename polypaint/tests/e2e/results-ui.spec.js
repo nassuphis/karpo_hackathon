@@ -118,6 +118,39 @@ test.describe('Results UI', () => {
     await expect(page.locator('#results-dir')).toHaveValue('compute_job_alpha');
   });
 
+  test('results tab re-entry is cache-served; popup Run and cache-miss force a fetch', async ({ page }) => {
+    await page.evaluate(({ results, details }) => {
+      window._resultsListBodies = [];
+      window.lambdaPost = async function (name, body, path) {
+        if (name !== 'storage') throw new Error(`unexpected ${name}`);
+        if (path === '/list') {
+          window._resultsListBodies.push(body || {});
+          return { results, count: results.length, list_us: 100000, list_workers: body.list_workers || 32 };
+        }
+        if (path === '/detail') return details[body.job_id];
+        throw new Error(`unexpected storage path ${path}`);
+      };
+    }, { results: RESULTS, details: DETAILS });
+
+    await page.click('.tab-btn:text("Results")');
+    await expect(page.locator('#results-tbody tr')).toHaveCount(2);
+    await page.click('.tab-btn:text("Compute")');
+    await page.click('.tab-btn:text("Results")');
+    await expect(page.locator('#results-tbody tr')).toHaveCount(2);   // instant, from cache
+    expect(await page.evaluate(() => window._resultsListBodies.length)).toBe(1);
+
+    // The popup's Run is an explicit refresh — it must always refetch.
+    await page.click('#tab-results button:text("Refresh...")');
+    await page.click('#results-refresh-popup-run');
+    await expect.poll(() => page.evaluate(() => window._resultsListBodies.length)).toBe(2);
+
+    // A finished compute marks the cache stale (js/12 sets _resultsLoaded=false).
+    await page.evaluate(() => { _resultsLoaded = false; });
+    await page.click('.tab-btn:text("Compute")');
+    await page.click('.tab-btn:text("Results")');
+    await expect.poll(() => page.evaluate(() => window._resultsListBodies.length)).toBe(3);
+  });
+
   test('results refresh popup forwards worker count and filter mode updates placeholder and rows', async ({ page }) => {
     await page.evaluate(({ results, details }) => {
       window._resultsListBodies = [];
@@ -147,11 +180,13 @@ test.describe('Results UI', () => {
     await page.click('#tab-results button:text("Refresh...")');
     await expect(page.locator('#results-refresh-popup-overlay')).toBeVisible();
     await page.fill('#results-refresh-workers', '48');
+    await page.check('#results-refresh-rebuild');
     await page.click('#results-refresh-popup-run');
 
     await expect(page.locator('#results-tbody tr')).toHaveCount(2);
     const lastListBody = await page.evaluate(() => window._resultsListBodies.at(-1));
     expect(lastListBody.list_workers).toBe(48);
+    expect(lastListBody.rebuild).toBe(true);   // catalog rebuild escape hatch
 
     await page.selectOption('#results-filter-mode', 'job_id');
     await expect(page.locator('#results-filter')).toHaveAttribute('placeholder', 'Filter by job id...');

@@ -1093,6 +1093,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
                     state: 'done',
                     detail: `deg ${calc.degree || '?'} · ${_fmtSecondsMs(totalWallMs || 0)}`,
                 });
+                _resultsLoaded = false;   // a new compute exists — next Results visit refetches
                 break;
             }
         }

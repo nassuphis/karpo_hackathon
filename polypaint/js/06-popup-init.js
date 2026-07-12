@@ -197,9 +197,10 @@ function _initResultsRefreshPopup() {
         onClose: _closeResultsRefreshPopup,
         onEnter: () => {
             const workers = _clampResultsListWorkers(document.getElementById('results-refresh-workers').value);
+            const rebuild = !!document.getElementById('results-refresh-rebuild')?.checked;
             _resultsRefreshPopupState.workers = workers;
             _closeResultsRefreshPopup();
-            loadResults({ listWorkers: workers });
+            loadResults({ listWorkers: workers, force: true, rebuild });
         },
     });
     if (workersEl) {
@@ -215,9 +216,10 @@ function _initResultsRefreshPopup() {
                 runBtn.disabled = true;
                 runBtn.textContent = 'Executing...';
                 const workers = _clampResultsListWorkers(document.getElementById('results-refresh-workers').value);
+                const rebuild = !!document.getElementById('results-refresh-rebuild')?.checked;
                 _resultsRefreshPopupState.workers = workers;
                 _closeResultsRefreshPopup();
-                await loadResults({ listWorkers: workers });
+                await loadResults({ listWorkers: workers, force: true, rebuild });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;

@@ -1289,6 +1289,7 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
         rail({ state: 'done', detail: `export complete (${_fmtMs(performance.now() - t0)})` });
         // Completed rows are one-shot — clean up (failures keep theirs as evidence).
         void lambdaPost('storage', { job_id: jobId, task_id: taskId }, '/delete-task').catch(() => {});
+        void _dzPatchInventoryAfterExport(jobId, exportId);
         if (!skipRenderRefresh) await refreshRenderArtifacts(jobId);
     } catch (e) {
         log(`  DeepZoom failed: ${e.message}`, 'err', 'render-log');
@@ -1298,6 +1299,8 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
 }
 
 let _osdViewer = null;
+let _dzInventoryLoaded = false;   // session cache (favorites-speedup idea 1)
+let _dzInventoryPromise = null;   // in-flight dedup: overlapping loads share one fetch
 const _dzViewportReadoutState = { rafPending: false, meta: null, visibleBounds: null };
 // (top-level statement moved to the js/12 boot block — parts are
 //  declarations-only; see tests/test_frontend_parts_contract.py)
@@ -1479,14 +1482,31 @@ function _scheduleDeepZoomViewportReadout() {
 }
 
 async function loadDeepZoomInventory(options = {}) {
+    // Session cache: exports are immutable and only change on OUR exports (which
+    // patch the cache in place), so tab re-entry costs zero requests. Refresh
+    // passes force. Cross-device exports appear on explicit Refresh — by design.
+    const force = !!(options && options.force);
+    if (_dzInventoryLoaded && !force) return;
+    if (_dzInventoryPromise) return _dzInventoryPromise;
+    _dzInventoryPromise = _dzLoadInventoryNow(options);
+    try {
+        return await _dzInventoryPromise;
+    } finally {
+        _dzInventoryPromise = null;
+    }
+}
+
+async function _dzLoadInventoryNow(options) {
     const container = document.getElementById('deepzoom-inventory');
     const statusEl = document.getElementById('deepzoom-status');
+    const hadInventory = (window._dzInventory || []).length > 0;
     _dzSetButtonsEnabled(false);
     if (statusEl) {
-        statusEl.textContent = 'Loading...';
+        statusEl.textContent = hadInventory ? 'Refreshing...' : 'Loading...';
         statusEl.className = 'status';
     }
-    container.innerHTML = 'Loading...';
+    // Never blank a live table for a refresh — only for a cold load.
+    if (!hadInventory) container.innerHTML = 'Loading...';
 
     try {
         // Single server-side call: lists all exports and reads their meta.json
@@ -1509,22 +1529,56 @@ async function loadDeepZoomInventory(options = {}) {
         // Sort newest first, store for keyboard navigation
         const sorted = exports.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
         window._dzInventory = sorted;
+        _dzInventoryLoaded = true;
         _dzRenderInventory();
         if (statusEl) {
             statusEl.textContent = 'Ready';
             statusEl.className = 'status ok';
         }
     } catch (e) {
-        window._dzInventory = [];
-        window._dzSelectedIdx = -1;
-        window._dzSelectedKey = '';
-        _dzClearViewer();
-        if (statusEl) {
-            statusEl.textContent = 'Refresh failed: ' + e.message;
-            statusEl.className = 'status error';
+        if ((window._dzInventory || []).length) {
+            // Transient failure with a good list on screen: KEEP it (favorites
+            // rule — a blip must never read as "no exports"). Selection and the
+            // open viewer survive; only the status line reports the failure.
+            _dzSetButtonsEnabled(true);
+            if (statusEl) {
+                statusEl.textContent = 'Refresh failed: ' + e.message + ' — showing cached list';
+                statusEl.className = 'status error';
+            }
+        } else {
+            window._dzInventory = [];
+            window._dzSelectedIdx = -1;
+            window._dzSelectedKey = '';
+            _dzClearViewer();
+            if (statusEl) {
+                statusEl.textContent = 'Refresh failed: ' + e.message;
+                statusEl.className = 'status error';
+            }
+            _setInlineError(container, e.message);
         }
-        _setInlineError(container, e.message);
         if (options.throwOnError) throw e;
+    }
+}
+
+// After OUR export completes we know its exact identity — one public meta.json
+// GET patches the cached inventory in place instead of a full /list-deepzoom
+// rescan (favorites-speedup idea 4). On any failure the cache is marked stale
+// so the next tab entry refetches everything.
+async function _dzPatchInventoryAfterExport(jobId, exportId) {
+    if (!_dzInventoryLoaded && !_dzInventoryPromise) return;   // tab never loaded
+    try {
+        if (_dzInventoryPromise) { try { await _dzInventoryPromise; } catch (e) {} }
+        const resp = await fetch(_publicStorageUrl(`deepzoom/${jobId}/${exportId}/meta.json`), { cache: 'no-store' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const meta = await resp.json();
+        const inv = window._dzInventory || [];
+        if (!inv.some((e) => e.job_id === meta.job_id && e.export_id === meta.export_id)) {
+            inv.unshift(meta);   // newest export first — matches created_at ordering
+            window._dzInventory = inv;
+        }
+        _dzRenderInventory();
+    } catch (e) {
+        _dzInventoryLoaded = false;   // stale — next tab entry does a full refresh
     }
 }
 
@@ -1533,7 +1587,7 @@ async function refreshDeepZoomInventory() {
     const orig = btn ? btn.textContent : 'Refresh';
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
-        await loadDeepZoomInventory({ throwOnError: true });
+        await loadDeepZoomInventory({ force: true, throwOnError: true });
         log('DeepZoom refreshed', 'ok', 'deepzoom-log');
     } catch (e) {
         log(`DeepZoom refresh failed: ${e.message}`, 'err', 'deepzoom-log');

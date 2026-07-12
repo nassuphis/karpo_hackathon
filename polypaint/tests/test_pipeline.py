@@ -180,6 +180,18 @@ class TestDispatchHandler(unittest.TestCase):
 
 
 class TestStorageList(unittest.TestCase):
+    # handle_list now consults the results catalog (results-list.md Phase 2);
+    # these legacy scan-path tests run against an EMPTY catalog, so every job
+    # reconciles through calc.json exactly like the old direct-scan behavior.
+    def setUp(self):
+        import handler_storage
+        fake_ddb = MagicMock()
+        fake_ddb.query.return_value = {"Items": []}
+        self._ddb_patch = patch.object(handler_storage, "_get_ddb", return_value=fake_ddb)
+        self._ddb_patch.start()
+
+    def tearDown(self):
+        self._ddb_patch.stop()
 
     @patch("handler_storage._results_list_s3_client")
     def test_list_uses_delimiter(self, mock_client_factory):
@@ -3079,6 +3091,11 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
         def track_put(**kwargs):
             put_calls.append(kwargs)
         mock_s3.put_object.side_effect = track_put
+        def _head_missing(*a, **kw):
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "404", "Message": "Not Found"},
+                               "ResponseMetadata": {"HTTPStatusCode": 404}}, "HeadObject")
+        mock_s3.head_object.side_effect = _head_missing
 
         # Mock file system operations needed by the handler
         import tempfile, shutil
@@ -3188,6 +3205,11 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
         def track_put(**kwargs):
             put_calls.append(kwargs)
         mock_s3.put_object.side_effect = track_put
+        def _head_missing(*a, **kw):
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "404", "Message": "Not Found"},
+                               "ResponseMetadata": {"HTTPStatusCode": 404}}, "HeadObject")
+        mock_s3.head_object.side_effect = _head_missing
 
         # Allow real open for template file, mock for everything else
         import builtins

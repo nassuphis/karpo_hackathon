@@ -90,6 +90,43 @@ test.beforeEach(async ({ page }) => {
 
 test.describe('DeepZoom Inventory', () => {
 
+  test('tab re-entry serves the cached inventory with zero new requests', async ({ page }) => {
+    // favorites-speedup idea 1: the inventory is session-cached; only Refresh
+    // (or an export completing) causes another /list-deepzoom.
+    await page.evaluate(() => {
+      window._dzListCalls = 0;
+      const prev = window.lambdaPost;
+      window.lambdaPost = async function (name, body, path) {
+        if (name === 'storage' && path === '/list-deepzoom') window._dzListCalls++;
+        return prev(name, body, path);
+      };
+    });
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.click('.tab-btn:text("Compute")');
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3);
+    expect(await page.evaluate(() => window._dzListCalls)).toBe(1);
+    // Refresh is the explicit escape hatch — it always refetches.
+    await page.click('#btn-dz-refresh');
+    await expect.poll(() => page.evaluate(() => window._dzListCalls)).toBe(2);
+  });
+
+  test('a failed refresh keeps the cached inventory, selection, and viewer', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.evaluate(() => {
+      window.lambdaPost = async function (name, body, path) {
+        if (name === 'storage' && path === '/list-deepzoom') throw new Error('boom');
+        return {};
+      };
+    });
+    await page.click('#btn-dz-refresh');
+    await expect(page.locator('#deepzoom-status')).toContainText('showing cached list');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3);   // never blanked
+    expect(await page.evaluate(() => (window._dzInventory || []).length)).toBe(3);
+  });
+
   test('switching to DeepZoom tab loads inventory', async ({ page }) => {
     await page.click('.tab-btn:text("DeepZoom")');
     // Wait for inventory rows to appear

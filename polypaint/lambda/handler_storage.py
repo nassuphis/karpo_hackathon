@@ -124,6 +124,14 @@ MOSAIC_INTERNAL_ACTIONS = {
 }
 FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
 FAVORITES_DDB_JOB_ID = "favorites#color"
+# Results catalog (results-list.md Phase 2): one DDB row per computed job with
+# the Results-table fields, so /list is a Query + cheap prefix listing instead
+# of a calc.json GET per job. Self-healing: rows are written the first time a
+# job's calc.json is read and pruned when its prefix vanishes.
+RESULTS_CATALOG_DDB_JOB_ID = "results#catalog"
+# A renders/<job>/ prefix can exist before calc.json lands (mid-compute):
+# re-probe calc-less rows younger than this; older ones are permanently junk.
+RESULTS_CATALOG_NO_CALC_RETRY_MS = 24 * 3600 * 1000
 FAVORITES_DDB_META_TASK_ID = "__meta__"
 FAVORITES_DDB_TASK_PREFIX = "favorite#"
 # Bump when the persisted favorite display snapshot shape changes; a row whose
@@ -2701,19 +2709,123 @@ def handle_delete_coeff_program(event):
     return ok_response({"id": program_id, "deleted": deleted})
 
 
+def _results_entry_fields(job_id, calc):
+    """Derive the Results-table fields from a calc.json dict — the ONE source of
+    truth for both the catalog rows and a direct calc read."""
+    entry = {"job_id": job_id}
+    entry["function"] = calc.get("function", "?")
+    entry["degree"] = calc.get("degree", 0)
+    entry["N"] = calc.get("N", calc.get("n1", 0))
+    entry["n1"] = calc.get("n1", entry["N"])
+    entry["n_chunks"] = calc.get("n_chunks", calc.get("n_stripes", 0))
+    entry["times"] = calc.get("times", 1)
+    chunks = calc.get("chunks", calc.get("stripes", []))
+    entry["total_size"] = sum(s.get("bin_size", 0) for s in chunks)
+    entry["total_size"] += calc.get("total_coeffs_size", 0)
+    entry["total_roots"] = calc.get("total_roots",
+        sum(s.get("bin_size", 0) for s in chunks) // 8)
+    return entry
+
+
+_RESULTS_CATALOG_NUM_FIELDS = ("degree", "N", "n1", "n_chunks", "times",
+                               "total_size", "total_roots")
+
+
+def _results_catalog_task_id(job_id):
+    return f"result#{job_id}"
+
+
+def _results_catalog_item(entry, *, no_calc=False):
+    item = {
+        "job_id": {"S": RESULTS_CATALOG_DDB_JOB_ID},
+        "task_id": {"S": _results_catalog_task_id(entry["job_id"])},
+        "result_job_id": {"S": entry["job_id"]},
+        "cached_at_ms": {"N": str(int(time.time() * 1000))},
+    }
+    if no_calc:
+        item["no_calc"] = {"S": "1"}
+        return item
+    item["fn"] = {"S": str(entry.get("function", "?"))}
+    for field in _RESULTS_CATALOG_NUM_FIELDS:
+        try:
+            item[field] = {"N": str(int(entry.get(field) or 0))}
+        except (TypeError, ValueError):
+            item[field] = {"N": "0"}
+    return item
+
+
+def _results_entry_from_catalog_item(item):
+    if "no_calc" in item:
+        return None
+    entry = {"job_id": item["result_job_id"]["S"],
+             "function": item.get("fn", {}).get("S", "?")}
+    for field in _RESULTS_CATALOG_NUM_FIELDS:
+        entry[field] = int(item.get(field, {}).get("N", "0"))
+    return entry
+
+
+def _read_results_catalog():
+    """All catalog rows as {job_id: raw item} — one paginated Query."""
+    ddb = _get_ddb()
+    rows = {}
+    kwargs = {
+        "TableName": JOBS_TABLE,
+        "KeyConditionExpression": "job_id = :jid",
+        "ExpressionAttributeValues": {":jid": {"S": RESULTS_CATALOG_DDB_JOB_ID}},
+    }
+    while True:
+        resp = ddb.query(**kwargs)
+        for item in resp.get("Items", []):
+            jid = item.get("result_job_id", {}).get("S", "")
+            if jid:
+                rows[jid] = item
+        lek = resp.get("LastEvaluatedKey")
+        if not lek:
+            return rows
+        kwargs["ExclusiveStartKey"] = lek
+
+
+def _results_catalog_put(item):
+    """Best-effort cache write: a DDB blip must never fail the read path —
+    the row self-heals on the next /list reconcile."""
+    try:
+        _get_ddb().put_item(TableName=JOBS_TABLE, Item=item)
+        return True
+    except Exception:
+        return False
+
+
+def _results_catalog_delete(job_id):
+    try:
+        _get_ddb().delete_item(TableName=JOBS_TABLE, Key={
+            "job_id": {"S": RESULTS_CATALOG_DDB_JOB_ID},
+            "task_id": {"S": _results_catalog_task_id(job_id)},
+        })
+    except Exception:
+        pass
+
+
 def handle_list(event):
-    """List all computed results in S3.
-    Uses Delimiter='/' to get just folder names (O(n_jobs)),
-    then reads calc.json per job in parallel for metadata.
+    """List all computed results (results-list.md Phase 2: catalog + reconcile).
+
+    Membership truth is the cheap renders/ prefix listing (O(n_jobs/1000)
+    requests); per-job table fields come from the DDB catalog. Reconcile makes
+    it self-healing with NO pipeline hooks required: jobs missing a row get
+    their calc.json read once (then cached forever — calc.json is written once,
+    at compute completion), rows whose prefix vanished are pruned, calc-less
+    prefixes younger than 24h are re-probed (mid-compute window), and
+    rebuild=true re-reads everything (escape hatch after manual S3 surgery).
+    Transient calc-read errors are surfaced but never cached.
     """
     import concurrent.futures
 
     params = parse_body(event)
     requested_workers = _validate_results_list_workers(params.get("list_workers"))
+    rebuild = parse_boolish(params.get("rebuild"), default=False)
     list_s3 = _results_list_s3_client(requested_workers)
     t0 = time.time()
 
-    # List folder prefixes under renders/ — O(n_jobs), not O(all_objects)
+    # 1) Membership: folder prefixes under renders/ — O(n_jobs), not O(all_objects)
     job_ids = []
     t_prefix_0 = time.time()
     paginator = list_s3.get_paginator('list_objects_v2')
@@ -2722,28 +2834,38 @@ def handle_list(event):
         for prefix in page.get('CommonPrefixes', []):
             # prefix['Prefix'] = 'renders/job_id/'
             job_id = prefix['Prefix'].split('/')[1]
-            if job_id:
+            # renders/_index, renders/_shared_mosaic hold shared internals
+            if job_id and not job_id.startswith('_'):
                 job_ids.append(job_id)
     prefix_list_us = int((time.time() - t_prefix_0) * 1e6)
 
-    # Read calc.json for each job (parallelized) — table fields only
+    # 2) Catalog rows — one paginated Query
+    t_cat_0 = time.time()
+    rows = _read_results_catalog()
+    catalog_read_us = int((time.time() - t_cat_0) * 1e6)
+
+    # 3) Reconcile: which jobs need a calc.json read THIS call?
+    now_ms = int(time.time() * 1000)
+
+    def needs_read(job_id):
+        item = rows.get(job_id)
+        if item is None or rebuild:
+            return True
+        if "no_calc" in item:
+            cached = int(item.get("cached_at_ms", {}).get("N", "0"))
+            return (now_ms - cached) < RESULTS_CATALOG_NO_CALC_RETRY_MS
+        return False
+
+    to_read = [j for j in job_ids if needs_read(j)]
+
+    # Read calc.json for each reconciled job (parallelized) — table fields only
     def read_calc(job_id):
         entry = {"job_id": job_id}
         try:
             obj = list_s3.get_object(Bucket=BUCKET,
                                      Key=f"renders/{job_id}/calc.json")
             calc = json.loads(obj["Body"].read())
-            entry["function"] = calc.get("function", "?")
-            entry["degree"] = calc.get("degree", 0)
-            entry["N"] = calc.get("N", calc.get("n1", 0))
-            entry["n1"] = calc.get("n1", entry["N"])
-            entry["n_chunks"] = calc.get("n_chunks", calc.get("n_stripes", 0))
-            entry["times"] = calc.get("times", 1)
-            chunks = calc.get("chunks", calc.get("stripes", []))
-            entry["total_size"] = sum(s.get("bin_size", 0) for s in chunks)
-            entry["total_size"] += calc.get("total_coeffs_size", 0)
-            entry["total_roots"] = calc.get("total_roots",
-                sum(s.get("bin_size", 0) for s in chunks) // 8)
+            entry = _results_entry_fields(job_id, calc)
         except Exception as exc:
             if isinstance(exc, ClientError) and _is_missing_s3_error(exc):
                 # A render prefix without calc.json is not a usable compute
@@ -2758,24 +2880,52 @@ def handle_list(event):
 
         return entry
 
-    list_workers = min(requested_workers, max(1, len(job_ids) or 1))
+    list_workers = min(requested_workers, max(1, len(to_read) or 1))
     t_calc_0 = time.time()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=list_workers) as pool:
-        results = list(pool.map(read_calc, job_ids))
+    fresh = []
+    if to_read:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=list_workers) as pool:
+            fresh = list(pool.map(read_calc, to_read))
     calc_fetch_us = int((time.time() - t_calc_0) * 1e6)
 
+    # 4) Fold fresh reads into the catalog + this response. Only authoritative
+    # answers are cached: a missing calc.json caches a no_calc marker, a good
+    # calc caches its fields, a TRANSIENT error is returned but never cached.
     metadata_errors = []
-    skipped_missing_calc = 0
-    filtered_results = []
-    for entry in results:
+    entries = {}
+    for entry in fresh:
         if entry.pop("_skip_missing_calc", False):
-            skipped_missing_calc += 1
+            _results_catalog_put(_results_catalog_item(entry, no_calc=True))
             continue
         err = entry.pop("_metadata_error", None)
         if err:
             metadata_errors.append({"job_id": entry["job_id"], "error": err[:200]})
-        filtered_results.append(entry)
-    results = filtered_results
+            entries[entry["job_id"]] = entry
+            continue
+        _results_catalog_put(_results_catalog_item(entry))
+        entries[entry["job_id"]] = entry
+
+    # Cached rows serve every job not read this call.
+    for job_id in job_ids:
+        if job_id in entries:
+            continue
+        item = rows.get(job_id)
+        entry = _results_entry_from_catalog_item(item) if item is not None else None
+        if entry is not None:
+            entries[job_id] = entry
+
+    # 5) Prune rows whose job prefix vanished (deletes, manual surgery).
+    present = set(job_ids)
+    pruned = 0
+    for jid in list(rows):
+        if jid not in present:
+            _results_catalog_delete(jid)
+            pruned += 1
+
+    skipped_missing_calc = len([j for j in job_ids if j not in entries])
+    fresh_jobs = {e.get("job_id") for e in fresh}
+    catalog_hits = len([j for j in entries if j not in fresh_jobs])
+    results = list(entries.values())
 
     # Sort by job_id descending (job_ids contain timestamps)
     t_sort_0 = time.time()
@@ -2788,6 +2938,10 @@ def handle_list(event):
         "list_us": int((time.time() - t0) * 1e6),
         "prefix_list_us": prefix_list_us,
         "calc_fetch_us": calc_fetch_us,
+        "catalog_read_us": catalog_read_us,
+        "catalog_hits": catalog_hits,
+        "catalog_misses": len(to_read),
+        "catalog_pruned": pruned,
         "sort_us": sort_us,
         "list_workers": list_workers,
         "s3_pool_connections": _results_list_pool_size(requested_workers),
@@ -5318,6 +5472,9 @@ def handle_delete(event):
     # renders/_index/... and renders/_shared_mosaic/... hold shared mosaic
     # state; a leading-underscore job_id would wipe them (code-review-26 F11)
     job_id = _assert_mutable_job_partition(params["job_id"])
+    # Drop the catalog row up front so a forced refresh can never resurrect the
+    # job while its objects are mid-delete (reconcile would also prune it later).
+    _results_catalog_delete(job_id)
 
     # List all objects for this job
     prefix = f"renders/{job_id}/"
@@ -5566,7 +5723,7 @@ ARTIFACT_FAMILIES = {
 # A single leading-underscore rule covers every internal render/DDB namespace;
 # real render/compute jobs never begin with '_'. (code-review-25 F1 +
 # code-review-26 F11)
-RESERVED_JOB_PREFIXES = ("_", "favorites#")
+RESERVED_JOB_PREFIXES = ("_", "favorites#", "results#")
 
 
 def _assert_mutable_job_partition(job_id):
@@ -5680,6 +5837,11 @@ def handle_save_metadata(event):
                   Key=f"renders/{job_id}/calc.json",
                   Body=json.dumps(metadata),
                   ContentType="application/json")
+
+    # Keep the results catalog row in lockstep (results-list.md Phase 2) —
+    # best-effort: a miss self-heals on the next /list reconcile.
+    if isinstance(metadata, dict):
+        _results_catalog_put(_results_catalog_item(_results_entry_fields(job_id, metadata)))
 
     return ok_response({"job_id": job_id, "saved": "calc.json"})
 

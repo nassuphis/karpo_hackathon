@@ -191,6 +191,31 @@ Implement Phase 2:
 That is the real path to a refresh that feels like a list operation instead of a
 mini compute job.
 
+**SHIPPED (2026-07-12, with the favorites-speedup wave).** The catalog is a
+DynamoDB partition (`results#catalog`, one row per job, reserved-prefix
+guarded) and `/list` is now catalog + reconcile in `handle_list()`:
+
+- membership truth = the cheap `renders/` prefix listing (unchanged)
+- table fields = one paginated DDB Query
+- `calc.json` is read ONLY for jobs the catalog has never seen, then cached
+  forever (calc.json is written once, at compute completion — `finalize_metadata`
+  / `/save-metadata`, and the latter upserts its row in lockstep)
+- rows whose prefix vanished are pruned; `/delete` drops its row up front
+- calc-less prefixes are re-probed only within a 24h mid-compute window;
+  older ones are trusted as junk (`no_calc` rows)
+- transient calc-read errors are surfaced in the response but NEVER cached
+- `rebuild: true` (Refresh popup checkbox) re-reads everything — the escape
+  hatch after manual S3 surgery
+
+No pipeline hooks were needed: the reconcile self-heals, so a missed writer
+can only delay a row by one `/list`, never lose it. Steady state is
+~2-4 network ops total instead of `1 + n_jobs`. The frontend also became
+session-cached (favorites-speedup idea 1): Results/DeepZoom tab re-entry is
+zero requests; compute completion invalidates, popup Run / Refresh force.
+Response gains `catalog_read_us` / `catalog_hits` / `catalog_misses` /
+`catalog_pruned`, logged in the results-log line. Gated tests:
+`tests/test_results_catalog.py`.
+
 ## What To Measure
 
 For the existing `/list` path:

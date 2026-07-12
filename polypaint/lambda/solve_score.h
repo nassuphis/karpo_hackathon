@@ -998,7 +998,24 @@ typedef struct {
     int outputCount;
     int hasExplicitOutputs;
     enum SolveScoreProgramOp outputOps[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
+    /* Prepared at parse (code-review-31 F9): per-slot lag flags, so the
+     * lagged-slot row loop stops rescanning every token for every slot on
+     * every row. lagPrepared == 0 (hand-built structs) falls back to scans. */
+    int lagPrepared;
+    uint8_t slotUsesLag[SOLVE_SCORE_MAX_METRIC_SLOTS];
 } SolveScoreProgram;
+
+static void solve_score_prepare_lag_flags(SolveScoreProgram *program) {
+    memset(program->slotUsesLag, 0, sizeof(program->slotUsesLag));
+    for (int i = 0; i < program->tokenCount; i++) {
+        const SolveScoreProgramToken *token = &program->tokens[i];
+        if (token->op == SOLVE_SCORE_OP_PUSH_METRIC && token->lagDepth > 0 &&
+            token->metricSlot >= 0 && token->metricSlot < SOLVE_SCORE_MAX_METRIC_SLOTS) {
+            program->slotUsesLag[token->metricSlot] = 1;
+        }
+    }
+    program->lagPrepared = 1;
+}
 
 static double solve_score_clamp_unit(double v) {
     if (!isfinite(v)) return 0.0;
@@ -1478,6 +1495,7 @@ static int parse_solve_score_program_args_ex(const char *metricsCsv, const char 
     if (tokenCount <= 0) return 0;
     out->metricCount = metricCount;
     out->tokenCount = tokenCount;
+    solve_score_prepare_lag_flags(out);
     return 1;
 }
 
@@ -1569,6 +1587,7 @@ static int solve_score_program_uses_lag_source(const SolveScoreProgram *program,
 
 static int solve_score_metric_slot_uses_lag(const SolveScoreProgram *program, int slot) {
     if (!program || slot < 0 || slot >= program->metricCount) return 0;
+    if (program->lagPrepared) return program->slotUsesLag[slot];   /* CR31 F9 */
     for (int i = 0; i < program->tokenCount; i++) {
         const SolveScoreProgramToken *token = &program->tokens[i];
         if (token->op == SOLVE_SCORE_OP_PUSH_METRIC && token->metricSlot == slot && token->lagDepth > 0) {

@@ -31,6 +31,15 @@ typedef struct {
     int fn_index;
     double args[MAX_RT_ARGS];
     int n_args;
+    /* Prepared at parse (code-review-31 F8): dispatch index resolved, default
+     * arguments applied, and derived constants (sin/cos, 1/sigma^2) computed
+     * ONCE instead of for every solved row. prep_fn == 0 means "not prepared";
+     * apply_root_xforms then falls back to the original per-row path, so a
+     * hand-built chain keeps working unchanged. */
+    int prep_fn;
+    double p0, p1, p2, p3;
+    double cos_t, sin_t;
+    double inv_sig2;
 } RootXformEntry;
 
 enum RootXformFnIndex {
@@ -126,6 +135,8 @@ static int rt_parse_object_entry(const char *objStart, const char *objEnd, RootX
 }
 
 /* Parse root_transforms JSON: [["rotate_roots","0.5"], {"fn_index":1,"args":[0.5]}] */
+static void rt_prepare_chain(RootXformEntry *entries, int n_entries);
+
 static int parse_root_xform_json(const char *p, RootXformEntry *entries, int maxCount) {
     p = rt_skip(p);
     if (*p != '[') return 0;
@@ -198,6 +209,7 @@ static int parse_root_xform_file(const char *path, RootXformEntry *entries, int 
     fclose(f);
     int n = parse_root_xform_json(buf, entries, maxCount);
     free(buf);
+    rt_prepare_chain(entries, n);   /* resolve dispatch + hoist constants once (CR31 F8) */
     return n;
 }
 
@@ -335,12 +347,133 @@ static void rt_pull_towards_center(float *re, float *im, int degree, double alph
     }
 }
 
+/* ---- Prepared plan (CR31 F8) ---- */
+
+/* Hoisted-constant twins of the row transforms. The inner arithmetic is
+ * IDENTICAL to the originals — only the per-call constant setup moved to
+ * rt_prepare_chain, so outputs are bit-equal. */
+static void rt_rotate_roots_pre(float *re, float *im, int degree, double c, double s) {
+    for (int k = 0; k < degree; k++) {
+        double r = re[k], i = im[k];
+        re[k] = (float)(r * c - i * s);
+        im[k] = (float)(r * s + i * c);
+    }
+}
+
+static void rt_pull_unit_circle_pre(float *re, float *im, int degree,
+                                    double alpha, double inv_sig2) {
+    for (int k = 0; k < degree; k++) {
+        double r_re = re[k], r_im = im[k];
+        double r = sqrt(r_re * r_re + r_im * r_im);
+        if (r < 1e-30) continue;
+        double d = r - 1.0;
+        double rprime = r - alpha * d * exp(-d * d * inv_sig2);
+        double scale = rprime / r;
+        re[k] = (float)(r_re * scale);
+        im[k] = (float)(r_im * scale);
+    }
+}
+
+static void rt_pull_towards_center_pre(float *re, float *im, int degree,
+                                       double alpha, double inv_sig2) {
+    for (int k = 0; k < degree; k++) {
+        double x = re[k], y = im[k];
+        double r = sqrt(x * x + y * y);
+        if (r < 1e-30) continue;
+        double shrink = alpha * exp(-r * r * inv_sig2);
+        double s = 1.0 - shrink;
+        re[k] = (float)(x * s);
+        im[k] = (float)(y * s);
+    }
+}
+
+static void rt_prepare_chain(RootXformEntry *entries, int n_entries) {
+    for (int t = 0; t < n_entries; t++) {
+        RootXformEntry *e = &entries[t];
+        int fn = e->fn_index ? e->fn_index : rt_fn_index_by_name(e->name);
+        e->prep_fn = fn;
+        switch (fn) {
+        case RT_FN_ROTATE_ROOTS: {
+            double turns = e->n_args > 0 ? e->args[0] : 0.0;
+            double theta = 2.0 * M_PI * turns;
+            e->cos_t = cos(theta);
+            e->sin_t = sin(theta);
+            break;
+        }
+        case RT_FN_PULL_UNIT_CIRCLE: {
+            double sigma = e->n_args > 0 ? e->args[0] : 0.75;
+            e->p0 = e->n_args > 1 ? e->args[1] : 1.0;   /* alpha */
+            if (sigma < 1e-10) sigma = 1e-10;
+            e->inv_sig2 = 1.0 / (sigma * sigma);
+            break;
+        }
+        case RT_FN_PULL_TOWARDS_CENTER: {
+            e->p0 = e->n_args > 0 ? e->args[0] : 1.0;   /* alpha */
+            double sigma = e->n_args > 1 ? e->args[1] : 0.75;
+            if (sigma < 1e-10) sigma = 1e-10;
+            e->inv_sig2 = 1.0 / (sigma * sigma);
+            break;
+        }
+        case RT_FN_ADD_COMPLEX:
+            e->p0 = e->n_args > 0 ? e->args[0] : 0.0;
+            e->p1 = e->n_args > 1 ? e->args[1] : 0.0;
+            break;
+        case RT_FN_MUL_COMPLEX:
+            e->p0 = e->n_args > 0 ? e->args[0] : 1.0;
+            e->p1 = e->n_args > 1 ? e->args[1] : 0.0;
+            break;
+        case RT_FN_MOEBIUS:
+            e->p0 = e->n_args > 0 ? e->args[0] : 1.0;
+            e->p1 = e->n_args > 1 ? e->args[1] : 0.0;
+            e->p2 = e->n_args > 2 ? e->args[2] : 0.0;
+            e->p3 = e->n_args > 3 ? e->args[3] : 1.0;
+            break;
+        default:
+            break;
+        }
+    }
+}
+
 /* ---- Dispatch ---- */
 
 static void apply_root_xforms(const RootXformEntry *entries, int n_entries,
                                float *re, float *im, int degree) {
     for (int t = 0; t < n_entries; t++) {
         const RootXformEntry *e = &entries[t];
+        if (e->prep_fn) {   /* prepared chain: constants hoisted (CR31 F8) */
+            switch (e->prep_fn) {
+            case RT_FN_ROTATE_ROOTS:
+                rt_rotate_roots_pre(re, im, degree, e->cos_t, e->sin_t);
+                break;
+            case RT_FN_PULL_UNIT_CIRCLE:
+                rt_pull_unit_circle_pre(re, im, degree, e->p0, e->inv_sig2);
+                break;
+            case RT_FN_ROOTS_TOLINE:
+                rt_roots_toline(re, im, degree);
+                break;
+            case RT_FN_LINE_TO_UNIT_CIRCLE:
+                rt_line_to_unit_circle(re, im, degree);
+                break;
+            case RT_FN_INVERT_ROOTS:
+                rt_invert_roots(re, im, degree);
+                break;
+            case RT_FN_ADD_COMPLEX:
+                rt_add_complex(re, im, degree, e->p0, e->p1);
+                break;
+            case RT_FN_MUL_COMPLEX:
+                rt_mul_complex(re, im, degree, e->p0, e->p1);
+                break;
+            case RT_FN_MOEBIUS:
+                rt_moebius(re, im, degree, e->p0, e->p1, e->p2, e->p3);
+                break;
+            case RT_FN_PULL_TOWARDS_CENTER:
+                rt_pull_towards_center_pre(re, im, degree, e->p0, e->inv_sig2);
+                break;
+            default:
+                break;
+            }
+            continue;
+        }
         int fn_index = e->fn_index ? e->fn_index : rt_fn_index_by_name(e->name);
         if (fn_index == RT_FN_ROTATE_ROOTS) {
             double turns = e->n_args > 0 ? e->args[0] : 0.0;

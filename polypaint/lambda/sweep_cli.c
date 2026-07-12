@@ -6520,12 +6520,30 @@ typedef struct {
     double nums[PARAM_PROGRAM_MAX_EXPR_NUMS];
 } ParamScalarExpr;
 
+/* Load-time lowered scalar expression (code-review-31 F6): the wire triples
+ * (double op, a, b) are decoded ONCE at parse into typed tokens, mirroring
+ * Coeff's CoeffLoweredExprPlan, instead of re-decoding doubles on every row. */
+typedef struct {
+    uint16_t op;
+    double a;
+    double b;
+} ParamLoweredExprTok;
+
+typedef struct {
+    uint16_t n;
+    ParamLoweredExprTok toks[PARAM_PROGRAM_MAX_EXPR_NUMS / PARAM_PROGRAM_EXPR_STRIDE];
+} ParamLoweredExprPlan;
+
 typedef struct {
     int token_count;
     int stack_max;
-    int uses_legacy_fast_path;
+    /* uses_legacy_fast_path removed (CR31 F6): parsed but never read — the
+     * name claimed an optimization that did not exist. The wire key is still
+     * accepted and ignored, so persisted programs are untouched. */
     int scalar_expr_count;
+    uint8_t reg_used_mask;   /* registers a row can actually READ (CR31 F6) */
     ParamScalarExpr scalar_exprs[PARAM_PROGRAM_MAX_SCALAR_EXPRS];
+    ParamLoweredExprPlan expr_plans[PARAM_PROGRAM_MAX_SCALAR_EXPRS];
     ParamProgramToken tokens[PARAM_PROGRAM_MAX_TOKENS];
 } ParamProgram;
 
@@ -6742,6 +6760,46 @@ static const char *parseParamProgramTokenObject(const char *objStart, const char
     return objEnd;
 }
 
+static void paramPreparePlan(ParamProgram *program) {
+    /* CR31 F6: derive once what evaluation used to rediscover per row.
+     * (1) Lower every scalar expression's double-triples into typed tokens —
+     *     the lowered evaluator replays the SAME operations in the SAME order,
+     *     so results and error messages are identical.
+     * (2) Record which registers a row can READ (push_reg tokens + reg exprs):
+     *     only those need their observable zero initialisation per row. */
+    for (int e = 0; e < program->scalar_expr_count; e++) {
+        const ParamScalarExpr *expr = &program->scalar_exprs[e];
+        ParamLoweredExprPlan *plan = &program->expr_plans[e];
+        plan->n = 0;
+        for (int pc = 0; pc + PARAM_PROGRAM_EXPR_STRIDE <= expr->n_nums;
+             pc += PARAM_PROGRAM_EXPR_STRIDE) {
+            ParamLoweredExprTok *lt = &plan->toks[plan->n++];
+            lt->op = (uint16_t)expr->nums[pc];
+            lt->a = expr->nums[pc + 1];
+            lt->b = expr->nums[pc + 2];
+        }
+    }
+    uint8_t mask = 0;
+    for (int k = 0; k < program->token_count; k++) {
+        const ParamProgramToken *tok = &program->tokens[k];
+        if (tok->op == PARAM_OP_PUSH_REG &&
+            tok->fn_index < PARAM_PROGRAM_REGISTERS) {
+            mask |= (uint8_t)(1u << tok->fn_index);
+        }
+    }
+    for (int e = 0; e < program->scalar_expr_count; e++) {
+        const ParamLoweredExprPlan *plan = &program->expr_plans[e];
+        for (int i = 0; i < plan->n; i++) {
+            if (plan->toks[i].op == PARAM_EXPR_REG &&
+                plan->toks[i].a >= 0.0 &&
+                plan->toks[i].a < (double)PARAM_PROGRAM_REGISTERS) {
+                mask |= (uint8_t)(1u << (int)plan->toks[i].a);
+            }
+        }
+    }
+    program->reg_used_mask = mask;
+}
+
 static int parseParamProgram(const char *buf, ParamProgram *program) {
     memset(program, 0, sizeof(*program));
     const char *p = findKey(buf, "param_program");
@@ -6766,8 +6824,7 @@ static int parseParamProgram(const char *buf, ParamProgram *program) {
         return -1;
     }
     if (v) program->stack_max = (int)parseNum(&v);
-    v = findKeyIn(objStart, objEnd, "uses_legacy_fast_path");
-    if (v) program->uses_legacy_fast_path = parseBool(v);
+    /* "uses_legacy_fast_path" intentionally ignored (CR31 F6). */
 
     const char *exprs = findKeyIn(objStart, objEnd, "scalar_exprs");
     if (exprs) {
@@ -6850,6 +6907,7 @@ static int parseParamProgram(const char *buf, ParamProgram *program) {
         tokens = tokEnd;
     }
     program->token_count = count;
+    paramPreparePlan(program);
     return 1;
 }
 
@@ -6861,13 +6919,16 @@ static int paramEvalScalarExpr(const ParamProgram *program, int ref,
         fprintf(stderr, "param_program scalar expression ref out of range: %d\n", ref);
         return 1;
     }
-    const ParamScalarExpr *expr = &program->scalar_exprs[ref];
+    /* CR31 F6: evaluate the load-time lowered plan (typed ops, no per-row
+     * double decoding). Operation order and every check match the old
+     * triple-decoder exactly. */
+    const ParamLoweredExprPlan *plan = &program->expr_plans[ref];
     ParamCx stack[PARAM_PROGRAM_MAX_EXPR_NUMS / PARAM_PROGRAM_EXPR_STRIDE];
     int sp = 0;
-    for (int pc = 0; pc < expr->n_nums; pc += PARAM_PROGRAM_EXPR_STRIDE) {
-        int op = (int)expr->nums[pc];
-        double a = expr->nums[pc + 1];
-        double b = expr->nums[pc + 2];
+    for (int ti = 0; ti < plan->n; ti++) {
+        int op = plan->toks[ti].op;
+        double a = plan->toks[ti].a;
+        double b = plan->toks[ti].b;
         if (op == PARAM_EXPR_LITERAL || op == PARAM_EXPR_T1 || op == PARAM_EXPR_T2 ||
             op == PARAM_EXPR_P1 || op == PARAM_EXPR_P2 || op == PARAM_EXPR_REG) {
             if (sp >= (int)(sizeof(stack) / sizeof(stack[0]))) return 1;
@@ -7157,7 +7218,11 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
     ParamCx stack[PARAM_PROGRAM_MAX_STACK];
     /* mutable scratch registers r1..r8, zeroed per evaluation */
     ParamCx regs[PARAM_PROGRAM_REGISTERS];
-    for (int ri = 0; ri < PARAM_PROGRAM_REGISTERS; ri++) regs[ri] = param_cx(0.0, 0.0);
+    /* CR31 F6: only registers the program can READ have an observable initial
+     * zero; the rest are always written before any read (or never touched). */
+    for (int ri = 0; ri < PARAM_PROGRAM_REGISTERS; ri++) {
+        if (program->reg_used_mask & (1u << ri)) regs[ri] = param_cx(0.0, 0.0);
+    }
     int sp = 0;
 
     for (int k = 0; k < program->token_count; k++) {

@@ -9317,7 +9317,7 @@ static int coeffGenWriteBlock(int fd, const void *buf, size_t len, off_t off);
  * A worker's cropped row spans are contiguous in the output file (cropping
  * only trims the global head/tail rows), so batching changes syscall count,
  * not bytes. One pwrite per row regressed macOS t4 by ~15-20%; Linux hid it. */
-#define PARAMGEN_IO_BLOCK_ROWS 128
+#define PARAMGEN_IO_BLOCK_ROWS 32
 
 static void *paramGenStaticWorkerMain(void *vp) {
     ParamGenStaticArg *arg = (ParamGenStaticArg *)vp;

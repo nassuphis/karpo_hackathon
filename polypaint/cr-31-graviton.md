@@ -71,9 +71,11 @@ the app. Reports: `reports/vm_bench_graviton_after-cr31.json` and
    repeatable, platform-specific M3 regression (interleaved re-measurement:
    +15–20% at t4, several× the observed MAD) caused by one pwrite per row.
    The fused-plan default is four workers, so this was the default dev-host
-   path. CR32 batches rows into 128-row block flushes: M3 t4 −24.2%, t2
-   −6.4%, t8 −90.5% vs baseline; opposite-sign platform behavior is retained
-   in the record rather than averaged away.**
+   path. CR32 batches rows into 32-row block flushes (128-row blocks lost
+   write/compute overlap on Linux): M3 t2 −18.9%, t4 −9.1%, t8 −91.1%;
+   Graviton t2 −10.1%, t4 −5.6%, t8 −45.9% — improvements on BOTH platforms,
+   with the opposite-sign history retained in the record rather than averaged
+   away.**
 
 4. **The 8-worker chunked *cliff* was macOS-only, but the blocked I/O still
    pays on Linux.** On the Graviton *base* build t8 was already the fastest
@@ -192,6 +194,46 @@ python3 scripts/bench_program_vms.py --compare <base> <cand> --cases "chunked*" 
 python3 scripts/bench_program_vms.py --compare <base> <cand> --cases "param_expr_t*" --reps 11
 cc -O3 -I lambda tests/native/vm_microbench.c -lm -o micro && ./micro
 ```
+
+## CR32 re-run on Graviton (fixed code, 2026-07-12)
+
+Same methodology and instance class as above (fresh throwaway c7g.2xlarge,
+gcc 11.5 `-O3`, AL2023; base = `32e01ff`, cand = CR32 remediation HEAD;
+interleaved A/B, **bytes ok on every row**; binary SHA-256s pinned in the
+reports — `reports/vm_bench_graviton_cr32_ab_{mqlacwaq,chunked,param}.json`).
+
+| Case | Base | CR32 | Δ | Pre-CR32 Δ |
+|---|---:|---:|---:|---:|
+| mqlacwaq_coeff (15 reps) | 46.38 ms | 32.17 ms | **−30.6%** | −31.4% |
+| mqlacwaq_param_coeff (15 reps) | 49.47 ms | 35.40 ms | **−28.5%** | −28.5% |
+| mqlacwaq_baseline (control) | 2.23 ms | 2.28 ms | +2.2% | −0.8% |
+| chunked35_t1 | 400.00 ms | 353.39 ms | **−11.7%** | −0.4% (never ran blocked I/O) |
+| chunked35_sin_t1 | 555.90 ms | 509.32 ms | **−8.4%** | −0.0% (same) |
+| chunked35_t2 | 214.03 ms | 179.38 ms | **−16.2%** | −15.3% |
+| chunked35_t4 | 108.85 ms | 90.39 ms | **−17.0%** | −15.6% |
+| chunked35_t8 | 56.42 ms | 45.64 ms | **−19.1%** | −17.5% |
+| param_expr_t2 | 11.34 ms | 10.20 ms | **−10.1%** | −8.1% |
+| param_expr_t4 | 5.74 ms | 5.42 ms | **−5.6%** | −5.9% |
+| param_expr_t8 | 5.89 ms | 3.19 ms | **−45.9%** | −47.5% |
+
+Micro (production entry, base → CR32): pair bundle 12,727.1 → 8,567.4 ns
+(**1.49×**), duplicate-slot proximity 1,550.0 → 1,050.3 ns (**1.48×**),
+one-slot max_re 77.7 → 79.2 ns and one-slot proximity 776.4 → 778.3 ns
+(both ≈ flat — the 5–7× pre-CR32 one-slot regression is gone; a one-slot
+program now returns through the baseline path before the plan scan).
+
+What changed vs the corrected verdicts above:
+
+- **t1 is now genuinely tested and genuinely faster on Linux** (−11.7%
+  plain, −8.4% transcendental) — smaller than macOS's −34.8% because Linux
+  handled the per-row syscalls better to begin with, but real. The original
+  "flat t1" rows compared per-row against per-row.
+- **Param write batching was tuned on both platforms**: 128-row blocks
+  regressed Graviton t4 by +2.1% (one large end-of-range flush lost
+  write/compute overlap); 32-row blocks win on both platforms at every
+  count. The pwrite count is still 32× below per-row.
+- The F1 clamp (typed-kernel non-finite policy) costs nothing measurable in
+  any macro case on either platform; mqlacwaq retains its −30% Graviton win.
 
 ## Residual-work list, updated (CR32)
 

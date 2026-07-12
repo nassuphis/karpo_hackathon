@@ -126,9 +126,11 @@ sweep — within the MAD we observed across runs.~~ **CR32 correction (F6):
 "within MAD" was wrong — interleaved re-measurement showed a repeatable
 +15–20% regression at t4 on M3 (the scheduler wrote one row per pwrite;
 the fused-plan default is four workers). CR32 batches contiguous rows into
-128-row blocks flushed with one pwrite (crop only trims the global head/tail,
-so bytes cannot change): t4 −24.2%, t2 −6.4%, t8 −90.5% vs baseline on M3,
-Graviton improvements retained.**
+32-row blocks flushed with one pwrite (crop only trims the global head/tail,
+so bytes cannot change; 128-row blocks lost write/compute overlap on Linux —
+Graviton t4 read +2.1% — so the block is sized for overlap, still 32× fewer
+syscalls): M3 t2 −18.9%, t4 −9.1%, t8 −91.1%; Graviton t2 −10.1%, t4 −5.6%,
+t8 −45.9%.**
 **Pre-audit finding (pre-existing, unchanged)**: serial (t1) dither output differs from
 threaded (t2+) — the serial path seeds per pass, threaded per row. Dither outputs at
 t2/t4/t8 verified byte-identical across old scheduler, new scheduler, and thread counts.
@@ -235,9 +237,9 @@ into the block engine, param writes batched, atomic flags, counters complete):
 | chunked35_t4 | 85.60 ms | 26.76 ms | **−68.7%** |
 | chunked35_t8 | 92.10 ms | 13.90 ms | **−84.9%** |
 | chunked35_sin_t1 | 193.58 ms | 140.34 ms | **−27.5%** |
-| param_expr_t2 | 8.60 ms | 8.05 ms | −6.4% |
-| param_expr_t4 | 5.56 ms | 4.22 ms | **−24.2%** |
-| param_expr_t8 | 26.13 ms | 2.47 ms | **−90.5%** |
+| param_expr_t2 | 9.71 ms | 7.88 ms | **−18.9%** |
+| param_expr_t4 | 4.53 ms | 4.11 ms | **−9.1%** |
+| param_expr_t8 | 24.82 ms | 2.20 ms | **−91.1%** |
 | mqlacwaq_coeff | 24.34 ms | 20.21 ms | **−17.0%** |
 | mqlacwaq_param_coeff | 27.01 ms | 22.86 ms | **−15.4%** |
 | coeff35 selector cases | — | — | −2.1% … +2.0% (noise; clamp costs nothing measurable) |
@@ -247,7 +249,10 @@ into the block engine, param writes batched, atomic flags, counters complete):
 | micro: pair bundle | 4493.1 ns | 2597.5 ns | **1.73×** |
 | micro: prepared root affine3 chain (parsed) | 42.8 ns | 42.6 ns | flat at this arity (now measured, not assumed) |
 
-Controls: mqlacwaq_baseline −0.2%, param_baseline +0.1%.
+Controls: mqlacwaq_baseline −0.2%, param_baseline +0.1%. Param rows are from
+the final 32-row-block build (11 reps, interleaved); the ordered-ring BASE
+scheduler is itself noisy run-to-run on macOS (its replacement was the point),
+so param deltas vary more than chunked ones — candidate absolutes are stable.
 New gates added by CR32: fast-kernel numerical policy, param seed-policy/CPU-cap
 byte pins, root prepared-vs-legacy parity (24 chains), cache-engaging solve
 parity, PP_VM_PERF count pins, TSan failure-path gate (validated to catch the

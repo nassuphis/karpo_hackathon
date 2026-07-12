@@ -5294,7 +5294,7 @@ def handle_describe_gallery(event):
     prov = vision_provider(model)
     api_key = cfg.get(f"api_key_{prov}") or (os.environ.get("GEMINI_API_KEY", "") if prov == "gemini" else "")
     if not api_key:
-        return ok_response({"error": "no vision API key configured — set one in the Book tab gear panel"})
+        return ok_response({"error": "no vision API key configured — set one in the Config panel (top right)"})
     task_id = f"describe_{uuid.uuid4().hex[:8]}"
     report_status(gallery_id, task_id, "started")
     worker_params = dict(params)

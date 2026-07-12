@@ -150,6 +150,10 @@ assertIncludes("export_id: exportId,", 'DeepZoom dispatch payload must carry the
 assertIncludes("task_id: taskId,", 'DeepZoom dispatch payload must carry the unique task_id');
 assertIncludes("_resultsLoaded = false;   // a new compute exists", 'a finished compute must invalidate the Results session cache');
 assertIncludes("void _dzPatchInventoryAfterExport(jobId, exportId);", 'a finished export must patch the cached DeepZoom inventory in place');
+assertIncludes("id=\"vision-model\"", 'the LLM (vision) config lives in the global Config popup');
+assertIncludes("if (next) void visionConfigLoad();", 'opening the Config popup must load the live vision config');
+assertNotIncludes("btn-book-vision", 'the Book tab must no longer carry its own vision gear panel');
+assertNotIncludes("book-vision-panel", 'the Book vision panel markup must be fully removed');
 assertIncludes("new_interpretation: newInterpretation", 'Color RePalette UI should forward the selected 3-channel interpretation');
 assertIncludes("id=\"color-repalette-interpretation-row\"", 'Color RePalette popup should expose the interpretation row');
 assertIncludes("id=\"color-repalette-interpretation\"", 'Color RePalette popup should expose the 3-channel interpretation selector');

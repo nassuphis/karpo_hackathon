@@ -662,81 +662,9 @@ async function _bookPollCompile() {
     }
 }
 
-function bookVisionModelChanged() {
-    const sel = document.getElementById('book-vision-model');
-    const custom = document.getElementById('book-vision-model-custom');
-    if (custom) custom.style.display = sel && sel.value === '__custom__' ? 'inline-block' : 'none';
-}
+// Vision-model (LLM) config moved to the GLOBAL Config popup (js/02
+// visionConfig*): it serves Book Describe and Gallery Describe alike.
 
-function _bookVisionSelectedModel() {
-    const sel = document.getElementById('book-vision-model');
-    if (!sel) return '';
-    if (sel.value === '__custom__') {
-        return (document.getElementById('book-vision-model-custom')?.value || '').trim();
-    }
-    return sel.value;
-}
-
-function _bookVisionShowModel(model) {
-    const sel = document.getElementById('book-vision-model');
-    const custom = document.getElementById('book-vision-model-custom');
-    if (!sel) return;
-    const known = Array.from(sel.options).some(o => o.value === model);
-    if (model && !known) {
-        sel.value = '__custom__';
-        if (custom) { custom.value = model; custom.style.display = 'inline-block'; }
-    } else if (model) {
-        sel.value = model;
-        if (custom) custom.style.display = 'none';
-    }
-}
-
-function _bookVisionStatusText(cfg) {
-    const provs = cfg.providers || {};
-    const marks = ['gemini', 'anthropic', 'openai']
-        .map(p => `${p} ${provs[p]?.key_set ? '✓' + (provs[p].key_hint || '') : '—'}`)
-        .join(' · ');
-    return `model ${cfg.model || 'gemini-2.5-flash (default)'} · keys: ${marks}`;
-}
-
-function bookVisionToggle() {
-    const panel = document.getElementById('book-vision-panel');
-    if (!panel) return;
-    const opening = panel.style.display === 'none';
-    panel.style.display = opening ? 'flex' : 'none';
-    if (opening) void bookVisionLoad();
-}
-
-async function bookVisionLoad() {
-    const status = document.getElementById('book-vision-status');
-    try {
-        const cfg = await lambdaPost('storage', {}, '/fetch-vision-config');
-        _bookVisionShowModel(cfg.model || '');
-        if (status) status.textContent = _bookVisionStatusText(cfg);
-    } catch (e) {
-        if (status) status.textContent = e.message;
-    }
-}
-
-async function bookVisionSave(btn) {
-    const orig = btn ? btn.textContent : 'Save Vision';
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-    try {
-        const model = _bookVisionSelectedModel();
-        if (!model) throw new Error('pick or type a model id');
-        const keyEl = document.getElementById('book-vision-key');
-        const cfg = await lambdaPost('storage', { model, api_key: (keyEl?.value || '').trim() }, '/save-vision-config');
-        if (keyEl) keyEl.value = '';
-        const status = document.getElementById('book-vision-status');
-        if (status) status.textContent = 'saved · ' + _bookVisionStatusText(cfg);
-        if (btn) btn.textContent = 'Saved ✓';
-    } catch (e) {
-        _bookStatus(e.message, true);
-        if (btn) btn.textContent = 'Failed';
-    } finally {
-        setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = orig; } }, 1500);
-    }
-}
 
 async function bookDescribe(btn) {
     // all entries, skip-existing (hand prose survives)

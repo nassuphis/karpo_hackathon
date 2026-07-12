@@ -428,6 +428,78 @@ function _toggleConfigPopup(forceOpen) {
     if (!popup) return;
     const next = typeof forceOpen === 'boolean' ? forceOpen : !popup._open;
     _setConfigPopupOpen(next);
+    if (next) void visionConfigLoad();     // the LLM section shows live state on open
+}
+
+// ── LLM (vision model) config — the Config popup's second section ──────────
+// Shared by Book Describe and Gallery Describe (DDB __config__/vision_model
+// via /fetch-vision-config + /save-vision-config; the key is never echoed).
+function visionConfigModelChanged() {
+    const sel = document.getElementById('vision-model');
+    const custom = document.getElementById('vision-model-custom');
+    if (custom) custom.style.display = sel && sel.value === '__custom__' ? 'block' : 'none';
+}
+
+function _visionConfigSelectedModel() {
+    const sel = document.getElementById('vision-model');
+    if (!sel) return '';
+    if (sel.value === '__custom__') {
+        return (document.getElementById('vision-model-custom')?.value || '').trim();
+    }
+    return sel.value;
+}
+
+function _visionConfigShowModel(model) {
+    const sel = document.getElementById('vision-model');
+    const custom = document.getElementById('vision-model-custom');
+    if (!sel) return;
+    const known = Array.from(sel.options).some(o => o.value === model);
+    if (model && !known) {
+        sel.value = '__custom__';
+        if (custom) { custom.value = model; custom.style.display = 'block'; }
+    } else if (model) {
+        sel.value = model;
+        if (custom) custom.style.display = 'none';
+    }
+}
+
+function _visionConfigStatusText(cfg) {
+    const provs = cfg.providers || {};
+    const marks = ['gemini', 'anthropic', 'openai']
+        .map(p => `${p} ${provs[p]?.key_set ? '✓' + (provs[p].key_hint || '') : '—'}`)
+        .join(' · ');
+    return `model ${cfg.model || 'gemini-2.5-flash (default)'} · keys: ${marks}`;
+}
+
+async function visionConfigLoad() {
+    const status = document.getElementById('vision-status');
+    try {
+        const cfg = await lambdaPost('storage', {}, '/fetch-vision-config');
+        _visionConfigShowModel(cfg.model || '');
+        if (status) status.textContent = _visionConfigStatusText(cfg);
+    } catch (e) {
+        if (status) status.textContent = e.message;
+    }
+}
+
+async function visionConfigSave(btn) {
+    const orig = btn ? btn.textContent : 'Save';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const status = document.getElementById('vision-status');
+    try {
+        const model = _visionConfigSelectedModel();
+        if (!model) throw new Error('pick or type a model id');
+        const keyEl = document.getElementById('vision-key');
+        const cfg = await lambdaPost('storage', { model, api_key: (keyEl?.value || '').trim() }, '/save-vision-config');
+        if (keyEl) keyEl.value = '';
+        if (status) status.textContent = 'saved · ' + _visionConfigStatusText(cfg);
+        if (btn) btn.textContent = 'Saved ✓';
+    } catch (e) {
+        if (status) status.textContent = 'save failed: ' + e.message;
+        if (btn) btn.textContent = 'Failed';
+    } finally {
+        setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = orig; } }, 1500);
+    }
 }
 
 function _applyBuildInfo(build) {

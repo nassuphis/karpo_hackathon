@@ -1597,6 +1597,27 @@ button {
                     <button onclick="loadLambdaConfig()" class="btn-secondary btn-inline" style="padding:4px 12px">Load</button>
                 </div>
                 <div id="config-status" style="font-size:11px; color:#888; margin-top:8px"></div>
+                <div style="border-top:1px solid #0f3460; margin:12px 0 10px"></div>
+                <label>LLM (vision model — Book + Gallery Describe)</label>
+                <div class="config-row" style="margin-bottom:6px">
+                    <select id="vision-model" onchange="visionConfigModelChanged()" style="flex:1; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:5px 8px; font-size:12px">
+                        <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                        <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+                        <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                        <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                        <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+                        <option value="claude-haiku-4-5-20251001">claude-haiku-4-5-20251001</option>
+                        <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                        <option value="gpt-4o-mini">gpt-4o-mini</option>
+                        <option value="__custom__">custom…</option>
+                    </select>
+                </div>
+                <input id="vision-model-custom" placeholder="model id" style="display:none; width:100%; margin-bottom:6px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:5px 8px; font-size:12px">
+                <div class="config-row">
+                    <input id="vision-key" type="password" placeholder="API key (stored server-side; blank = keep)" style="flex:1; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:5px 8px; font-size:12px">
+                    <button type="button" class="btn-secondary btn-inline" onclick="void visionConfigSave(this)" style="padding:4px 12px">Save</button>
+                </div>
+                <div id="vision-status" style="font-size:11px; color:#9aa0b4; margin-top:6px"></div>
                 <div id="config-build-meta" class="config-meta"></div>
             </div>
         </div>
@@ -2100,29 +2121,10 @@ button {
         <button id="btn-book-save" type="button" class="btn-primary" onclick="bookSave()" style="padding:6px 12px">Save</button>
         <button id="btn-book-describe" type="button" class="btn-secondary" onclick="bookDescribe(this)" style="padding:6px 12px">Describe</button>
         <button id="btn-book-cleardesc" type="button" class="btn-secondary" onclick="void bookClearDescriptions(this)" style="padding:6px 12px" title="Blank every title + description so Describe re-runs from scratch">ClearDescriptions</button>
-        <button id="btn-book-vision" type="button" class="btn-secondary" onclick="bookVisionToggle()" style="padding:6px 10px" title="Vision model settings">⚙</button>
         <button id="btn-book-compile" type="button" class="btn-primary" onclick="bookCompile()" style="padding:6px 12px">Compile</button>
         <button id="btn-book-refresh" type="button" class="btn-secondary" onclick="void bookRefresh()" style="padding:6px 12px">Refresh</button>
         <button id="btn-book-delete" type="button" class="btn-secondary" onclick="bookDelete()" style="padding:6px 12px">Delete</button>
         <span id="book-info" style="color:#9aa0b4; font-size:12px"></span>
-    </div>
-    <div id="book-vision-panel" style="display:none; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px; padding:8px; background:#121829; border:1px solid #2b3a5e; border-radius:6px">
-        <span style="color:#9aa0b4; font-size:12px">VisionModel</span>
-        <select id="book-vision-model" onchange="bookVisionModelChanged()" style="min-width:220px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:5px 8px; font-size:12px">
-            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-            <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
-            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-            <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
-            <option value="claude-haiku-4-5-20251001">claude-haiku-4-5-20251001</option>
-            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-            <option value="gpt-4o-mini">gpt-4o-mini</option>
-            <option value="__custom__">custom…</option>
-        </select>
-        <input id="book-vision-model-custom" placeholder="model id" style="display:none; min-width:180px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:5px 8px; font-size:12px">
-        <input id="book-vision-key" type="password" placeholder="API key (stored server-side; blank = keep)" style="min-width:280px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:5px 8px; font-size:12px">
-        <button type="button" class="btn-secondary" onclick="void bookVisionSave(this)" style="padding:4px 12px">Save Vision</button>
-        <span id="book-vision-status" style="color:#9aa0b4; font-size:12px"></span>
     </div>
     <div id="book-download-row" style="display:none; gap:8px; align-items:center; margin-bottom:6px">
         <button type="button" class="btn-secondary" onclick="bookDownload('cover', this)" style="padding:4px 10px">Cover PDF</button>
@@ -2293,7 +2295,7 @@ button {
     </div>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
         <button id="btn-gallery-godz" type="button" class="btn-secondary" onclick="galleryGoDeepZoom()" style="padding:5px 12px; font-size:12px">Go DeepZoom</button>
-        <button id="btn-gallery-describe" type="button" class="btn-secondary" onclick="galleryDescribeSelection()" style="padding:5px 12px; font-size:12px" title="Generate a title for the selected piece from its thumbnail (vision model from the Book tab gear panel)">Describe Selection</button>
+        <button id="btn-gallery-describe" type="button" class="btn-secondary" onclick="galleryDescribeSelection()" style="padding:5px 12px; font-size:12px" title="Generate a title for the selected piece from its thumbnail (vision model from the Config panel, top right)">Describe Selection</button>
         <span style="font-size:11px; color:#666">Click a row to select it.</span>
     </div>
     <div id="gallery-piece-list" style="display:flex; flex-direction:column; gap:6px; max-height:60vh; overflow-y:auto"></div>

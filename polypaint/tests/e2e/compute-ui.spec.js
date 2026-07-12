@@ -19,6 +19,41 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+test.describe('Global Config popup', () => {
+  test('opening loads the LLM section; Save posts the exact vision payload', async ({ page }) => {
+    await page.evaluate(() => {
+      window._visionPosts = [];
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/fetch-vision-config') {
+          return { model: 'gemini-3.1-pro-preview',
+                   providers: { gemini: { key_set: true, key_hint: '…h8' }, anthropic: { key_set: false }, openai: { key_set: false } } };
+        }
+        if (path === '/save-vision-config') {
+          window._visionPosts.push(JSON.parse(JSON.stringify(body)));
+          return { model: body.model, providers: { gemini: { key_set: true, key_hint: '…h8' }, anthropic: { key_set: true, key_hint: '…st' }, openai: { key_set: false } } };
+        }
+        return {};
+      };
+    });
+    await page.click('#btn-config-toggle');
+    await expect(page.locator('#config-popup')).toBeVisible();
+    // open -> live state loads: the configured model is selected, keys summarized
+    await expect(page.locator('#vision-model')).toHaveValue('gemini-3.1-pro-preview');
+    await expect(page.locator('#vision-status')).toContainText('gemini ✓');
+    // save carries the EXACT payload contract {model, api_key}
+    await page.selectOption('#vision-model', 'claude-sonnet-4-6');
+    await page.fill('#vision-key', 'sk-test');
+    await page.click('#config-popup button:text("Save")');
+    await expect(page.locator('#vision-status')).toContainText('saved');
+    const posts = await page.evaluate(() => window._visionPosts);
+    expect(posts).toEqual([{ model: 'claude-sonnet-4-6', api_key: 'sk-test' }]);
+    await expect(page.locator('#vision-key')).toHaveValue('');   // key never lingers in the DOM
+    // the Book toolbar no longer carries its own gear panel
+    expect(await page.locator('#btn-book-vision').count()).toBe(0);
+    expect(await page.locator('#book-vision-panel').count()).toBe(0);
+  });
+});
+
 test.describe('Compute UI', () => {
   test('compute tab exposes preview controls and calculate buttons', async ({ page }) => {
     await page.click('.tab-btn:text("Compute")');

@@ -227,26 +227,28 @@ Reproduce: `python3 scripts/bench_program_vms.py` (full), or
 
 ## CR32 corrected results (M3, interleaved A/B vs `32e01ff`, 11 reps, all bytes ok)
 
-After the CR32 remediation (clamp restored, solve cache rewritten, t1 unified
-into the block engine, param writes batched, atomic flags, counters complete):
+Final numbers from the CLEAN committed tree (`ee07ec1`, after the follow-up
+audit fixes), report `reports/vm_bench_arm64_ab_cr32final_vs_32e01ff.json`
+with base/cand binary hashes and source commits pinned in metadata:
 
 | Case | Base | CR32 | Δ |
 |---|---:|---:|---:|
-| chunked35_t1 | 153.10 ms | 99.79 ms | **−34.8%** |
-| chunked35_t2 | 118.35 ms | 51.57 ms | **−56.4%** |
-| chunked35_t4 | 85.60 ms | 26.76 ms | **−68.7%** |
-| chunked35_t8 | 92.10 ms | 13.90 ms | **−84.9%** |
-| chunked35_sin_t1 | 193.58 ms | 140.34 ms | **−27.5%** |
-| param_expr_t2 | 9.71 ms | 7.88 ms | **−18.9%** |
-| param_expr_t4 | 4.53 ms | 4.11 ms | **−9.1%** |
-| param_expr_t8 | 24.82 ms | 2.20 ms | **−91.1%** |
-| mqlacwaq_coeff | 24.34 ms | 20.21 ms | **−17.0%** |
-| mqlacwaq_param_coeff | 27.01 ms | 22.86 ms | **−15.4%** |
+| chunked35_t1 | 155.86 ms | 102.29 ms | **−34.4%** |
+| chunked35_t2 | 119.80 ms | 52.41 ms | **−56.3%** |
+| chunked35_t4 | 112.05 ms | 27.43 ms | **−75.5%** |
+| chunked35_t8 | 97.20 ms | 14.20 ms | **−85.4%** |
+| chunked35_sin_t1 | 197.61 ms | 143.57 ms | **−27.4%** |
+| param_expr_t2 | 9.74 ms | 8.01 ms | **−17.7%** |
+| param_expr_t4 | 5.11 ms | 4.13 ms | **−19.2%** |
+| param_expr_t8 | 25.28 ms | 2.28 ms | **−91.0%** |
+| mqlacwaq_coeff | 23.83 ms | 19.63 ms | **−17.6%** |
+| mqlacwaq_param_coeff | 26.39 ms | 21.94 ms | **−16.9%** |
 | coeff35 selector cases | — | — | −2.1% … +2.0% (noise; clamp costs nothing measurable) |
-| micro: one-slot max_re (production entry) | 53.0 ns | 54.5 ns | ~flat (was 5.3× slower pre-CR32) |
-| micro: one-slot proximity (production entry) | 365.2 ns | 366.0 ns | flat (was 6.7× slower pre-CR32) |
-| micro: duplicate-slot proximity | 718.2 ns | 375.0 ns | **1.92×** (memo) |
-| micro: pair bundle | 4493.1 ns | 2597.5 ns | **1.73×** |
+| micro: one-slot max_re (production entry) | 53.0 ns | 53.2 ns | flat (was 5.3× slower pre-CR32) |
+| micro: one-slot proximity (production entry) | 365.2 ns | 361.8 ns | flat (was 6.7× slower pre-CR32) |
+| micro: duplicate-slot proximity | 718.2 ns | 376.7 ns | **1.91×** (memo) |
+| micro: two distinct cheap slots | 94.6 ns | 99.8 ns | +5 ns plan scan (was +27% before the reuse-gated engagement rule) |
+| micro: pair bundle | 4493.1 ns | 2629.3 ns | **1.71×** |
 | micro: prepared root affine3 chain (parsed) | 44.1 ns (fallback) | 37.8 ns | **−14%** (follow-up: the first "flat" reading compared fallback to fallback — parse_root_xform_json did not prepare; it does now) |
 
 Controls: mqlacwaq_baseline −0.2%, param_baseline +0.1%. Param rows are from

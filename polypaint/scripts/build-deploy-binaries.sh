@@ -112,7 +112,9 @@ docker run --rm --platform linux/arm64 \
         echo "  sweep_coeffgen + sweep_cm compiled"
     '
 
-echo "== freshness + manifest =="
-python3 scripts/check_binary_freshness.py --check
+echo "== manifest + freshness =="
+# write FIRST: after a rebuild the old manifest legitimately mismatches the
+# fresh binaries; --check then validates mtimes AND the new hashes agree.
 python3 scripts/check_binary_freshness.py --write-manifest
+python3 scripts/check_binary_freshness.py --check
 echo "ALL DEPLOY BINARIES REBUILT"

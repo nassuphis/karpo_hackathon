@@ -1,0 +1,46 @@
+{
+  "cases": {
+    "param_expr_t2": {
+      "base_mad_us": 102,
+      "base_median_us": 9711,
+      "cand_mad_us": 78,
+      "cand_median_us": 7878,
+      "delta_pct": -18.88,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    },
+    "param_expr_t4": {
+      "base_mad_us": 15,
+      "base_median_us": 4526,
+      "cand_mad_us": 9,
+      "cand_median_us": 4114,
+      "delta_pct": -9.1,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    },
+    "param_expr_t8": {
+      "base_mad_us": 466,
+      "base_median_us": 24815,
+      "cand_mad_us": 11,
+      "cand_median_us": 2202,
+      "delta_pct": -91.13,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    }
+  },
+  "metadata": {
+    "base_binary_sha256": "857595d42e8028264c7c4141c6b9484ae6bddd56a00b9832c1046f8e9c53d5b2",
+    "bench_script_sha256": "7aeec1efa36899b9bfa3cfb6f1e0a53e2246ea218c6b04b8d9c620b4b2dab5be",
+    "cand_binary_sha256": "2435ae03f71a42eb9685e47682a8fd2f8dfbf4330c827c4e48fda166b07ad73a",
+    "cc_flags": "-O3 -pthread -I lambda",
+    "compiler": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "cpu_count": 16,
+    "git_dirty": true,
+    "git_sha": "83cf959d6b9d181d390e167fba3528a50d1a9328",
+    "harvested_fixture_sha256": "c38d51c89e2912ba0877e6706c00ce40a5af56ebb08661d9444378a40bc8fbd4",
+    "machine": "arm64",
+    "micro_source_sha256": "f03e19e7c521a91c9bdcd068222d39d5ccf2be902b0d7ad967bf615ad1a4ed50",
+    "platform": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "python": "3.14.3"
+  }
+}

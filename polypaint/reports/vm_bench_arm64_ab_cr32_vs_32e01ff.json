@@ -1,0 +1,253 @@
+{
+  "cases": {
+    "chunked35_sin_t1": {
+      "base_mad_us": 1819,
+      "base_median_us": 193579,
+      "cand_mad_us": 1828,
+      "cand_median_us": 140338,
+      "delta_pct": -27.5,
+      "output_sha256": "38d2b65de8187268d02428a30c8bcf2ea7c53ebccfc28ada2a1743829562ac46",
+      "reps_each": 11
+    },
+    "chunked35_sin_t4": {
+      "base_mad_us": 1786,
+      "base_median_us": 80800,
+      "cand_mad_us": 194,
+      "cand_median_us": 36698,
+      "delta_pct": -54.58,
+      "output_sha256": "38d2b65de8187268d02428a30c8bcf2ea7c53ebccfc28ada2a1743829562ac46",
+      "reps_each": 11
+    },
+    "chunked35_t1": {
+      "base_mad_us": 295,
+      "base_median_us": 153096,
+      "cand_mad_us": 438,
+      "cand_median_us": 99788,
+      "delta_pct": -34.82,
+      "output_sha256": "9d019a337e23e0aabe223107e8e74f33b247da594541e4b2538af5c4e60e4418",
+      "reps_each": 11
+    },
+    "chunked35_t2": {
+      "base_mad_us": 622,
+      "base_median_us": 118353,
+      "cand_mad_us": 292,
+      "cand_median_us": 51573,
+      "delta_pct": -56.42,
+      "output_sha256": "9d019a337e23e0aabe223107e8e74f33b247da594541e4b2538af5c4e60e4418",
+      "reps_each": 11
+    },
+    "chunked35_t4": {
+      "base_mad_us": 16023,
+      "base_median_us": 85601,
+      "cand_mad_us": 252,
+      "cand_median_us": 26755,
+      "delta_pct": -68.74,
+      "output_sha256": "9d019a337e23e0aabe223107e8e74f33b247da594541e4b2538af5c4e60e4418",
+      "reps_each": 11
+    },
+    "chunked35_t8": {
+      "base_mad_us": 1480,
+      "base_median_us": 92097,
+      "cand_mad_us": 91,
+      "cand_median_us": 13899,
+      "delta_pct": -84.91,
+      "output_sha256": "9d019a337e23e0aabe223107e8e74f33b247da594541e4b2538af5c4e60e4418",
+      "reps_each": 11
+    },
+    "coeff35_add": {
+      "base_mad_us": 371,
+      "base_median_us": 31671,
+      "cand_mad_us": 520,
+      "cand_median_us": 31911,
+      "delta_pct": 0.76,
+      "output_sha256": "a8c2df99e59ef3d0883051a4cbc5b1e2f0c3f5ea10732099df4b6b8cb3399881",
+      "reps_each": 11
+    },
+    "coeff35_baseline": {
+      "base_mad_us": 154,
+      "base_median_us": 28736,
+      "cand_mad_us": 571,
+      "cand_median_us": 29299,
+      "delta_pct": 1.96,
+      "output_sha256": "d3b8976510262ef5407807e0bde2a3c6b27401d72c4018beda29d5a80acdbf70",
+      "reps_each": 11
+    },
+    "coeff35_neg": {
+      "base_mad_us": 626,
+      "base_median_us": 32234,
+      "cand_mad_us": 307,
+      "cand_median_us": 32003,
+      "delta_pct": -0.72,
+      "output_sha256": "ab092d6bf43f19f4c7c0172d5228bcf2fe254dc7c86958ae0ed8c60f41bdab5e",
+      "reps_each": 11
+    },
+    "coeff35_neg16": {
+      "base_mad_us": 845,
+      "base_median_us": 63329,
+      "cand_mad_us": 371,
+      "cand_median_us": 61993,
+      "delta_pct": -2.11,
+      "output_sha256": "d3b8976510262ef5407807e0bde2a3c6b27401d72c4018beda29d5a80acdbf70",
+      "reps_each": 11
+    },
+    "coeff35_rev": {
+      "base_mad_us": 390,
+      "base_median_us": 30053,
+      "cand_mad_us": 416,
+      "cand_median_us": 29929,
+      "delta_pct": -0.41,
+      "output_sha256": "e6eca40d86565fda072b8997498a0992b4d28a6933e120aa0542cfb6691a3afe",
+      "reps_each": 11
+    },
+    "coeff35_rev16": {
+      "base_mad_us": 347,
+      "base_median_us": 38943,
+      "cand_mad_us": 382,
+      "cand_median_us": 38219,
+      "delta_pct": -1.86,
+      "output_sha256": "d3b8976510262ef5407807e0bde2a3c6b27401d72c4018beda29d5a80acdbf70",
+      "reps_each": 11
+    },
+    "coeff35_sin": {
+      "base_mad_us": 259,
+      "base_median_us": 39147,
+      "cand_mad_us": 247,
+      "cand_median_us": 38773,
+      "delta_pct": -0.96,
+      "output_sha256": "861859696d23b5a60dacef618e3521c60f229906ee53c77a02c1b7df4c7a384d",
+      "reps_each": 11
+    },
+    "coeff4_baseline": {
+      "base_mad_us": 32,
+      "base_median_us": 1080,
+      "cand_mad_us": 12,
+      "cand_median_us": 1057,
+      "delta_pct": -2.13,
+      "output_sha256": "bf0d03c5eb6caf30d02062628d5f5367f67953c5a061bcfc9ad20792cc22bd11",
+      "reps_each": 11
+    },
+    "coeff4_scalar21": {
+      "base_mad_us": 45,
+      "base_median_us": 3767,
+      "cand_mad_us": 31,
+      "cand_median_us": 3337,
+      "delta_pct": -11.41,
+      "output_sha256": "c8687fed2e349dc54d594d62c0cee18937a0fe3859b116336332b42ff39ab585",
+      "reps_each": 11
+    },
+    "mqlacwaq_baseline": {
+      "base_mad_us": 135,
+      "base_median_us": 4996,
+      "cand_mad_us": 114,
+      "cand_median_us": 4986,
+      "delta_pct": -0.2,
+      "output_sha256": "e4ecdfc1379c54b04d2d2b0dc8d8c968d800fe88f10e1bf4d786ef62367d7170",
+      "reps_each": 11
+    },
+    "mqlacwaq_coeff": {
+      "base_mad_us": 367,
+      "base_median_us": 24340,
+      "cand_mad_us": 223,
+      "cand_median_us": 20208,
+      "delta_pct": -16.98,
+      "output_sha256": "ca5faa757f24e5a1bf182f7bf46785d479462c40b8df322c5b64945f405ccdc3",
+      "reps_each": 11
+    },
+    "mqlacwaq_param_coeff": {
+      "base_mad_us": 556,
+      "base_median_us": 27010,
+      "cand_mad_us": 386,
+      "cand_median_us": 22862,
+      "delta_pct": -15.36,
+      "output_sha256": "5fccb74653f1fdf6ffd03ce8115fb22cd3cc337855fe953509436b4e0d13997f",
+      "reps_each": 11
+    },
+    "param_arith_8tok": {
+      "base_mad_us": 208,
+      "base_median_us": 13382,
+      "cand_mad_us": 227,
+      "cand_median_us": 13272,
+      "delta_pct": -0.82,
+      "output_sha256": "a9ec63b55708b3ee6902c9e1fd9d81f4665062dbf0304303a97f927f627587c3",
+      "reps_each": 11
+    },
+    "param_baseline": {
+      "base_mad_us": 67,
+      "base_median_us": 9471,
+      "cand_mad_us": 97,
+      "cand_median_us": 9476,
+      "delta_pct": 0.05,
+      "output_sha256": "d9e476bab5c7fa2e74c458fe9e8a4d9a390ebbfd1b6c64eb51240f85349b09e7",
+      "reps_each": 11
+    },
+    "param_expr_t2": {
+      "base_mad_us": 241,
+      "base_median_us": 8599,
+      "cand_mad_us": 27,
+      "cand_median_us": 8053,
+      "delta_pct": -6.35,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    },
+    "param_expr_t4": {
+      "base_mad_us": 208,
+      "base_median_us": 5562,
+      "cand_mad_us": 38,
+      "cand_median_us": 4215,
+      "delta_pct": -24.22,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    },
+    "param_expr_t8": {
+      "base_mad_us": 789,
+      "base_median_us": 26126,
+      "cand_mad_us": 45,
+      "cand_median_us": 2472,
+      "delta_pct": -90.54,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    },
+    "param_identity_4tok": {
+      "base_mad_us": 73,
+      "base_median_us": 11581,
+      "cand_mad_us": 162,
+      "cand_median_us": 11644,
+      "delta_pct": 0.54,
+      "output_sha256": "d9e476bab5c7fa2e74c458fe9e8a4d9a390ebbfd1b6c64eb51240f85349b09e7",
+      "reps_each": 11
+    },
+    "param_unit_circle_expr": {
+      "base_mad_us": 249,
+      "base_median_us": 23874,
+      "cand_mad_us": 235,
+      "cand_median_us": 23300,
+      "delta_pct": -2.4,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    },
+    "param_unit_circle_native": {
+      "base_mad_us": 111,
+      "base_median_us": 20747,
+      "cand_mad_us": 67,
+      "cand_median_us": 20163,
+      "delta_pct": -2.81,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    }
+  },
+  "metadata": {
+    "base_binary_sha256": "857595d42e8028264c7c4141c6b9484ae6bddd56a00b9832c1046f8e9c53d5b2",
+    "bench_script_sha256": "7aeec1efa36899b9bfa3cfb6f1e0a53e2246ea218c6b04b8d9c620b4b2dab5be",
+    "cand_binary_sha256": "5aba8f9eead3c077f040045a39d2bbb51391fc26a644737a7542964472a85ad7",
+    "cc_flags": "-O3 -pthread -I lambda",
+    "compiler": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "cpu_count": 16,
+    "git_dirty": true,
+    "git_sha": "9ec68c21d6e45add2416d19e14f58b99db3464f8",
+    "harvested_fixture_sha256": "c38d51c89e2912ba0877e6706c00ce40a5af56ebb08661d9444378a40bc8fbd4",
+    "machine": "arm64",
+    "micro_source_sha256": "f03e19e7c521a91c9bdcd068222d39d5ccf2be902b0d7ad967bf615ad1a4ed50",
+    "platform": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "python": "3.14.3"
+  }
+}

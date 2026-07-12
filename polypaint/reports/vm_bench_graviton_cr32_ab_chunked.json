@@ -1,0 +1,73 @@
+{
+  "cases": {
+    "chunked35_sin_t1": {
+      "base_mad_us": 315,
+      "base_median_us": 555900,
+      "cand_mad_us": 335,
+      "cand_median_us": 509323,
+      "delta_pct": -8.38,
+      "output_sha256": "38d2b65de8187268d02428a30c8bcf2ea7c53ebccfc28ada2a1743829562ac46",
+      "reps_each": 11
+    },
+    "chunked35_sin_t4": {
+      "base_mad_us": 339,
+      "base_median_us": 147771,
+      "cand_mad_us": 29,
+      "cand_median_us": 129213,
+      "delta_pct": -12.56,
+      "output_sha256": "38d2b65de8187268d02428a30c8bcf2ea7c53ebccfc28ada2a1743829562ac46",
+      "reps_each": 11
+    },
+    "chunked35_t1": {
+      "base_mad_us": 300,
+      "base_median_us": 399999,
+      "cand_mad_us": 267,
+      "cand_median_us": 353394,
+      "delta_pct": -11.65,
+      "output_sha256": "9d019a337e23e0aabe223107e8e74f33b247da594541e4b2538af5c4e60e4418",
+      "reps_each": 11
+    },
+    "chunked35_t2": {
+      "base_mad_us": 564,
+      "base_median_us": 214033,
+      "cand_mad_us": 33,
+      "cand_median_us": 179378,
+      "delta_pct": -16.19,
+      "output_sha256": "9d019a337e23e0aabe223107e8e74f33b247da594541e4b2538af5c4e60e4418",
+      "reps_each": 11
+    },
+    "chunked35_t4": {
+      "base_mad_us": 282,
+      "base_median_us": 108847,
+      "cand_mad_us": 55,
+      "cand_median_us": 90388,
+      "delta_pct": -16.96,
+      "output_sha256": "9d019a337e23e0aabe223107e8e74f33b247da594541e4b2538af5c4e60e4418",
+      "reps_each": 11
+    },
+    "chunked35_t8": {
+      "base_mad_us": 419,
+      "base_median_us": 56424,
+      "cand_mad_us": 90,
+      "cand_median_us": 45643,
+      "delta_pct": -19.11,
+      "output_sha256": "9d019a337e23e0aabe223107e8e74f33b247da594541e4b2538af5c4e60e4418",
+      "reps_each": 11
+    }
+  },
+  "metadata": {
+    "base_binary_sha256": "75b3ae0ce5848df25f36562f93cb2ae322996a898365c341de3ad11eb5ea50f8",
+    "bench_script_sha256": "7aeec1efa36899b9bfa3cfb6f1e0a53e2246ea218c6b04b8d9c620b4b2dab5be",
+    "cand_binary_sha256": "8c9c66a2d2069d4d1bc3a87381a7aee9922469d33af20bbc7d83c11d1b271b23",
+    "cc_flags": "-O3 -pthread -I lambda",
+    "compiler": "cc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5)",
+    "cpu_count": 8,
+    "git_dirty": false,
+    "git_sha": "",
+    "harvested_fixture_sha256": "c38d51c89e2912ba0877e6706c00ce40a5af56ebb08661d9444378a40bc8fbd4",
+    "machine": "aarch64",
+    "micro_source_sha256": "f03e19e7c521a91c9bdcd068222d39d5ccf2be902b0d7ad967bf615ad1a4ed50",
+    "platform": "Linux-6.1.176-221.360.amzn2023.aarch64-aarch64-with-glibc2.34",
+    "python": "3.9.25"
+  }
+}

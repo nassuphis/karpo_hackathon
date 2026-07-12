@@ -1,0 +1,209 @@
+{
+  "binaries": {
+    "bilevel_section_raster": {
+      "built_mtime": 1783887721,
+      "sha256": "f186d11754d29cf3983a60bbbb4bad47a981da1e6693a966247a2ec4dfe8ca2c",
+      "size": 247232,
+      "sources": [
+        "lambda/bilevel_section_raster.c",
+        "lambda/root_xforms.h"
+      ]
+    },
+    "coeffs_bilevel_raster": {
+      "built_mtime": 1783887721,
+      "sha256": "ce9fdb789d6623005cecbc7099d47dcc5ce129fd5c029791fb9dc634d7ec5cef",
+      "size": 180728,
+      "sources": [
+        "lambda/coeffs_bilevel_raster.c"
+      ]
+    },
+    "palette_bins_render": {
+      "built_mtime": 1783887723,
+      "sha256": "42f5c2be569650f40cfe7e547be3242ca33baa4246cb40fd7ab873e8bc11087d",
+      "size": 233360,
+      "sources": [
+        "lambda/long_palette_lut.generated.h",
+        "lambda/palette_bins_render.c",
+        "lambda/palette_lut.h",
+        "lambda/tri_palette_lut.generated.h"
+      ]
+    },
+    "roots2pix_mt": {
+      "built_mtime": 1783887866,
+      "sha256": "e9063583bd59286db6123aa0f2891241a6dfb60277748e851048125c600ae8e7",
+      "size": 207032,
+      "sources": [
+        "lambda/multispan_reader.c",
+        "lambda/multispan_reader.h",
+        "lambda/root_xforms.h",
+        "lambda/roots2pix_mt.c",
+        "lambda/solve_score.h"
+      ]
+    },
+    "solve_palette_chunk": {
+      "built_mtime": 1783887723,
+      "sha256": "2ea1cce29c4fb17225eabf1d55d64d2fe55ebf62dae25ae1b81b64ac1a0af8e0",
+      "size": 250344,
+      "sources": [
+        "lambda/root_xforms.h",
+        "lambda/solve_palette_chunk.c",
+        "lambda/solve_score.h"
+      ]
+    },
+    "solve_palette_chunk_mt": {
+      "built_mtime": 1783888127,
+      "sha256": "84234ef0ba65ecf0b707e4e25447a4c4e11cc63ce2f8ebdb04ab4af2482b693f",
+      "size": 206944,
+      "sources": [
+        "lambda/multispan_reader.c",
+        "lambda/multispan_reader.h",
+        "lambda/root_xforms.h",
+        "lambda/solve_palette_chunk_mt.c",
+        "lambda/solve_score.h"
+      ]
+    },
+    "solve_palette_debug": {
+      "built_mtime": 1783887722,
+      "sha256": "d958958d69077bcee5e68d5d436ae67f692edc99e4fe5540ce1f872f98b6202c",
+      "size": 338312,
+      "sources": [
+        "lambda/long_palette_lut.generated.h",
+        "lambda/palette_lut.h",
+        "lambda/root_xforms.h",
+        "lambda/solve_palette_debug.c",
+        "lambda/solve_score.h",
+        "lambda/tri_palette_lut.generated.h"
+      ]
+    },
+    "solve_proximity_hist_sectioned": {
+      "built_mtime": 1783887989,
+      "sha256": "8dc41aae43835e9dea10834ba43225c7ce07a25389def53fed0110012fb0f861",
+      "size": 207504,
+      "sources": [
+        "lambda/multispan_reader.c",
+        "lambda/multispan_reader.h",
+        "lambda/root_xforms.h",
+        "lambda/solve_proximity_hist_sectioned.c",
+        "lambda/solve_score.h"
+      ]
+    },
+    "solve_proximity_stats": {
+      "built_mtime": 1783887722,
+      "sha256": "3abb54f3f746f1467a669d1abe0020507d86ac5b7be0c6b69e3d8bbee73848c2",
+      "size": 322568,
+      "sources": [
+        "lambda/root_xforms.h",
+        "lambda/solve_proximity_stats.c",
+        "lambda/solve_score.h"
+      ]
+    },
+    "step_scores_to_palette_raw": {
+      "built_mtime": 1783887723,
+      "sha256": "105967512a95e9413b5300ac7694f4c57bf6dd2a15c3680387d5ff70ecad2460",
+      "size": 144664,
+      "sources": [
+        "lambda/step_scores_to_palette_raw.c"
+      ]
+    },
+    "sweep": {
+      "built_mtime": 1783887721,
+      "sha256": "533f5fb86f18b7288116eb10e383faa1831f69c9fbccc60292b07755351195e5",
+      "size": 1950952,
+      "sources": [
+        "lambda/coeff_func_lookup.h",
+        "lambda/companion_solver.h",
+        "lambda/g_generated.c",
+        "lambda/giga_generated.c",
+        "lambda/merged_opcodes.h",
+        "lambda/poly_generated_200.c",
+        "lambda/poly_generated_200_funcs.h",
+        "lambda/poly_generated_400.c",
+        "lambda/poly_generated_400_funcs.h",
+        "lambda/poly_generated_500.c",
+        "lambda/poly_generated_500_funcs.h",
+        "lambda/poly_generated_600.c",
+        "lambda/poly_generated_600_funcs.h",
+        "lambda/poly_generated_700.c",
+        "lambda/poly_generated_700_funcs.h",
+        "lambda/poly_generated_800.c",
+        "lambda/poly_generated_800_funcs.h",
+        "lambda/poly_generated_900.c",
+        "lambda/poly_generated_900_funcs.h",
+        "lambda/poly_generated_funcs.h",
+        "lambda/poly_hand.h",
+        "lambda/poly_hand_300a.h",
+        "lambda/poly_hand_300b.h",
+        "lambda/poly_hand_300c.h",
+        "lambda/poly_hand_300d.h",
+        "lambda/poly_hand_300e.h",
+        "lambda/poly_hand_batch2.h",
+        "lambda/poly_hand_batch3.h",
+        "lambda/poly_hand_batch4.h",
+        "lambda/poly_hand_batch5.h",
+        "lambda/poly_hand_batch6.h",
+        "lambda/poly_hand_batch7.h",
+        "lambda/sweep_cli.c"
+      ]
+    },
+    "sweep_cm": {
+      "built_mtime": 1783888242,
+      "sha256": "526e14988711ae246b409092fb693319e1be0f2980a53926674563256275749f",
+      "size": 203656,
+      "sources": [
+        "lambda/companion_solver.h",
+        "lambda/sweep_cm.c"
+      ]
+    },
+    "sweep_coeffgen": {
+      "built_mtime": 1783888242,
+      "sha256": "542c217b4081d01556bdad811dab401c431ab816ee3d42b3bfabc11c88d388c8",
+      "size": 1892640,
+      "sources": [
+        "lambda/coeff_func_lookup.h",
+        "lambda/companion_solver.h",
+        "lambda/g_generated.c",
+        "lambda/giga_generated.c",
+        "lambda/merged_opcodes.h",
+        "lambda/poly_generated_200.c",
+        "lambda/poly_generated_200_funcs.h",
+        "lambda/poly_generated_400.c",
+        "lambda/poly_generated_400_funcs.h",
+        "lambda/poly_generated_500.c",
+        "lambda/poly_generated_500_funcs.h",
+        "lambda/poly_generated_600.c",
+        "lambda/poly_generated_600_funcs.h",
+        "lambda/poly_generated_700.c",
+        "lambda/poly_generated_700_funcs.h",
+        "lambda/poly_generated_800.c",
+        "lambda/poly_generated_800_funcs.h",
+        "lambda/poly_generated_900.c",
+        "lambda/poly_generated_900_funcs.h",
+        "lambda/poly_generated_funcs.h",
+        "lambda/poly_hand.h",
+        "lambda/poly_hand_300a.h",
+        "lambda/poly_hand_300b.h",
+        "lambda/poly_hand_300c.h",
+        "lambda/poly_hand_300d.h",
+        "lambda/poly_hand_300e.h",
+        "lambda/poly_hand_batch2.h",
+        "lambda/poly_hand_batch3.h",
+        "lambda/poly_hand_batch4.h",
+        "lambda/poly_hand_batch5.h",
+        "lambda/poly_hand_batch6.h",
+        "lambda/poly_hand_batch7.h",
+        "lambda/sweep_cli.c"
+      ]
+    },
+    "sweep_mt": {
+      "built_mtime": 1783887721,
+      "sha256": "bb38b0fa1d085914db7a8b6c62c4565700b65d9732d4bad6aabaf0f19f72017e",
+      "size": 252640,
+      "sources": [
+        "lambda/sweep_mt.c"
+      ]
+    }
+  },
+  "generated_at": 1783888243,
+  "git_dirty": false,
+  "git_sha": "2ab4a1740dc5f70c5ff1e4ff6e5de7ac9387d6e7"
+}

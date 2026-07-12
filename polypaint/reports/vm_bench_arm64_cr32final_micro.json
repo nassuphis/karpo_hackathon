@@ -1,0 +1,42 @@
+{
+  "cases": {},
+  "metadata": {
+    "bench_script_sha256": "77fc2b056623580e97a9a03e987a8062a1e70be3f56198cee810b40125723284",
+    "binary_built_here": false,
+    "binary_sha256": "f5fa7b15e4d96b774464d488abd3d59278acda60fc7c8d8898958f1dcac9ca3e",
+    "cc_flags": "-O3 -pthread -I lambda",
+    "compiler": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "cpu_count": 16,
+    "git_dirty": false,
+    "git_sha": "ee07ec1dd5e1d0c0d0fa7d206974a32142da7bb5",
+    "harvested_fixture_sha256": "c38d51c89e2912ba0877e6706c00ce40a5af56ebb08661d9444378a40bc8fbd4",
+    "machine": "arm64",
+    "micro_binary_sha256": "d57b6118163a987bb0ea7ee6d36bbb5e362a06d89ba3cec7bfa8cfe715b83bb8",
+    "micro_source_sha256": "f03e19e7c521a91c9bdcd068222d39d5ccf2be902b0d7ad967bf615ad1a4ed50",
+    "note_source_commit": "ee07ec1",
+    "platform": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "python": "3.14.3"
+  },
+  "micro": {
+    "metric_bundle_pair4_ns": 2629.29,
+    "metric_clusteriness_ns": 1170.73,
+    "metric_max_re_ns": 53.14,
+    "metric_min_angular_ns": 384.41,
+    "metric_proximity_ns": 356.81,
+    "metric_slot1_max_re_ns": 53.21,
+    "metric_slot1_proximity_ns": 361.76,
+    "metric_slot2_dup_proximity_ns": 376.72,
+    "root_affine16_ns": 241.615,
+    "root_affine3_ns": 43.985,
+    "root_affine3_prepared_ns": 37.455,
+    "root_copy_only_ns": 4.395,
+    "root_degree": 35,
+    "root_pull_ns": 136.11,
+    "root_rotate_ns": 21.045,
+    "sink": 181437901.72102106,
+    "solve_vm_arithmetic_7tok_ns": 12.436,
+    "solve_vm_long_31tok_ns": 59.387,
+    "solve_vm_pass_2tok_ns": 3.356,
+    "solve_vm_transcendental_7tok_ns": 56.571
+  }
+}

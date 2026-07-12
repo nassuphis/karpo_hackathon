@@ -112,6 +112,22 @@ test.describe('DeepZoom Inventory', () => {
     await expect.poll(() => page.evaluate(() => window._dzListCalls)).toBe(2);
   });
 
+  test('an EMPTY inventory is a cached result — no refetch on re-entry (CR30 F12)', async ({ page }) => {
+    await page.evaluate(() => {
+      window._dzListCalls = 0;
+      window.lambdaPost = async function (name, body, path) {
+        if (name === 'storage' && path === '/list-deepzoom') { window._dzListCalls++; return { exports: [], count: 0 }; }
+        return {};
+      };
+    });
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('#deepzoom-inventory')).toContainText('No DeepZoom exports yet');
+    await page.click('.tab-btn:text("Compute")');
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('#deepzoom-inventory')).toContainText('No DeepZoom exports yet');
+    expect(await page.evaluate(() => window._dzListCalls)).toBe(1);
+  });
+
   test('a failed refresh keeps the cached inventory, selection, and viewer', async ({ page }) => {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });

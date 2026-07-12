@@ -64,7 +64,7 @@ function _logContractWarnings(entries, target='compute-log') {
 function switchTab(name) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === name));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
-    if (name === 'results') loadResults();
+    if (name === 'results') void loadResults().catch(() => {});   // UI already shows the error
     if (name === 'render') _maybeAutoRefreshRenderInventory();
     if (name === 'favorites') void loadFavoritesInventory();
     if (name === 'book') void loadBookTab();
@@ -78,6 +78,8 @@ function switchTab(name) {
 /* ---- Results management ---- */
 let _resultsCache = [];      // last fetched results
 let _resultsLoaded = false;  // session cache: tab re-entry renders _resultsCache
+let _resultsLoadPromise = null;  // in-flight load — awaitable by every caller (F4)
+let _resultsLoadForced = false;  // whether the in-flight load was a forced refresh
                              // with ZERO requests (favorites-speedup idea 1);
                              // Refresh/compute-completion/missing-job force a fetch
 let _selectedJobId = null;   // currently selected job_id
@@ -235,9 +237,25 @@ function openResultsRefreshPopup() {
 }
 
 async function loadResults(options = null) {
-    if (_resultsLoading) return;
     const force = !!(options && options.force);
+    // A caller awaiting loadResults must get POST-REFRESH state (code-review-30
+    // F4): join the in-flight request instead of returning early, and if this
+    // call is forced but the active one wasn't, run one follow-up afterwards.
+    if (_resultsLoadPromise) {
+        if (!force || _resultsLoadForced) return _resultsLoadPromise;
+        return _resultsLoadPromise.catch(() => {}).then(() => loadResults(options));
+    }
     if (_resultsLoaded && !force) return;   // cached — the table DOM is already live
+    _resultsLoadForced = force;
+    _resultsLoadPromise = _loadResultsNow(options);
+    try {
+        return await _resultsLoadPromise;
+    } finally {
+        _resultsLoadPromise = null;
+    }
+}
+
+async function _loadResultsNow(options) {
     _resultsLoading = true;
     _syncResultsRefreshPopupLoadingState();
     let countEl = null;
@@ -277,6 +295,7 @@ async function loadResults(options = null) {
     } catch (e) {
         if (countEl) countEl.textContent = 'Error: ' + e.message;
         log('Results refresh failed: ' + e.message, 'err', 'results-log');
+        throw e;   // callers must see failure, not a false completion (F4)
     } finally {
         _resultsLoading = false;
         _syncResultsRefreshPopupLoadingState();
@@ -296,7 +315,9 @@ async function _getResultDetail(jobId) {
 async function _ensureResultsSelection(jobId) {
     if (!jobId) throw new Error('No result selected');
     const hasJob = _resultsCache.some(r => r.job_id === jobId);
-    if (!hasJob) await loadResults({ force: true });   // cache miss = stale by definition
+    if (!hasJob) await loadResults({ force: true });   // cache miss = stale by definition;
+                                                       // a load FAILURE propagates as itself,
+                                                       // never as a fake "not found" (F4)
     const found = _resultsCache.some(r => r.job_id === jobId);
     if (!found) throw new Error(`Result ${jobId} not found`);
     selectResult(jobId);
@@ -344,11 +365,19 @@ function _favoriteRowsSignature(rows) {
     ).join(';');
 }
 
-async function _loadFavoriteRefs(force = false) {
-    if (_favoriteRefsLoaded && !force) return _favoriteRefs;
+// PURE fetch — touches no shared state (code-review-30 F5): only the winning
+// generation may commit refs, so a superseded response can never poison the
+// cache that _isFavorite()/tab re-entry read.
+async function _fetchFavoriteRefs(force = false) {
     // force -> refresh:true re-validates each favorite by exact key server-side.
     const resp = await lambdaPost('storage', force ? { refresh: true } : {}, '/list-favorites');
-    _favoriteRefs = Array.isArray(resp.favorites) ? resp.favorites : [];
+    return Array.isArray(resp.favorites) ? resp.favorites : [];
+}
+
+async function _loadFavoriteRefs(force = false) {
+    if (_favoriteRefsLoaded && !force) return _favoriteRefs;
+    const refs = await _fetchFavoriteRefs(force);
+    _favoriteRefs = refs;
     _favoriteRefsLoaded = true;
     return _favoriteRefs;
 }
@@ -589,25 +618,36 @@ async function loadFavoritesInventory(options = {}) {
     if (_favoriteLoadPromise && !force) return _favoriteLoadPromise;
     if (statusEl) { statusEl.textContent = 'Loading...'; statusEl.className = 'status'; }
     const generation = force ? ++_favoriteLoadGeneration : _favoriteLoadGeneration;
-    _favoriteLoadPromise = (async () => {
+    const promise = (async () => {
         try {
-            await _loadFavoriteRefs(force);
-            if (generation !== _favoriteLoadGeneration) return _favoriteArtifacts;  // superseded
+            const refs = (_favoriteRefsLoaded && !force)
+                ? _favoriteRefs
+                : await _fetchFavoriteRefs(force);
+            if (generation !== _favoriteLoadGeneration) return _favoriteArtifacts;  // superseded: commit NOTHING
+            _favoriteRefs = refs;
+            _favoriteRefsLoaded = true;
             _rebuildFavoriteArtifactsFromRefs();
             renderFavoritesPanel();
             if (statusEl) { statusEl.textContent = 'Ready'; statusEl.className = 'status ok'; }
+            return _favoriteArtifacts;
         } catch (e) {
             if (generation !== _favoriteLoadGeneration) return _favoriteArtifacts;
-            _favoriteArtifactsReady = false;
-            _favoriteArtifacts = [];
-            _favoriteSelectedIdx = -1;
-            _favoriteSelectedKey = '';
-            renderFavoritesPanel();
-            if (statusEl) { statusEl.textContent = 'Refresh failed: ' + e.message; statusEl.className = 'status error'; }
+            // KEEP the last good list (code-review-30 F6, the DeepZoom rule):
+            // a transient failure must never blank a valid panel. Only an
+            // authoritative empty response clears it (handled above).
+            if (statusEl) {
+                statusEl.textContent = 'Refresh failed: ' + e.message
+                    + ((_favoriteArtifacts || []).length ? ' — showing cached list' : '');
+                statusEl.className = 'status error';
+            }
+            throw e;   // refreshFavoritesInventory must log the real outcome
         }
-        return _favoriteArtifacts;
-    })().finally(() => { _favoriteLoadPromise = null; });
-    return _favoriteLoadPromise;
+    })();
+    _favoriteLoadPromise = promise;
+    promise.catch(() => {}).finally(() => {
+        if (_favoriteLoadPromise === promise) _favoriteLoadPromise = null;   // owner-checked (F5)
+    });
+    return promise;
 }
 
 async function refreshFavoritesInventory() {

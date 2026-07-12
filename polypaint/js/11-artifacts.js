@@ -1514,6 +1514,7 @@ async function _dzLoadInventoryNow(options) {
         const exports = data.exports || [];
 
         if (exports.length === 0) {
+            _dzInventoryLoaded = true;   // EMPTY is a loaded result, not uninitialized (CR30 F12)
             window._dzInventory = [];
             window._dzSelectedIdx = -1;
             window._dzSelectedKey = '';

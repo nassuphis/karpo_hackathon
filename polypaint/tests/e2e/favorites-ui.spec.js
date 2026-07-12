@@ -115,6 +115,64 @@ test.describe('Favorites UI', () => {
     expect(await page.evaluate(() => window._listCalls)).toBe(1);
   });
 
+  test('a superseded load cannot poison the refs cache or clear the newer promise slot', async ({ page }) => {
+    // code-review-30 F5: slow non-forced request A vs fast forced request B.
+    await page.evaluate((rows) => {
+      window._resolvers = [];
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-favorites') {
+          return new Promise((resolve) => { window._resolvers.push({ body, resolve }); });
+        }
+        throw new Error('unexpected ' + path);
+      };
+      window._stale = [{ ...rows[0], display_name: 'STALE OLD ROW' }];
+      window._fresh = rows;
+    }, FAVORITE_ROWS);
+    await page.click('.tab-btn:text("Favorites")');            // A starts (non-forced)
+    await page.evaluate(() => { void loadFavoritesInventory({ force: true }); });   // B starts (forced)
+    await page.waitForFunction(() => window._resolvers.length === 2);
+    await page.evaluate(() => {
+      window._resolvers[1].resolve({ favorites: window._fresh });   // B (forced) wins first
+    });
+    await expect(page.locator('.favorite-art-row')).toHaveCount(2);
+    await page.evaluate(() => {
+      window._resolvers[0].resolve({ favorites: window._stale });   // A resolves late
+    });
+    await page.waitForTimeout(150);
+    const st = await page.evaluate(() => ({
+      names: (_favoriteRefs || []).map((r) => r.display_name),
+      rows: document.querySelectorAll('.favorite-art-row').length,
+    }));
+    expect(st.names).toEqual(['Favorite A', 'Favorite B']);    // stale A committed NOTHING
+    expect(st.rows).toBe(2);
+  });
+
+  test('a failed refresh keeps the cached rows and is logged as a failure', async ({ page }) => {
+    // code-review-30 F6: the DeepZoom keep-last-good rule applies to Favorites.
+    await page.evaluate((rows) => {
+      window._failNext = false;
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-favorites') {
+          if (window._failNext) throw new Error('boom 503');
+          return { favorites: rows };
+        }
+        throw new Error('unexpected ' + path);
+      };
+    }, FAVORITE_ROWS);
+    await page.click('.tab-btn:text("Favorites")');
+    await expect(page.locator('.favorite-art-row')).toHaveCount(2);
+    await page.evaluate(() => { window._failNext = true; window._logLines = []; 
+      const origLog = window.log;
+      window.log = (msg, cls, target) => { window._logLines.push({ msg, cls }); return origLog(msg, cls, target); };
+    });
+    await page.click('#btn-favorites-refresh');
+    await expect(page.locator('#favorites-status')).toContainText('showing cached list');
+    await expect(page.locator('.favorite-art-row')).toHaveCount(2);   // never blanked
+    const lines = await page.evaluate(() => window._logLines);
+    expect(lines.some((l) => /Favorites refresh failed/.test(l.msg) && l.cls === 'err')).toBe(true);
+    expect(lines.some((l) => /Favorites refreshed/.test(l.msg))).toBe(false);
+  });
+
   test('GoRender switches to Render and selects the artifact', async ({ page }) => {
     await page.evaluate(({ rows, summaryA, detail }) => {
       window._mockFavoriteRows = rows.slice();

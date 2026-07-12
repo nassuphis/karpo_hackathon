@@ -151,6 +151,38 @@ test.describe('Results UI', () => {
     await expect.poll(() => page.evaluate(() => window._resultsListBodies.length)).toBe(3);
   });
 
+  test('selection during an in-flight refresh awaits it instead of failing (CR30 F4)', async ({ page }) => {
+    await page.evaluate(({ results }) => {
+      window._listResolvers = [];
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list') {
+          return new Promise((resolve) => { window._listResolvers.push(resolve); });
+        }
+        if (path === '/detail') return { has_preview: false, file_count: 1, calc: {} };
+        return {};
+      };
+      window._newResults = results.concat([{ job_id: 'compute_new', function: 'poly_new', degree: 5, N: 100, times: 1, total_size: 10, n_chunks: 1 }]);
+    }, { results: RESULTS });
+    await page.click('.tab-btn:text("Results")');              // refresh in flight
+    const pending = page.evaluate(() => _ensureResultsSelection('compute_new').then(() => 'ok', (e) => 'err:' + e.message));
+    await page.waitForFunction(() => window._listResolvers.length >= 1);
+    await page.evaluate(() => {
+      const payload = { results: window._newResults, count: window._newResults.length, list_us: 1000 };
+      window._listResolvers.forEach((res) => res(payload));    // resolve all joined loads
+    });
+    expect(await pending).toBe('ok');                          // selection waited for the refresh
+    // a REJECTED load surfaces its own error, never a fake "not found"
+    await page.evaluate(() => {
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list') throw new Error('network down');
+        return {};
+      };
+      _resultsLoaded = false; _resultsCache = [];
+    });
+    const err = await page.evaluate(() => _ensureResultsSelection('compute_other').then(() => 'ok', (e) => e.message));
+    expect(err).toContain('network down');
+  });
+
   test('results refresh popup forwards worker count and filter mode updates placeholder and rows', async ({ page }) => {
     await page.evaluate(({ results, details }) => {
       window._resultsListBodies = [];

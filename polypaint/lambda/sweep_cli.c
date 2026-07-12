@@ -3569,12 +3569,36 @@ typedef struct {
 } CoeffLoweredExprPlan;
 
 typedef struct {
+    double re[COEFF_PROGRAM_MAX_ARGS];
+    double im[COEFF_PROGRAM_MAX_ARGS];
+    int n;
+    double andy_re;
+    double andy_im;
+    int has_andy;
+} CoeffResolvedArgs;
+
+/* Load-time argument plan (code-review-31 F1). Most tokens have no arguments
+ * and no dynamic blend, yet evaluation cleared and re-resolved a ~160-byte
+ * frame for every token on every row. The plan classifies each token ONCE at
+ * parse: NONE dispatches against a shared zero frame, STATIC against a frame
+ * resolved at load, DYNAMIC (expression-referenced args/blend) keeps the
+ * per-row resolution. DYNAMIC is the zero value, so an unprepared program
+ * degrades to the always-correct slow path. */
+enum CoeffArgMode {
+    COEFF_ARG_MODE_DYNAMIC = 0,
+    COEFF_ARG_MODE_NONE = 1,
+    COEFF_ARG_MODE_STATIC = 2
+};
+
+typedef struct {
     int token_count;
     int stack_max;
     int scalar_expr_count;
     CoeffProgramToken tokens[COEFF_PROGRAM_MAX_TOKENS];
     CoeffScalarExpr scalar_exprs[COEFF_PROGRAM_MAX_SCALAR_EXPRS];
     CoeffLoweredExprPlan expr_plans[COEFF_PROGRAM_MAX_SCALAR_EXPRS];
+    uint8_t arg_mode[COEFF_PROGRAM_MAX_TOKENS];
+    CoeffResolvedArgs prepared_args[COEFF_PROGRAM_MAX_TOKENS];
 } CoeffProgram;
 
 typedef struct {
@@ -3626,14 +3650,6 @@ typedef struct {
     double scan_k;
 } CoeffProgramWorkspace;
 
-typedef struct {
-    double re[COEFF_PROGRAM_MAX_ARGS];
-    double im[COEFF_PROGRAM_MAX_ARGS];
-    int n;
-    double andy_re;
-    double andy_im;
-    int has_andy;
-} CoeffResolvedArgs;
 
 /* Per-row evaluation context: everything that stays constant while one
  * program runs for one parameter-grid row. Built once in evalCoeffProgram;
@@ -3918,6 +3934,44 @@ static int coeffBuildLoweredExprPlan(const CoeffScalarExpr *expr, CoeffLoweredEx
     return 0;
 }
 
+static void coeffPrepareArgPlan(CoeffProgram *program) {
+    /* CR31 F1: classify every token's argument needs once. Semantics match
+     * coeffResolveTokenArgs exactly: NONE == the zeroed frame it produced for
+     * argument-free tokens, STATIC == the frame it produced when every value
+     * was a literal. Anything unusual stays DYNAMIC (per-row resolution),
+     * including out-of-range n_args so the original runtime error surfaces. */
+    for (int k = 0; k < program->token_count; k++) {
+        const CoeffProgramToken *tok = &program->tokens[k];
+        if (tok->n_args > COEFF_PROGRAM_MAX_ARGS || tok->andy_expr_ref >= 0) {
+            program->arg_mode[k] = COEFF_ARG_MODE_DYNAMIC;
+            continue;
+        }
+        int dynamic = 0;
+        for (int i = 0; i < tok->n_args; i++) {
+            if (tok->expr_refs[i] >= 0) { dynamic = 1; break; }
+        }
+        if (dynamic) {
+            program->arg_mode[k] = COEFF_ARG_MODE_DYNAMIC;
+            continue;
+        }
+        if (tok->n_args == 0 && tok->andy == 0.0) {
+            program->arg_mode[k] = COEFF_ARG_MODE_NONE;
+            continue;
+        }
+        CoeffResolvedArgs *pre = &program->prepared_args[k];
+        memset(pre, 0, sizeof(*pre));
+        pre->n = tok->n_args;
+        for (int i = 0; i < tok->n_args; i++) {
+            pre->re[i] = tok->args[i];
+            pre->im[i] = tok->args_im[i];
+        }
+        pre->andy_re = tok->andy;
+        pre->andy_im = 0.0;
+        pre->has_andy = tok->andy != 0.0;
+        program->arg_mode[k] = COEFF_ARG_MODE_STATIC;
+    }
+}
+
 static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
     memset(program, 0, sizeof(*program));
     const char *p = findKey(buf, "coeff_program");
@@ -4028,6 +4082,7 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
         tokens = tokEnd;
     }
     program->token_count = count;
+    coeffPrepareArgPlan(program);
     return 1;
 }
 
@@ -5578,13 +5633,22 @@ static int evalCoeffProgram(const CoeffProgram *program,
     };
     const CoeffEvalContext *ctx = &ctxStorage;
 
+    static const CoeffResolvedArgs kCoeffNoArgs;   /* zero frame for NONE tokens */
     for (int k = 0; k < program->token_count; k++) {
         const CoeffProgramToken *tok = &program->tokens[k];
-        CoeffResolvedArgs resolved;
-        if (coeffResolveTokenArgs(ctx, tok, &resolved) != 0) return 1;
+        CoeffResolvedArgs dynArgs;
+        const CoeffResolvedArgs *resolvedArgs;
+        if (program->arg_mode[k] == COEFF_ARG_MODE_NONE) {
+            resolvedArgs = &kCoeffNoArgs;
+        } else if (program->arg_mode[k] == COEFF_ARG_MODE_STATIC) {
+            resolvedArgs = &program->prepared_args[k];
+        } else {
+            if (coeffResolveTokenArgs(ctx, tok, &dynArgs) != 0) return 1;
+            resolvedArgs = &dynArgs;
+        }
         int rc = 0;
         switch (tok->op) {  /* cases in COEFF_OP_* enum order */
-            case COEFF_OP_CONST:             rc = coeffProgramConstOp(ctx, tok, &resolved); break;
+            case COEFF_OP_CONST:             rc = coeffProgramConstOp(ctx, tok, resolvedArgs); break;
             case COEFF_OP_PUSH:              rc = coeffProgramPushOp(ctx, tok); break;
             case COEFF_OP_EMIT:              rc = coeffProgramEmitOp(ws); break;
             case COEFF_OP_DUPLICATE:         rc = coeffProgramDuplicateOp(ws); break;
@@ -5598,20 +5662,20 @@ static int evalCoeffProgram(const CoeffProgram *program,
                 ws->stack_depth = 0;
                 ws->stack_head = 0;
                 break;
-            case COEFF_OP_BLEND:             rc = coeffProgramBlendOp(ctx, tok, &resolved); break;
-            case COEFF_OP_LEGACY:            rc = coeffProgramNativeTransformOp(ctx, tok, &resolved, "legacy"); break;
-            case COEFF_OP_POKE_POLY:         rc = coeffProgramPokePolyOp(ctx, tok, &resolved); break;
-            case COEFF_OP_POKE_TOS:          rc = coeffProgramPokeTosOp(ctx, tok, &resolved); break;
+            case COEFF_OP_BLEND:             rc = coeffProgramBlendOp(ctx, tok, resolvedArgs); break;
+            case COEFF_OP_LEGACY:            rc = coeffProgramNativeTransformOp(ctx, tok, resolvedArgs, "legacy"); break;
+            case COEFF_OP_POKE_POLY:         rc = coeffProgramPokePolyOp(ctx, tok, resolvedArgs); break;
+            case COEFF_OP_POKE_TOS:          rc = coeffProgramPokeTosOp(ctx, tok, resolvedArgs); break;
             case COEFF_OP_VECTOR_BINARY:     rc = coeffProgramVectorBinaryDispatch(ctx, tok); break;
             case COEFF_OP_VECTOR_UNARY:      rc = coeffProgramVectorUnaryDispatch(ctx, tok); break;
             case COEFF_OP_VECTOR_ROLL:       rc = coeffProgramVectorRollDispatch(ctx, tok); break;
             case COEFF_OP_VECTOR_ARGSORT:    rc = coeffProgramArgsortDispatch(ctx, tok); break;
-            case COEFF_OP_LITTLEWOOD:        rc = coeffProgramLittlewoodOp(ctx, tok, &resolved, k, evalSeed); break;
-            case COEFF_OP_LINSPACE:          rc = coeffProgramLinspaceOp(ctx, tok, &resolved); break;
-            case COEFF_OP_RANGE:             rc = coeffProgramRangeOp(ctx, tok, &resolved); break;
+            case COEFF_OP_LITTLEWOOD:        rc = coeffProgramLittlewoodOp(ctx, tok, resolvedArgs, k, evalSeed); break;
+            case COEFF_OP_LINSPACE:          rc = coeffProgramLinspaceOp(ctx, tok, resolvedArgs); break;
+            case COEFF_OP_RANGE:             rc = coeffProgramRangeOp(ctx, tok, resolvedArgs); break;
             case COEFF_OP_SET:               rc = coeffProgramSetOp(ctx, tok); break;
-            case COEFF_OP_AFFINE:            rc = coeffProgramAffineOp(ctx, tok, &resolved); break;
-            case COEFF_OP_TYPED_PUSH_SCALAR: rc = coeffProgramTypedPushScalarOp(ctx, tok, &resolved); break;
+            case COEFF_OP_AFFINE:            rc = coeffProgramAffineOp(ctx, tok, resolvedArgs); break;
+            case COEFF_OP_TYPED_PUSH_SCALAR: rc = coeffProgramTypedPushScalarOp(ctx, tok, resolvedArgs); break;
             case COEFF_OP_TYPED_PUSH_VECTOR: rc = coeffProgramTypedPushVectorOp(ctx, tok); break;
             case COEFF_OP_TYPED_BINARY:      rc = coeffProgramTypedBinaryOp(ws, tok); break;
             case COEFF_OP_TYPED_UNARY:       rc = coeffProgramTypedUnaryOp(ws, tok); break;
@@ -5619,7 +5683,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
             case COEFF_OP_TYPED_SET_POLY:    rc = coeffProgramTypedSetPoly(ws); break;
             case COEFF_OP_TYPED_POKE_POLY:   rc = coeffProgramTypedPokePoly(ws); break;
             case COEFF_OP_TYPED_FILL:        rc = coeffProgramTypedFill(ws); break;
-            case COEFF_OP_NATIVE_TRANSFORM:  rc = coeffProgramNativeTransformOp(ctx, tok, &resolved, "native transform"); break;
+            case COEFF_OP_NATIVE_TRANSFORM:  rc = coeffProgramNativeTransformOp(ctx, tok, resolvedArgs, "native transform"); break;
             case COEFF_OP_TYPED_BLEND:       rc = coeffProgramTypedBlend(ws); break;
             case COEFF_OP_SCAN:              rc = coeffProgramScanOp(ctx, tok); break;
             case COEFF_OP_SLICE_READ:        rc = coeffProgramSliceReadOp(ctx, tok); break;

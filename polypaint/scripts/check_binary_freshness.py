@@ -101,19 +101,24 @@ def check():
             missing.append(name)
             continue
         bin_mtime = binary.stat().st_mtime
+        entry = (manifest or {}).get("binaries", {}).get(name)
+        recorded = entry.get("source_sha256", {}) if entry else {}
         for src in include_closure(c_files):
-            if src.stat().st_mtime > bin_mtime:
-                stale.append((name, str(src.relative_to(ROOT)),
-                              f"{src.stat().st_mtime - bin_mtime:.0f}s newer mtime"))
-        if manifest and name in manifest.get("binaries", {}):
-            entry = manifest["binaries"][name]
-            recorded = entry.get("source_sha256", {})
-            for src in include_closure(c_files):
-                rel = str(src.relative_to(ROOT))
-                if rel in recorded and sha256_file(src) != recorded[rel]:
+            rel = str(src.relative_to(ROOT))
+            if rel in recorded:
+                # Hash is truth: deterministic regeneration (palette LUT
+                # headers on every deploy) refreshes mtimes without changing
+                # content — a matching hash means NOT stale. A differing
+                # hash means stale regardless of mtimes (touch-proof).
+                if sha256_file(src) != recorded[rel]:
                     stale.append((name, rel, "source hash differs from manifest"))
-            if sha256_file(binary) != entry["sha256"]:
-                stale.append((name, "(binary)", "binary hash differs from manifest"))
+                continue
+            if src.stat().st_mtime > bin_mtime:
+                stale.append((name, rel,
+                              f"{src.stat().st_mtime - bin_mtime:.0f}s newer mtime "
+                              "(no manifest hash to confirm content)"))
+        if entry and sha256_file(binary) != entry["sha256"]:
+            stale.append((name, "(binary)", "binary hash differs from manifest"))
     for name in missing:
         print(f"MISSING: lambda/{name}")
     for name, src, why in stale:

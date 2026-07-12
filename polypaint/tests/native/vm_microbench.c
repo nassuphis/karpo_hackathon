@@ -192,6 +192,40 @@ static double bench_metric_bundle(long calls) {
     return median_ns_per_call(elapsed, calls);
 }
 
+/* CR32 F2/F8: production-entry benches. bench_metric() times the raw metric
+ * helper directly and CANNOT see the feature-cache plumbing; these go through
+ * solve_score_eval_metric_slots — the changed production entry — so one-slot
+ * cost and the dup-slot memo are measured where production pays them. */
+static double bench_metric_slots(const enum SolveMetric *metrics, int count, long calls) {
+    float roots[ROOT_DEGREE * 2];
+    float outBuf[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    uint64_t elapsed[REPS];
+    for (int i = 0; i < ROOT_DEGREE; i++) {
+        const double theta = 2.0 * M_PI * (double)i / (double)ROOT_DEGREE;
+        roots[2 * i] = (float)((0.6 + 0.01 * i) * cos(theta));
+        roots[2 * i + 1] = (float)((0.6 + 0.01 * i) * sin(theta));
+    }
+    SolveScoreProgram prog;
+    memset(&prog, 0, sizeof(prog));
+    prog.metricCount = count;
+    for (int i = 0; i < count; i++) {
+        prog.metrics[i] = metrics[i];
+        prog.metricSources[i] = SOLVE_SCORE_SOURCE_SOLVE;
+        prog.clipLo[i] = 0.0;
+        prog.clipHi[i] = 4.0 + i;
+    }
+    for (int rep = 0; rep < REPS; rep++) {
+        const uint64_t t0 = now_ns();
+        for (long call = 0; call < calls; call++) {
+            roots[0] += (float)((call & 1L) ? 1e-7 : -1e-7);
+            solve_score_eval_metric_slots(roots, ROOT_DEGREE, NULL, 0, NULL, 0, &prog, outBuf);
+            bench_sink += outBuf[0];
+        }
+        elapsed[rep] = now_ns() - t0;
+    }
+    return median_ns_per_call(elapsed, calls);
+}
+
 static double bench_metric(enum SolveMetric metric, long calls) {
     float roots[ROOT_DEGREE * 2];
     uint64_t elapsed[REPS];
@@ -209,6 +243,18 @@ static double bench_metric(enum SolveMetric metric, long calls) {
         elapsed[rep] = now_ns() - t0;
     }
     return median_ns_per_call(elapsed, calls);
+}
+
+/* CR32 F8/F12: the hand-built entries above never get prep_fn, so they time
+ * the legacy fallback. This case parses a chain exactly like the consumer
+ * binaries (parse_root_xform_json -> rt_prepare_chain) and times the PREPARED
+ * dispatch — the path production actually runs. */
+static int parse_prepared_chain(RootXformEntry *entries, int maxCount) {
+    static const char *CHAIN_JSON =
+        "[{\"name\":\"rotate_roots\",\"args\":[0.125]},"
+        "{\"name\":\"mul_complex\",\"args\":[0.9,0.1]},"
+        "{\"name\":\"add_complex\",\"args\":[0.2,-0.1]}]";
+    return parse_root_xform_json(CHAIN_JSON, entries, maxCount);
 }
 
 int main(void) {
@@ -252,6 +298,20 @@ int main(void) {
     printf("  \"metric_clusteriness_ns\": %.3f,\n", bench_metric(SOLVE_METRIC_CLUSTERINESS, metric_calls));
     printf("  \"metric_min_angular_ns\": %.3f,\n", bench_metric(SOLVE_METRIC_MIN_ANGULAR_SEPARATION, metric_calls));
     printf("  \"metric_bundle_pair4_ns\": %.3f,\n", bench_metric_bundle(metric_calls));
+    {
+        const enum SolveMetric one_max_re[1] = {SOLVE_METRIC_MAX_RE};
+        const enum SolveMetric one_prox[1] = {SOLVE_METRIC_PROXIMITY};
+        const enum SolveMetric dup_prox[2] = {SOLVE_METRIC_PROXIMITY, SOLVE_METRIC_PROXIMITY};
+        printf("  \"metric_slot1_max_re_ns\": %.3f,\n", bench_metric_slots(one_max_re, 1, metric_calls));
+        printf("  \"metric_slot1_proximity_ns\": %.3f,\n", bench_metric_slots(one_prox, 1, metric_calls));
+        printf("  \"metric_slot2_dup_proximity_ns\": %.3f,\n", bench_metric_slots(dup_prox, 2, metric_calls));
+    }
+    {
+        RootXformEntry preparedChain[MAX_RT_CHAIN];
+        int nPrepared = parse_prepared_chain(preparedChain, MAX_RT_CHAIN);
+        printf("  \"root_affine3_prepared_ns\": %.3f,\n",
+               nPrepared == 3 ? bench_root_chain(preparedChain, nPrepared, root_calls) : -1.0);
+    }
     printf("  \"sink\": %.17g\n", bench_sink);
     printf("}\n");
     return 0;

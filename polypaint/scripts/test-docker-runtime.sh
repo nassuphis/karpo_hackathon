@@ -10,6 +10,10 @@ LIBVIPS_BUILD="$ROOT/lambda/layer-build"
 
 echo "=== Docker Runtime Regression Test ==="
 
+# CR32 F7: a green Docker run must never certify stale binaries — fail up
+# front if any deploy binary is older than its sources (transitive includes).
+python3 "$ROOT/scripts/check_binary_freshness.py" --check
+
 # Verify binaries exist
 for BIN in "$ROOT/lambda/sweep" "$ROOT/lambda/sweep_mt" "$ROOT/lambda/sweep_cm" "$ROOT/lambda/sweep_coeffgen" "$ROOT/lambda/roots2pix_mt" "$ROOT/lambda/solve_palette_chunk_mt" "$ROOT/lambda/solve_proximity_stats" "$ROOT/lambda/solve_proximity_hist_sectioned" "$ROOT/lambda/score_raw_render" "$ROOT/lambda/bilevel_section_raster" "$ROOT/lambda/coeffs_bilevel_raster" "$ROOT/lambda/bilevel_merge" "$ROOT/lambda/raw_to_bilevel" "$ROOT/lambda/assemble_greyscale"; do
     if [ ! -f "$BIN" ]; then

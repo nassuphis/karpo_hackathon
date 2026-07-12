@@ -1,5 +1,30 @@
 # CR31 Post-Mortem: VM Performance Campaign
 
+> **CORRECTED per code-review-32 (2026-07-12).** The adversarial audit of this
+> campaign found six defects the original text certified as sound, all
+> verified and all fixed in the CR32 remediation wave (same day):
+> **(1)** the F7 fast kernels dropped the evaluator's non-finite clamp —
+> overflow emitted `inf` where the VM's contract says `0` (CRITICAL; clamp
+> restored, policy now pinned by tests/test_coeff_fast_kernel_policy.py);
+> **(2)** the F4 feature cache made one-slot production programs 5.3–6.7×
+> slower at `solve_score_eval_metric_slots` (rewritten: requirement plan,
+> direct path for single-slot sources, masked pair pass, lazy heap state —
+> one-slot back to baseline, bundle improved to 1.73×);
+> **(3)** chunked t1 NEVER entered the blocked I/O — the "t1 gap is not
+> syscalls" conclusion below compared per-row vs per-row (t1 now runs the
+> same block engine: **−34.8% on M3**, the review's original target beaten);
+> **(4)** the CPU cap could flip a full request between seed policies by host
+> topology (guarded: the cap never crosses the serial/threaded boundary);
+> **(5)** worker failure flags were racy plain ints (now `atomic_int`,
+> TSan-gated by scripts/test-tsan-races.sh);
+> **(6)** the "all deploy binaries rebuilt" claim was false — five binaries
+> predated the sources their Docker run claimed to verify (freshness is now
+> machine-checked: scripts/check_binary_freshness.py gates the Docker
+> regression, and scripts/build-deploy-binaries.sh rebuilds the FULL set).
+> Corrected numbers: see "CR32 corrected results" at the end of this file.
+> Sections below keep the original text with inline corrections where a
+> specific claim was false.
+
 Implemented: 2026-07-12, on top of `32e01ff`.
 Commits: `7ad40be` (P0+F1), `eba68ef` (P1), `a73c136` (P2), `5159951` (P3), final wave (P4-scoped, F7, F10, portability fix).
 Host for all numbers: Apple M3 Max, arm64, Apple clang 17, `cc -O3 -pthread` — the same
@@ -12,22 +37,29 @@ production sizing default** (see Residual Work).
 | Case | Review baseline | Target | Achieved | Verdict |
 |---|---:|---:|---:|---|
 | Harvested `compute_mqlacwaq`, Coeff Program | 23.81 ms | ≤ 21.4 ms after F1 | **19.61 ms (−16.5%)** | ✅ beat (F1 alone measured −15.9%) |
-| Chunked deg-35, 65,536 rows, 1 worker | 151.5 ms | ≤ 132.8 ms | 152.8 ms (+1.1%) | ❌ on this host — see F2 notes |
+| Chunked deg-35, 65,536 rows, 1 worker | 151.5 ms | ≤ 132.8 ms | ~~152.8 ms (+1.1%)~~ **CR32: t1 never entered blocked I/O; unified engine → 99.8 ms (−34.8%)** | ✅ after CR32 |
 | Chunked deg-35, 65,536 rows, 4 workers | 70.2 ms | no regression | **26.5 ms (−62.2%)** | ✅ far beyond |
 | Chunked deg-35, 8 workers | 90.5 ms (worse than 4) | — | **13.8 ms (−84.7%)**, now the fastest | ✅ cliff eliminated |
-| Param expr, 262k rows, 4 workers | 4.43 ms | no regression | 5.34 ms (+9.6%) | ⚠ within observed MAD; watch on Graviton |
+| Param expr, 262k rows, 4 workers | 4.43 ms | no regression | ~~5.34 ms (+9.6%) "within MAD"~~ **CR32: repeatable +15–20% M3 regression of one-pwrite-per-row; write batching → 4.22 ms (−24.2%)** | ✅ after CR32 |
 | Param expr, 8 workers | 24.31 ms | ≤ 1.3× best | **4.87 ms**, now the best count | ✅ cliff eliminated |
 | Root rotate predecode | 28.4 ns | 15–25% A/B gain | implemented; direct micro unchanged by design (see F8) | ✅ structural |
 | Solve 31-token VM | 56.9 ns | no regression | 56.6 ns | ✅ |
 | Solve mixed pair-metric bundle | (new case) | ≥ 1.5× | **4288.8 → 2658.9 ns = 1.61×** | ✅ |
 
 Every A/B in the campaign was **byte-identical** (SHA-256 of complete output files,
-enforced by the tool — a mismatch is a fatal error, not a warning). The full 13-file
-correctness gate (param/coeff native, chains, source equivalence, wire fingerprints,
-M3 oracles, root registry, solve parity + equivalence, whole-sweep oracle) plus the
-coeff VM property fuzz passed after every phase: **214 passed, 63 subtests** at the end.
-The ARM64 Docker runtime regression passed against freshly cross-compiled deploy
-binaries.
+enforced by the tool — a mismatch is a fatal error, not a warning). **CR32
+correction: byte equality held only for the finite fixtures measured — the F7
+fast kernels changed non-finite semantics (overflow → `inf` instead of the
+clamped `0`), which the matrix never exercised. Fixed and pinned; the policy
+suite now covers overflow, subnormal, signed zero, and non-finite inputs.**
+The full 13-file correctness gate plus the coeff VM property fuzz passed after
+every phase: **214 passed, 63 subtests** at the end (now 326 + 63 with the
+CR32 gates). ~~The ARM64 Docker runtime regression passed against freshly
+cross-compiled deploy binaries.~~ **CR32 correction: five deploy binaries
+(roots2pix_mt, solve_proximity_hist_sectioned, solve_palette_chunk_mt,
+sweep_coeffgen, sweep_cm) predated the P1/P3/P4 source when that run
+executed — it certified packaging, not the final code. Freshness is now a
+machine-checked precondition of the Docker gate.**
 
 ## What shipped, per finding
 
@@ -73,19 +105,30 @@ their call sites — the review's citation was accurate but most callers were on
 ### F2 — blocked chunk I/O (P2)
 128-row `pread`/`pwrite` blocks with short-transfer resume loops and first-affected-row
 error text. 131,072 syscalls → ~1,024 for a 256×256 chunk (verified live by the F10
-counters: 32+32 for a 4,096-row run). **The surprise**: on this host the win is almost
-entirely in *multi-worker* runs — t2 −54.6%, t4 −62.2%, t8 −84.7% (near-linear scaling
-now) — because the syscall storm was serializing workers in the kernel. Single-thread
-chunked was unchanged (+1.1%), i.e. the 1-worker gap vs buffered generation on macOS is
-NOT syscall cost; the review's ≤132.8 ms t1 target was not met here and needs Graviton
-data before further chasing.
+counters: 32+32 for a 4,096-row run). ~~Single-thread chunked was unchanged
+(+1.1%), i.e. the 1-worker gap vs buffered generation on macOS is NOT syscall
+cost.~~ **CR32 correction (F3): that conclusion was measured on a path that
+never executed this optimization — the `threadsUsed <= 1` branch kept the old
+per-row pread/pwrite loop, so the t1 A/B compared per-row against per-row.
+CR32 routes t1 through the same block engine (the serial loop is deleted;
+worker counts now differ only in partitioning), and syscalls turn out to be a
+large single-worker cost after all: t1 −34.8% on M3 (153.1 → 99.8 ms),
+sin_t1 −27.5%, bytes identical. The review's ≤132.8 ms target is beaten.**
+Multi-worker wins stand as measured: t2 −54.6%, t4 −62.2%, t8 −84.7% —
+the syscall storm was also serializing workers in the kernel.
 
 ### F5 — Param static-range scheduler (P2)
 Seekable outputs: each worker owns a contiguous row range and `pwrite`s rows at exact
 offsets — zero synchronization on the success path. Streaming (`"-"`) keeps the ordered
 ring. Thread count now capped by online CPUs (execution-plan only). t8: 24.7 → 4.9 ms
-(−80%), now the best count. t2/t4 read +3–10% vs baseline in the final sweep — within
-the MAD we observed across runs, but flagged for Graviton verification.
+(−80%), now the best count. ~~t2/t4 read +3–10% vs baseline in the final
+sweep — within the MAD we observed across runs.~~ **CR32 correction (F6):
+"within MAD" was wrong — interleaved re-measurement showed a repeatable
++15–20% regression at t4 on M3 (the scheduler wrote one row per pwrite;
+the fused-plan default is four workers). CR32 batches contiguous rows into
+128-row blocks flushed with one pwrite (crop only trims the global head/tail,
+so bytes cannot change): t4 −24.2%, t2 −6.4%, t8 −90.5% vs baseline on M3,
+Graviton improvements retained.**
 **Pre-audit finding (pre-existing, unchanged)**: serial (t1) dither output differs from
 threaded (t2+) — the serial path seeds per pass, threaded per row. Dither outputs at
 t2/t4/t8 verified byte-identical across old scheduler, new scheduler, and thread counts.
@@ -97,6 +140,17 @@ crowding sum (original i<j order), and per-root NN distances (bit-equal: `(a−b
 is untouched; raw-score memo makes duplicate-quantile slots free. Production-shaped
 bundle case: **1.61×** (4288.8 → 2658.9 ns). Param-style metrics keep the raw-pointer
 path; lagged slots keep the direct path (their root sets vary per lag depth).
+**CR32 correction (F2): as shipped, this cache imposed its preparation cost on
+EVERY call — two ~16.6 KiB memsets per invocation and an all-features pair
+pass — making one-slot production programs 5.3× (max_re) to 6.7× (proximity)
+slower at the production entry, which the micro's ordinary rows could not see
+(they bypassed the entry). Rewritten in CR32: a requirement plan scans slots
+first; a source with fewer than two cacheable slots takes the pre-CR31 direct
+path verbatim; the pair pass computes only requested features; feature state
+is lazy heap (no large stack frames, no wholesale clearing). One-slot cost is
+back to baseline (53.0 → 54.5 ns max_re, proximity flat), duplicate slots are
+1.9× faster than baseline, and the dense bundle improved to 1.73×
+(4493 → 2598 ns).**
 
 ### F3 — vector ownership (P4) — deliberately SCOPED
 Shipped: in-place typed unary/binary destinations (safe because every push copies, so
@@ -117,7 +171,15 @@ NOT shipped, with reasons:
 ### F7 — hoisted kernels (P5)
 Cheap unary kernels (`neg`, `conj`, `real`, `imag`) and vector-vector `add`/`subtract`/
 `multiply` now select once outside the element loop; broadcasts and transcendentals keep
-the exact generic path. Combined with F1/F3 this took the harvested program from −15.9%
+the exact generic path. **CR32 correction (F1, CRITICAL): as shipped these
+kernels reproduced the ladder's arithmetic but dropped its final non-finite
+clamp — `1e308 + 1e308` through a typed vector add emitted `inf` where every
+prior evaluator emitted `0` (reproduced byte-level against `32e01ff`). The
+clamp is part of each operation's semantics and is now applied inside every
+fast kernel; overflow, subnormal, signed-zero, and non-finite-input behavior
+is pinned by tests/test_coeff_fast_kernel_policy.py. Also corrected: the
+harvested program's typed ops are SCALAR (no `_typed_push_vector` tokens), so
+the mqlacwaq win belongs to F1 alone — these vector kernels never run there.** Combined with F1/F3 this took the harvested program from −15.9%
 to **−16.5/−17.1%**. The synthetic `neg16` case barely moved because `poly = neg(poly)`
 compiles to the *selector* path, not typed ops (see F3 note above) — a useful map of
 where the remaining cost lives.
@@ -125,7 +187,14 @@ where the remaining cost lives.
 ### F10 — opt-in perf counters (P5)
 `-DPP_VM_PERF` builds count `pread`/`pwrite` calls and dynamic-arg resolves and emit one
 JSON line to stderr per chunked/param run; normal builds compile the macros away.
-Verified live: 4,096 rows → 32 preads + 32 pwrites.
+Verified live: 4,096 rows → 32 preads + 32 pwrites. **CR32 correction (F10):
+as shipped the counters saw only the blocked helpers — t1's per-row calls and
+the param static scheduler's pwrites were invisible, so those runs reported
+zero I/O while doing plenty. All direct I/O now flows through the shared
+helpers (t1 via the unified engine, param static via block flushes), the
+fields are renamed `direct_pread_calls`/`direct_pwrite_calls` (stdio-buffered
+serial param output is intentionally uncounted), and expected counts are
+pinned by tests/test_vm_perf_counters.py.**
 
 ## Bugs found by the campaign itself
 - **musl portability**: `solve_score.h` used `uint8_t` without `<stdint.h>` — masked by
@@ -154,16 +223,49 @@ Verified live: 4,096 rows → 32 preads + 32 pwrites.
 Reproduce: `python3 scripts/bench_program_vms.py` (full), or
 `--compare <base> <cand> --cases '<glob>'` for interleaved A/Bs.
 
+## CR32 corrected results (M3, interleaved A/B vs `32e01ff`, 11 reps, all bytes ok)
+
+After the CR32 remediation (clamp restored, solve cache rewritten, t1 unified
+into the block engine, param writes batched, atomic flags, counters complete):
+
+| Case | Base | CR32 | Δ |
+|---|---:|---:|---:|
+| chunked35_t1 | 153.10 ms | 99.79 ms | **−34.8%** |
+| chunked35_t2 | 118.35 ms | 51.57 ms | **−56.4%** |
+| chunked35_t4 | 85.60 ms | 26.76 ms | **−68.7%** |
+| chunked35_t8 | 92.10 ms | 13.90 ms | **−84.9%** |
+| chunked35_sin_t1 | 193.58 ms | 140.34 ms | **−27.5%** |
+| param_expr_t2 | 8.60 ms | 8.05 ms | −6.4% |
+| param_expr_t4 | 5.56 ms | 4.22 ms | **−24.2%** |
+| param_expr_t8 | 26.13 ms | 2.47 ms | **−90.5%** |
+| mqlacwaq_coeff | 24.34 ms | 20.21 ms | **−17.0%** |
+| mqlacwaq_param_coeff | 27.01 ms | 22.86 ms | **−15.4%** |
+| coeff35 selector cases | — | — | −2.1% … +2.0% (noise; clamp costs nothing measurable) |
+| micro: one-slot max_re (production entry) | 53.0 ns | 54.5 ns | ~flat (was 5.3× slower pre-CR32) |
+| micro: one-slot proximity (production entry) | 365.2 ns | 366.0 ns | flat (was 6.7× slower pre-CR32) |
+| micro: duplicate-slot proximity | 718.2 ns | 375.0 ns | **1.92×** (memo) |
+| micro: pair bundle | 4493.1 ns | 2597.5 ns | **1.73×** |
+| micro: prepared root affine3 chain (parsed) | 42.8 ns | 42.6 ns | flat at this arity (now measured, not assumed) |
+
+Controls: mqlacwaq_baseline −0.2%, param_baseline +0.1%.
+New gates added by CR32: fast-kernel numerical policy, param seed-policy/CPU-cap
+byte pins, root prepared-vs-legacy parity (24 chains), cache-engaging solve
+parity, PP_VM_PERF count pins, TSan failure-path gate (validated to catch the
+pre-fix race), binary freshness checker wired into the Docker regression.
+
 ## Residual work (ranked)
-1. **Graviton re-measurement** (review requirement): especially chunked t1 (the
-   unexplained 1-worker gap), param t2/t4 (+3–10% here), and the CPU-cap default —
-   Lambda allocates few vCPUs, where the scheduler fixes should matter more, not less.
+1. ~~Graviton re-measurement~~ — done twice: `cr-31-graviton.md` (pre-CR32,
+   corrected in place) and the CR32 re-run recorded there.
 2. `poly = fn(poly)` selector-path in-place transforms, behind a per-function alias
    audit (biggest remaining cost for the `neg16`-style shapes: ~150–600 ns/row).
+   The chunked-t1 question is CLOSED (it was syscalls; see F2 correction).
 3. Full Coeff ownership redesign (swap-as-metadata etc.) — only with a debug owner
    tracker and degree-128/256 benchmarks demonstrating the cost first.
 4. Remaining Solve feature families (log-modulus, angular histogram, centroid/radii) —
-   3–10× cheaper per call than the pair family; share only with accumulation-order
-   proofs per metric.
+   share only with accumulation-order proofs per metric AND requirement masks
+   (the CR32 F2 lesson: reuse must be proven per program shape, not assumed).
 5. Param superinstruction fusion + sanitize classification (skipped in P1: ~13 ns/row
    upside vs exact-behavior risk on the per-token sanitize boundary).
+6. Real-Lambda memory-size matrix (F11): EC2 Graviton numbers are architecture
+   evidence, not Lambda sizing proof — needs the final static binaries at
+   representative memory allocations (user-run; deployment is user-only).

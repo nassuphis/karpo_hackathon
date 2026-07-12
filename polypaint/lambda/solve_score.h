@@ -1657,7 +1657,21 @@ typedef struct {
 } SolveSourceFeatures;
 
 static void solve_features_init(SolveSourceFeatures *f) {
-    memset(f, 0, sizeof(*f));
+    /* CR32 F2: no wholesale clearing — the two 8 KiB buffers are always
+     * written before they are read (prepare fills owned[], the pair pass
+     * initializes s1) and the memo arrays are read only up to rawCount.
+     * Clearing ~16.6 KiB per source per call was most of the one-slot
+     * regression this cache caused. */
+    f->prepared = 0;
+    f->roots = NULL;
+    f->degree = 0;
+    f->owned = NULL;
+    f->pairDone = 0;
+    f->d2_min = 0.0;
+    f->crowd_sum = 0.0;
+    f->s1 = NULL;
+    f->s1Heap = 0;
+    f->rawCount = 0;
 }
 
 static void solve_features_release(SolveSourceFeatures *f) {
@@ -1695,15 +1709,23 @@ static void solve_features_prepare(SolveSourceFeatures *f, const float *roots, i
 
 /* ONE pair traversal for the whole pair-metric family. Accumulators observe
  * pairs in the original (i<j ascending) order. */
-static int solve_features_pair_pass(SolveSourceFeatures *f) {
+/* CR32 F2: the masks are the UNION of the source's slot requirements,
+ * computed before any slot evaluates — so a feature is either computed on the
+ * single traversal or provably never read. A proximity-only program no longer
+ * pays crowding's per-pair log10 or the NN bookkeeping. */
+static int solve_features_pair_pass(SolveSourceFeatures *f,
+                                    int needCrowd, int needNN) {
     if (f->pairDone) return 1;
     int degree = f->degree;
     if (degree < 2) return 0;
-    f->s1 = degree <= 1024 ? f->s1Stack : (double *)malloc((size_t)degree * sizeof(double));
-    if (!f->s1) return 0;
-    f->s1Heap = degree > 1024;
-    double *nn_d2 = f->s1;   /* holds raw min d2 first, converted below */
-    for (int i = 0; i < degree; i++) nn_d2[i] = 1e300;
+    double *nn_d2 = NULL;
+    if (needNN) {
+        f->s1 = degree <= 1024 ? f->s1Stack : (double *)malloc((size_t)degree * sizeof(double));
+        if (!f->s1) return 0;
+        f->s1Heap = degree > 1024;
+        nn_d2 = f->s1;   /* holds raw min d2 first, converted below */
+        for (int i = 0; i < degree; i++) nn_d2[i] = 1e300;
+    }
     double d2_min = 1e300;
     double crowd_sum = 0.0;
     const float *roots = f->roots;
@@ -1714,13 +1736,17 @@ static int solve_features_pair_pass(SolveSourceFeatures *f) {
             double di = ri_im - roots[j * 2 + 1];
             double d2 = dr * dr + di * di;
             if (d2 < d2_min) d2_min = d2;
-            crowd_sum += -0.5 * log10(d2 > SOLVE_SCORE_EPS2 ? d2 : SOLVE_SCORE_EPS2);
-            if (d2 < nn_d2[i]) nn_d2[i] = d2;
-            if (d2 < nn_d2[j]) nn_d2[j] = d2;
+            if (needCrowd) crowd_sum += -0.5 * log10(d2 > SOLVE_SCORE_EPS2 ? d2 : SOLVE_SCORE_EPS2);
+            if (needNN) {
+                if (d2 < nn_d2[i]) nn_d2[i] = d2;
+                if (d2 < nn_d2[j]) nn_d2[j] = d2;
+            }
         }
     }
-    for (int i = 0; i < degree; i++) {
-        nn_d2[i] = -0.5 * log10(nn_d2[i] > SOLVE_SCORE_EPS2 ? nn_d2[i] : SOLVE_SCORE_EPS2);
+    if (needNN) {
+        for (int i = 0; i < degree; i++) {
+            nn_d2[i] = -0.5 * log10(nn_d2[i] > SOLVE_SCORE_EPS2 ? nn_d2[i] : SOLVE_SCORE_EPS2);
+        }
     }
     f->d2_min = d2_min;
     f->crowd_sum = crowd_sum;
@@ -1735,12 +1761,13 @@ static int solve_metric_in_pair_family(enum SolveMetric metric) {
 
 /* Raw (pre-normalization) score via the shared features; tail math matches
  * each metric's original branch exactly. */
-static double solve_features_pair_metric(SolveSourceFeatures *f, enum SolveMetric metric) {
+static double solve_features_pair_metric(SolveSourceFeatures *f, enum SolveMetric metric,
+                                         int needCrowd, int needNN) {
     int degree = f->degree;
     if (degree <= 0) return 0.0;
     if (degree < solve_metric_min_roots(metric)) return 0.0;
     if (degree < 2) return 0.0;
-    if (!solve_features_pair_pass(f)) return 0.0;
+    if (!solve_features_pair_pass(f, needCrowd, needNN)) return 0.0;
     if (metric == SOLVE_METRIC_PROXIMITY) {
         return -0.5 * log10(f->d2_min > SOLVE_SCORE_EPS2 ? f->d2_min : SOLVE_SCORE_EPS2);
     }
@@ -1773,9 +1800,26 @@ static int solve_score_eval_metric_slots(const float *roots, int degree,
                                          const SolveScoreProgram *program,
                                          float *outMetricBuffer) {
     if (!program || !outMetricBuffer) return 0;
-    SolveSourceFeatures featSolve, featCoeff;
-    solve_features_init(&featSolve);
-    solve_features_init(&featCoeff);
+    /* CR32 F2: build the requirement plan BEFORE evaluating anything.
+     * The cache only pays off when a source's filter/traversal/memo work is
+     * reused, i.e. when that source has >= 2 cacheable slots. A source with a
+     * single slot takes the pre-CR31 direct path verbatim — same bytes, same
+     * cost, no feature-cache preparation at all. Pair-feature masks are the
+     * union across the source's slots so ONE traversal serves them all. */
+    int cacheableSlots[2] = {0, 0};   /* [0]=solve roots, [1]=coeff roots */
+    int needCrowd[2] = {0, 0}, needNN[2] = {0, 0};
+    for (int i = 0; i < program->metricCount; i++) {
+        enum SolveMetric metric = program->metrics[i];
+        enum SolveScoreMetricSource source = program->metricSources[i];
+        if (source == SOLVE_SCORE_SOURCE_PARAM || solve_metric_is_param_metric(metric)) continue;
+        int si = (source == SOLVE_SCORE_SOURCE_COEFF) ? 1 : 0;
+        cacheableSlots[si]++;
+        if (metric == SOLVE_METRIC_CROWDING) needCrowd[si] = 1;
+        else if (metric == SOLVE_METRIC_CLUSTERINESS || metric == SOLVE_METRIC_NN_VARIATION) needNN[si] = 1;
+    }
+    /* Lazy, heap-backed feature state: nothing is allocated (and no 16.6 KiB
+     * object lives on this frame) unless a source actually engages the cache. */
+    SolveSourceFeatures *feat[2] = {NULL, NULL};
     for (int i = 0; i < program->metricCount; i++) {
         enum SolveMetric metric = program->metrics[i];
         enum SolveScoreMetricSource source = program->metricSources[i];
@@ -1785,14 +1829,27 @@ static int solve_score_eval_metric_slots(const float *roots, int degree,
                 roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, i);
             continue;
         }
-        const float *metricRoots = roots;
-        int metricDegree = degree;
-        SolveSourceFeatures *f = &featSolve;
-        if (source == SOLVE_SCORE_SOURCE_COEFF) {
-            metricRoots = coeffRoots;
-            metricDegree = coeffDegree;
-            f = &featCoeff;
+        int si = (source == SOLVE_SCORE_SOURCE_COEFF) ? 1 : 0;
+        if (cacheableSlots[si] < 2) {
+            /* single-slot source: original direct path (bit-identical) */
+            outMetricBuffer[i] = solve_score_eval_metric_slot_normalized(
+                roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, i);
+            continue;
         }
+        if (!feat[si]) {
+            feat[si] = (SolveSourceFeatures *)malloc(sizeof(SolveSourceFeatures));
+            if (feat[si]) {
+                solve_features_init(feat[si]);
+            } else {
+                /* allocation failure: correctness over reuse — direct path */
+                outMetricBuffer[i] = solve_score_eval_metric_slot_normalized(
+                    roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, i);
+                continue;
+            }
+        }
+        const float *metricRoots = si ? coeffRoots : roots;
+        int metricDegree = si ? coeffDegree : degree;
+        SolveSourceFeatures *f = feat[si];
         double score = 0.0;
         if (metricRoots && metricDegree > 0) {
             int memoHit = 0;
@@ -1806,7 +1863,7 @@ static int solve_score_eval_metric_slots(const float *roots, int degree,
             if (!memoHit) {
                 solve_features_prepare(f, metricRoots, metricDegree);
                 if (solve_metric_in_pair_family(metric)) {
-                    score = solve_features_pair_metric(f, metric);
+                    score = solve_features_pair_metric(f, metric, needCrowd[si], needNN[si]);
                 } else {
                     /* pre-filtered roots: the callee's own filter no-ops */
                     score = (f->degree > 0)
@@ -1824,8 +1881,8 @@ static int solve_score_eval_metric_slots(const float *roots, int degree,
         double u = (score - program->clipLo[i]) / range;
         outMetricBuffer[i] = (float)solve_score_clamp_unit(u);
     }
-    solve_features_release(&featSolve);
-    solve_features_release(&featCoeff);
+    if (feat[0]) { solve_features_release(feat[0]); free(feat[0]); }
+    if (feat[1]) { solve_features_release(feat[1]); free(feat[1]); }
     return 1;
 }
 

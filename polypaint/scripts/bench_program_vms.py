@@ -85,6 +85,12 @@ def host_metadata():
         "machine": platform.machine(),
         "cpu_count": os.cpu_count(),
         "python": platform.python_version(),
+        # CR32 F9: pin the measurement inputs, not just the host. git fields
+        # above describe the CHECKOUT RUNNING THE HARNESS; the binary hashes
+        # below are the ground truth for what was measured.
+        "bench_script_sha256": sha256_file(pathlib.Path(__file__)),
+        "micro_source_sha256": sha256_file(MICRO_SRC) if MICRO_SRC.exists() else None,
+        "harvested_fixture_sha256": sha256_file(HARVESTED) if HARVESTED.exists() else None,
     }
 
 
@@ -247,13 +253,23 @@ def main():
         workdir = pathlib.Path(td)
         if args.compare:
             bin_a, bin_b = map(pathlib.Path, args.compare)
+            meta["base_binary_sha256"] = sha256_file(bin_a)
+            meta["cand_binary_sha256"] = sha256_file(bin_b)
         else:
             bin_a = pathlib.Path(args.binary) if args.binary else build_binary(workdir / "sweep_o3")
             bin_b = None
+            meta["binary_sha256"] = sha256_file(bin_a)
+            meta["binary_built_here"] = not bool(args.binary)
+        # CR32 F14: "micro" is a selectable case, not a hidden side effect.
+        # Micro compiles tests/native/vm_microbench.c from THIS checkout, so
+        # it is skipped in --compare mode (prebuilt binaries would not be what
+        # it measures) — pass each binary's checkout through --binary instead.
+        micro_requested = (not args.no_micro and not args.compare
+                           and fnmatch.fnmatch("micro", args.cases))
         cases = build_cases(workdir, bin_a)
         selected = {k: v for k, v in cases.items() if fnmatch.fnmatch(k, args.cases)}
-        if not selected:
-            raise SystemExit(f"no cases match {args.cases!r}; available: {', '.join(sorted(cases))}")
+        if not selected and not micro_requested:
+            raise SystemExit(f"no cases match {args.cases!r}; available: micro, {', '.join(sorted(cases))}")
         for name in sorted(selected):
             payload = selected[name]
             if bin_b is not None:
@@ -265,9 +281,10 @@ def main():
                 report["cases"][name] = run_case(bin_a, payload, workdir, name, args.reps)
                 r = report["cases"][name]
                 print(f"{name:28s} median {r['median_us']:>10.0f}us  mad {r['mad_us']:>7.0f}us")
-        if not args.no_micro and not args.compare and fnmatch.fnmatch("micro", args.cases) or args.cases == "*" and not args.no_micro and not args.compare:
+        if micro_requested:
             micro_bin = build_micro(workdir / "vm_micro")
             report["micro"] = json.loads(sh([str(micro_bin)]).stdout)
+            report["metadata"]["micro_binary_sha256"] = sha256_file(micro_bin)
             for k, v in report["micro"].items():
                 if k != "sink":
                     print(f"micro:{k:38s} {v}")

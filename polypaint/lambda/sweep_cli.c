@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include "companion_solver.h"
 
 /* f32 transport: coefficient/param/root values are written as float32. A finite
@@ -3394,10 +3395,15 @@ static _Atomic long pp_perf_pread_calls;
 static _Atomic long pp_perf_pwrite_calls;
 static _Atomic long pp_perf_dyn_arg_resolves;
 #define PP_PERF_COUNT(counter) ((void)(counter++))
+/* CR32 F10: every direct pread/pwrite site flows through the shared block
+ * helpers, so these totals are complete for direct I/O (chunked coeff at every
+ * worker count, param static scheduler). Field names say "direct_" because
+ * stdio-buffered paths (serial/streamed param_gen fwrite) are intentionally
+ * not counted — a zero there means "no direct I/O", not "no I/O". */
 static void pp_perf_report(const char *mode) {
     fprintf(stderr,
-            "{\"pp_vm_perf\":{\"mode\":\"%s\",\"pread_calls\":%ld,"
-            "\"pwrite_calls\":%ld,\"dyn_arg_resolves\":%ld}}\n",
+            "{\"pp_vm_perf\":{\"mode\":\"%s\",\"direct_pread_calls\":%ld,"
+            "\"direct_pwrite_calls\":%ld,\"dyn_arg_resolves\":%ld}}\n",
             mode, (long)pp_perf_pread_calls, (long)pp_perf_pwrite_calls,
             (long)pp_perf_dyn_arg_resolves);
 }
@@ -4814,20 +4820,35 @@ static int coeffProgramTypedBinaryOp(CoeffProgramWorkspace *ws, const CoeffProgr
      * per-element reads capture their values before the write. */
     /* CR31 F7: vector-vector add/subtract/multiply get dedicated loops (the
      * common shapes); everything else — broadcasts included — keeps the exact
-     * generic path. */
+     * generic path. CR32 F1: the final non-finite clamp is part of every
+     * operation's semantics (see coeffProgramApplyBinaryFn) — each kernel
+     * must apply it too, or overflow emits inf where the VM's contract says 0. */
     if (leftType == COEFF_STACK_VECTOR && rightType == COEFF_STACK_VECTOR &&
         (tok->fn_index == COEFF_VEC_ADD || tok->fn_index == COEFF_VEC_SUBTRACT ||
          tok->fn_index == COEFF_VEC_MULTIPLY)) {
         double *lre = ws->stack_re[left], *lim = ws->stack_im[left];
         const double *rre = ws->stack_re[right], *rim = ws->stack_im[right];
         if (tok->fn_index == COEFF_VEC_ADD) {
-            for (int i = 0; i < n; i++) { lre[i] = lre[i] + rre[i]; lim[i] = lim[i] + rim[i]; }
+            for (int i = 0; i < n; i++) {
+                double rr = lre[i] + rre[i], ri = lim[i] + rim[i];
+                if (!isfinite(rr)) rr = 0.0;
+                if (!isfinite(ri)) ri = 0.0;
+                lre[i] = rr; lim[i] = ri;
+            }
         } else if (tok->fn_index == COEFF_VEC_SUBTRACT) {
-            for (int i = 0; i < n; i++) { lre[i] = lre[i] - rre[i]; lim[i] = lim[i] - rim[i]; }
+            for (int i = 0; i < n; i++) {
+                double rr = lre[i] - rre[i], ri = lim[i] - rim[i];
+                if (!isfinite(rr)) rr = 0.0;
+                if (!isfinite(ri)) ri = 0.0;
+                lre[i] = rr; lim[i] = ri;
+            }
         } else {
             for (int i = 0; i < n; i++) {
-                double ar = lre[i], ai = lim[i];
-                c_mul(ar, ai, rre[i], rim[i], &lre[i], &lim[i]);
+                double rr = 0.0, ri = 0.0;
+                c_mul(lre[i], lim[i], rre[i], rim[i], &rr, &ri);
+                if (!isfinite(rr)) rr = 0.0;
+                if (!isfinite(ri)) ri = 0.0;
+                lre[i] = rr; lim[i] = ri;
             }
         }
     } else {
@@ -4868,17 +4889,36 @@ static int coeffProgramTypedUnaryOp(CoeffProgramWorkspace *ws, const CoeffProgra
      * Arguments pass by value, so writing element i after reading it is safe.
      * CR31 F7: the operation is constant for the whole vector — select the
      * cheap kernels ONCE instead of walking the dispatch ladder per element.
-     * Each kernel's arithmetic matches its ladder branch exactly. */
+     * CR32 F1: each kernel applies the ladder's final non-finite clamp too —
+     * a non-finite stack input must leave as 0, exactly like the generic op. */
     double *sre = ws->stack_re[slot];
     double *sim = ws->stack_im[slot];
     if (tok->fn_index == COEFF_VEC_NEG) {
-        for (int i = 0; i < n; i++) { sre[i] = -sre[i]; sim[i] = -sim[i]; }
+        for (int i = 0; i < n; i++) {
+            double rr = -sre[i], ri = -sim[i];
+            if (!isfinite(rr)) rr = 0.0;
+            if (!isfinite(ri)) ri = 0.0;
+            sre[i] = rr; sim[i] = ri;
+        }
     } else if (tok->fn_index == COEFF_VEC_CONJ) {
-        for (int i = 0; i < n; i++) { sim[i] = -sim[i]; }
+        for (int i = 0; i < n; i++) {
+            double rr = sre[i], ri = -sim[i];
+            if (!isfinite(rr)) rr = 0.0;
+            if (!isfinite(ri)) ri = 0.0;
+            sre[i] = rr; sim[i] = ri;
+        }
     } else if (tok->fn_index == COEFF_VEC_REAL) {
-        for (int i = 0; i < n; i++) { sim[i] = 0.0; }
+        for (int i = 0; i < n; i++) {
+            double rr = sre[i];
+            if (!isfinite(rr)) rr = 0.0;
+            sre[i] = rr; sim[i] = 0.0;
+        }
     } else if (tok->fn_index == COEFF_VEC_IMAG) {
-        for (int i = 0; i < n; i++) { sre[i] = sim[i]; sim[i] = 0.0; }
+        for (int i = 0; i < n; i++) {
+            double rr = sim[i];
+            if (!isfinite(rr)) rr = 0.0;
+            sre[i] = rr; sim[i] = 0.0;
+        }
     } else {
         for (int i = 0; i < n; i++) {
             if (coeffProgramApplyUnaryFn(tok->fn_index,
@@ -9245,7 +9285,10 @@ typedef struct {
     long stepEnd;
     int outFd;
     pthread_mutex_t errMutex;
-    int failed;
+    /* CR32 F5: workers poll this without the mutex — it must be atomic to be
+     * defined C. The error string stays mutex-guarded; readers of the string
+     * only look after pthread_join, which supplies the ordering. */
+    atomic_int failed;
     char error[256];
 } ParamGenStaticCtx;
 
@@ -9257,53 +9300,81 @@ typedef struct {
 
 static void paramGenStaticSetError(ParamGenStaticCtx *ctx, const char *msg) {
     pthread_mutex_lock(&ctx->errMutex);
-    if (!ctx->failed) {
-        ctx->failed = 1;
+    if (!atomic_load_explicit(&ctx->failed, memory_order_relaxed)) {
         snprintf(ctx->error, sizeof(ctx->error), "%s", msg);
+        atomic_store_explicit(&ctx->failed, 1, memory_order_release);
     }
     pthread_mutex_unlock(&ctx->errMutex);
 }
 
+/* Shared short-transfer block I/O (defined with the coeff chunk engine); the
+ * param static scheduler reuses them so all direct I/O shares one
+ * instrumentation layer (CR32 F10). */
+static int coeffGenReadBlock(int fd, void *buf, size_t len, off_t off);
+static int coeffGenWriteBlock(int fd, const void *buf, size_t len, off_t off);
+
+/* CR32 F6: rows accumulate into a block and flush with ONE pwrite per block.
+ * A worker's cropped row spans are contiguous in the output file (cropping
+ * only trims the global head/tail rows), so batching changes syscall count,
+ * not bytes. One pwrite per row regressed macOS t4 by ~15-20%; Linux hid it. */
+#define PARAMGEN_IO_BLOCK_ROWS 128
+
 static void *paramGenStaticWorkerMain(void *vp) {
     ParamGenStaticArg *arg = (ParamGenStaticArg *)vp;
     ParamGenStaticCtx *ctx = arg->ctx;
-    float *rowData = (float *)malloc((size_t)ctx->n2 * 4u * sizeof(float));
-    if (!rowData) {
+    size_t rowBytes = (size_t)ctx->n2 * 4u * sizeof(float);
+    float *scratch = (float *)malloc(rowBytes);   /* cropped head/tail rows */
+    float *block = (float *)malloc(rowBytes * PARAMGEN_IO_BLOCK_ROWS);
+    if (!scratch || !block) {
+        free(scratch);
+        free(block);
         paramGenStaticSetError(ctx, "param_gen static row buffer alloc failed");
         return NULL;
     }
+    const size_t blockCap = rowBytes * PARAMGEN_IO_BLOCK_ROWS;
+    size_t blockBytes = 0;
+    off_t blockOff = 0;
     for (long row = arg->rowLo; row < arg->rowHi; row++) {
-        if (ctx->failed) break;
+        if (atomic_load_explicit(&ctx->failed, memory_order_relaxed)) break;
+        long rowFirstStep = row * (long)ctx->n2;
+        long rowEndStep = rowFirstStep + (long)ctx->n2;
+        long lo = rowFirstStep > ctx->stepStart ? rowFirstStep : ctx->stepStart;
+        long hi = rowEndStep < ctx->stepEnd ? rowEndStep : ctx->stepEnd;
+        if (hi <= lo) continue;
+        if (blockBytes + rowBytes > blockCap) {
+            if (coeffGenWriteBlock(ctx->outFd, block, blockBytes, blockOff) != 0) {
+                paramGenStaticSetError(ctx, "param_gen static write failed");
+                break;
+            }
+            blockBytes = 0;
+        }
+        int cropped = (lo != rowFirstStep) || (hi != rowEndStep);
+        float *dst = cropped ? scratch
+                             : (float *)((char *)block + blockBytes);
         if (computeParamGenRow(row, ctx->n1, ctx->n2, ctx->gridN,
                                ctx->paramProgram, ctx->hasParamProgram,
-                               ctx->ptEntries, ctx->nPt, rowData) != 0) {
+                               ctx->ptEntries, ctx->nPt, dst) != 0) {
             char msg[256];
             snprintf(msg, sizeof(msg),
                      "param_gen param program evaluation failed at row %ld", row);
             paramGenStaticSetError(ctx, msg);
             break;
         }
-        /* crop to the requested step range — same math as writeParamGenRowSlice */
-        long rowFirstStep = row * (long)ctx->n2;
-        long rowEndStep = rowFirstStep + (long)ctx->n2;
-        long lo = rowFirstStep > ctx->stepStart ? rowFirstStep : ctx->stepStart;
-        long hi = rowEndStep < ctx->stepEnd ? rowEndStep : ctx->stepEnd;
-        if (hi <= lo) continue;
-        const char *src = (const char *)(rowData + (size_t)(lo - rowFirstStep) * 4u);
-        size_t len = (size_t)(hi - lo) * 4u * sizeof(float);
-        off_t off = (off_t)(lo - ctx->stepStart) * (off_t)(4u * sizeof(float));
-        size_t done = 0;
-        while (done < len) {
-            ssize_t wrote = pwrite(ctx->outFd, src + done, len - done, off + (off_t)done);
-            if (wrote <= 0) {
-                paramGenStaticSetError(ctx, "param_gen static write failed");
-                break;
-            }
-            done += (size_t)wrote;
+        size_t spanBytes = (size_t)(hi - lo) * 4u * sizeof(float);
+        if (cropped) {
+            memcpy((char *)block + blockBytes,
+                   scratch + (size_t)(lo - rowFirstStep) * 4u, spanBytes);
         }
-        if (ctx->failed) break;
+        if (blockBytes == 0) blockOff = (off_t)(lo - ctx->stepStart) * (off_t)(4u * sizeof(float));
+        blockBytes += spanBytes;
     }
-    free(rowData);
+    if (!atomic_load_explicit(&ctx->failed, memory_order_relaxed) && blockBytes > 0) {
+        if (coeffGenWriteBlock(ctx->outFd, block, blockBytes, blockOff) != 0) {
+            paramGenStaticSetError(ctx, "param_gen static write failed");
+        }
+    }
+    free(scratch);
+    free(block);
     return NULL;
 }
 
@@ -9350,7 +9421,7 @@ static int runParamGenThreadedStatic(int outFd, int n1, int n2, int gridN,
         created++;
     }
     for (int i = 0; i < created; i++) pthread_join(threads[i], NULL);
-    int failed = ctx.failed;
+    int failed = atomic_load(&ctx.failed);
     if (failed) fprintf(stderr, "%s\n", ctx.error[0] ? ctx.error : "param_gen static worker failed");
     pthread_mutex_destroy(&ctx.errMutex);
     free(threads);
@@ -9431,11 +9502,27 @@ static int runParamGen(const char *buf, const char *outPath) {
     long rowEnd = (stepStart + stepCount + (long)n2 - 1L) / (long)n2;
     long rowCount = rowEnd - rowStart;
     if (threadsUsed > rowCount) threadsUsed = (int)rowCount;
-    /* CR31 F5: cap by online CPUs — an execution-plan choice only (never a
-     * reproducibility input). Extra workers past the cores just serialized
-     * through the old scheduler and made runs SLOWER. */
+    /* CR31 F5 / CR32 F4: cap by online CPUs, but the cap must stay an
+     * execution-plan choice. Full (non-range) requests seed dither per PASS on
+     * the serial path and per ROW on every threaded path (a pre-CR31 seam), so
+     * the serial/threaded decision is part of the output contract: it may
+     * depend only on the REQUEST (n_threads), never on host CPU topology.
+     * The cap therefore never reduces a multi-worker request below 2 workers —
+     * two workers on a one-CPU host are merely slow, not different bytes.
+     * PP_TEST_ONLINE_CPUS overrides the probe so tests can pin the topology. */
     long onlineCpus = sysconf(_SC_NPROCESSORS_ONLN);
-    if (onlineCpus > 0 && threadsUsed > onlineCpus) threadsUsed = (int)onlineCpus;
+    {
+        const char *testCpus = getenv("PP_TEST_ONLINE_CPUS");
+        if (testCpus && *testCpus) {
+            long v = strtol(testCpus, NULL, 10);
+            if (v > 0) onlineCpus = v;
+        }
+    }
+    if (onlineCpus > 0 && threadsUsed > onlineCpus) {
+        int capped = (int)onlineCpus;
+        if (capped < 2) capped = 2;
+        if (threadsUsed > capped) threadsUsed = capped;
+    }
     if (threadsUsed < 1) threadsUsed = 1;
 
     int rc = 0;
@@ -9875,7 +9962,9 @@ typedef struct {
     const double *cfpv;
     int n_cfpv;
     pthread_mutex_t mutex;
-    int failed;
+    /* CR32 F5: polled by workers without the mutex — atomic for defined C.
+     * The error string stays mutex-guarded; final readers run after join. */
+    atomic_int failed;
     char error[256];
 } CoeffGenThreadCtx;
 
@@ -9910,9 +9999,9 @@ static void coeffgenSourceParamsForStep(long globalStep, int n1, int n2,
 
 static void coeffGenSetThreadError(CoeffGenThreadCtx *ctx, const char *msg) {
     pthread_mutex_lock(&ctx->mutex);
-    if (!ctx->failed) {
-        ctx->failed = 1;
+    if (!atomic_load_explicit(&ctx->failed, memory_order_relaxed)) {
         snprintf(ctx->error, sizeof(ctx->error), "%s", msg);
+        atomic_store_explicit(&ctx->failed, 1, memory_order_release);
     }
     pthread_mutex_unlock(&ctx->mutex);
 }
@@ -9975,7 +10064,7 @@ static void *coeffGenWorkerMain(void *vp) {
     }
 
     for (long blockLo = arg->stepLo; blockLo < arg->stepHi; blockLo += COEFFGEN_IO_BLOCK_ROWS) {
-        if (ctx->failed) break;
+        if (atomic_load_explicit(&ctx->failed, memory_order_relaxed)) break;
         long blockHi = blockLo + COEFFGEN_IO_BLOCK_ROWS;
         if (blockHi > arg->stepHi) blockHi = arg->stepHi;   /* partial tail block */
         long nRows = blockHi - blockLo;
@@ -10020,7 +10109,7 @@ static void *coeffGenWorkerMain(void *vp) {
                     }
                 }
             }
-            if (ctx->failed) break;
+            if (atomic_load_explicit(&ctx->failed, memory_order_relaxed)) break;
 
             if (nCoeffs != ctx->nCoeffsOut) {
                 char msg[256];
@@ -10037,7 +10126,7 @@ static void *coeffGenWorkerMain(void *vp) {
                 rowOut[k * 2 + 1] = (float)cIm[k];
             }
         }
-        if (ctx->failed) break;
+        if (atomic_load_explicit(&ctx->failed, memory_order_relaxed)) break;
 
         off_t outOff = (off_t)(blockLo * ctx->outRowBytes);
         if (coeffGenWriteBlock(ctx->outFd, outBlock,
@@ -10192,80 +10281,39 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     int rc = 0;
+    /* CR32 F3: ONE chunk engine for every worker count. A single-worker run
+     * executes the same blocked range worker inline on this thread — the old
+     * separate per-row serial loop (per-row pread/pwrite, never entering the
+     * blocked helpers) is gone, so t1 and tN differ only in partitioning. */
     if (threadsUsed <= 1) {
-        float *stepBuf = (float *)malloc((size_t)outRowBytes);
-        if (!stepBuf) {
-            fprintf(stderr, "coeffgen step buffer alloc failed\n");
-            close(paramsFd);
-            close(outFd);
-            return 1;
+        CoeffGenThreadCtx ctx;
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.paramsFd = paramsFd;
+        ctx.outFd = outFd;
+        ctx.paramBaseOffset = stepStart * recordBytes;
+        ctx.globalStepStart = sourceStepStart;
+        ctx.sourceN1 = sourceN1;
+        ctx.sourceN2 = sourceN2;
+        ctx.nCoeffsOut = nCoeffsOut;
+        ctx.outRowBytes = outRowBytes;
+        ctx.coeffFunc = coeffFunc;
+        ctx.ctEntries = ctEntries;
+        ctx.nCt = nCt;
+        ctx.coeffProgram = &coeffProgram;
+        ctx.hasCoeffProgram = hasCoeffProgram > 0;
+        ctx.cfpv = cfpv;
+        ctx.n_cfpv = n_cfpv;
+        pthread_mutex_init(&ctx.mutex, NULL);
+        CoeffGenWorkerArg arg;
+        arg.ctx = &ctx;
+        arg.stepLo = 0;
+        arg.stepHi = stepCount;
+        coeffGenWorkerMain(&arg);
+        if (atomic_load(&ctx.failed)) {
+            fprintf(stderr, "%s\n", ctx.error[0] ? ctx.error : "coeffgen failure");
+            rc = 1;
         }
-        CoeffProgramWorkspace *coeffWs = NULL;
-        if (hasCoeffProgram > 0) {
-            coeffWs = coeff_program_workspace_new();
-            if (!coeffWs) {
-                free(stepBuf);
-                close(paramsFd);
-                close(outFd);
-                return 1;
-            }
-        }
-        for (long s = 0; s < stepCount; s++) {
-            float params[4];
-            if (pread(paramsFd, params, sizeof(params), (off_t)(stepStart * recordBytes + s * recordBytes)) != (ssize_t)sizeof(params)) {
-                fprintf(stderr, "Short read at step %ld\n", stepStart + s);
-                rc = 1;
-                break;
-            }
-
-            double t1r = 0.0, t1i = 0.0, t2r = 0.0, t2i = 0.0;
-            coeffgenSourceParamsForStep(sourceStepStart + s, sourceN1, sourceN2,
-                                        params, &t1r, &t1i, &t2r, &t2i);
-
-            double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
-            int nCoeffs;
-            coeffFunc((double)params[0], (double)params[1],
-                      (double)params[2], (double)params[3],
-                      cfpv, n_cfpv, cRe, cIm, &nCoeffs);
-            if (hasCoeffProgram > 0) {
-                if (evalCoeffProgram(&coeffProgram,
-                                     (double)params[0], (double)params[1],
-                                     (double)params[2], (double)params[3],
-                                     t1r, t1i, t2r, t2i,
-                                     cRe, cIm, nCoeffs,
-                                     cRe, cIm, &nCoeffs, coeffWs,
-                                     (uint64_t)(sourceStepStart + s), nCoeffsOut) != 0) {
-                    rc = 1;
-                }
-            } else {
-                for (int t = 0; t < nCt; t++) {
-                    if (dispatchCt(&ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
-                        rc = 1;
-                        break;
-                    }
-                }
-            }
-            if (rc != 0) break;
-
-            if (nCoeffs != nCoeffsOut) {
-                fprintf(stderr, "nCoeffs mismatch: probe returned %d but step %ld returned %d\n",
-                        nCoeffsOut, stepStart + s, nCoeffs);
-                rc = 1;
-                break;
-            }
-
-            for (int k = 0; k < nCoeffsOut; k++) {
-                stepBuf[k * 2]     = (float)cRe[k];
-                stepBuf[k * 2 + 1] = (float)cIm[k];
-            }
-            if (pwrite(outFd, stepBuf, (size_t)outRowBytes, (off_t)(s * outRowBytes)) != (ssize_t)outRowBytes) {
-                fprintf(stderr, "Short write at step %ld\n", stepStart + s);
-                rc = 1;
-                break;
-            }
-        }
-        free(coeffWs);
-        free(stepBuf);
+        pthread_mutex_destroy(&ctx.mutex);
     } else {
         CoeffGenThreadCtx ctx;
         memset(&ctx, 0, sizeof(ctx));
@@ -10316,7 +10364,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
             created++;
         }
         for (int i = 0; i < created; i++) pthread_join(threads[i], NULL);
-        if (ctx.failed) {
+        if (atomic_load(&ctx.failed)) {
             fprintf(stderr, "%s\n", ctx.error[0] ? ctx.error : "coeffgen threaded failure");
             rc = 1;
         }

@@ -194,6 +194,103 @@ class TestSolveScoreNativeParity(unittest.TestCase):
             self._assert_close_list(native_outputs, py.outputs)
 
 
+    def test_feature_cache_engaging_programs_match_python(self):
+        """CR32 F2: programs with >= 2 same-source root-metric slots engage the
+        shared feature cache (one masked pair traversal + raw-score memo);
+        single-slot programs take the direct path. Both must match the Python
+        reference bit-for-bit-ish (same tolerance as every other parity case).
+        Root sets are larger here so pair math dominates, and one case carries
+        non-finite roots through the shared finite filter."""
+        from solve_score_eval import eval_solve_score
+
+        roots = [
+            (0.31 * i - 1.4, 0.27 * ((i * 7) % 11) - 1.2) for i in range(12)
+        ]
+        coeff_roots = [(-1.0, 0.0), (0.5, 0.2), (0.1, -0.6), (0.9, 0.9), (-0.4, 0.7)]
+        param_values = [(0.2, -0.3), (0.7, 0.1)]
+        dirty_roots = list(roots)
+        dirty_roots[3] = (float("inf"), 0.5)
+        dirty_roots[8] = (float("nan"), float("nan"))
+
+        cases = [
+            # full pair family + duplicate slot, one source (the dense bundle)
+            (
+                [
+                    ["proximity", "slv", "1"],
+                    ["crowding", "slv", "1"],
+                    ["clusteriness", "slv", "1"],
+                    ["nn_variation", "slv", "1"],
+                    ["proximity", "slv", "1"],
+                    ["weighted_sum", "0.2", "0.2"],
+                    ["weighted_sum", "0.7", "0.3"],
+                    ["weighted_sum", "0.7", "0.3"],
+                    ["weighted_sum", "0.7", "0.3"],
+                ],
+                {"proximity": (-10, 10), "crowding": (-10, 10),
+                 "clusteriness": (-10, 10), "nn_variation": (-10, 10)},
+                roots,
+            ),
+            # proximity-only pair need (masked pass: no crowding, no NN)
+            (
+                [
+                    ["proximity", "slv", "1"],
+                    ["proximity", "slv", "1"],
+                    ["weighted_sum", "0.5", "0.5"],
+                ],
+                {"proximity": (-10, 10)},
+                roots,
+            ),
+            # pair + non-pair metric sharing one source (filter + memo reuse)
+            (
+                [
+                    ["crowding", "slv", "1"],
+                    ["max_re", "slv", "1"],
+                    ["weighted_sum", "0.6", "0.4"],
+                ],
+                {"crowding": (-10, 10), "max_re": (-10, 10)},
+                roots,
+            ),
+            # mixed sources: solve engages cache, coeff single slot stays direct
+            (
+                [
+                    ["proximity", "slv", "1"],
+                    ["nn_variation", "slv", "1"],
+                    ["crowding", "cf", "1"],
+                    ["weighted_sum", "0.5", "0.5"],
+                    ["weighted_sum", "0.5", "0.5"],
+                ],
+                {"proximity": (-10, 10), "nn_variation": (-10, 10),
+                 "crowding": (-10, 10)},
+                roots,
+            ),
+            # non-finite roots through the shared finite filter
+            (
+                [
+                    ["proximity", "slv", "1"],
+                    ["crowding", "slv", "1"],
+                    ["clusteriness", "slv", "1"],
+                    ["weighted_sum", "0.4", "0.3"],
+                    ["weighted_sum", "0.8", "0.2"],
+                ],
+                {"proximity": (-10, 10), "crowding": (-10, 10),
+                 "clusteriness": (-10, 10)},
+                dirty_roots,
+            ),
+        ]
+        for chain, clips, case_roots in cases:
+            compiled, payload = self._compile_case(chain, clips)
+            native_metrics, native_outputs = self._native_eval(
+                compiled, payload, case_roots,
+                coeff_roots=coeff_roots, param_values=param_values,
+            )
+            py = eval_solve_score(
+                compiled, case_roots,
+                coeff_roots=coeff_roots, param_values=param_values,
+            )
+            self._assert_close_list(native_metrics, py.metrics)
+            self._assert_close_list(native_outputs, py.outputs)
+
+
 class TestSolveScoreCPartitionDrift(unittest.TestCase):
     def test_c_param_metric_partition_matches_python(self):
         """solve_metric_is_param_metric (C) vs PARAM_SOLVE_SCORE_METRICS.

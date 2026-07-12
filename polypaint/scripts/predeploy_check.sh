@@ -55,6 +55,10 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_program_source_core.py \
     tests/test_source_locals_and_infix.py \
     tests/test_coeff_vm_property_fuzz.py \
+    tests/test_coeff_fast_kernel_policy.py \
+    tests/test_param_seed_policy.py \
+    tests/test_root_prepared_parity.py \
+    tests/test_vm_perf_counters.py \
     tests/test_program_starter_snippets.py \
     tests/test_program_profiles_drift.py \
     tests/test_program_v2_migration.py \

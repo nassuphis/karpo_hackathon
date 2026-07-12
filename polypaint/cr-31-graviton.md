@@ -1,5 +1,24 @@
 # CR31 on Graviton: Benchmark Results
 
+> **CORRECTED per code-review-32 (2026-07-12).** Three conclusions in this
+> report were wrong and are corrected inline below:
+> **(1)** the "syscall theory is dead" t1 verdict — candidate t1 never
+> executed blocked I/O (the `threadsUsed <= 1` branch kept per-row calls), so
+> both t1 rows compared per-row against per-row; with CR32's unified engine,
+> t1 improves −34.8% on M3 (Graviton re-run below);
+> **(2)** "the M3 t2/t4 readings were host scheduling noise" — they were a
+> repeatable +15–20% platform-specific regression of the one-pwrite-per-row
+> scheduler, fixed by CR32 write batching (M3 t4 now −24.2%);
+> **(3)** "the campaign helps at every memory size and regresses none" — an
+> overclaim: the coeff fast kernels had changed non-finite output semantics
+> (CR32-F1, CRITICAL) and one-slot solve-score programs had regressed 5–7× at
+> the production entry (CR32-F2), neither visible to this matrix; both fixed.
+> Also scoped honestly: the flat "micro" solve rows below measure the raw
+> metric helper, NOT the changed production entry; EC2 Graviton results are
+> architecture evidence, not Lambda sizing proof (Lambda matrix remains
+> user-run future work). The macro A/B numbers themselves remain valid for
+> the finite fixtures measured.
+
 Date: 2026-07-12. This closes the #1 residual item from `cr-31-post-mortem.md`:
 re-measure the CR31 VM campaign on the deployment architecture instead of the
 M3 development host, and settle the three questions the M3 numbers left open
@@ -36,18 +55,25 @@ the app. Reports: `reports/vm_bench_graviton_after-cr31.json` and
    wall time — **in production the campaign is worth about twice what the M3
    numbers suggested.**
 
-2. **Chunked t1 is flat on Linux too (−0.41%) — the syscall theory is dead on
-   both platforms.** 131,072 → ~1,024 syscalls does not move single-worker
-   time on macOS (+1.1%) or on Graviton (−0.4%); `chunked35_sin_t1` confirms
-   it (−0.005%). The review's ≤132.8 ms t1 acceptance target was therefore
-   unreachable via F2 anywhere; the remaining single-worker chunked cost is
-   per-row program evaluation and chunk framing, not I/O. This folds the t1
-   question into the post-mortem's residual item #2 (per-row eval cost).
+2. ~~**Chunked t1 is flat on Linux too (−0.41%) — the syscall theory is dead
+   on both platforms.**~~ **CR32 correction (F3): candidate t1 never executed
+   blocked I/O — the single-worker branch kept the old per-row pread/pwrite
+   loop, so this A/B compared two per-row implementations and said nothing
+   about syscalls. The claimed "131,072 → ~1,024" transition never occurred
+   at t1. After CR32 unified t1 into the block engine: M3 t1 −34.8%
+   (153.1 → 99.8 ms, bytes identical) — syscalls were a major single-worker
+   cost after all, and the review's ≤132.8 ms target is beaten. Graviton
+   re-run below.**
 
-3. **The param t2/t4 "+3–10% watch" resolves as an improvement.** On Graviton
-   the static-range scheduler wins at every thread count: t2 **−8.1%**, t4
-   **−5.9%**, t8 **−47.5%**. The M3 +3.8/+9.6% readings were host scheduling
-   noise, as suspected.
+3. **The param t2/t4 "+3–10% watch" resolves as an improvement on Graviton**
+   (t2 −8.1%, t4 −5.9%, t8 −47.5%). ~~The M3 +3.8/+9.6% readings were host
+   scheduling noise, as suspected.~~ **CR32 correction (F6): not noise — a
+   repeatable, platform-specific M3 regression (interleaved re-measurement:
+   +15–20% at t4, several× the observed MAD) caused by one pwrite per row.
+   The fused-plan default is four workers, so this was the default dev-host
+   path. CR32 batches rows into 128-row block flushes: M3 t4 −24.2%, t2
+   −6.4%, t8 −90.5% vs baseline; opposite-sign platform behavior is retained
+   in the record rather than averaged away.**
 
 4. **The 8-worker chunked *cliff* was macOS-only, but the blocked I/O still
    pays on Linux.** On the Graviton *base* build t8 was already the fastest
@@ -58,17 +84,24 @@ the app. Reports: `reports/vm_bench_graviton_after-cr31.json` and
    scaling (cand 5.35 → 3.05 ms, 1.75× from t4→t8).
 
 5. **The solve pair-metric bundle holds at 1.46×** (12,588.8 → 8,644.4 ns;
-   M3: 1.61×). All other micro rows are flat as expected — the root-rotate
-   prepared-chain win is structural and invisible to this micro by design
-   (it times `rt_*` bodies, not the chain dispatch).
+   M3: 1.61×). ~~All other micro rows are flat as expected.~~ **CR32
+   correction (F8): the ordinary metric rows call the raw helper directly and
+   bypass `solve_score_eval_metric_slots`, so they could not see the cache —
+   which is exactly where a 5–7× one-slot regression was hiding (CR32-F2,
+   fixed). The micro now has production-entry one-slot/duplicate-slot cases
+   and a parsed prepared root-chain case, so flat rows mean flat production
+   paths.** The root-rotate note stands: the old rotate row times `rt_*`
+   bodies, not chain dispatch.
 
 6. **Bonus determinism result: all 26 matrix outputs are byte-identical
    across platforms.** Every case's output SHA-256 on Graviton (gcc 11.5,
    glibc 2.34) equals the M3 value (Apple clang 17, macOS libm) — including
    the `sin`/expression cases. Both hosts are aarch64 and outputs are f32,
    but surviving two compilers, two libms, and two OSes bit-exactly is a
-   strong property for the oracle suite: M3-harvested oracles are valid
-   verbatim on the deployment architecture.
+   strong property. **CR32 scoping: this validates those 26 finite workloads
+   across the two arm64 hosts — it is evidence for, not proof of, general
+   oracle portability (non-finite policy boundaries were outside this matrix,
+   and CR32-F1 proved such boundaries can diverge silently).**
 
 ## Interleaved A/B (Graviton, bytes ok on every row)
 
@@ -129,16 +162,20 @@ predates the campaign.
 
 ## Lambda sizing implications
 
-Lambda arm64 allocates vCPU roughly in proportion to memory. From the table:
-every thread count ≥2 improves (chunked −11…−18%, param −6…−48%) and t1 is
-flat (−0.4%), so the campaign helps at every memory size and regresses none.
-The F5 CPU cap did not bind on this 8-vCPU box; its purpose (don't
-oversubscribe when configured threads exceed allocated vCPU) applies at small
-Lambda sizes and remains execution-plan-only. The param base's 4→8 plateau on
-Graviton means pre-campaign binaries were wasting anything past ~4 vCPU on
-param generation; post-campaign they are not — worth revisiting memory-size
-choices for param/chunked-heavy stages if they were tuned around the old
-plateau.
+Lambda arm64 allocates vCPU roughly in proportion to memory.
+~~From the table: every thread count ≥2 improves and t1 is flat, so the
+campaign helps at every memory size and regresses none.~~ **CR32 correction
+(F11): that sentence overclaimed twice. First, this table is EC2 Graviton
+evidence — no Lambda memory size was measured (musl static binaries, cgroup
+CPU visibility, cold starts, and noisy neighbors all differ); a real Lambda
+matrix with the final binaries remains future work and is user-run. Second,
+"regresses none" was false outside this matrix: CR32 found changed non-finite
+output semantics (F1) and a 5–7× one-slot solve regression (F2), both since
+fixed.** The F5 CPU cap did not bind on this 8-vCPU box; after CR32 it also
+cannot flip a request's dither seed policy (the cap never crosses the
+serial/threaded boundary — pinned by tests/test_param_seed_policy.py). The
+param base's 4→8 plateau on Graviton means pre-campaign binaries were wasting
+anything past ~4 vCPU on param generation; post-campaign they are not.
 
 ## Reproducing on a fresh box
 
@@ -156,16 +193,20 @@ python3 scripts/bench_program_vms.py --compare <base> <cand> --cases "param_expr
 cc -O3 -I lambda tests/native/vm_microbench.c -lm -o micro && ./micro
 ```
 
-## Residual-work list, updated
+## Residual-work list, updated (CR32)
 
-1. ~~Graviton re-measurement~~ — **done (this document).** Watch items
-   resolved: param t2/t4 regression was M3 noise; chunked t1 gap is not
-   syscalls anywhere.
+1. ~~Graviton re-measurement~~ — done (this document + the CR32 re-run below).
+   ~~Watch items resolved: param t2/t4 regression was M3 noise; chunked t1
+   gap is not syscalls anywhere.~~ **Both original resolutions were wrong;
+   see the corrections above. Now actually resolved: t1 WAS syscalls (fixed,
+   −34.8% M3), t4 WAS a real M3 regression (fixed, −24.2% M3).**
 2. `poly = fn(poly)` selector-path in-place transforms (per-function alias
-   audit) — now also the owner of the chunked-t1 question, since per-row eval
-   is what's left there.
+   audit) — the chunked-t1 question no longer belongs here (closed by CR32).
 3. Full Coeff ownership redesign — unchanged (needs deg-128/256 evidence).
-4. Remaining Solve feature families — unchanged.
+4. Remaining Solve feature families — only with requirement masks and
+   accumulation-order proofs (the CR32 F2 lesson).
 5. Param superinstruction fusion — unchanged; note Graviton's ~3× slower VM
    loops make the ~13 ns/row upside proportionally bigger there, but the
    exactness risk is unchanged.
+6. Real-Lambda memory/concurrency matrix with the final static binaries
+   (user-run; see corrected Lambda section above).

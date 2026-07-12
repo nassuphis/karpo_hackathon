@@ -158,10 +158,10 @@ test('layout dropdown marks dirty and Save carries it', async ({ page }) => {
   await page.click('#btn-gallery-save');
   let saved = await page.evaluate(() => window._galleryPosts.filter((p) => p.path === '/save-gallery').pop());
   expect(saved.body.gallery.settings.wall_layout).toBe('serpentine');
-  await page.selectOption('#gallery-wall-layout', 'standalone');
+  await page.selectOption('#gallery-wall-layout', 'standalone4');
   await page.click('#btn-gallery-save');
   saved = await page.evaluate(() => window._galleryPosts.filter((p) => p.path === '/save-gallery').pop());
-  expect(saved.body.gallery.settings.wall_layout).toBe('standalone');
+  expect(saved.body.gallery.settings.wall_layout).toBe('standalone4');
 });
 
 test('sky dropdown marks dirty and Save carries it', async ({ page }) => {

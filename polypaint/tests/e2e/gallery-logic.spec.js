@@ -329,6 +329,23 @@ test.describe('Gallery viewer layout (pure)', () => {
       const touchesBoundary = st.wallSegments.some((s) => (s.axis === 'x')
         ? (s.z < b.minZ + eps || s.z > b.maxZ - eps)
         : (s.x < b.minX + eps || s.x > b.maxX - eps));
+      const minGap = (m) => {
+        let best = Infinity;
+        for (let i = 0; i < m.wallSegments.length; i++) for (let j = i + 1; j < m.wallSegments.length; j++) {
+          const a = m.wallSegments[i], bb = m.wallSegments[j];
+          best = Math.min(best, Math.hypot(a.x - bb.x, a.z - bb.z));
+        }
+        return best;
+      };
+      const fieldMargin = (m) => {
+        const bb = m.bounds; let best = Infinity;
+        for (const sg of m.wallSegments) {
+          best = Math.min(best, sg.x - bb.minX, bb.maxX - sg.x, sg.z - bb.minZ, bb.maxZ - sg.z);
+        }
+        return best;
+      };
+      const st2 = L.computeLayout(pieces, { mode: 'standalone2', coverage: 35 });
+      const st4 = L.computeLayout(pieces, { mode: 'standalone4', coverage: 35 });
       return {
         placed: st.placedCount,
         reach: bfs(st) === st.cols * st.rows,
@@ -336,6 +353,9 @@ test.describe('Gallery viewer layout (pure)', () => {
         noPerimeter: !touchesBoundary,                                   // open sky to the horizon
         allDetached: L.mergeWallRuns(st.wallSegments).length === st.wallSegments.length,
         panelFaces: st.faceCount === st.wallSegments.length * 2,          // art on BOTH panel faces
+        gaps: [minGap(st), minGap(st2), minGap(st4)],
+        margins: [fieldMargin(st), fieldMargin(st2), fieldMargin(st4)],
+        placedSparse: [st2.placedCount, st4.placedCount],
       };
     }, eightPieces());
     expect(r.placed).toBe(8);
@@ -344,6 +364,12 @@ test.describe('Gallery viewer layout (pure)', () => {
     expect(r.noPerimeter).toBe(true);    // the surrounding wall is GONE
     expect(r.allDetached).toBe(true);    // no panel touches any other (lonely stands)
     expect(r.panelFaces).toBe(true);
+    // standalone2/4 DOUBLE and QUADRUPLE the panel spacing, same piece capacity
+    expect(r.gaps[1] / r.gaps[0]).toBeCloseTo(2, 5);
+    expect(r.gaps[2] / r.gaps[0]).toBeCloseTo(4, 5);
+    expect(r.placedSparse).toEqual([8, 8]);
+    // a wide open walk-back margin surrounds the forest in every variant
+    for (const m of r.margins) expect(m).toBeGreaterThanOrEqual(10.8 - 1e-6);
   });
 
   test('gridPath: BFS corridor paths never cross a closed wall, all placements reachable', async ({ page }) => {

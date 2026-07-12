@@ -401,24 +401,33 @@ export function gridPath(maze, from, to) {
   return null;
 }
 
-// Standalone: free-standing panels on a checkerboard — each work hangs on a
-// single lonely stand (art on BOTH faces), detached from every other panel and
-// from the field edge. NO perimeter wall at all: the sky runs to the horizon,
-// and the bounds clamp (not geometry) keeps the visitor on the field.
-export function computeStandalone(pieces, { coverage = null } = {}) {
+// Standalone: free-standing panels on a checkerboard lattice — each work hangs
+// on a single lonely stand (art on BOTH faces), detached from every other panel
+// and from the field edge. NO perimeter wall at all: the sky runs to the
+// horizon, and the bounds clamp (not geometry) keeps the visitor on the field.
+// `pitch` scales the lattice (standalone2/4 = double/quadruple panel spacing);
+// `margin` adds open walkable cells around the panel forest so the visitor can
+// step far back and view it against the sky.
+const STANDALONE_MAX_CELLS = 48;   // sparse variants outgrow MAZE.MAX_GRID — cells are just flags
+export function computeStandalone(pieces, { coverage = null, pitch = 1, margin = 3 } = {}) {
   const n = Math.max(1, pieces.length);
   const frac = Math.max(5, Math.min(100, Number(coverage) || 35)) / 100;
-  // Panels sit on interior row boundaries of checkerboard cells; each carries
-  // two faces, so a G-grid offers ~G*(G-1) faces.
-  const G = Math.max(MAZE.MIN_GRID, Math.min(MAZE.MAX_GRID,
-    Math.ceil(Math.sqrt(n / frac)) + 1));
-  const cols = G, rows = G;
+  // Each panel carries two faces; coverage is the fraction of faces used.
+  const panelsNeeded = Math.max(1, Math.ceil(n / (2 * frac)));
+  let S = Math.max(2, Math.ceil(Math.sqrt(2 * panelsNeeded)));   // super-lattice side
+  const maxSpan = STANDALONE_MAX_CELLS - 2 * margin - 1;
+  S = Math.min(S, Math.floor(maxSpan / pitch) + 1);
+  const cols = 2 * margin + pitch * (S - 1) + 1;
+  const rows = cols;
   const grid = [];
   for (let i = 0; i < cols * rows; i++) grid.push({ N: false, S: false, E: false, W: false });
   const at = (r, c) => grid[r * cols + c];
-  for (let r = 1; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if ((r + c) % 2 === 0) { at(r, c).N = true; at(r - 1, c).S = true; }
+  for (let i = 0; i < S; i++) {
+    for (let j = 0; j < S; j++) {
+      if ((i + j) % 2 !== 0) continue;                 // checkerboard on the super-lattice
+      const r = margin + i * pitch, c = margin + j * pitch;
+      if (r < 1 || r >= rows || c >= cols) continue;   // margin >= 1 keeps panels off the edge
+      at(r, c).N = true; at(r - 1, c).S = true;
     }
   }
   return _layoutFromGrid(pieces, grid, cols, rows, { placement: 'stride' });
@@ -429,7 +438,9 @@ export function computeLayout(pieces, { mode = 'maze', seed = 1, coverage = null
   if (mode === 'serpentine') return computeSerpentine(pieces, { coverage });
   if (mode === 'exhibition') return computeExhibition(pieces, { coverage });
   if (mode === 'spiral') return computeSpiral(pieces, { coverage });
-  if (mode === 'standalone') return computeStandalone(pieces, { coverage });
+  if (mode === 'standalone') return computeStandalone(pieces, { coverage, pitch: 1 });
+  if (mode === 'standalone2') return computeStandalone(pieces, { coverage, pitch: 2 });
+  if (mode === 'standalone4') return computeStandalone(pieces, { coverage, pitch: 4 });
   return computeMaze(pieces, { seed, coverage });
 }
 

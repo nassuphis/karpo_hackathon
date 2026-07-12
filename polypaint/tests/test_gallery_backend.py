@@ -746,8 +746,9 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertEqual(s["wall_layout"], "spiral")
 
     def test_settings_accept_standalone_layout(self):
-        s = hs._clean_gallery_settings({"wall_layout": "standalone"})
-        self.assertEqual(s["wall_layout"], "standalone")
+        for layout in ("standalone", "standalone2", "standalone4"):
+            s = hs._clean_gallery_settings({"wall_layout": layout})
+            self.assertEqual(s["wall_layout"], layout)
 
     def test_describe_gallery_titles_selection(self):
         import book_describe

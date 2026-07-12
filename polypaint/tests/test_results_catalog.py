@@ -326,6 +326,23 @@ class ResultsCatalogTests(unittest.TestCase):
         self._list()
         self.assertEqual(len(self._calc_gets()), n)
 
+    def test_prune_count_reflects_reality_not_intent(self):
+        self._seed_job("compute_a")
+        self._seed_job("compute_gone")
+        self._list()
+        del self.s3.objects["renders/compute_gone/calc.json"]
+        real_batch = self.ddb.batch_write_item
+        def deletes_fail(RequestItems=None):
+            reqs = next(iter(RequestItems.values()))
+            if any("DeleteRequest" in r for r in reqs):
+                raise _ce("ProvisionedThroughputExceededException", 400, "BatchWriteItem")
+            return real_batch(RequestItems=RequestItems)
+        self.ddb.batch_write_item = deletes_fail
+        body = self._list()
+        self.ddb.batch_write_item = real_batch
+        self.assertEqual(body["catalog_pruned"], 0)          # nothing ACTUALLY pruned
+        self.assertEqual(body["catalog_prune_failed"], 1)    # ...and the failure is visible
+
     def test_catalog_write_failure_never_breaks_the_read(self):
         self._seed_job("compute_a")
         def boom(**kw):

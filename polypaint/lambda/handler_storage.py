@@ -1282,6 +1282,9 @@ def _favorite_from_row(row):
     }
     if row.get("hydration_state", {}).get("S") == "missing":
         entry["hydration_state"] = "missing"   # persisted authoritative verdict (CR30 F7)
+    inc = row.get("incarnation", {}).get("S")
+    if inc:
+        entry["incarnation"] = inc             # rides along for conditional hydration writes (CR30 follow-up F2)
     for field in ("display_name", "image_key", "preview_key"):
         value = row.get(field, {}).get("S")
         if value:
@@ -1320,6 +1323,10 @@ def _put_favorite_entry(entry, snapshot=None):
         "family": {"S": "color"},
         "added_at": {"S": entry["added_at"]},
         "updated_at_ms": {"N": str(int(time.time() * 1000))},
+        # Immutable per-incarnation token (CR30 follow-up F2): delete + re-add reuses the
+        # same key, so hydration writes captured against the OLD incarnation
+        # must fail conditionally instead of stamping the new row.
+        "incarnation": {"S": uuid.uuid4().hex[:12]},
     }
     for field in ("display_name", "image_key", "preview_key"):
         value = entry.get(field)
@@ -1436,10 +1443,22 @@ def _favorite_panel_row(ref, snapshot, state, reason):
     return row
 
 
-def _backfill_favorite_snapshot(job_id, artifact_id, snapshot):
-    """Persist a resolved snapshot onto an existing (legacy) favorite row so the
-    next list is zero-S3 for it. Conditioned on the row still existing. Also
-    clears any persisted missing marker — the artifact evidently exists again."""
+def _favorite_incarnation_condition(incarnation):
+    """Conditional guard for hydration writes (CR30 follow-up F2): the row must still be
+    the SAME incarnation the resolution was computed against. Legacy rows
+    predate the token — for those, require it to still be absent (a re-add
+    stamps one, which correctly fails the stale write)."""
+    if incarnation:
+        return ("attribute_exists(task_id) AND incarnation = :inc",
+                {":inc": {"S": incarnation}})
+    return ("attribute_exists(task_id) AND attribute_not_exists(incarnation)", {})
+
+
+def _backfill_favorite_snapshot(job_id, artifact_id, snapshot, incarnation=None):
+    """Persist a resolved snapshot onto an existing favorite row so the next
+    list is zero-S3 for it. Conditioned on the SAME row incarnation (CR30 follow-up F2).
+    Also clears any persisted missing marker — the artifact evidently exists."""
+    cond, extra = _favorite_incarnation_condition(incarnation)
     _get_ddb().update_item(
         TableName=JOBS_TABLE,
         Key={
@@ -1452,18 +1471,20 @@ def _backfill_favorite_snapshot(job_id, artifact_id, snapshot):
             ":v": {"N": str(FAVORITE_SNAPSHOT_VERSION)},
             ":s": {"S": json.dumps(snapshot, separators=(",", ":"))},
             ":u": {"N": str(int(time.time() * 1000))},
+            **extra,
         },
-        ConditionExpression="attribute_exists(task_id)",
+        ConditionExpression=cond,
     )
 
 
-def _persist_favorite_missing(job_id, artifact_id):
+def _persist_favorite_missing(job_id, artifact_id, incarnation=None):
     """Persist an AUTHORITATIVE missing verdict (code-review-30 F7): drop the
     stale snapshot and mark the row, so the next zero-S3 cached list shows the
     favorite as missing instead of resurrecting the old snapshot. The row stays
     (product rule: a stale favorite remains visible until the user removes it);
     a later forced refresh that finds the artifact again heals it via the
     backfill. Transient/throttle/access errors must never reach here."""
+    cond, extra = _favorite_incarnation_condition(incarnation)
     _get_ddb().update_item(
         TableName=JOBS_TABLE,
         Key={
@@ -1475,8 +1496,9 @@ def _persist_favorite_missing(job_id, artifact_id):
         ExpressionAttributeValues={
             ":m": {"S": "missing"},
             ":t": {"N": str(int(time.time() * 1000))},
+            **extra,
         },
-        ConditionExpression="attribute_exists(task_id)",
+        ConditionExpression=cond,
     )
 
 
@@ -1696,7 +1718,9 @@ def handle_list_favorites(event):
     to_resolve = [r for r in refs
                   if refresh or ((r["job_id"], r["artifact_id"]) not in snapshots
                                  and r.get("hydration_state") != "missing")]
+    incarnation_by_key = {(r["job_id"], r["artifact_id"]): r.get("incarnation") for r in refs}
     resolved = {}
+    hydration_pool = None
     if to_resolve:
         import concurrent.futures
         client = _results_list_s3_client(len(to_resolve))
@@ -1706,10 +1730,11 @@ def handle_list_favorites(event):
             return (ref["job_id"], ref["artifact_id"]), _resolve_favorite_color_snapshot(
                 ref["job_id"], ref["artifact_id"], s3_client=client, parallel_heads=False)
 
-        with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(len(to_resolve), 16)) as pool:
-            for keypair, result in pool.map(work, to_resolve):
-                resolved[keypair] = result
+        # kept open: the persistence phase below reuses this ONE pool (CR30 follow-up F9)
+        hydration_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(len(to_resolve), 16))
+        for keypair, result in hydration_pool.map(work, to_resolve):
+            resolved[keypair] = result
 
     panel = []
     diag = {"snapshot_hits": 0, "snapshot_backfills": 0, "missing": 0, "errors": 0}
@@ -1736,16 +1761,32 @@ def handle_list_favorites(event):
             panel.append(_favorite_panel_row(ref, None, "missing", "not found"))
             diag["missing"] += 1
 
-    for job_id, artifact_id, snap in backfills:
+    # Persistence phase: parallel in the SAME pool, failures COUNTED — a
+    # silently dropped missing-marker write re-enables the resurrection CR30 F7
+    # closed, so the response must say when persistence didn't stick (CR30 follow-up F9).
+    def _persist_one(task):
+        kind, job_id, artifact_id, payload = task
         try:
-            _backfill_favorite_snapshot(job_id, artifact_id, snap)
+            inc = incarnation_by_key.get((job_id, artifact_id))
+            if kind == "backfill":
+                _backfill_favorite_snapshot(job_id, artifact_id, payload, incarnation=inc)
+            else:
+                _persist_favorite_missing(job_id, artifact_id, incarnation=inc)
+            return True
         except Exception:
-            pass  # backfill is an optimization; never fail the list on it
-    for job_id, artifact_id in fresh_missing:
-        try:
-            _persist_favorite_missing(job_id, artifact_id)   # no resurrection (CR30 F7)
-        except Exception:
-            pass
+            return False   # best-effort, but observable
+
+    write_tasks = [("backfill", j, a, snap) for j, a, snap in backfills]
+    write_tasks += [("missing", j, a, None) for j, a in fresh_missing]
+    diag["hydration_write_failures"] = 0
+    if write_tasks:
+        if hydration_pool is not None:
+            outcomes = list(hydration_pool.map(_persist_one, write_tasks))
+        else:
+            outcomes = [_persist_one(t) for t in write_tasks]
+        diag["hydration_write_failures"] = sum(1 for ok in outcomes if not ok)
+    if hydration_pool is not None:
+        hydration_pool.shutdown(wait=True)
 
     return ok_response({
         "favorites": panel,
@@ -1754,6 +1795,7 @@ def handle_list_favorites(event):
         "snapshot_backfills": diag["snapshot_backfills"],
         "missing": diag["missing"],
         "errors": diag["errors"],
+        "hydration_write_failures": diag.get("hydration_write_failures", 0),
         "hydrate_us": int((time.time() - t0) * 1e6),
     })
 
@@ -1791,10 +1833,14 @@ def handle_add_favorite(event):
         # Already favorited: return the STORED row (original added_at and
         # display_name), never a freshly fabricated one — the frontend would
         # otherwise reorder/rename an existing favorite (code-review-30 F8).
+        # ConsistentRead (CR30 follow-up F4): the conflicting put proves the row exists;
+        # an eventually-consistent read can miss a row written moments ago
+        # (double-click) and fall through to the fabricated shape.
         resp = _get_ddb().get_item(
             TableName=JOBS_TABLE,
             Key={"job_id": {"S": FAVORITES_DDB_JOB_ID},
-                 "task_id": {"S": _favorite_task_id(job_id, artifact_id)}})
+                 "task_id": {"S": _favorite_task_id(job_id, artifact_id)}},
+            ConsistentRead=True)
         row = resp.get("Item")
         if row:
             stored_ref = _favorite_from_row(row)
@@ -1805,6 +1851,16 @@ def handle_add_favorite(event):
                     stored_snap = json.loads(snap_raw)
                 except (ValueError, TypeError):
                     stored_snap = None
+            if stored_ref.get("hydration_state") == "missing":
+                # The re-add just PROVED the artifact exists — persist the
+                # healing so the next cached list doesn't say missing (CR30 follow-up F4).
+                try:
+                    _backfill_favorite_snapshot(job_id, artifact_id, snapshot,
+                                                incarnation=stored_ref.get("incarnation"))
+                except Exception:
+                    pass
+                return ok_response({"added": False,
+                                    "favorite": _favorite_panel_row(stored_ref, snapshot, "ready", "")})
             return ok_response({"added": False,
                                 "favorite": _favorite_panel_row(stored_ref, stored_snap or snapshot, "ready", "")})
     return ok_response({"added": added, "favorite": _favorite_panel_row(entry, snapshot, "ready", "")})
@@ -2879,6 +2935,7 @@ def _results_catalog_write_batch(put_items, delete_job_ids):
             chunk = (resp.get("UnprocessedItems") or {}).get(JOBS_TABLE) or []
             if not chunk:
                 break
+            time.sleep(0.05 * (_retry + 1))   # brief backoff before re-offering (CR30 follow-up F10)
         failed += len(chunk)
     return attempted, failed
 
@@ -3027,9 +3084,11 @@ def handle_list(event):
     present = set(job_ids)
     prune_jobs = [jid for jid in rows if jid not in present]
     t_p0 = time.time()
-    _results_catalog_write_batch([], prune_jobs)
+    _, prune_failed = _results_catalog_write_batch([], prune_jobs)
     catalog_prune_us = int((time.time() - t_p0) * 1e6)
-    pruned = len(prune_jobs)
+    # HONEST accounting (CR30 follow-up F10): report what actually pruned, not what was
+    # requested — a failed delete self-heals next reconcile but must not lie.
+    pruned = len(prune_jobs) - prune_failed
 
     skipped_missing_calc = len([j for j in job_ids if j not in entries])
     fresh_jobs = {e.get("job_id") for e in fresh}
@@ -3052,6 +3111,7 @@ def handle_list(event):
         "catalog_writes_attempted": writes_attempted,
         "catalog_writes_failed": writes_failed,
         "catalog_prune_us": catalog_prune_us,
+        "catalog_prune_failed": prune_failed,
         "catalog_hits": catalog_hits,
         "catalog_misses": len(to_read),
         "catalog_pruned": pruned,
@@ -5404,6 +5464,15 @@ def handle_describe_gallery(event):
     gallery_id = assert_safe_id(params.get("gallery_id"), "gallery_id")
     if not isinstance(params.get("pieces"), (list, type(None))):
         raise ValueError("pieces must be a list when present")
+    # The ownership contract is REQUIRED, not advisory (CR30 follow-up F6): a caller
+    # omitting base_title would let a generated title overwrite a human edit
+    # made between dispatch and worker start.
+    if not str(params.get("expected_revision") or "").strip():
+        raise ValueError("describe-gallery requires expected_revision (refetch the gallery)")
+    for t in (params.get("pieces") or []):
+        if not isinstance(t, dict) or "base_title" not in t:
+            raise ValueError("each explicit describe target requires base_title "
+                             "(the title as reviewed at dispatch time)")
     # Fail fast on missing config — no point dispatching a doomed worker.
     cfg = _load_vision_config()
     model = str(cfg.get("model") or "") or "gemini-2.5-flash"
@@ -5478,8 +5547,11 @@ def _describe_gallery_run(params):
                 return p
         return None
 
-    explicit = isinstance(raw_targets, list) and bool(raw_targets)
+    # PRESENCE of `pieces` chooses explicit mode (CR30 follow-up F5): an empty list is an
+    # explicit request for nothing (clean no-op), never a bulk describe.
+    explicit = isinstance(raw_targets, list)
     base_by_key = {}
+    missing_errors = []
     if explicit:
         want = []
         for t in raw_targets[:8]:
@@ -5493,12 +5565,13 @@ def _describe_gallery_run(params):
                 base_by_key[k] = _clean_gallery_title(t.get("base_title"))
         present = {key3(p) for p in (doc.get("pieces") or [])}
         target_keys = [k for k in want if k in present]
+        # EVERY requested-but-absent member is an error — mixed lists included
+        # (CR30 follow-up F5: described=1 with silently dropped missing members is a lie).
+        missing_errors = [{"artifact_id": k[2], "error": "gallery_piece_missing"}
+                          for k in want if k not in present]
         if not target_keys:
-            # An EXPLICIT selection matching nothing is a concurrency error,
-            # never a silent success (code-review-30 F3).
             return {"gallery": doc, "revision": revision, "described": 0,
-                    "errors": [{"artifact_id": k[2], "error": "gallery_piece_missing"}
-                               for k in want]}
+                    "errors": missing_errors}
     else:
         target_keys = [key3(p) for p in (doc.get("pieces") or [])]
     if not overwrite:
@@ -5520,7 +5593,7 @@ def _describe_gallery_run(params):
 
     used = [str(p.get("title") or "").strip() for p in (doc.get("pieces") or [])
             if str(p.get("title") or "").strip()]
-    described, errors = 0, []
+    described, errors = 0, list(missing_errors)
     deadline = time.time() + DESCRIBE_TIME_BUDGET_S
     for i, k in enumerate(target_keys):
         if time.time() >= deadline - DESCRIBE_STATUS_RESERVE_S:

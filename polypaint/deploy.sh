@@ -483,11 +483,7 @@ configure_async_invoke_policies() {
     # No retries for most Lambdas (prevents retry storms), but bilevel gets
     # 2 retries / 1hr age to handle concurrency throttle drops.
     local fn
-    # STORAGE included (code-review-30 F1): its self-invoked workers (describe,
-    # mosaic builds) must not be replayed by the platform — a replay can flip a
-    # terminal task row from error to done and double vision spend. In-process
-    # CAS retries own conflict handling instead.
-    for fn in "$FINALIZE_MT_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME" "$STORAGE_NAME"; do
+    for fn in "$FINALIZE_MT_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -497,6 +493,19 @@ configure_async_invoke_policies() {
     aws lambda put-function-event-invoke-config \
         --function-name "$BILEVEL_NAME" \
         --maximum-retry-attempts 2 \
+        --maximum-event-age-in-seconds 3600 \
+        --region "$REGION" >/dev/null
+    # STORAGE (code-review-30 F1 + CR30 follow-up F8): zero retries — its self-invoked
+    # workers (describe, mosaics) must never be platform-replayed (a replay can
+    # flip a terminal task row error->done and double vision spend; in-process
+    # CAS retries own conflicts). Event age 3600 (not 300): with reserved
+    # concurrency 5, a throttled event expiring would orphan its already-written
+    # task row as permanently "started" — an hour of queueing absorbs bursts.
+    # Residual gap (accepted): a dropped/expired event still leaves the row to
+    # its 24h TTL; a DLQ/OnFailure destination is future infra work.
+    aws lambda put-function-event-invoke-config \
+        --function-name "$STORAGE_NAME" \
+        --maximum-retry-attempts 0 \
         --maximum-event-age-in-seconds 3600 \
         --region "$REGION" >/dev/null
     # Orchestrators: no retries (self-reinvoke), long event age.

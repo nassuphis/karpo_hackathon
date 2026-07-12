@@ -186,6 +186,31 @@ test.describe('Results UI', () => {
     expect(err).toContain('network down');
   });
 
+  test('a mutation mid-flight makes the response stale: refetch, never commit (CR30 follow-up F1)', async ({ page }) => {
+    await page.evaluate(({ results }) => {
+      window._listResolvers = [];
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list') {
+          return new Promise((resolve) => { window._listResolvers.push(resolve); });
+        }
+        return {};
+      };
+      window._stale = { results, count: results.length, list_us: 1 };            // pre-mutation world
+      window._fresh = { results: results.concat([{ job_id: 'compute_new', function: 'poly_new', degree: 5, N: 100, times: 1, total_size: 10, n_chunks: 1 }]), count: results.length + 1, list_us: 1 };
+    }, { results: RESULTS });
+    await page.click('.tab-btn:text("Results")');                 // load starts (epoch e0)
+    await page.waitForFunction(() => window._listResolvers.length === 1);
+    await page.evaluate(() => { _resultsInvalidate(); });         // compute completed mid-flight
+    await page.evaluate(() => { window._listResolvers[0](window._stale); });   // stale response lands
+    // the loader must REFETCH instead of committing the stale world
+    await page.waitForFunction(() => window._listResolvers.length === 2);
+    await page.evaluate(() => { window._listResolvers[1](window._fresh); });
+    await expect(page.locator('#results-tbody tr')).toHaveCount(3);            // fresh world rendered
+    const st = await page.evaluate(() => ({ loaded: _resultsLoaded, jobs: _resultsCache.map((r) => r.job_id) }));
+    expect(st.loaded).toBe(true);
+    expect(st.jobs).toContain('compute_new');                     // the new compute is NOT hidden
+  });
+
   test('results refresh popup forwards worker count and filter mode updates placeholder and rows', async ({ page }) => {
     await page.evaluate(({ results, details }) => {
       window._resultsListBodies = [];

@@ -1093,7 +1093,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
                     state: 'done',
                     detail: `deg ${calc.degree || '?'} · ${_fmtSecondsMs(totalWallMs || 0)}`,
                 });
-                _resultsLoaded = false;   // a new compute exists — next Results visit refetches
+                _resultsInvalidate();   // a new compute exists — next Results visit refetches; in-flight responses are stale (CR30 follow-up F1)
                 break;
             }
         }

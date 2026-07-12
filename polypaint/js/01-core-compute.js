@@ -80,6 +80,14 @@ let _resultsCache = [];      // last fetched results
 let _resultsLoaded = false;  // session cache: tab re-entry renders _resultsCache
 let _resultsLoadPromise = null;  // in-flight load — awaitable by every caller (F4)
 let _resultsLoadRebuild = false; // whether the in-flight load carries rebuild:true
+let _resultsEpoch = 0;           // bumped by any mutation/invalidation (CR30 follow-up F1):
+                                 // a response fetched before the bump is STALE
+                                 // and must refetch, never commit
+
+function _resultsInvalidate() {
+    _resultsLoaded = false;
+    _resultsEpoch++;
+}
                              // with ZERO requests (favorites-speedup idea 1);
                              // Refresh/compute-completion/missing-job force a fetch
 let _selectedJobId = null;   // currently selected job_id
@@ -273,7 +281,18 @@ async function _loadResultsNow(options) {
         log(`Results refresh: loading... workers=${requestedWorkers}`, '', 'results-log');
         const body = { list_workers: requestedWorkers };
         if (options && options.rebuild) body.rebuild = true;
-        const data = await lambdaPost('storage', body, '/list');
+        // Epoch guard (CR30 follow-up F1): a mutation (compute completed, result deleted)
+        // during the round-trip makes this response STALE — refetch instead of
+        // committing a cache that would resurrect deletions or hide new jobs.
+        let data = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const epoch = _resultsEpoch;
+            data = await lambdaPost('storage', body, '/list');
+            if (epoch === _resultsEpoch) break;
+            data = null;
+            log('Results refresh: state moved mid-flight — refetching', '', 'results-log');
+        }
+        if (!data) throw new Error('results kept changing during refresh — try again');
         _resultsCache = data.results || [];
         _resultsLoaded = true;
         renderResultsTable();
@@ -288,6 +307,8 @@ async function _loadResultsNow(options) {
         if (data.calc_fetch_us != null) detail.push(`calc ${fmtUs(data.calc_fetch_us)}`);
         if (data.sort_us != null) detail.push(`sort ${fmtUs(data.sort_us)}`);
         if (data.catalog_hits != null) detail.push(`hits ${data.catalog_hits}/${data.count || 0}`);
+        if (data.catalog_writes_attempted) detail.push(`writes ${data.catalog_writes_attempted}${data.catalog_writes_failed ? ` (${data.catalog_writes_failed} failed)` : ''} ${fmtUs(data.catalog_write_us)}`);
+        if (data.catalog_pruned || data.catalog_prune_failed) detail.push(`pruned ${data.catalog_pruned}${data.catalog_prune_failed ? ` (${data.catalog_prune_failed} failed)` : ''} ${fmtUs(data.catalog_prune_us)}`);
         if (detail.length) parts.push(detail.join(' + '));
         const tune = [];
         if (data.list_workers != null) tune.push(`workers=${data.list_workers}`);
@@ -378,10 +399,13 @@ async function _fetchFavoriteRefs(force = false) {
 
 async function _loadFavoriteRefs(force = false) {
     if (_favoriteRefsLoaded && !force) return _favoriteRefs;
+    const generation = _favoriteLoadGeneration;
     const refs = await _fetchFavoriteRefs(force);
-    _favoriteRefs = refs;
-    _favoriteRefsLoaded = true;
-    return _favoriteRefs;
+    if (generation === _favoriteLoadGeneration) {   // no mutation raced us (CR30 follow-up F3)
+        _favoriteRefs = refs;
+        _favoriteRefsLoaded = true;
+    }
+    return refs;
 }
 
 function _rebuildFavoriteArtifactsFromRefs() {
@@ -410,6 +434,9 @@ async function _addColorFavorite(ref, options = {}) {
     // POST) — still returns the row. Patch the local cache; never reload.
     const row = resp && resp.favorite;
     if (row) {
+        // A mutation supersedes any in-flight load (CR30 follow-up F3): an older response
+        // committing after this write-through would silently discard the add.
+        _favoriteLoadGeneration++;
         const key = _favoriteRefKey(_favoriteRefJob(row), _favoriteRefArtifact(row));
         if (resp.added === false) {
             // Duplicate: the backend returned the AUTHORITATIVE stored row —
@@ -424,7 +451,9 @@ async function _addColorFavorite(ref, options = {}) {
             _favoriteRefs = [row, ...(_favoriteRefs || []).filter(
                 r => _favoriteRefKey(_favoriteRefJob(r), _favoriteRefArtifact(r)) !== key)];
         }
-        _favoriteRefsLoaded = true;
+        // NOT _favoriteRefsLoaded = true (CR30 follow-up F3): patching one row into a
+        // never-loaded cache must not mark it complete — that hid every older
+        // favorite until a forced refresh.
         if (_favoriteArtifactsReady) {
             _rebuildFavoriteArtifactsFromRefs();
             if (document.getElementById('tab-favorites')?.classList.contains('active')) {
@@ -806,10 +835,10 @@ async function deleteSelectedFavorite() {
         }, '/delete-favorite');
         // Write-through (favorites-speedup.md Proposal 4): drop the one row
         // locally; no partition reread, no rehydration.
+        _favoriteLoadGeneration++;   // supersede in-flight loads — no resurrection (CR30 follow-up F3)
         const removedKey = _favoriteRefKey(art.favorite_job_id, art.artifact_id);
         _favoriteRefs = (_favoriteRefs || []).filter(
             ref => _favoriteRefKey(_favoriteRefJob(ref), _favoriteRefArtifact(ref)) !== removedKey);
-        _favoriteRefsLoaded = true;
         const removedArtKey = _favoriteArtifactKey(art);
         const nextIdx = _favoriteSelectedIdx;
         _favoriteArtifacts = (_favoriteArtifacts || []).filter(a => _favoriteArtifactKey(a) !== removedArtKey);
@@ -1314,6 +1343,7 @@ async function deleteResult() {
 
         // Remove from cache and re-render
         _resultsCache = _resultsCache.filter(r => r.job_id !== _selectedJobId);
+        _resultsEpoch++;   // an in-flight /list response predates this delete (CR30 follow-up F1)
         _selectedJobId = null;
         renderResultsTable();
 

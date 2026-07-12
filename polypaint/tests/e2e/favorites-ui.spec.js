@@ -173,6 +173,37 @@ test.describe('Favorites UI', () => {
     expect(lines.some((l) => /Favorites refreshed/.test(l.msg))).toBe(false);
   });
 
+  test('an add mid-load survives the older response (CR30 follow-up F3)', async ({ page }) => {
+    await page.evaluate((rows) => {
+      window._listResolvers = [];
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-favorites') {
+          return new Promise((resolve) => { window._listResolvers.push(resolve); });
+        }
+        if (path === '/add-favorite') {
+          return { added: true, favorite: { family: 'color', artifact_id: 'color_new',
+            favorite_job_id: 'job_new', favorite_artifact_id: 'color_new',
+            favorite_added_at: '2026-05-01T00:00:00Z', display_name: 'Brand New',
+            image_key: 'renders/job_new/color/color_new/image.jpeg',
+            preview_key: 'renders/job_new/color/color_new/preview.png',
+            hydration_state: 'ready', missing: false } };
+        }
+        throw new Error('unexpected ' + path);
+      };
+      window._old = rows;
+    }, FAVORITE_ROWS);
+    await page.click('.tab-btn:text("Favorites")');               // slow load in flight
+    await page.waitForFunction(() => window._listResolvers.length === 1);
+    await page.evaluate(() => _addColorFavorite({ job_id: 'job_new', artifact_id: 'color_new' }, { force: true }));
+    await page.evaluate(() => { window._listResolvers[0]({ favorites: window._old }); });   // old world lands late
+    await page.waitForTimeout(150);
+    const names = await page.evaluate(() => (_favoriteRefs || []).map((x) => x.display_name));
+    expect(names).toContain('Brand New');                         // the add was NOT discarded
+    // and patching a never-loaded cache must not mark it complete
+    const flags = await page.evaluate(() => ({ loaded: _favoriteRefsLoaded }));
+    expect(flags.loaded).toBe(false);                             // full list still pending a real load
+  });
+
   test('a duplicate add never reorders or renames the existing row (CR30 F8)', async ({ page }) => {
     await page.evaluate((rows) => {
       window.lambdaPost = async function (name, body, path) {

@@ -39,8 +39,10 @@ class _FakeDDB:
         items = [v for (j, _t), v in sorted(self.items.items()) if j == jid]
         return {"Items": items}
 
-    def get_item(self, TableName=None, Key=None, ProjectionExpression=None):
+    def get_item(self, TableName=None, Key=None, ProjectionExpression=None,
+                 ConsistentRead=None):
         self.get_calls += 1
+        self.last_consistent_read = ConsistentRead
         k = (Key["job_id"]["S"], Key["task_id"]["S"])
         return {"Item": self.items[k]} if k in self.items else {}
 
@@ -61,6 +63,13 @@ class _FakeDDB:
         k = (Key["job_id"]["S"], Key["task_id"]["S"])
         if ConditionExpression and "attribute_exists" in ConditionExpression and k not in self.items:
             raise _ce("ConditionalCheckFailedException", 400, "UpdateItem")
+        cur = self.items.get(k, {})
+        if ConditionExpression and "incarnation = :inc" in ConditionExpression:
+            if cur.get("incarnation") != ExpressionAttributeValues.get(":inc"):
+                raise _ce("ConditionalCheckFailedException", 400, "UpdateItem")
+        if ConditionExpression and "attribute_not_exists(incarnation)" in ConditionExpression:
+            if "incarnation" in cur:
+                raise _ce("ConditionalCheckFailedException", 400, "UpdateItem")
         # crude generic SET a = :x, b = :y ... REMOVE c, d parser
         expr = UpdateExpression or ""
         set_part, remove_part = expr, ""
@@ -337,6 +346,68 @@ class FavoritesStorageTests(unittest.TestCase):
             body = json.loads(hs.handle_list_favorites(self._event({"refresh": True}))["body"])
         self.assertEqual(len(body["favorites"]), 2)
         self.assertEqual(count["n"], 1)                   # outer pool only — no nested executors
+
+    # ── CR30 follow-up F2: incarnation-conditioned hydration writes ──────
+    def test_stale_incarnation_write_cannot_stamp_a_readded_favorite(self):
+        self._seed_artifact("jobA", "cA")
+        hs.handle_add_favorite(self._event({"job_id": "jobA", "artifact_id": "cA", "family": "color"}))
+        key = (hs.FAVORITES_DDB_JOB_ID, hs._favorite_task_id("jobA", "cA"))
+        old_inc = self.ddb.items[key]["incarnation"]["S"]
+        # delete + re-add: SAME task key, NEW incarnation
+        self.ddb.items.pop(key)
+        hs.handle_add_favorite(self._event({"job_id": "jobA", "artifact_id": "cA", "family": "color"}))
+        self.assertNotEqual(self.ddb.items[key]["incarnation"]["S"], old_inc)
+        # a refresh captured against the OLD incarnation must FAIL conditionally
+        with self.assertRaises(ClientError):
+            hs._persist_favorite_missing("jobA", "cA", incarnation=old_inc)
+        self.assertNotIn("hydration_state", self.ddb.items[key])   # new row untouched
+        with self.assertRaises(ClientError):
+            hs._backfill_favorite_snapshot("jobA", "cA", {"image_key": "x"}, incarnation=old_inc)
+
+    def test_legacy_row_writes_fail_once_reincarnated(self):
+        self._seed_fav("jobL", "cL")                      # legacy: no incarnation token
+        hs._persist_favorite_missing("jobL", "cL", incarnation=None)   # legacy->legacy OK
+        key = (hs.FAVORITES_DDB_JOB_ID, hs._favorite_task_id("jobL", "cL"))
+        self.assertEqual(self.ddb.items[key]["hydration_state"]["S"], "missing")
+        # re-add stamps an incarnation; a stale legacy-shaped write now fails
+        self.ddb.items.pop(key)
+        self._seed_artifact("jobL", "cL")
+        hs.handle_add_favorite(self._event({"job_id": "jobL", "artifact_id": "cL", "family": "color"}))
+        with self.assertRaises(ClientError):
+            hs._persist_favorite_missing("jobL", "cL", incarnation=None)
+
+    # ── CR30 follow-up F4: consistent duplicate reads + persisted healing ──
+    def test_duplicate_read_is_consistent_and_heals_missing(self):
+        self._seed_artifact("jobA", "cA")
+        hs.handle_add_favorite(self._event({"job_id": "jobA", "artifact_id": "cA", "family": "color"}))
+        key = (hs.FAVORITES_DDB_JOB_ID, hs._favorite_task_id("jobA", "cA"))
+        inc = self.ddb.items[key]["incarnation"]["S"]
+        hs._persist_favorite_missing("jobA", "cA", incarnation=inc)    # goes missing
+        body = json.loads(hs.handle_add_favorite(self._event({
+            "job_id": "jobA", "artifact_id": "cA", "family": "color"}))["body"])
+        self.assertFalse(body["added"])
+        self.assertIs(self.ddb.last_consistent_read, True)             # never eventually-consistent
+        self.assertEqual(body["favorite"]["hydration_state"], "ready")
+        row = self.ddb.items[key]
+        self.assertNotIn("hydration_state", row)                       # healing PERSISTED
+        self.assertIn("snapshot", row)
+        # ...so the next cached list shows ready, zero S3
+        self.s3.head_calls = 0
+        body2 = json.loads(hs.handle_list_favorites(self._event({}))["body"])
+        self.assertEqual(body2["favorites"][0]["hydration_state"], "ready")
+        self.assertEqual(self.s3.head_calls, 0)
+
+    # ── CR30 follow-up F9: persistence failures are OBSERVABLE ───────────
+    def test_hydration_write_failures_are_counted(self):
+        self._seed_fav("jobA", "cA", snapshot={"image_key": "renders/jobA/color/cA/image.jpeg", "width": 1})
+        real_update = self.ddb.update_item
+        def flaky(**kw):
+            raise _ce("ProvisionedThroughputExceededException", 400, "UpdateItem")
+        self.ddb.update_item = flaky
+        body = json.loads(hs.handle_list_favorites(self._event({"refresh": True}))["body"])
+        self.ddb.update_item = real_update
+        self.assertGreaterEqual(body["hydration_write_failures"], 1)   # silence forbidden
+        self.assertEqual(body["favorites"][0]["hydration_state"], "missing")  # verdict still SHOWN
 
     def test_add_rejects_bad_ids(self):
         for bad in ({"job_id": "../evil", "artifact_id": "cA"},

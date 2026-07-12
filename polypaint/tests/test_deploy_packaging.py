@@ -928,9 +928,15 @@ class AsyncInvokePolicyTests(unittest.TestCase):
     must never be platform-replayed — a replay can flip a terminal task row
     from error to done and double vision spend."""
 
-    def test_storage_is_in_the_zero_retry_group(self):
+    def test_storage_async_config_zero_retries_long_event_age(self):
+        # CR30 follow-up F8: zero retries (no replay) but a LONG event age —
+        # 300s expiry under throttling would orphan already-written task rows
+        # as permanently "started".
         src = (pathlib.Path(__file__).resolve().parent.parent / "deploy.sh").read_text()
         start = src.index("configure_async_invoke_policies()")
         body = src[start:src.index("\n}", start)]
-        zero_retry_loop = body.split("--maximum-retry-attempts 0")[0]
-        self.assertIn('"$STORAGE_NAME"', zero_retry_loop)
+        chunks = body.split("put-function-event-invoke-config")
+        storage_chunks = [c for c in chunks if '"$STORAGE_NAME"' in c]
+        self.assertEqual(len(storage_chunks), 1, "storage needs exactly one async-invoke config")
+        self.assertIn("--maximum-retry-attempts 0", storage_chunks[0])
+        self.assertIn("--maximum-event-age-in-seconds 3600", storage_chunks[0])

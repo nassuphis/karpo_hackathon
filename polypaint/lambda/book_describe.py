@@ -149,6 +149,10 @@ def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TI
     a quota message like "retry in 52s" must pause the run, not kill it."""
     delay = 3.0
     for attempt in range(1, attempts + 1):
+        # PACE FIRST (CR30 follow-up F7): the free-tier pacing sleep consumes real budget,
+        # so remaining time must be measured after it — computing the socket
+        # timeout pre-pace let requests start past an already-expired deadline.
+        _pace(pacing)
         # A real deadline bounds EVERY attempt (code-review-30 F2): the per-
         # attempt socket timeout shrinks to the remaining budget, and no
         # attempt starts without enough margin to matter.
@@ -158,7 +162,6 @@ def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TI
             if remaining < 5.0:
                 raise RuntimeError(f"vision budget exhausted before attempt {attempt}")
             attempt_timeout = max(3.0, min(timeout, remaining - 2.0))
-        _pace(pacing)
         req = urllib.request.Request(
             url, data=body,
             headers=headers or {"Content-Type": "application/json", "x-goog-api-key": api_key})

@@ -163,18 +163,13 @@ class TestPredeployGateCompleteness(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 # code-review-30 F13: the browser gate gets the same completeness accounting as
 # pytest — a new tests/e2e/*.spec.js must be gated or EXPLICITLY excluded here.
-EXCLUDED_E2E = {
-    # ColorRender-MT has a known deterministic render-tab fixture failure
-    # (missing calc.job_size) predating the gallery work; the suite stays out
-    # of the gate until that fixture is repaired. Run manually.
-    "render-solve-score.spec.js",
-}
+# (render-solve-score is GATED with --grep-invert on its one known-red
+# ColorRender-MT fixture test — CR30 follow-up F11 — so nothing is excluded today.)
+EXCLUDED_E2E = set()
 
 
 class TestE2EGateCompleteness(unittest.TestCase):
@@ -199,3 +194,7 @@ class TestE2EGateCompleteness(unittest.TestCase):
         self.assertEqual(missing, [], f"gate references deleted specs: {missing}")
         stale = sorted((EXCLUDED_E2E & self._gated_specs()) | (EXCLUDED_E2E - self._disk_specs()))
         self.assertEqual(stale, [], f"stale EXCLUDED_E2E entries: {stale}")
+
+
+if __name__ == "__main__":   # LAST statement — direct runs must see every class (CR30 follow-up F11)
+    unittest.main()

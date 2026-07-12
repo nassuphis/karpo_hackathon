@@ -148,7 +148,7 @@ assertIncludes("const exportId = 'dz_' + opId;", 'each DeepZoom launch must mint
 assertIncludes("const taskId = dispatchTarget + '_' + opId;", 'each DeepZoom launch must mint a unique task_id (code-review-29 F1)');
 assertIncludes("export_id: exportId,", 'DeepZoom dispatch payload must carry the unique export_id');
 assertIncludes("task_id: taskId,", 'DeepZoom dispatch payload must carry the unique task_id');
-assertIncludes("_resultsLoaded = false;   // a new compute exists", 'a finished compute must invalidate the Results session cache');
+assertIncludes("_resultsInvalidate();   // a new compute exists", 'a finished compute must invalidate the Results session cache AND epoch');
 assertIncludes("void _dzPatchInventoryAfterExport(jobId, exportId);", 'a finished export must patch the cached DeepZoom inventory in place');
 assertIncludes("id=\"vision-model\"", 'the LLM (vision) config lives in the global Config popup');
 assertIncludes("if (next) void visionConfigLoad();", 'opening the Config popup must load the live vision config');

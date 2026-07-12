@@ -285,6 +285,8 @@ test('a photographic sky becomes the scene background texture', async ({ page })
   expect(st.equirect).toBe(true);
   expect(st.skyGroup).toBe(false);
   expect(st.owned).toBe(true);
+  // the ~32MiB scene-owned allocation is visible in diagnostics, not hidden
+  await expect(page.locator('#debug')).toContainText('scene-owned', { timeout: 5000 });
   // destroy() disposes the sky texture exactly like every owned GPU resource
   const disposed = await page.evaluate(() => new Promise((resolve) => {
     const v = window.__galleryViewer;
@@ -293,6 +295,23 @@ test('a photographic sky becomes the scene background texture', async ({ page })
     setTimeout(() => resolve(false), 500);
   }));
   expect(disposed).toBe(true);
+});
+
+test('a failed sky download falls back to the dark background (CR30 follow-up F12)', async ({ page }) => {
+  const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/skyfail/manifest.json';
+  const mk = (j, a) => ({ ordinal: 0, job_id: j, artifact_id: a, preview_key: `renders/${j}/color/${a}/preview.jpg`, image_key: null, preview_width: 512, preview_height: 512, function: 'f', title: '', deepzoom: null });
+  await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color',
+    layout: { mode: 'auto', seed: 1 }, settings: { sky: 'galaxies' }, pieces: [mk('j0', 'a0')] }) }));
+  await page.route('**/skybox/*.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(GALLERY + '?share=skyfail');
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  await page.waitForFunction(() => {
+    const v = window.__galleryViewer;
+    return v.scene.background === null && v._skyTexture === null;   // dead texture dropped + disposed
+  }, { timeout: 8000 });
 });
 
 test('builds a maze with settings applied and collision that clamps to bounds', async ({ page }) => {

@@ -402,7 +402,19 @@ class GalleryViewer {
   // (published by deploy.sh from the converted skybox/ sources). Loads async:
   // the dark background stays until the texture arrives; a failed load keeps it.
   _buildImageSky(sky) {
-    const tex = new THREE.TextureLoader().load(location.origin + '/skybox/' + sky + '.jpg');
+    const tex = new THREE.TextureLoader().load(
+      location.origin + '/skybox/' + sky + '.jpg',
+      undefined, undefined,
+      () => {
+        // Load failure REALLY falls back to the dark background (CR30 follow-up F12) —
+        // previously that claim rode on the accident that an unloaded texture
+        // renders black; now the dead texture is dropped and disposed.
+        if (this._skyTexture === tex) {
+          this.scene.background = null;
+          this._skyTexture = null;
+        }
+        try { tex.dispose(); } catch {}
+      });
     tex.mapping = THREE.EquirectangularReflectionMapping;
     tex.colorSpace = THREE.SRGBColorSpace;
     // Owned resource (code-review-30 F15): a 4096x2048 background is ~32MiB of
@@ -1018,10 +1030,15 @@ class GalleryViewer {
   _updateDebug() {
     const s = this.tm.stats();
     const eff = Math.round(100 * this.maze.placedCount / Math.max(1, this.maze.faceCount));
+    // Scene-owned textures (the photographic sky) sit OUTSIDE the art-texture
+    // budget — say so instead of letting ~32MiB hide from every readout (CR30 follow-up F12).
+    const skyImg = this._skyTexture && this._skyTexture.image;
+    const skyLine = skyImg && skyImg.width
+      ? `\nsky ${Math.round((skyImg.width * skyImg.height * 4) / 1048576)}MiB (scene-owned, outside art budget)` : '';
     $('debug').textContent = `pieces ${this.pieces.length}${this._dropped ? `  (+${this._dropped} not shown)` : ''}\n` +
       `art on ${this.maze.placedCount}/${this.maze.faceCount} faces (${eff}% effective)\n` +
       `queued ${s.queued}  inflight ${s.inFlight}\n` +
-      `resident ${s.resident}/${TEXTURE_LIMITS.MAX_RESIDENT}  gpu ${this.renderer.info.memory.textures}`;
+      `resident ${s.resident}/${TEXTURE_LIMITS.MAX_RESIDENT}  gpu ${this.renderer.info.memory.textures}` + skyLine;
   }
 
   destroy() {

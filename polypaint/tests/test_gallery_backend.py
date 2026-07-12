@@ -674,7 +674,9 @@ class GalleryBackendTests(unittest.TestCase):
              patch.object(hs, "report_status", side_effect=lambda *a, **k: statuses.append(a)), \
              patch.object(hs.boto3, "client", return_value=_Lambda()):
             resp, body = self._route(hs.handle_describe_gallery, gallery_id=gid,
-                                     pieces=[{"job_id": "jobT", "artifact_id": "cT"}], overwrite=True)
+                                     expected_revision="r1",
+                                     pieces=[{"job_id": "jobT", "artifact_id": "cT", "base_title": ""}],
+                                     overwrite=True)
         vc.assert_not_called()                                  # request path is vision-free
         self.assertTrue(body["dispatched"])
         self.assertTrue(body["task_id"].startswith("describe_"))
@@ -825,6 +827,50 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertGreater(budget, 0)
         self.assertLessEqual(budget, hs.DESCRIBE_TIME_BUDGET_S)
 
+    # ── CR30 follow-up F6: the route ENFORCES the ownership contract ─────
+    def test_route_rejects_targets_without_base_title(self):
+        gid = self._seed_dzi_piece_gallery()
+        resp, body = self._route(hs.handle_describe_gallery, gallery_id=gid,
+                                 expected_revision="r1",
+                                 pieces=[{"job_id": "jobT", "artifact_id": "cT"}], overwrite=True)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("base_title", body["error"])
+
+    def test_route_rejects_missing_expected_revision(self):
+        gid = self._seed_dzi_piece_gallery()
+        resp, body = self._route(hs.handle_describe_gallery, gallery_id=gid,
+                                 pieces=[{"job_id": "jobT", "artifact_id": "cT", "base_title": ""}],
+                                 overwrite=True)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("expected_revision", body["error"])
+
+    # ── CR30 follow-up F5: presence chooses explicit mode; mixed lists honest ──
+    def test_mixed_selection_reports_missing_members(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        with patch.object(book_describe, "_vision_call", return_value='{"title": "Real Title"}'), \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
+            body = hs._describe_gallery_run({"gallery_id": gid, "overwrite": True,
+                "pieces": [{"job_id": "jobT", "artifact_id": "cT", "base_title": ""},
+                           {"job_id": "jobGONE", "artifact_id": "cGONE", "base_title": ""}]})
+        self.assertEqual(body["described"], 1)                        # the live member titled
+        self.assertEqual(len(body["errors"]), 1)                      # the dead one REPORTED
+        self.assertIn("gallery_piece_missing", body["errors"][0]["error"])
+        self.assertEqual(body["errors"][0]["artifact_id"], "cGONE")
+
+    def test_empty_explicit_selection_is_a_noop_not_bulk(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        with patch.object(book_describe, "_vision_call") as vc, \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}):
+            body = hs._describe_gallery_run({"gallery_id": gid, "overwrite": True, "pieces": []})
+        vc.assert_not_called()                       # pieces: [] must NOT describe the gallery
+        self.assertEqual(body["described"], 0)
+        self.assertEqual(body["errors"], [])
+
     def test_describe_stops_at_time_budget(self):
         import book_describe
         gid = self._seed_dzi_piece_gallery()
@@ -893,7 +939,8 @@ class GalleryBackendTests(unittest.TestCase):
         gid = self._seed_dzi_piece_gallery()
         with patch.object(book_describe, "_load_vision_config", return_value={}), \
              patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
-            resp, body = self._route(hs.handle_describe_gallery, gallery_id=gid, overwrite=True)
+            resp, body = self._route(hs.handle_describe_gallery, gallery_id=gid,
+                                     expected_revision="r1", overwrite=True)
         self.assertIn("error", body)                 # fails FAST — nothing dispatched
         self.assertIn("vision API key", body["error"])
         with patch.object(book_describe, "_load_vision_config", return_value={}), \
@@ -959,6 +1006,37 @@ class InteractiveVisionBudgetTests(unittest.TestCase):
                                        timeout=120.0, deadline_ts=_time.time() + 20)
         self.assertLessEqual(captured["timeout"], 20.0)
         self.assertGreater(captured["timeout"], 3.0)
+
+    def test_pacing_sleep_counts_against_the_deadline(self):
+        import book_describe, time as _time
+        # a 6.5s pace against an 8s deadline leaves <5s margin: NO socket opens
+        clock = {"now": _time.time()}
+        def paced(_p):
+            clock["now"] += 6.5
+        with patch.object(book_describe.time, "time", side_effect=lambda: clock["now"]), \
+             patch.object(book_describe, "_pace", side_effect=paced), \
+             patch.object(book_describe.urllib.request, "urlopen") as uo:
+            with self.assertRaisesRegex(RuntimeError, "budget exhausted"):
+                book_describe._gemini_call("https://x", b"{}", "k", attempts=3,
+                                           deadline_ts=clock["now"] + 8, timeout=120.0)
+        uo.assert_not_called()
+        # with real margin, the socket timeout reflects POST-pace remaining time
+        ok = unittest.mock.MagicMock()
+        ok.__enter__ = lambda s: unittest.mock.MagicMock(read=lambda: b'{"content": [{"text": "hi"}]}')
+        ok.__exit__ = lambda s, *a: False
+        captured = {}
+        def capture(req, timeout=None):
+            captured["timeout"] = timeout
+            return ok
+        clock2 = {"now": _time.time()}
+        def paced2(_p):
+            clock2["now"] += 6.5
+        with patch.object(book_describe.time, "time", side_effect=lambda: clock2["now"]), \
+             patch.object(book_describe, "_pace", side_effect=paced2), \
+             patch.object(book_describe.urllib.request, "urlopen", side_effect=capture):
+            book_describe._gemini_call("https://x", b"{}", "k", attempts=3,
+                                       deadline_ts=clock2["now"] + 20, timeout=120.0)
+        self.assertLessEqual(captured["timeout"], 20 - 6.5)   # pace already spent
 
     def test_batch_profile_is_unchanged(self):
         import book_describe

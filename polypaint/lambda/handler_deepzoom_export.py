@@ -17,7 +17,8 @@ import boto3
 
 from color_artifact_meta import load_color_artifact_head
 from shared import (BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status,
-                    imgpipe_env, assert_render_source, assert_safe_id, parse_render_key)
+                    imgpipe_env, assert_render_source, assert_safe_id, parse_render_key,
+                    is_missing_s3_error)
 
 s3 = boto3.client("s3")
 DZ_EXPORT = os.path.join(os.path.dirname(__file__), "dz_export")
@@ -126,6 +127,19 @@ def _manifest_source_fields(source_key):
     return manifest
 
 
+def _export_prefix_exists(job_id, export_id):
+    """Create-only export identity (code-review-29 F1): a NEW export must never
+    land on an existing prefix — a reused or same-second-defaulted export_id
+    would silently mix two exports' objects under one immutable prefix."""
+    try:
+        s3.head_object(Bucket=BUCKET, Key=f"deepzoom/{job_id}/{export_id}/meta.json")
+        return True
+    except Exception as exc:
+        if is_missing_s3_error(exc):
+            return False
+        raise
+
+
 def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id="deepzoom_export"):
     # job_id + export_id become an S3 prefix AND public viewer HTML — validate
     # to a safe charset before any use (CR28 F9): no slashes / HTML / control
@@ -165,6 +179,10 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
             for label, k in (("raw_key", raw_key), ("raw_meta_key", raw_meta_key)):
                 if k and not k.startswith(f"renders/{job_id}/"):
                     raise ValueError(f"{label} {k!r} is not under renders/{job_id}/ (job mismatch)")
+        if _export_prefix_exists(job_id, export_id):
+            raise RuntimeError(
+                f"export prefix deepzoom/{job_id}/{export_id}/ already exists — "
+                "each export needs a fresh export_id")
         source_kind = "image"
         suffix = os.path.splitext(source_key)[1] or ".img"
         source_path = f"/tmp/deepzoom_source{suffix}"
@@ -341,4 +359,7 @@ def handler(event, context):
             }
         from handler_wall_pyramid import handle_build_wall_pyramid
         return handle_build_wall_pyramid(params if params.get("internal_action") else event)
-    return handle_deepzoom_export_request(params, require_raw_sidecar=False, task_id="deepzoom_export")
+    # The caller may thread its own operation-unique task_id (code-review-29 F1)
+    # so overlapping exports for one job never share a status row.
+    task_id = assert_safe_id(str(params.get("task_id") or "deepzoom_export"), "task_id")
+    return handle_deepzoom_export_request(params, require_raw_sidecar=False, task_id=task_id)

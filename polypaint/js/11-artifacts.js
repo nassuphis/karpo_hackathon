@@ -1224,7 +1224,13 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
     const skipRenderRefresh = !!(options && options.skipRenderRefresh);
     const useExactSource = !!String(sourceKey || '').trim();
     const dispatchTarget = useExactSource ? 'deepzoom_export' : ((rawKey && rawMetaKey) ? 'deepzoom_from_raw' : 'deepzoom_export');
-    const taskId = dispatchTarget;
+    // ONE operation identity end-to-end (code-review-29 F1): a unique export_id
+    // (the S3 prefix) + task_id (the status row) minted here and threaded
+    // through dispatch, so overlapping exports for one job can never share a
+    // status row (false completion) or an export prefix (mixed tile sets).
+    const opId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    const exportId = 'dz_' + opId;
+    const taskId = dispatchTarget + '_' + opId;
     // Every dispatched job rides the jobs rail (user rule): card up before the
     // dispatch so even an immediate failure is visible, ticked while polling.
     const railId = 'deepzoom:' + jobId + ':' + Date.now().toString(36);
@@ -1234,21 +1240,23 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
     rail({ state: 'running', startedAt: Date.now(), detail: 'dispatching' });
     log(`DeepZoom: exporting ${sourceKey}...`, '', 'render-log');
     try {
-        // Clear any stale DeepZoom status row before dispatching,
-        // so we don't falsely complete against a previous run's "done".
-        await lambdaPost('storage', { job_id: jobId, task_id: taskId }, '/delete-task').catch(() => {});
-
-        // Dispatch async — API Gateway has a 30s hard limit, DeepZoom takes 30-120s
+        // Dispatch async — API Gateway has a 30s hard limit, DeepZoom takes 30-120s.
+        // No pre-dispatch delete-task: the task_id is unique per launch, so there
+        // is no shared row to go stale against.
         const dispResult = await lambdaPost('dispatch', {
             target: dispatchTarget,
             jobs: [useExactSource ? {
                 job_id: jobId,
                 source_key: sourceKey,
+                export_id: exportId,
+                task_id: taskId,
             } : {
                 job_id: jobId,
                 source_key: sourceKey,
                 raw_key: rawKey,
                 raw_meta_key: rawMetaKey,
+                export_id: exportId,
+                task_id: taskId,
             }],
             expected_keys: [],
         });
@@ -1279,6 +1287,8 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
         }
         log(`  DeepZoom export complete (${_fmtMs(performance.now() - t0)})`, 'ok', 'render-log');
         rail({ state: 'done', detail: `export complete (${_fmtMs(performance.now() - t0)})` });
+        // Completed rows are one-shot — clean up (failures keep theirs as evidence).
+        void lambdaPost('storage', { job_id: jobId, task_id: taskId }, '/delete-task').catch(() => {});
         if (!skipRenderRefresh) await refreshRenderArtifacts(jobId);
     } catch (e) {
         log(`  DeepZoom failed: ${e.message}`, 'err', 'render-log');

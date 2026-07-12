@@ -58,6 +58,11 @@ class TestDeepZoomFromRaw(unittest.TestCase):
 
         mock_s3.get_object.side_effect = get_object
         mock_s3.put_object.side_effect = put_object
+        def _missing(*a, **kw):
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "404", "Message": "Not Found"},
+                               "ResponseMetadata": {"HTTPStatusCode": 404}}, "HeadObject")
+        mock_s3.head_object.side_effect = _missing
         def run_side_effect(cmd, capture_output=False, text=False, timeout=None, env=None):
             exe = os.path.basename(cmd[0])
             if exe == "dz_export":

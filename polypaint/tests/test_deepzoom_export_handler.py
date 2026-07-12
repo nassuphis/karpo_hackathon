@@ -9,6 +9,12 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 
+def _s3_missing(*args, **kwargs):
+    from botocore.exceptions import ClientError
+    raise ClientError({"Error": {"Code": "404", "Message": "Not Found"},
+                       "ResponseMetadata": {"HTTPStatusCode": 404}}, "HeadObject")
+
+
 def _event(**overrides):
     payload = {
         "job_id": "test_dz",
@@ -131,6 +137,7 @@ class TestDeepZoomExportRaw(unittest.TestCase):
 
         mock_s3.get_object.side_effect = get_object
         mock_s3.put_object.side_effect = put_object
+        mock_s3.head_object.side_effect = _s3_missing
         def run_side_effect(cmd, capture_output=False, text=False, timeout=None, env=None):
             exe = os.path.basename(cmd[0])
             if exe == "dz_export":
@@ -218,6 +225,7 @@ class TestDeepZoomExportRaw(unittest.TestCase):
             "Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"exact image bytes"])
         }
         mock_s3.put_object.side_effect = lambda **kwargs: put_calls.append(kwargs)
+        mock_s3.head_object.side_effect = _s3_missing
         mock_subprocess.run.return_value = MagicMock(returncode=0, stdout=json.dumps({"width": 2, "height": 2}), stderr="")
 
         import builtins
@@ -257,3 +265,49 @@ class TestDeepZoomExportRaw(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOperationIdentity(unittest.TestCase):
+    """code-review-29 F1: overlapping exports must never share a status row or
+    an export prefix — the caller's task_id threads through both entry points,
+    and a supposedly NEW export refuses an already-occupied prefix."""
+
+    @patch("handler_deepzoom_export.report_status")
+    @patch("handler_deepzoom_export.s3")
+    def test_handler_threads_caller_task_id_into_status_rows(self, mock_s3, report):
+        import handler_deepzoom_export as mod
+        mock_s3.head_object.side_effect = _s3_missing
+        with self.assertRaises(ValueError):
+            mod.handler(_event(source_key="renders/OTHERJOB/color/color_src/image.jpeg",
+                               task_id="deepzoom_export_op123"), None)
+        rows = {c.args[1] for c in report.call_args_list}
+        self.assertEqual(rows, {"deepzoom_export_op123"})
+
+    def test_handler_rejects_unsafe_task_id(self):
+        import handler_deepzoom_export as mod
+        with self.assertRaises(ValueError):
+            mod.handler(_event(task_id="../evil"), None)
+
+    @patch("handler_deepzoom_export.report_status")
+    @patch("handler_deepzoom_export.s3")
+    def test_new_export_refuses_existing_prefix(self, mock_s3, report):
+        import handler_deepzoom_export as mod
+        mock_s3.head_object.return_value = {}   # meta.json already at the prefix
+        with self.assertRaisesRegex(RuntimeError, "already exists"):
+            mod.handle_deepzoom_export_request(
+                {"job_id": "test_dz",
+                 "source_key": "renders/test_dz/color/color_src/image.jpeg",
+                 "export_id": "dz_dupe"})
+        mock_s3.get_object.assert_not_called()   # refused before any download
+        self.assertIn("error", {c.args[2] for c in report.call_args_list})
+
+    @patch("handler_deepzoom_export.report_status")
+    @patch("handler_deepzoom_export.s3")
+    def test_from_raw_wrapper_threads_task_id(self, mock_s3, report):
+        import handler_deepzoom_from_raw as raw
+        mock_s3.head_object.side_effect = _s3_missing
+        with self.assertRaises(RuntimeError):   # missing raw sidecars
+            raw.handler({"body": json.dumps({"job_id": "test_dz",
+                                             "task_id": "deepzoom_from_raw_op9"})}, None)
+        rows = {c.args[1] for c in report.call_args_list}
+        self.assertEqual(rows, {"deepzoom_from_raw_op9"})

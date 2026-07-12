@@ -144,6 +144,10 @@ assertIncludes("_mosaicContextButton('DeepZoom', 'deepzoom', ctx.busy)", 'AllCol
 assertIncludes("void runDeepZoomExport(tile.job_id, sourceKey, null, { skipRenderRefresh: true });", 'mosaic DeepZoom must go through the ONE canonical export flow');
 assertIncludes("id: railId, kind: 'deepzoom', label: 'deepzoom · ' + jobId, jobId,", 'DeepZoom exports must ride the jobs rail (all dispatched jobs do)');
 assertIncludes("rail({ state: 'failed', detail: String(e.message || e) });", 'a failed DeepZoom export must mark its rail card failed');
+assertIncludes("const exportId = 'dz_' + opId;", 'each DeepZoom launch must mint a unique export_id (code-review-29 F1)');
+assertIncludes("const taskId = dispatchTarget + '_' + opId;", 'each DeepZoom launch must mint a unique task_id (code-review-29 F1)');
+assertIncludes("export_id: exportId,", 'DeepZoom dispatch payload must carry the unique export_id');
+assertIncludes("task_id: taskId,", 'DeepZoom dispatch payload must carry the unique task_id');
 assertIncludes("new_interpretation: newInterpretation", 'Color RePalette UI should forward the selected 3-channel interpretation');
 assertIncludes("id=\"color-repalette-interpretation-row\"", 'Color RePalette popup should expose the interpretation row');
 assertIncludes("id=\"color-repalette-interpretation\"", 'Color RePalette popup should expose the 3-channel interpretation selector');

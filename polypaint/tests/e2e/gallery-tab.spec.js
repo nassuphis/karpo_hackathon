@@ -229,6 +229,69 @@ test('FINDING 3 REGRESSION: concurrent adds survive a dirty merge + save', async
   expect(saved.body.expected_revision).toBe('r-after-adds');
 });
 
+test('a remote RENAME while dirty refuses the merge and keeps the old revision', async ({ page }) => {
+  // code-review-29 F2: the dirty merge only knows additions. Any other remote
+  // change must be refused (local doc + OLD revision kept) so the next Save
+  // meets a clean 409 instead of silently overwriting the remote edit.
+  await setup(page, docWith(pieces()));
+  await page.locator('#gallery-piece-list input[type="text"]').nth(0).fill('My title');
+  await page.evaluate(() => {
+    const server = JSON.parse(JSON.stringify(window.__docs.gal_x));
+    server.name = 'Renamed elsewhere';
+    server.pieces.push({ job_id: 'jC', artifact_id: 'artC', preview_key: 'renders/jC/color/artC/preview.jpg', image_key: 'renders/jC/color/artC/image.jpeg', preview_width: 512, preview_height: 512, function: 'h', title: '', deepzoom: null });
+    _galleryNotifyChanged('gal_x', server, 'r-remote');
+  });
+  await expect(page.locator('#gallery-status')).toContainText('changed elsewhere');
+  await expect(page.locator('#gallery-piece-list > div')).toHaveCount(2);   // nothing silently merged
+  const st = await page.evaluate(() => ({ rev: _galleryState.revision, name: _galleryState.doc.name, dirty: _galleryState.dirty }));
+  expect(st.rev).not.toBe('r-remote');   // old revision kept -> Save conflicts cleanly
+  expect(st.name).toBe('Show');
+  expect(st.dirty).toBe(true);
+});
+
+test('a remote REMOVAL while dirty refuses the merge (no unsavable adopted state)', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.locator('#gallery-piece-list input[type="text"]').nth(0).fill('My title');
+  await page.evaluate(() => {
+    const server = JSON.parse(JSON.stringify(window.__docs.gal_x));
+    server.pieces = server.pieces.filter((p) => p.artifact_id !== 'artB');
+    _galleryNotifyChanged('gal_x', server, 'r-remote');
+  });
+  await expect(page.locator('#gallery-status')).toContainText('pieces removed');
+  const rev = await page.evaluate(() => _galleryState.revision);
+  expect(rev).not.toBe('r-remote');
+});
+
+test('save rejected with "unknown piece" says reload, never "try again"', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.evaluate(() => {
+    const orig = window.lambdaPost;
+    window.lambdaPost = async (name, body, path, opts) => {
+      if (path === '/save-gallery') throw new Error('HTTP 400: unknown piece jobB/artB: add pieces via the DeepZoom tab');
+      return orig(name, body, path, opts);
+    };
+  });
+  await page.locator('#gallery-piece-list input[type="text"]').nth(0).fill('t');
+  await page.click('#btn-gallery-save');
+  await expect(page.locator('#gallery-status')).toContainText('removed elsewhere');
+  const status = await page.locator('#gallery-status').textContent();
+  expect(status).not.toContain('try again');   // retrying can never succeed here
+});
+
+test('Go DeepZoom refuses an export with no standalone viewer page', async ({ page }) => {
+  // code-review-29 F5: viewer === false is RECORDED at admission (pre-share-links
+  // exports never shipped viewer.html) — never open a known-dead URL.
+  const pcs = pieces();
+  pcs[0].deepzoom = { export_id: 'dzA', dzi_key: 'deepzoom/compute_a/dzA/image.dzi', source_key: null, source_artifact_id: 'artA', viewer: false };
+  pcs[0].export_job_id = 'compute_a';
+  await setup(page, docWith(pcs));
+  await page.locator('#gallery-piece-list > div').nth(0).click();
+  await page.click('#btn-gallery-godz');
+  const opened = await page.evaluate(() => window._opened);
+  expect(opened).toEqual([]);
+  await expect(page.locator('#btn-gallery-godz')).toContainText('No viewer page');
+});
+
 test('untitled pieces default to "image N" placeholders', async ({ page }) => {
   await setup(page, docWith(pieces()));
   await expect(page.locator('#gallery-piece-list input[type="text"]').nth(0)).toHaveAttribute('placeholder', 'image 1');

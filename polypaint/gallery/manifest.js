@@ -129,6 +129,9 @@ export function validateDeepzoom(dz, { dziJobId, artifactId, trustedOrigin }) {
     // Opaque provenance: never used to build a URL, so any string/null is safe.
     source_key: typeof dz.source_key === 'string' ? dz.source_key : null,
     source_artifact_id: artifactId,
+    // Standalone-viewer capability (code-review-29 F5): recorded at admission;
+    // absent on legacy pieces (null) = unknown, false = known missing.
+    viewer: dz.viewer === false ? false : (dz.viewer === true ? true : null),
   };
 }
 
@@ -179,8 +182,10 @@ export function normalizeManifest(doc, { pathKind, trustedOrigin }) {
   if (doc.manifest_type !== pathKind) {
     return { ok: false, error: `manifest_type ${doc.manifest_type} does not match path type ${pathKind}` };
   }
-  if (doc.artifact_kind !== 'color') {
-    return { ok: false, error: 'only color artifacts are supported' };
+  const kindOk = doc.artifact_kind === 'color'
+    || (pathKind === 'virtual_gallery' && doc.artifact_kind === 'mixed');
+  if (!kindOk) {
+    return { ok: false, error: 'unsupported artifact_kind' };
   }
   // The viewer loads immutable SHARES with auto layout. Reject an editable
   // document copied under a share path, and an explicit-layout share the auto
@@ -223,7 +228,7 @@ export function normalizeManifest(doc, { pathKind, trustedOrigin }) {
   pieces.forEach((p, idx) => { p.ordinal = idx; });
 
   return {
-    ok: true, kind: pathKind, artifactKind: 'color', pieces, skipped,
+    ok: true, kind: pathKind, artifactKind: doc.artifact_kind, pieces, skipped,
     settings: validateGallerySettings(doc.settings),
     layout: (doc.layout && typeof doc.layout === 'object') ? { seed: Number.isFinite(doc.layout.seed) ? doc.layout.seed : 1 } : { seed: 1 },
   };
@@ -237,7 +242,9 @@ function normalizeGalleryPiece(row, index, trustedOrigin) {
   // The export OWNER's job can differ from the render job (cross-job exports);
   // it scopes the DZI + pyramid-tile preview keys.
   const exportJobId = isValidId(row.export_job_id) ? row.export_job_id : jobId;
-  const family = (typeof row.family === 'string' && /^[a-z]{1,24}$/.test(row.family)) ? row.family : '';
+  // Default matches the backend's identity default (code-review-29 F3): an
+  // absent family IS color; only a present-but-invalid value degrades the same way.
+  const family = (typeof row.family === 'string' && /^[a-z]{1,24}$/.test(row.family)) ? row.family : 'color';
   const dzExportId = row.deepzoom && typeof row.deepzoom === 'object' && isValidId(row.deepzoom.export_id)
     ? row.deepzoom.export_id : null;
   const previewLeaf = validateColorKey(row.preview_key, jobId, artifactId);
@@ -246,8 +253,11 @@ function normalizeGalleryPiece(row, index, trustedOrigin) {
   if (!previewOk) return { ok: false, error: 'invalid preview_key' };
   // The original is optional ("link if linkable"); an invalid/legacy-shaped
   // image key DEGRADES to "no original" instead of dropping the whole piece.
+  // The linked original must belong to the DECLARED family — a mismatched key
+  // degrades to "no original" like any other invalid image_key (F3).
   const hasImage = row.image_key != null && row.image_key !== ''
-    && !!validateRenderKey(row.image_key, jobId, artifactId);
+    && !!validateRenderKey(row.image_key, jobId, artifactId)
+    && String(row.image_key).split('/')[2] === family;
   if (!isFinitePositive(row.preview_width) || !isFinitePositive(row.preview_height)) {
     return { ok: false, error: 'invalid preview dimensions' };
   }

@@ -15,7 +15,8 @@ let _galleryState = {
     doc: null,              // the loaded editable gallery (source of truth while editing)
     revision: '',           // ETag CAS token from fetch/save
     dirty: false,           // unsaved reorder/title/name edits
-    baseIds: new Set(),     // piece identities at the last server sync (three-way merge base)
+    baseIds: new Set(),     // piece identities at the last server sync (merge base)
+    baseDoc: null,          // full doc at the last server sync (detects non-add remote edits)
     epoch: 0,               // bumped on every selection/load/adopt; async ops must match
     selectedKey: '',        // selected piece (row click) for Go DeepZoom / Describe Selection
 };
@@ -27,6 +28,30 @@ function _galleryPieceKey(p) {
 function _gallerySyncBase(gallery, revision) {
     _galleryState.revision = revision || '';
     _galleryState.baseIds = new Set(((gallery && gallery.pieces) || []).map(_galleryPieceKey));
+    _galleryState.baseDoc = gallery ? JSON.parse(JSON.stringify(gallery)) : null;
+}
+
+// What did the server change relative to our base BEYOND appending pieces?
+// The dirty-merge in _galleryNotifyChanged only knows how to fold in additions
+// (code-review-29 F2): any other remote change (rename, settings, retitle,
+// reorder, removal) must NOT be silently merged over — the caller refuses the
+// merge and keeps the local doc + OLD revision, so Save conflicts cleanly (409)
+// instead of overwriting remote edits or wedging on a removed piece.
+function _galleryRemoteDeltaBeyondAdds(base, server) {
+    if (!base) return 'no merge base';
+    if (String(server.name || '') !== String(base.name || '')) return 'renamed';
+    if (JSON.stringify(server.settings || null) !== JSON.stringify(base.settings || null)) return 'scene settings changed';
+    const baseSeq = (base.pieces || []).map(_galleryPieceKey);
+    const baseSet = new Set(baseSeq);
+    const serverBase = (server.pieces || []).filter((p) => baseSet.has(_galleryPieceKey(p)));
+    if (serverBase.length !== baseSeq.length) return 'pieces removed';
+    const baseTitles = new Map((base.pieces || []).map((p) => [_galleryPieceKey(p), String(p.title || '')]));
+    for (let i = 0; i < serverBase.length; i++) {
+        const key = _galleryPieceKey(serverBase[i]);
+        if (key !== baseSeq[i]) return 'pieces reordered';
+        if (String(serverBase[i].title || '') !== baseTitles.get(key)) return 'titles changed';
+    }
+    return null;
 }
 
 // Read by the DeepZoom tab's "Add to Gallery" (js/12). Reads localStorage (the
@@ -107,6 +132,13 @@ function _galleryNotifyChanged(galleryId, gallery, revision) {
         // concurrent client's adds) and must be kept; anything in the base but
         // not local was removed locally and stays removed. Adopting the newest
         // revision is then safe — Save can no longer delete concurrent adds.
+        const delta = _galleryRemoteDeltaBeyondAdds(_galleryState.baseDoc, gallery);
+        if (delta) {
+            // Keep the local doc AND the old revision: the next Save meets a
+            // genuine 409 and offers reload — nothing is silently overwritten.
+            _galleryStatus('This gallery changed elsewhere (' + delta + ') while you have unsaved edits — Save will offer to reload.', true);
+            return;
+        }
         const baseIds = _galleryState.baseIds || new Set();
         const localIds = new Set((_galleryState.doc.pieces || []).map(_galleryPieceKey));
         const added = (gallery.pieces || []).filter((p) =>
@@ -159,7 +191,7 @@ async function _galleryRefreshList() {
 
 async function _galleryLoadActive() {
     const id = _galleryState.activeId;
-    if (!id) { _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false; _galleryState.baseIds = new Set(); return; }
+    if (!id) { _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false; _galleryState.baseIds = new Set(); _galleryState.baseDoc = null; return; }
     try {
         const resp = await lambdaPost('storage', { gallery_id: id }, '/fetch-gallery');
         if (id !== _galleryState.activeId) return;   // a newer selection superseded this load
@@ -175,13 +207,13 @@ async function _galleryLoadActive() {
         // the selector says B while edits silently target A.
         if (_galleryState.doc && _galleryState.doc.gallery_id !== id) {
             _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false;
-            _galleryState.baseIds = new Set();
+            _galleryState.baseIds = new Set(); _galleryState.baseDoc = null;
         }
         // Clear the selection ONLY on a genuine 404 (the gallery is gone). A
         // network/5xx blip keeps the selection so it isn't lost spuriously.
         if (/HTTP 404/i.test(e.message || '')) {
             _galleryState.doc = null; _galleryState.revision = ''; _galleryState.dirty = false;
-            _galleryState.baseIds = new Set();
+            _galleryState.baseIds = new Set(); _galleryState.baseDoc = null;
             _gallerySetActive('');
             _galleryStatus('That gallery no longer exists — pick or create another.', true);
         } else {
@@ -293,6 +325,10 @@ async function gallerySave() {
         if (/HTTP 409|conflict/i.test(e.message || '')) {
             _galleryStatus('This gallery changed elsewhere — reloaded the latest; re-apply your edits.', true);
             await _galleryLoadActive();
+        } else if (/unknown piece/i.test(e.message || '')) {
+            // Retrying can never succeed: a listed piece no longer exists
+            // server-side. Only a reload clears it (code-review-29 F2).
+            _galleryStatus('A piece in your list was removed elsewhere — Refresh (reselect the gallery) to reload, then re-apply your edits.', true);
         } else {
             _galleryStatus('Save failed: ' + e.message + ' — your edits are kept, try again.', true);
         }
@@ -355,6 +391,10 @@ function galleryGoDeepZoom() {
     const p = _gallerySelectedPiece();
     if (!p) { _galleryBtnFlash('btn-gallery-godz', '✗ Select a piece'); _galleryStatus('Click a row first, then Go DeepZoom.', true); return; }
     if (!p.deepzoom || !p.deepzoom.export_id) { _galleryBtnFlash('btn-gallery-godz', '✗ No DeepZoom'); _galleryStatus('This piece has no DeepZoom export.', true); return; }
+    // viewer === false is a RECORDED absence (admission HEADs viewer.html —
+    // exports older than the share-links feature never shipped one). Undefined
+    // = legacy piece admitted before the capability existed: open as before.
+    if (p.deepzoom.viewer === false) { _galleryBtnFlash('btn-gallery-godz', '✗ No viewer page'); _galleryStatus('This export predates standalone viewer pages — inline zoom in the gallery still works.', true); return; }
     const url = _publicStorageUrl(`deepzoom/${p.export_job_id || p.job_id}/${p.deepzoom.export_id}/viewer.html`);
     _galleryBtnFlash('btn-gallery-godz', '✓ Opened');
     const win = window.open(url, '_blank');

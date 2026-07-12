@@ -141,7 +141,8 @@ def parse_response(payload):
 RETRYABLE_HTTP = {429, 500, 502, 503}
 
 
-def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TIER_PACING_S):
+def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TIER_PACING_S,
+                 timeout=120.0, max_retry_wait=90.0):
     """POST with backoff: free tiers throw 503 ("model overloaded")
     routinely and 429 when a rate window fills. 429s wait out the window
     (Retry-After honored, up to ~90s per attempt) instead of dying —
@@ -153,7 +154,7 @@ def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TI
             url, data=body,
             headers=headers or {"Content-Type": "application/json", "x-goog-api-key": api_key})
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             detail = ""
@@ -165,6 +166,7 @@ def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TI
                 wait = min(float(exc.headers.get("Retry-After") or delay), 90.0)
                 if exc.code == 429:
                     wait = max(wait, 15.0)
+                wait = min(wait, max_retry_wait)   # interactive callers cap the stall
                 print(f"    vision API {exc.code} ({detail[:120] or 'transient'}) — "
                       f"retry {attempt}/{attempts - 1} in {wait:.0f}s")
                 time.sleep(wait)
@@ -194,9 +196,13 @@ def _extract_text(payload, path_desc, *chain):
         raise RuntimeError(f"{path_desc}: no text in {json.dumps(payload)[:300]}") from exc
 
 
-def _vision_call(model, api_key, image_bytes, text):
+def _vision_call(model, api_key, image_bytes, text, *, interactive=False):
     """One image + one prompt -> raw model text. Provider inferred from the
-    model id: gemini-* / claude-* / gpt-* & o* (VisionModel config)."""
+    model id: gemini-* / claude-* / gpt-* & o* (VisionModel config).
+    interactive=True (code-review-29 F4): the caller is a synchronous API route,
+    so trade the batch engine's patience (8 attempts, 120s socket, 90s waits)
+    for a bounded profile that fits the gateway window; batch runs unchanged."""
+    quick = {"attempts": 2, "timeout": 12.0, "max_retry_wait": 4.0} if interactive else {}
     b64 = base64.b64encode(image_bytes).decode()
     if model.startswith("claude"):
         body = {
@@ -212,7 +218,7 @@ def _vision_call(model, api_key, image_bytes, text):
             json.dumps(body).encode(), api_key,
             headers={"Content-Type": "application/json", "x-api-key": api_key,
                      "anthropic-version": "2023-06-01"},
-            pacing=1.5)
+            pacing=0.0 if interactive else 1.5, **quick)
         if "error" in payload:
             raise RuntimeError(f"Anthropic: {payload['error'].get('message', payload['error'])}")
         return _extract_text(payload, "Anthropic", "content", 0, "text")
@@ -232,14 +238,15 @@ def _vision_call(model, api_key, image_bytes, text):
             json.dumps(body).encode(), api_key,
             headers={"Content-Type": "application/json",
                      "Authorization": f"Bearer {api_key}"},
-            pacing=1.5)
+            pacing=0.0 if interactive else 1.5, **quick)
         if "error" in payload:
             raise RuntimeError(f"OpenAI: {payload['error'].get('message', payload['error'])}")
         return _extract_text(payload, "OpenAI", "choices", 0, "message", "content")
     # default: Gemini
     req = build_request(image_bytes, None, None, prebuilt_text=text)
     payload = _gemini_call(GEMINI_URL.format(model=model),
-                           json.dumps(req).encode(), api_key)
+                           json.dumps(req).encode(), api_key,
+                           pacing=0.0 if interactive else FREE_TIER_PACING_S, **quick)
     if "error" in payload:
         raise RuntimeError(f"Gemini: {payload['error'].get('message', payload['error'])}")
     return _gemini_text(payload)

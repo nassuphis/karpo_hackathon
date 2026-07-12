@@ -12,7 +12,7 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from botocore.exceptions import ClientError
 
@@ -360,6 +360,7 @@ class GalleryBackendTests(unittest.TestCase):
         m = json.loads(put["Body"])
         self.assertEqual(m["manifest_type"], "virtual_gallery")
         self.assertEqual(m["document_kind"], "share")
+        self.assertEqual(m["artifact_kind"], "color")   # all-color set stays 'color'
         self.assertEqual([p["ordinal"] for p in m["pieces"]], [0, 1])
         self.assertEqual(m["pieces"][0]["title"], "First")
         self.assertEqual(m["pieces"][1]["title"], "Second")
@@ -580,6 +581,109 @@ class GalleryBackendTests(unittest.TestCase):
         self._add(gid, "jobT", "cT", "dz_T")
         return gid
 
+    # ── code-review-29 F5: viewer.html capability recorded at admission ──
+    def test_admitted_export_records_missing_viewer_page(self):
+        gid = self._create()["gallery"]["gallery_id"]
+        self._seed_color("jobA", "cA")
+        self._seed_export("jobA", "cA", "dz_1")           # fixture ships NO viewer.html
+        body = self._add(gid, "jobA", "cA", "dz_1")
+        self.assertTrue(body["added"])
+        self.assertIs(body["gallery"]["pieces"][0]["deepzoom"]["viewer"], False)
+
+    def test_admitted_export_records_present_viewer_page(self):
+        gid = self._create()["gallery"]["gallery_id"]
+        self._seed_color("jobA", "cA")
+        self._seed_export("jobA", "cA", "dz_1")
+        self.s3.objects["deepzoom/jobA/dz_1/viewer.html"] = {
+            "Metadata": {}, "ContentLength": 10, "ContentType": "text/html"}
+        body = self._add(gid, "jobA", "cA", "dz_1")
+        self.assertIs(body["gallery"]["pieces"][0]["deepzoom"]["viewer"], True)
+
+    def test_dzi_fallback_piece_records_viewer_capability(self):
+        gid = self._create()["gallery"]["gallery_id"]
+        self._seed_export("jobF", "cF", "dz_f")           # no color artifact at all
+        body = self._add(gid, "jobF", "cF", "dz_f")
+        self.assertTrue(body["added"], body)
+        self.assertIs(body["gallery"]["pieces"][0]["deepzoom"]["viewer"], False)
+
+    # ── code-review-29 F6: share writes are create-only ──────────────────
+    def test_share_write_is_create_only_and_retries_collision(self):
+        gid = self._seed_two_piece_gallery()
+        fetched = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
+        pre_key = "renders/_shared_mosaic/gallery/aaaaaaaaaa/manifest.json"
+        self.s3.objects[pre_key] = {"body": b'{"existing":true}', "etag": "keepme"}
+        with patch.object(hs.uuid, "uuid4",
+                          side_effect=[Mock(hex="a" * 32), Mock(hex="b" * 32)]):
+            _, share = self._route(hs.handle_create_gallery_share, gallery_id=gid,
+                                   expected_revision=fetched["revision"])
+        self.assertEqual(share["share_id"], "b" * 10)     # collided once, minted fresh
+        self.assertEqual(self.s3.objects[pre_key]["body"], b'{"existing":true}')   # untouched
+        put = next(p for p in self.s3.puts
+                   if p["Key"] == f"renders/_shared_mosaic/gallery/{'b' * 10}/manifest.json")
+        self.assertEqual(put["IfNoneMatch"], "*")
+
+    def test_share_collision_exhaustion_fails_explicitly(self):
+        gid = self._seed_two_piece_gallery()
+        fetched = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
+        pre_key = "renders/_shared_mosaic/gallery/aaaaaaaaaa/manifest.json"
+        self.s3.objects[pre_key] = {"body": b'{"existing":true}', "etag": "keepme"}
+        with patch.object(hs.uuid, "uuid4", return_value=Mock(hex="a" * 32)):
+            resp, body = self._route(hs.handle_create_gallery_share, gallery_id=gid,
+                                     expected_revision=fetched["revision"])
+        self.assertIn("error", body)                       # explicit failure...
+        self.assertEqual(self.s3.objects[pre_key]["body"], b'{"existing":true}')   # ...never overwrite
+
+    # ── code-review-29 F3: truthful top-level kind for mixed families ────
+    def test_share_kind_mixed_when_non_color_piece_present(self):
+        gid = self._create()["gallery"]["gallery_id"]
+        self._seed_color("jobA", "cA")
+        self._add(gid, "jobA", "cA")
+        self._seed_export("jobB", "bB", "dz_b",
+                          image_key="renders/jobB/bilevel/bB/image.tif", source_family="bilevel")
+        self.s3.objects["renders/jobB/bilevel/bB/image.tif"] = {
+            "Metadata": {}, "ContentLength": 5, "ContentType": "image/tiff"}
+        add = self._add(gid, "jobB", "bB", "dz_b")
+        self.assertTrue(add["added"], add)
+        rev = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])["revision"]
+        self._route(hs.handle_create_gallery_share, gallery_id=gid, expected_revision=rev)
+        put = next(p for p in self.s3.puts
+                   if p["Key"].startswith("renders/_shared_mosaic/gallery/")
+                   and p["Key"].endswith("manifest.json"))
+        m = json.loads(put["Body"])
+        self.assertEqual(m["artifact_kind"], "mixed")
+        self.assertEqual({p["family"] for p in m["pieces"]}, {"color", "bilevel"})
+
+    # ── code-review-29 F4: describe stays inside the interactive budget ──
+    def test_describe_uses_interactive_vision_budget(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        with patch.object(book_describe, "_vision_call",
+                          return_value='{"title": "T"}') as vc, \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
+            self._route(hs.handle_describe_gallery, gallery_id=gid,
+                        pieces=[{"job_id": "jobT", "artifact_id": "cT"}], overwrite=True)
+        self.assertIs(vc.call_args.kwargs.get("interactive"), True)
+
+    def test_describe_stops_at_time_budget(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        old_budget = hs.DESCRIBE_TIME_BUDGET_S
+        hs.DESCRIBE_TIME_BUDGET_S = -1.0    # budget already spent at loop entry
+        try:
+            with patch.object(book_describe, "_vision_call") as vc, \
+                 patch.object(book_describe, "_load_vision_config",
+                              return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+                 patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
+                _, body = self._route(hs.handle_describe_gallery, gallery_id=gid,
+                                      pieces=[{"job_id": "jobT", "artifact_id": "cT"}], overwrite=True)
+        finally:
+            hs.DESCRIBE_TIME_BUDGET_S = old_budget
+        vc.assert_not_called()
+        self.assertEqual(body["described"], 0)
+        self.assertIn("time budget", body["errors"][0]["error"])
+
     def test_settings_accept_spiral_layout(self):
         s = hs._clean_gallery_settings({"wall_layout": "spiral"})
         self.assertEqual(s["wall_layout"], "spiral")
@@ -628,3 +732,29 @@ class GalleryBackendTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InteractiveVisionBudgetTests(unittest.TestCase):
+    """code-review-29 F4: interactive callers get the bounded profile; the batch
+    engine's patient defaults (8 attempts / 120s / 90s waits) stay untouched."""
+
+    def test_interactive_profile_bounds_the_provider_call(self):
+        import book_describe
+        with patch.object(book_describe, "_gemini_call",
+                          return_value={"content": [{"text": "hi"}]}) as gc:
+            out = book_describe._vision_call("claude-test", "k", b"img", "p", interactive=True)
+        self.assertEqual(out, "hi")
+        kw = gc.call_args.kwargs
+        self.assertEqual(kw["attempts"], 2)
+        self.assertEqual(kw["timeout"], 12.0)
+        self.assertEqual(kw["max_retry_wait"], 4.0)
+        self.assertEqual(kw["pacing"], 0.0)
+
+    def test_batch_profile_is_unchanged(self):
+        import book_describe
+        with patch.object(book_describe, "_gemini_call",
+                          return_value={"content": [{"text": "hi"}]}) as gc:
+            book_describe._vision_call("claude-test", "k", b"img", "p")
+        kw = gc.call_args.kwargs
+        self.assertNotIn("attempts", kw)          # engine defaults apply
+        self.assertEqual(kw["pacing"], 1.5)

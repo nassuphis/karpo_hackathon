@@ -115,6 +115,41 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
     expect(r.explicitLayout).toBe(false);        // auto-only until explicit layout ships
   });
 
+  test('piece identity: family defaults color, mismatched image key degrades, viewer flag carries', async ({ page }) => {
+    const r = await withModules(page, (M, L, doc, ORIGIN) => {
+      const mk = (over) => M.normalizeManifest(
+        { ...doc, pieces: [{ ...doc.pieces[1], deepzoom: null, ...over }] },
+        { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).pieces[0];
+      const dzBase = { export_id: 'dz_A', dzi_key: 'deepzoom/compute_a/dz_A/image.dzi', source_artifact_id: 'cA' };
+      const dzCtx = { dziJobId: 'compute_a', artifactId: 'cA', trustedOrigin: ORIGIN };
+      const mixed = M.normalizeManifest({ ...doc, artifact_kind: 'mixed' }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN });
+      return {
+        defaultFamily: mk({}).family,                       // absent family IS color (backend parity)
+        junkFamily: mk({ family: 'NOT VALID!' }).family,
+        // declared bilevel but the linked original is a color key -> original degrades, piece kept
+        mismatch: (() => { const p = mk({ family: 'bilevel' }); return { image: p.image_key, kept: !!p }; })(),
+        matchedImage: mk({}).image_key,
+        mixedOk: mixed.ok, mixedKind: mixed.ok ? mixed.artifactKind : null,
+        mosaicMixed: M.normalizeManifest({ schema_version: 1, manifest_type: 'artifact_mosaic', artifact_kind: 'mixed', tiles: [] },
+          { pathKind: 'artifact_mosaic', trustedOrigin: ORIGIN }).ok,
+        viewerFlags: [
+          M.validateDeepzoom({ ...dzBase, viewer: false }, dzCtx).viewer,
+          M.validateDeepzoom({ ...dzBase, viewer: true }, dzCtx).viewer,
+          M.validateDeepzoom(dzBase, dzCtx).viewer,          // legacy: unknown, not false
+        ],
+      };
+    }, galleryDoc());
+    expect(r.defaultFamily).toBe('color');
+    expect(r.junkFamily).toBe('color');
+    expect(r.mismatch.kept).toBe(true);
+    expect(r.mismatch.image).toBeNull();
+    expect(r.matchedImage).toBe('renders/compute_b/color/cB/image.jpeg');
+    expect(r.mixedOk).toBe(true);                    // gallery shares may be mixed-family
+    expect(r.mixedKind).toBe('mixed');               // ...and say so truthfully
+    expect(r.mosaicMixed).toBe(false);               // mosaics stay single-kind
+    expect(r.viewerFlags).toEqual([false, true, null]);
+  });
+
   test('cross-job export pieces + image-key degrade normalize correctly', async ({ page }) => {
     const r = await withModules(page, (M, L, doc, ORIGIN) => {
       const piece = {

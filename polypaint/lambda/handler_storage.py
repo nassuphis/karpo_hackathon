@@ -43,7 +43,7 @@ from logical_sections import (
 from shared import (BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response,
                     _get_ddb, parse_boolish, assert_safe_render_image_key,
                     assert_render_identity, is_missing_s3_error, s3_error_reason,
-                    assert_safe_id, CACHE_IMMUTABLE)
+                    s3_error_code, assert_safe_id, CACHE_IMMUTABLE)
 from coeff_program_chain import (
     PROGRAM_KIND as COEFF_PROGRAM_KIND,
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
@@ -4446,6 +4446,9 @@ def handle_share_mosaic(event):
 GALLERY_SHARE_PREFIX = MOSAIC_SHARE_PREFIX + "gallery/"   # renders/_shared_mosaic/gallery/ (immutable shares)
 GALLERIES_PREFIX = "polypaint/galleries/"                 # editable gallery documents
 GALLERY_MAX_PIECES = 64
+# Sync /describe-gallery must fit the API-gateway window (code-review-29 F4):
+# once this budget is spent, remaining pieces are reported back, not attempted.
+DESCRIBE_TIME_BUDGET_S = 22.0
 GALLERY_SCHEMA_VERSION = 1
 GALLERY_NAME_MAX = 120
 GALLERY_TITLE_MAX = 160
@@ -4511,6 +4514,20 @@ def _gallery_resolve_color_tile(job_id, artifact_id, calc_cache, *, client):
     return tile, "ready", ""
 
 
+def _export_viewer_exists(export_job_id, export_id, client):
+    """Capability check (code-review-29 F5): exports older than 9a3c5d7 have no
+    standalone viewer.html, yet remain curatable (has a DZI => curatable). The
+    admitted piece records whether the viewer page exists so Go DeepZoom /
+    Copy link can be truthful instead of opening a known-dead URL."""
+    try:
+        client.head_object(Bucket=BUCKET, Key=f"deepzoom/{export_job_id}/{export_id}/viewer.html")
+        return True
+    except Exception as exc:
+        if is_missing_s3_error(exc):
+            return False
+        raise
+
+
 def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, client, export_job_id=None):
     """Validate a caller-named DeepZoom export for a piece (virtual-gallery.md
     §3.1 step 4): exact identity match + canonical dzi_key + a live DZI. Returns
@@ -4552,7 +4569,8 @@ def _validate_gallery_export(job_id, artifact_id, export_id, image_key, *, clien
         raise
     return {"export_id": export_id, "dzi_key": dzi_key,
             "source_key": str(meta.get("source_key") or "") or image_key,   # true provenance
-            "source_artifact_id": artifact_id}, ""
+            "source_artifact_id": artifact_id,
+            "viewer": _export_viewer_exists(export_job_id, export_id, client)}, ""
 
 
 def _read_dzi_descriptor(export_job_id, export_id, client):
@@ -4678,7 +4696,8 @@ def _dzi_piece_from_export(job_id, artifact_id, export_id, calc_cache, *, client
         "created_at": str(meta.get("created_at") or ""),
         "deepzoom": {"export_id": export_id, "dzi_key": dzi_key,
                       "source_key": src_key or None,   # true provenance, opaque to the viewer
-                      "source_artifact_id": artifact_id},
+                      "source_artifact_id": artifact_id,
+                      "viewer": _export_viewer_exists(export_job_id, export_id, client)},
     }, ""
 
 
@@ -4731,11 +4750,6 @@ def _write_gallery_share_manifest(pieces, *, source_kind, seed, settings=None):
     """Write an immutable virtual_gallery SHARE manifest (the document the viewer
     loads) and return (public_url, key, share_id, count). `pieces` order is
     authoritative; ordinals are assigned here and curator titles carried through."""
-    # SHORT id: the share link is gallery.html?share=<id> and the viewer
-    # reconstructs the manifest path from the id alone, so the id is the whole
-    # payload of the link. 10 hex chars ~ 1e12 space — collision-safe here.
-    share_id = uuid.uuid4().hex[:10]
-    snapshot_key = f"{GALLERY_SHARE_PREFIX}{share_id}/manifest.json"
     out_pieces = []
     for i, p in enumerate(pieces):
         piece = {k: p.get(k) for k in (
@@ -4747,27 +4761,45 @@ def _write_gallery_share_manifest(pieces, *, source_kind, seed, settings=None):
         if title:
             piece["title"] = title
         out_pieces.append(piece)
-    manifest = {
-        "schema_version": GALLERY_SCHEMA_VERSION,
-        "manifest_type": "virtual_gallery",
-        "document_kind": "share",
-        "artifact_kind": "color",
-        "created_at": _utc_now_iso(),
-        "share_id": share_id,
-        "manifest_key": snapshot_key,
-        "source": {"kind": source_kind, "share_id": share_id},
-        "layout": {"mode": "auto", "seed": seed},
-        "settings": _clean_gallery_settings(settings),
-        "pieces": out_pieces,
-    }
-    s3.put_object(
-        Bucket=BUCKET,
-        Key=snapshot_key,
-        Body=json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
-        ContentType="application/json",
-        CacheControl=CACHE_IMMUTABLE,
-    )
-    return _s3_public_url(snapshot_key), snapshot_key, share_id, len(out_pieces)
+    # Truthful top-level kind (code-review-29 F3): DZI-fallback pieces can carry
+    # any render family, and the viewer is told so instead of a hardcoded color.
+    families = {str(p.get("family") or "") or "color" for p in pieces}
+    artifact_kind = "color" if families <= {"color"} else "mixed"
+    # SHORT id (the share link is gallery.html?share=<id>, the id is the whole
+    # payload of the link) + CREATE-ONLY write (code-review-29 F6): the manifest
+    # is served with an immutable cache header, so a colliding id must fail the
+    # put and retry a fresh id — never overwrite an existing share.
+    for _ in range(4):
+        share_id = uuid.uuid4().hex[:10]
+        snapshot_key = f"{GALLERY_SHARE_PREFIX}{share_id}/manifest.json"
+        manifest = {
+            "schema_version": GALLERY_SCHEMA_VERSION,
+            "manifest_type": "virtual_gallery",
+            "document_kind": "share",
+            "artifact_kind": artifact_kind,
+            "created_at": _utc_now_iso(),
+            "share_id": share_id,
+            "manifest_key": snapshot_key,
+            "source": {"kind": source_kind, "share_id": share_id},
+            "layout": {"mode": "auto", "seed": seed},
+            "settings": _clean_gallery_settings(settings),
+            "pieces": out_pieces,
+        }
+        try:
+            s3.put_object(
+                Bucket=BUCKET,
+                Key=snapshot_key,
+                Body=json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
+                ContentType="application/json",
+                CacheControl=CACHE_IMMUTABLE,
+                IfNoneMatch="*",
+            )
+        except Exception as exc:
+            if s3_error_code(exc) in ("PreconditionFailed", "412"):
+                continue   # collided with an existing share — mint a fresh id
+            raise
+        return _s3_public_url(snapshot_key), snapshot_key, share_id, len(out_pieces)
+    raise RuntimeError("could not allocate a unique gallery share id — try again")
 
 
 # ── Editable gallery documents (the Gallery tab curates these) ─────────────
@@ -5128,7 +5160,12 @@ def handle_describe_gallery(event):
 
     used = [str(p.get("title") or "").strip() for p in pieces if str(p.get("title") or "").strip()]
     described, errors = 0, []
-    for p in targets:
+    deadline = time.time() + DESCRIBE_TIME_BUDGET_S
+    for i, p in enumerate(targets):
+        if time.time() >= deadline:
+            errors.append({"artifact_id": "", "error":
+                f"time budget reached with {len(targets) - i} piece(s) left — run Describe again to continue"})
+            break
         try:
             obj = s3.get_object(Bucket=BUCKET, Key=str(p.get("preview_key") or ""))
             img = _downscale_for_vision(obj["Body"].read())
@@ -5138,7 +5175,7 @@ def handle_describe_gallery(event):
                 "2-4 words, evocative but concrete, no colons, no quotes inside. "
                 + ("Do not reuse any of these existing titles: " + "; ".join(used[-20:]) + ". " if used else "")
             )
-            title = _gallery_title_from_reply(_vision_call(model, api_key, img, prompt))
+            title = _gallery_title_from_reply(_vision_call(model, api_key, img, prompt, interactive=True))
             p["title"] = _clean_gallery_title(title)
             doc["updated_at"] = _utc_now_iso()
             revision = _put_gallery_doc(doc, expected_revision=revision)   # per-piece persistence

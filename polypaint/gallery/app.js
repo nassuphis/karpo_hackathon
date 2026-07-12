@@ -450,7 +450,10 @@ class GalleryViewer {
     });
   }
 
-  _pieceId(piece) { return piece.job_id + '/' + piece.artifact_id; }
+  // Texture/pin identity mirrors the backend's piece identity (code-review-29
+  // F3): family included, so same-ID artifacts across families can never share
+  // texture, retry, or pin state.
+  _pieceId(piece) { return piece.job_id + '/' + (piece.family || 'color') + '/' + piece.artifact_id; }
 
   // Display title: the curator title, else a stable default ("image 1", …).
   _pieceTitle(piece) { return piece.title || ('image ' + ((piece.ordinal ?? 0) + 1)); }
@@ -822,7 +825,9 @@ class GalleryViewer {
     // "Copy link": the piece's standalone DeepZoom viewer (each export ships a
     // viewer.html next to its image.dzi) — a directly shareable per-image link.
     // Fallback (no DZI): this gallery's own share link.
-    const link = p.deepzoom
+    // viewer === false: admission recorded that this export never shipped a
+    // standalone viewer.html — fall back to this gallery's own share link.
+    const link = (p.deepzoom && p.deepzoom.viewer !== false)
       ? location.origin + '/deepzoom/' + (p.export_job_id || p.job_id) + '/' + p.deepzoom.export_id + '/viewer.html'
       : location.href;
     const btn = $('overlay-copy');

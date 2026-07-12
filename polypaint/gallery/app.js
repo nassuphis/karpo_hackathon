@@ -311,10 +311,10 @@ class GalleryViewer {
     this._buildWallEdges(maze, wallColor);
   }
 
-  // Edge accent: fat lines (LineSegments2 — real pixel width; native GL lines
-  // are stuck at 1px) along every wall-box edge, merged into ONE draw call, so
-  // corners and junctions read instead of blending into a flat colour mass.
-  // Width comes from settings.wall_edge_px; 0 disables the accent entirely.
+  // Edge accent: fat lines (LineSegments2) along every wall-RUN edge, merged
+  // into ONE draw call, so corners and junctions read instead of blending into
+  // a flat colour mass. settings.wall_edge_px is a WORLD-space weight (~4mm
+  // per step — the key name is historical); 0 disables the accent entirely.
   _buildWallEdges(maze, wallColor) {
     const widthPx = this.spec.settings && Number.isFinite(this.spec.settings.wall_edge_px)
       ? this.spec.settings.wall_edge_px : 1;
@@ -405,6 +405,10 @@ class GalleryViewer {
     const tex = new THREE.TextureLoader().load(location.origin + '/skybox/' + sky + '.jpg');
     tex.mapping = THREE.EquirectangularReflectionMapping;
     tex.colorSpace = THREE.SRGBColorSpace;
+    // Owned resource (code-review-30 F15): a 4096x2048 background is ~32MiB of
+    // GPU memory — track it, dispose any predecessor, dispose on destroy().
+    if (this._skyTexture) { try { this._skyTexture.dispose(); } catch {} }
+    this._skyTexture = tex;
     this.scene.background = tex;
   }
 
@@ -786,12 +790,15 @@ class GalleryViewer {
     const next = Math.max(SPEED_MULT_MIN, Math.min(SPEED_MULT_MAX, this._speedMult * factor));
     const clamped = next === this._speedMult;
     this._speedMult = next;
+    // ANY adjust invalidates a pending clamp-flash (code-review-30 F16): a
+    // stale timer must never rewrite the label after a later speed change.
+    clearTimeout(this._speedFlashT);
+    this._speedFlashT = null;
     const el = $('speed-readout');
     if (!el) return;
     const label = next + '×';
     if (clamped) {
       el.textContent = label + (factor > 1 ? ' max' : ' min');
-      clearTimeout(this._speedFlashT);
       this._speedFlashT = setTimeout(() => { el.textContent = label; }, 900);
     } else {
       el.textContent = label;
@@ -1028,6 +1035,8 @@ class GalleryViewer {
     try { this.controls.dispose(); } catch {}
     this._destroyOsd();
     if (this.tm) this.tm.destroy();
+    clearTimeout(this._speedFlashT);
+    if (this._skyTexture) { try { this._skyTexture.dispose(); } catch {} this._skyTexture = null; }
     // dispose owned GPU resources
     this._sharedPlane && this._sharedPlane.dispose();
     for (const mesh of this._artMeshes || []) {

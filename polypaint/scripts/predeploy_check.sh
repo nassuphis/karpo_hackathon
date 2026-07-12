@@ -132,12 +132,20 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_deepzoom_export_handler.py \
     -q
 bash tests/test_frontend_js.sh
-# Gallery browser regression specs (review demand: browser protection in the
-# gate). Focused on the gallery suites to keep the gate fast (~10s).
+# Browser regression specs (code-review-30 F13): EVERY load-bearing e2e suite
+# is gated — tests/test_predeploy_gate_completeness.py accounts for each
+# tests/e2e/*.spec.js as gated here or explicitly excluded with a reason.
 npx playwright test \
     tests/e2e/gallery-logic.spec.js \
     tests/e2e/gallery-tab.spec.js \
     tests/e2e/gallery-viewer-smoke.spec.js \
     tests/e2e/gallery-texture-manager.spec.js \
-    tests/e2e/gallery-curation.spec.js
+    tests/e2e/gallery-curation.spec.js \
+    tests/e2e/favorites-ui.spec.js \
+    tests/e2e/results-ui.spec.js \
+    tests/e2e/deepzoom-inventory.spec.js \
+    tests/e2e/compute-ui.spec.js \
+    tests/e2e/palette-ui.spec.js \
+    tests/e2e/render-refresh.spec.js \
+    tests/e2e/scrub-pad.spec.js
 echo "Predeploy contract gate passed."

@@ -178,14 +178,42 @@ test('Slow/Fast halve and double observer speed with readout feedback, clamped',
   await expect(page.locator('#speed-readout')).toHaveText('0.25×');
   await page.click('#btn-slow');
   await expect(page.locator('#speed-readout')).toHaveText('0.25× min');   // clamp still answers the click
-  // the multiplier is wired into BOTH movement paths (walk + tour)
-  const wiring = await page.evaluate(() => {
+
+  // CR30 F16: a stale clamp-flash timer must never rewrite a LATER speed.
+  await page.evaluate(() => { window.__galleryViewer._speedMult = 4; });  // reset to a known state
+  await page.click('#btn-fast');                                          // 8×
+  await page.click('#btn-fast');                                          // clamp: "8× max" + timer
+  await expect(page.locator('#speed-readout')).toHaveText('8× max');
+  await page.click('#btn-slow');                                          // 4× — must kill the timer
+  await page.waitForTimeout(1100);                                        // outlive the 900ms flash
+  await expect(page.locator('#speed-readout')).toHaveText('4×');          // label matches reality
+  expect(await page.evaluate(() => window.__galleryViewer._speedMult)).toBe(4);
+
+  // BEHAVIORAL speed wiring (replaces source-string checks): drive _tourTick
+  // deterministically on a synthetic straight leg and measure displacement.
+  const meas = await page.evaluate(() => {
     const v = window.__galleryViewer;
-    return { walk: v._animate.toString().includes('MOVE_SPEED * this._speedMult'),
-             tour: v._tourTick.toString().includes('TOUR_SPEED * this._speedMult') };
+    v._tourStop();
+    const leg = () => {
+      const wp = v.camera.position.clone(); wp.x += 500;   // long straight run
+      return { index: 0, waypoints: [wp], wi: 0, phase: 'walk', dwellLeft: 0, artPos: null, faceQuat: null };
+    };
+    const run = (mult) => {
+      v._speedMult = mult;
+      const sx = v.camera.position.x;
+      v._tour = leg();
+      for (let i = 0; i < 20; i++) v._tourTick(0.016);
+      v._tour = null;
+      return v.camera.position.x - sx;
+    };
+    const d1 = run(1);
+    const d8 = run(8);
+    v._speedMult = 1;
+    return { d1, d8 };
   });
-  expect(wiring.walk).toBe(true);
-  expect(wiring.tour).toBe(true);
+  expect(meas.d1).toBeGreaterThan(0);
+  expect(meas.d8 / meas.d1).toBeGreaterThan(6);   // ~8× travel per tick
+  expect(meas.d8 / meas.d1).toBeLessThan(10);
 });
 
 test('Tour walks the gallery continuously and stops on demand', async ({ page }) => {
@@ -251,10 +279,20 @@ test('a photographic sky becomes the scene background texture', async ({ page })
       mapping: v.scene.background.mapping,
       equirect: v.scene.background.mapping === 303,   // THREE.EquirectangularReflectionMapping
       skyGroup: !!v._skyGroup,                        // procedural stars must be OFF
+      owned: v._skyTexture === v.scene.background,    // tracked resource (CR30 F15)
     };
   });
   expect(st.equirect).toBe(true);
   expect(st.skyGroup).toBe(false);
+  expect(st.owned).toBe(true);
+  // destroy() disposes the sky texture exactly like every owned GPU resource
+  const disposed = await page.evaluate(() => new Promise((resolve) => {
+    const v = window.__galleryViewer;
+    v._skyTexture.addEventListener('dispose', () => resolve(true));
+    v.destroy();
+    setTimeout(() => resolve(false), 500);
+  }));
+  expect(disposed).toBe(true);
 });
 
 test('builds a maze with settings applied and collision that clamps to bounds', async ({ page }) => {

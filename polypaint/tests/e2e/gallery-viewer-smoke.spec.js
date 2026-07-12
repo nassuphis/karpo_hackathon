@@ -153,6 +153,41 @@ test('Zoom opens OpenSeadragon on the piece DZI without forcing CORS', async ({ 
   expect(opts.crossOriginPolicy).toBeUndefined();   // must NOT force CORS — the bucket has none
 });
 
+test('Slow/Fast halve and double observer speed with readout feedback, clamped', async ({ page }) => {
+  const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/spd/manifest.json';
+  const mk = (j, a) => ({ ordinal: 0, job_id: j, artifact_id: a, preview_key: `renders/${j}/color/${a}/preview.jpg`, image_key: null, preview_width: 512, preview_height: 512, function: 'f', title: '', deepzoom: null });
+  const pieces = [mk('j0', 'a0'), mk('j1', 'a1')]; pieces.forEach((p, i) => (p.ordinal = i));
+  await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color',
+    layout: { mode: 'auto', seed: 1 }, settings: { sky: 'dark' }, pieces }) }));
+  await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(GALLERY + '?share=spd');
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+
+  await expect(page.locator('#speed-readout')).toHaveText('1×');
+  await page.click('#btn-fast');
+  await page.click('#btn-fast');
+  await expect(page.locator('#speed-readout')).toHaveText('4×');   // 1 -> 2 -> 4
+  expect(await page.evaluate(() => window.__galleryViewer._speedMult)).toBe(4);
+  await page.click('#btn-slow');
+  await page.click('#btn-slow');
+  await page.click('#btn-slow');
+  await expect(page.locator('#speed-readout')).toHaveText('0.5×'); // 4 -> 2 -> 1 -> 0.5
+  await page.click('#btn-slow');
+  await expect(page.locator('#speed-readout')).toHaveText('0.25×');
+  await page.click('#btn-slow');
+  await expect(page.locator('#speed-readout')).toHaveText('0.25× min');   // clamp still answers the click
+  // the multiplier is wired into BOTH movement paths (walk + tour)
+  const wiring = await page.evaluate(() => {
+    const v = window.__galleryViewer;
+    return { walk: v._animate.toString().includes('MOVE_SPEED * this._speedMult'),
+             tour: v._tourTick.toString().includes('TOUR_SPEED * this._speedMult') };
+  });
+  expect(wiring.walk).toBe(true);
+  expect(wiring.tour).toBe(true);
+});
+
 test('Tour walks the gallery continuously and stops on demand', async ({ page }) => {
   const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/tour/manifest.json';
   const mk = (j, a) => ({ ordinal: 0, job_id: j, artifact_id: a, preview_key: `renders/${j}/color/${a}/preview.jpg`, image_key: null, preview_width: 512, preview_height: 512, function: 'f', title: '', deepzoom: null });

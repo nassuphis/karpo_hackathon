@@ -99,6 +99,7 @@
   #message p { font-size: 14px; line-height: 1.6; opacity: .82; margin: 6px 0; }
   #message a { color: #e0b877; }
 #btn-tour.active { background: #e0b877; color: #131313; border-color: #e0b877; }
+#speed-readout { color: #c9d2ee; font-size: 12px; min-width: 34px; text-align: center; align-self: center; user-select: none; }
 </style>
 </head>
 <body>
@@ -116,6 +117,9 @@
     <button id="btn-next" type="button">Next ›</button>
     <button id="btn-inspect" type="button" disabled>Inspect</button>
     <button id="btn-tour" type="button" title="Auto walk-through: visits every piece in curator order, on a loop. Click again (or Esc / take control) to stop.">Tour</button>
+    <button id="btn-slow" type="button" title="Halve the observer speed (walking and Tour)">Slow</button>
+    <span id="speed-readout" title="Observer speed multiplier">1×</span>
+    <button id="btn-fast" type="button" title="Double the observer speed (walking and Tour)">Fast</button>
   </div>
 
   <div id="overlay" aria-hidden="true">

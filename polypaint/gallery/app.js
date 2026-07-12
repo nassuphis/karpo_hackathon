@@ -25,6 +25,11 @@ const TOUR_SPEED = 2.3;              // metres / second
 const TOUR_TURN_RATE = 2.6;          // rad / s while walking
 const TOUR_FACE_RATE = 1.7;          // rad / s turning onto the art
 const TOUR_DWELL_S = 3.0;            // seconds in front of each piece
+// Observer speed multiplier (Slow / Fast buttons): scales walking AND the
+// tour's travel speed — turn rates and dwell stay fixed (fast turning reads
+// as jitter, and reading time shouldn't shrink with travel speed).
+const SPEED_MULT_MIN = 0.25;
+const SPEED_MULT_MAX = 8;
 const VIEW_DISTANCE_M = 2.4;        // guided-mode standoff from a piece
 const VIEWER_MAX_PIECES = 64;       // hard cap on meshes/queued previews (§5/§8)
 const ART_PLACEHOLDER_COLOR = 0x3a332a;
@@ -187,6 +192,7 @@ class GalleryViewer {
     this._focusIndex = -1;
     this._guidedIndex = -1;
     this._tour = null;               // active walk-through state, or null
+    this._speedMult = 1;             // observer speed multiplier (Slow/Fast)
     this._pinnedFocusId = null;     // the id currently pinned for focus (unpin on change)
     this._contextLost = false;
     this._abort = new AbortController();
@@ -545,6 +551,8 @@ class GalleryViewer {
     on($('btn-prev'), 'click', () => this._guidedStep(-1));
     on($('btn-next'), 'click', () => this._guidedStep(1));
     on($('btn-tour'), 'click', () => this._tourToggle());
+    on($('btn-slow'), 'click', () => this._speedAdjust(0.5));
+    on($('btn-fast'), 'click', () => this._speedAdjust(2));
     on($('btn-inspect'), 'click', () => this._inspectFocused());
     on($('overlay-close'), 'click', () => this._closeOverlay());
     on($('overlay-copy'), 'click', () => this._copyFocusedRef());
@@ -612,7 +620,7 @@ class GalleryViewer {
 
     if (this.controls.isLocked && !this._overlayOpen()) {
       const px = this.camera.position.x, pz = this.camera.position.z;   // pre-move position
-      const step = MOVE_SPEED * dt;
+      const step = MOVE_SPEED * this._speedMult * dt;
       if (this._keys.has('f')) this.controls.moveForward(step);
       if (this._keys.has('b')) this.controls.moveForward(-step);
       if (this._keys.has('l')) this.controls.moveRight(-step);
@@ -771,6 +779,25 @@ class GalleryViewer {
   // an OPEN wall, so the walk cannot cross geometry), steer along the path,
   // turn onto the art, dwell, continue. Any manual act (Prev/Next/Inspect,
   // pointer lock, Esc) stops it.
+  // Observer speed: double / halve, clamped; the readout is the click's
+  // visible response, and pulses "min"/"max" at the clamp so a no-op click
+  // still answers.
+  _speedAdjust(factor) {
+    const next = Math.max(SPEED_MULT_MIN, Math.min(SPEED_MULT_MAX, this._speedMult * factor));
+    const clamped = next === this._speedMult;
+    this._speedMult = next;
+    const el = $('speed-readout');
+    if (!el) return;
+    const label = next + '×';
+    if (clamped) {
+      el.textContent = label + (factor > 1 ? ' max' : ' min');
+      clearTimeout(this._speedFlashT);
+      this._speedFlashT = setTimeout(() => { el.textContent = label; }, 900);
+    } else {
+      el.textContent = label;
+    }
+  }
+
   _tourToggle() {
     if (this._tour) { this._tourStop(); return; }
     if (!this.maze.placements.length) return;
@@ -845,7 +872,7 @@ class GalleryViewer {
         return;
       }
       dir.normalize();
-      pos.addScaledVector(dir, Math.min(TOUR_SPEED * dt, dist));
+      pos.addScaledVector(dir, Math.min(TOUR_SPEED * this._speedMult * dt, dist));
       pos.y = MAZE.EYE_HEIGHT_M;
       if (dist > 0.3) {                    // steering is unstable when on top of the point
         this.camera.quaternion.rotateTowards(

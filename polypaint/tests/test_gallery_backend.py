@@ -719,6 +719,112 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertEqual(statuses[-1][2], "error")
         self.assertIn("model exploded", statuses[-1][3])
 
+    # ── code-review-30 F1: dispatch-time OWNERSHIP (the Book run_base pattern) ──
+    def test_worker_keeps_newer_human_title(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        # human titles the piece AFTER dispatch (dispatch saw base_title="")
+        fetched = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
+        doc = fetched["gallery"]; doc["pieces"][0]["title"] = "Chosen by curator"
+        self._route(hs.handle_save_gallery, gallery=doc, expected_revision=fetched["revision"])
+        with patch.object(book_describe, "_vision_call") as vc, \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
+            body = hs._describe_gallery_run({"gallery_id": gid, "overwrite": True,
+                "pieces": [{"job_id": "jobT", "artifact_id": "cT", "base_title": ""}]})
+        vc.assert_not_called()                                 # no vision spend on a lost race
+        self.assertEqual(body["described"], 0)
+        self.assertIn("title_changed", body["errors"][0]["error"])
+        _, after = self._route(hs.handle_fetch_gallery, gallery_id=gid)
+        self.assertEqual(after["gallery"]["pieces"][0]["title"], "Chosen by curator")
+
+    def test_cas_conflict_rechecks_ownership_human_wins(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        real_put = hs._put_gallery_doc
+        state = {"fired": False}
+
+        def racing_put(doc, expected_revision=None):
+            if not state["fired"]:
+                state["fired"] = True
+                # a human titles the piece between the worker's read and write
+                cur, rev = hs._read_gallery_doc_with_etag(gid)
+                cur["pieces"][0]["title"] = "Human title"
+                real_put(cur, expected_revision=rev)
+                raise hs.GalleryConflictError("moved")
+            return real_put(doc, expected_revision=expected_revision)
+
+        with patch.object(book_describe, "_vision_call", return_value='{"title": "Robot"}'), \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b), \
+             patch.object(hs, "_put_gallery_doc", side_effect=racing_put):
+            body = hs._describe_gallery_run({"gallery_id": gid, "overwrite": True,
+                "pieces": [{"job_id": "jobT", "artifact_id": "cT", "base_title": ""}]})
+        self.assertEqual(body["described"], 0)
+        self.assertIn("title_changed", body["errors"][0]["error"])
+        _, after = self._route(hs.handle_fetch_gallery, gallery_id=gid)
+        self.assertEqual(after["gallery"]["pieces"][0]["title"], "Human title")   # human survives
+
+    def test_cas_conflict_with_unchanged_title_still_merges(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        real_put = hs._put_gallery_doc
+        state = {"fired": False}
+
+        def racing_put(doc, expected_revision=None):
+            if not state["fired"]:
+                state["fired"] = True
+                cur, rev = hs._read_gallery_doc_with_etag(gid)
+                cur["name"] = "Renamed elsewhere"              # UNRELATED field moved
+                real_put(cur, expected_revision=rev)
+                raise hs.GalleryConflictError("moved")
+            return real_put(doc, expected_revision=expected_revision)
+
+        with patch.object(book_describe, "_vision_call", return_value='{"title": "Robot"}'), \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b), \
+             patch.object(hs, "_put_gallery_doc", side_effect=racing_put):
+            body = hs._describe_gallery_run({"gallery_id": gid, "overwrite": True,
+                "pieces": [{"job_id": "jobT", "artifact_id": "cT", "base_title": ""}]})
+        self.assertEqual(body["described"], 1)                 # field-level merge permitted
+        _, after = self._route(hs.handle_fetch_gallery, gallery_id=gid)
+        self.assertEqual(after["gallery"]["pieces"][0]["title"], "Robot")
+        self.assertEqual(after["gallery"]["name"], "Renamed elsewhere")
+
+    # ── code-review-30 F3: explicit missing target is an ERROR ──────────
+    def test_explicit_missing_target_is_terminal_error(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        statuses = []
+        with patch.object(book_describe, "_vision_call") as vc, \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(hs, "report_status", side_effect=lambda *a, **k: statuses.append(a)):
+            hs.handler({"internal_action": "describe_gallery",
+                        "params": {"gallery_id": gid, "overwrite": True, "task_id": "describe_gone",
+                                   "pieces": [{"job_id": "jobGONE", "artifact_id": "cGONE"}]}}, None)
+        vc.assert_not_called()
+        self.assertEqual(statuses[-1][2], "error")
+        self.assertIn("gallery_piece_missing", statuses[-1][3])
+
+    # ── code-review-30 F2: the deadline reaches the provider layer ──────
+    def test_worker_passes_remaining_budget_to_vision(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        with patch.object(book_describe, "_vision_call", return_value='{"title": "T"}') as vc, \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
+            hs._describe_gallery_run({"gallery_id": gid, "overwrite": True,
+                "pieces": [{"job_id": "jobT", "artifact_id": "cT", "base_title": ""}]})
+        budget = vc.call_args.kwargs.get("budget_s")
+        self.assertIsNotNone(budget)
+        self.assertGreater(budget, 0)
+        self.assertLessEqual(budget, hs.DESCRIBE_TIME_BUDGET_S)
+
     def test_describe_stops_at_time_budget(self):
         import book_describe
         gid = self._seed_dzi_piece_gallery()
@@ -831,6 +937,28 @@ class InteractiveVisionBudgetTests(unittest.TestCase):
              patch.object(book_describe.time, "sleep"):
             with self.assertRaisesRegex(RuntimeError, "timeout"):
                 book_describe._gemini_call("https://x", b"{}", "k", attempts=2, pacing=0)
+
+    def test_deadline_bounds_every_attempt(self):
+        import book_describe, time as _time
+        # already-expired deadline: no network attempt at all
+        with patch.object(book_describe.urllib.request, "urlopen") as uo:
+            with self.assertRaisesRegex(RuntimeError, "budget exhausted"):
+                book_describe._gemini_call("https://x", b"{}", "k", attempts=3, pacing=0,
+                                           deadline_ts=_time.time() - 1)
+        uo.assert_not_called()
+        # short deadline: the per-attempt socket timeout shrinks to fit
+        ok = unittest.mock.MagicMock()
+        ok.__enter__ = lambda s: unittest.mock.MagicMock(read=lambda: b'{"content": [{"text": "hi"}]}')
+        ok.__exit__ = lambda s, *a: False
+        captured = {}
+        def capture(req, timeout=None):
+            captured["timeout"] = timeout
+            return ok
+        with patch.object(book_describe.urllib.request, "urlopen", side_effect=capture):
+            book_describe._gemini_call("https://x", b"{}", "k", attempts=3, pacing=0,
+                                       timeout=120.0, deadline_ts=_time.time() + 20)
+        self.assertLessEqual(captured["timeout"], 20.0)
+        self.assertGreater(captured["timeout"], 3.0)
 
     def test_batch_profile_is_unchanged(self):
         import book_describe

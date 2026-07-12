@@ -483,7 +483,11 @@ configure_async_invoke_policies() {
     # No retries for most Lambdas (prevents retry storms), but bilevel gets
     # 2 retries / 1hr age to handle concurrency throttle drops.
     local fn
-    for fn in "$FINALIZE_MT_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
+    # STORAGE included (code-review-30 F1): its self-invoked workers (describe,
+    # mosaic builds) must not be replayed by the platform — a replay can flip a
+    # terminal task row from error to done and double vision spend. In-process
+    # CAS retries own conflict handling instead.
+    for fn in "$FINALIZE_MT_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME" "$STORAGE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \

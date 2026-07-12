@@ -142,19 +142,28 @@ RETRYABLE_HTTP = {429, 500, 502, 503}
 
 
 def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TIER_PACING_S,
-                 timeout=120.0, max_retry_wait=90.0):
+                 timeout=120.0, max_retry_wait=90.0, deadline_ts=None):
     """POST with backoff: free tiers throw 503 ("model overloaded")
     routinely and 429 when a rate window fills. 429s wait out the window
     (Retry-After honored, up to ~90s per attempt) instead of dying —
     a quota message like "retry in 52s" must pause the run, not kill it."""
     delay = 3.0
     for attempt in range(1, attempts + 1):
+        # A real deadline bounds EVERY attempt (code-review-30 F2): the per-
+        # attempt socket timeout shrinks to the remaining budget, and no
+        # attempt starts without enough margin to matter.
+        attempt_timeout = timeout
+        if deadline_ts is not None:
+            remaining = deadline_ts - time.time()
+            if remaining < 5.0:
+                raise RuntimeError(f"vision budget exhausted before attempt {attempt}")
+            attempt_timeout = max(3.0, min(timeout, remaining - 2.0))
         _pace(pacing)
         req = urllib.request.Request(
             url, data=body,
             headers=headers or {"Content-Type": "application/json", "x-goog-api-key": api_key})
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=attempt_timeout) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             detail = ""
@@ -167,6 +176,10 @@ def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TI
                 if exc.code == 429:
                     wait = max(wait, 15.0)
                 wait = min(wait, max_retry_wait)   # interactive callers cap the stall
+                if deadline_ts is not None:
+                    wait = min(wait, max(0.0, deadline_ts - time.time() - 8.0))
+                    if wait <= 0:
+                        raise RuntimeError("vision budget exhausted during retry backoff")
                 print(f"    vision API {exc.code} ({detail[:120] or 'transient'}) — "
                       f"retry {attempt}/{attempts - 1} in {wait:.0f}s")
                 time.sleep(wait)
@@ -181,6 +194,10 @@ def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TI
             # TimeoutError covers read timeouts (socket.timeout is its alias).
             if attempt < attempts:
                 wait = min(delay, max_retry_wait)
+                if deadline_ts is not None:
+                    wait = min(wait, max(0.0, deadline_ts - time.time() - 8.0))
+                    if wait <= 0:
+                        raise RuntimeError(f"vision budget exhausted: {exc}") from exc
                 print(f"    vision API {type(exc).__name__} — "
                       f"retry {attempt}/{attempts - 1} in {wait:.0f}s")
                 time.sleep(wait)
@@ -210,13 +227,15 @@ def _extract_text(payload, path_desc, *chain):
         raise RuntimeError(f"{path_desc}: no text in {json.dumps(payload)[:300]}") from exc
 
 
-def _vision_call(model, api_key, image_bytes, text, *, interactive=False):
+def _vision_call(model, api_key, image_bytes, text, *, interactive=False, budget_s=None):
     """One image + one prompt -> raw model text. Provider inferred from the
     model id: gemini-* / claude-* / gpt-* & o* (VisionModel config).
     interactive=True (code-review-29 F4): the caller is a synchronous API route,
     so trade the batch engine's patience (8 attempts, 120s socket, 90s waits)
     for a bounded profile that fits the gateway window; batch runs unchanged."""
     quick = {"attempts": 2, "timeout": 12.0, "max_retry_wait": 4.0} if interactive else {}
+    if budget_s is not None:
+        quick["deadline_ts"] = time.time() + max(5.0, float(budget_s))
     b64 = base64.b64encode(image_bytes).decode()
     if model.startswith("claude"):
         body = {

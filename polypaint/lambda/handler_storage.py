@@ -4604,8 +4604,12 @@ GALLERIES_PREFIX = "polypaint/galleries/"                 # editable gallery doc
 GALLERY_MAX_PIECES = 64
 # Describe runs in a self-invoked storage worker (async — the interactive
 # route only dispatches), so the budget is a worker wall-time bound, not an
-# API-gateway fit. Leftover pieces are reported back, not attempted.
+# API-gateway fit. Leftover pieces are reported back, not attempted. The
+# deadline is threaded into the provider layer (every attempt's socket timeout
+# and retry sleep shrink to the remaining budget), and a reserve guarantees
+# the worker always has time to write its terminal task status.
 DESCRIBE_TIME_BUDGET_S = 240.0
+DESCRIBE_STATUS_RESERVE_S = 10.0
 GALLERY_SCHEMA_VERSION = 1
 GALLERY_NAME_MAX = 120
 GALLERY_TITLE_MAX = 160
@@ -5335,37 +5339,65 @@ def _run_describe_gallery_worker(params):
 def _describe_gallery_run(params):
     """Generate short curator titles for gallery pieces from their thumbnails,
     reusing the Book tab's vision engine + model/key config (lambda/book_describe).
-    SMALL-BATCH (Describe Selection): at most 4 pieces per run — each success is
-    CAS-saved immediately so progress survives later failures. Runs inside the
-    self-invoked worker: the batch vision profile (patient retries) applies."""
+    SMALL-BATCH: at most 4 pieces per run — each success is CAS-saved
+    immediately so progress survives later failures.
+
+    OWNERSHIP (code-review-30 F1, the Book run_base pattern): each target
+    carries a base_title — the caller's dispatch-time value when provided,
+    else the title observed when this run started. The generated title is
+    written ONLY while the piece's current title still equals that base; a
+    newer human title always wins (skipped with a coded error, no vision
+    spend when detectable up front). CAS conflicts re-read, re-check
+    ownership, and retry IN PROCESS — they never escape to the platform's
+    async retry (storage has retries=0 regardless)."""
     from book_describe import _vision_call, _load_vision_config, _downscale_for_vision
     from shared import vision_provider
     gallery_id = assert_safe_id(params.get("gallery_id"), "gallery_id")
     raw_targets = params.get("pieces")
     overwrite = bool(params.get("overwrite"))
     doc, revision = _read_gallery_doc_with_etag(gallery_id)
-    pieces = doc.get("pieces") or []
 
     def key3(p):
         return (str(p.get("job_id") or ""), str(p.get("family") or "") or "color",
                 str(p.get("artifact_id") or ""))
 
-    if isinstance(raw_targets, list) and raw_targets:
-        want = set()
+    def find_piece(d, k):
+        for p in (d.get("pieces") or []):
+            if key3(p) == k:
+                return p
+        return None
+
+    explicit = isinstance(raw_targets, list) and bool(raw_targets)
+    base_by_key = {}
+    if explicit:
+        want = []
         for t in raw_targets[:8]:
             if not isinstance(t, dict):
                 raise ValueError("pieces entries must be objects")
-            want.add((assert_safe_id(t.get("job_id"), "job_id"),
-                      str(t.get("family") or "") or "color",
-                      assert_safe_id(t.get("artifact_id"), "artifact_id")))
-        targets = [p for p in pieces if key3(p) in want]
+            k = (assert_safe_id(t.get("job_id"), "job_id"),
+                 str(t.get("family") or "") or "color",
+                 assert_safe_id(t.get("artifact_id"), "artifact_id"))
+            want.append(k)
+            if "base_title" in t:
+                base_by_key[k] = _clean_gallery_title(t.get("base_title"))
+        present = {key3(p) for p in (doc.get("pieces") or [])}
+        target_keys = [k for k in want if k in present]
+        if not target_keys:
+            # An EXPLICIT selection matching nothing is a concurrency error,
+            # never a silent success (code-review-30 F3).
+            return {"gallery": doc, "revision": revision, "described": 0,
+                    "errors": [{"artifact_id": k[2], "error": "gallery_piece_missing"}
+                               for k in want]}
     else:
-        targets = list(pieces)
+        target_keys = [key3(p) for p in (doc.get("pieces") or [])]
     if not overwrite:
-        targets = [p for p in targets if not str(p.get("title") or "").strip()]
-    targets = targets[:4]   # sync route — stay well inside the API gateway budget
-    if not targets:
+        target_keys = [k for k in target_keys
+                       if not str((find_piece(doc, k) or {}).get("title") or "").strip()]
+    target_keys = target_keys[:4]   # small batch per run — bounded worker wall time
+    if not target_keys:
         return {"gallery": doc, "revision": revision, "described": 0, "errors": []}
+    for k in target_keys:
+        base_by_key.setdefault(k, _clean_gallery_title((find_piece(doc, k) or {}).get("title")))
 
     cfg = _load_vision_config()
     model = str(cfg.get("model") or "") or "gemini-2.5-flash"
@@ -5375,15 +5407,26 @@ def _describe_gallery_run(params):
         return {"gallery": doc, "revision": revision, "described": 0,
                 "errors": [{"artifact_id": "", "error": "no vision API key configured"}]}
 
-    used = [str(p.get("title") or "").strip() for p in pieces if str(p.get("title") or "").strip()]
+    used = [str(p.get("title") or "").strip() for p in (doc.get("pieces") or [])
+            if str(p.get("title") or "").strip()]
     described, errors = 0, []
     deadline = time.time() + DESCRIBE_TIME_BUDGET_S
-    for i, p in enumerate(targets):
-        if time.time() >= deadline:
+    for i, k in enumerate(target_keys):
+        if time.time() >= deadline - DESCRIBE_STATUS_RESERVE_S:
             errors.append({"artifact_id": "", "error":
-                f"time budget reached with {len(targets) - i} piece(s) left — run Describe again to continue"})
+                f"time budget reached with {len(target_keys) - i} piece(s) left — run Describe again to continue"})
             break
         try:
+            p = find_piece(doc, k)
+            if p is None:
+                errors.append({"artifact_id": k[2], "error": "gallery_piece_missing"})
+                continue
+            base = base_by_key[k]
+            if _clean_gallery_title(p.get("title")) != base:
+                # A newer (human) title landed after dispatch — it wins, and we
+                # detect it BEFORE spending a vision call.
+                errors.append({"artifact_id": k[2], "error": "title_changed — kept the newer title"})
+                continue
             obj = s3.get_object(Bucket=BUCKET, Key=str(p.get("preview_key") or ""))
             img = _downscale_for_vision(obj["Body"].read())
             prompt = (
@@ -5392,16 +5435,33 @@ def _describe_gallery_run(params):
                 "2-4 words, evocative but concrete, no colons, no quotes inside. "
                 + ("Do not reuse any of these existing titles: " + "; ".join(used[-20:]) + ". " if used else "")
             )
-            title = _gallery_title_from_reply(_vision_call(model, api_key, img, prompt))
-            p["title"] = _clean_gallery_title(title)
-            doc["updated_at"] = _utc_now_iso()
-            revision = _put_gallery_doc(doc, expected_revision=revision)   # per-piece persistence
-            used.append(p["title"])
-            described += 1
+            remaining = max(5.0, deadline - time.time() - DESCRIBE_STATUS_RESERVE_S)
+            title = _gallery_title_from_reply(
+                _vision_call(model, api_key, img, prompt, budget_s=remaining))
+            new_title = _clean_gallery_title(title)
+            for _attempt in range(3):
+                p["title"] = new_title
+                doc["updated_at"] = _utc_now_iso()
+                try:
+                    revision = _put_gallery_doc(doc, expected_revision=revision)   # per-piece persistence
+                    used.append(new_title)
+                    described += 1
+                    break
+                except GalleryConflictError:
+                    # The gallery moved mid-run: re-read, re-check FIELD ownership,
+                    # and retry in process. A changed title means a human edit won.
+                    doc, revision = _read_gallery_doc_with_etag(gallery_id)
+                    p = find_piece(doc, k)
+                    if p is None:
+                        errors.append({"artifact_id": k[2], "error": "gallery_piece_missing"})
+                        break
+                    if _clean_gallery_title(p.get("title")) != base:
+                        errors.append({"artifact_id": k[2], "error": "title_changed — kept the newer title"})
+                        break
+            else:
+                errors.append({"artifact_id": k[2], "error": "save_conflict — the gallery kept moving"})
         except Exception as exc:   # per-piece isolation: one failure never voids the rest
-            if isinstance(exc, GalleryConflictError):
-                raise
-            errors.append({"artifact_id": str(p.get("artifact_id") or ""), "error": str(exc)[:200]})
+            errors.append({"artifact_id": k[2], "error": str(exc)[:200]})
     return {"gallery": doc, "revision": revision, "described": described, "errors": errors}
 
 

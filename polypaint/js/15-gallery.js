@@ -418,9 +418,15 @@ async function galleryDescribeSelection() {
         id: railId, kind: 'describe', label: 'describe · ' + gid, jobId: gid,
         tab: 'gallery', ...patch }); };
     try {
+        // The dispatch carries the OWNERSHIP contract (code-review-30 F1): the
+        // reviewed revision and the title as seen at click time — the worker
+        // writes only while the title still equals base_title, so a newer
+        // human edit always survives an async describe.
         const resp = await lambdaPost('storage', {
             gallery_id: gid, overwrite: true,
-            pieces: [{ job_id: p.job_id, family: p.family || 'color', artifact_id: p.artifact_id }],
+            expected_revision: _galleryState.revision,
+            pieces: [{ job_id: p.job_id, family: p.family || 'color', artifact_id: p.artifact_id,
+                       base_title: p.title || '' }],
         }, '/describe-gallery', { idempotent: false });
         if (resp && resp.error) throw new Error(resp.error);
         if (!resp.dispatched || !resp.task_id) throw new Error('describe dispatch failed');
@@ -430,7 +436,10 @@ async function galleryDescribeSelection() {
             const check = await lambdaPost('storage', { job_id: gid, task_prefix: resp.task_id, expected: 1 }, '/check-status');
             if (check.errors > 0) throw new Error(check.error_details?.[0]?.error_msg || 'describe failed');
             if (check.complete) break;
-            if (performance.now() - t0 > 180000) throw new Error('describe timed out — check the jobs rail later');
+            // Poll PAST the backend's 240s operation deadline (code-review-30 F2):
+            // the worker always reaches a terminal state inside its budget, so
+            // the browser must outlive it rather than abandon a live task.
+            if (performance.now() - t0 > 300000) throw new Error('describe exceeded its deadline — Refresh the gallery to see the final state');
             if (typeof _jobsRailProgress === 'function') _jobsRailProgress(railId, 'titling ' + Math.round((performance.now() - t0) / 1000) + 's');
             await new Promise((r) => setTimeout(r, 2000));
         }
@@ -442,11 +451,16 @@ async function galleryDescribeSelection() {
         if (_galleryState.epoch === epoch && _galleryState.activeId === gid && fetched.gallery) {
             _galleryNotifyChanged(gid, fetched.gallery, fetched.revision);
         }
+        // Verify the OUTCOME before claiming success (code-review-30 F3): the
+        // refetched target must exist and actually carry a title.
         const titled = ((fetched.gallery || {}).pieces || []).find((q) => _galleryPieceKey(q) === _galleryPieceKey(p));
-        rail({ state: 'done', detail: (titled && titled.title) ? '“' + titled.title + '”' : 'titled' });
+        if (!titled || !titled.title) {
+            throw new Error(!titled ? 'the piece is no longer in this gallery' : 'no title was written');
+        }
+        rail({ state: 'done', detail: '“' + titled.title + '”' });
         _galleryBtnBusy('btn-gallery-describe', false);
         _galleryBtnFlash('btn-gallery-describe', '✓ Titled');
-        _galleryStatus('Titled: “' + ((titled && titled.title) || '?') + '”');
+        _galleryStatus('Titled: “' + titled.title + '”');
     } catch (e) {
         rail({ state: 'failed', detail: String(e.message || e) });
         _galleryBtnBusy('btn-gallery-describe', false);

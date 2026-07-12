@@ -921,3 +921,16 @@ class TestDeployPackaging(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AsyncInvokePolicyTests(unittest.TestCase):
+    """code-review-30 F1: storage's self-invoked workers (describe, mosaics)
+    must never be platform-replayed — a replay can flip a terminal task row
+    from error to done and double vision spend."""
+
+    def test_storage_is_in_the_zero_retry_group(self):
+        src = (pathlib.Path(__file__).resolve().parent.parent / "deploy.sh").read_text()
+        start = src.index("configure_async_invoke_policies()")
+        body = src[start:src.index("\n}", start)]
+        zero_retry_loop = body.split("--maximum-retry-attempts 0")[0]
+        self.assertIn('"$STORAGE_NAME"', zero_retry_loop)

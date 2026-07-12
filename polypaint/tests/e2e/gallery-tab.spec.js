@@ -326,8 +326,29 @@ test('Describe Selection titles the selected piece via the vision route', async 
   await expect(page.locator('#gallery-piece-list input[type="text"]').nth(0)).toHaveValue('Night Lattice');
   await expect(page.locator('#gallery-status')).toContainText('Night Lattice');
   const post = await page.evaluate(() => window._galleryPosts.find((p) => p.path === '/describe-gallery'));
-  expect(post.body.pieces).toEqual([{ job_id: 'jobA', family: 'color', artifact_id: 'artA' }]);
+  // ownership contract (code-review-30 F1): base_title + reviewed revision travel with the dispatch
+  expect(post.body.pieces).toEqual([{ job_id: 'jobA', family: 'color', artifact_id: 'artA', base_title: '' }]);
   expect(post.body.overwrite).toBe(true);
+  expect(typeof post.body.expected_revision).toBe('string');
+});
+
+test('Describe never claims success when the piece vanished (code-review-30 F3)', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.evaluate(() => {
+    const orig = window.lambdaPost;
+    window.lambdaPost = async (name, body, path, opts) => {
+      if (path === '/describe-gallery') {
+        // worker "succeeds" but the piece is deleted before the refetch
+        window.__docs.gal_x.pieces = window.__docs.gal_x.pieces.filter((q) => q.artifact_id !== 'artA');
+        return { dispatched: true, task_id: 'describe_t2', job_id: body.gallery_id };
+      }
+      return orig(name, body, path, opts);
+    };
+  });
+  await page.locator('#gallery-piece-list > div').nth(0).click();
+  await page.click('#btn-gallery-describe');
+  await expect(page.locator('#btn-gallery-describe')).toContainText('Failed');
+  await expect(page.locator('#gallery-status')).toContainText('no longer in this gallery');
 });
 
 test('Describe Selection without a selection flashes, never posts', async ({ page }) => {

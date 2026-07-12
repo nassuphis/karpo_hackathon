@@ -41,8 +41,19 @@ DEPLOY_BINARIES = {
     "roots2pix_mt": ["roots2pix_mt.c", "multispan_reader.c"],
     "solve_proximity_hist_sectioned": ["solve_proximity_hist_sectioned.c", "multispan_reader.c"],
     "solve_palette_chunk_mt": ["solve_palette_chunk_mt.c", "multispan_reader.c"],
+    "assemble_greyscale": ["assemble_greyscale.c"],
     "sweep_coeffgen": ["sweep_cli.c"],
     "sweep_cm": ["sweep_cm.c"],
+    # libvips docker set (deploy.sh VIPS block)
+    "raw2jpeg": ["raw2jpeg.c"],
+    "score_raw_render": ["score_raw_render.c"],
+    "bilevel_merge": ["bilevel_merge.c"],
+    "raw_to_bilevel": ["raw_to_bilevel.c"],
+    "tiff_compat": ["tiff_compat.c"],
+    "png_export": ["png_export.c"],
+    "dz_export": ["dz_export.c"],
+    "wall_dz": ["wall_dz.c"],
+    "autolevels_render": ["autolevels_render.c"],
 }
 
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.M)
@@ -77,6 +88,12 @@ def git(*args):
 
 
 def check():
+    """mtime freshness PLUS, when a manifest exists, source-hash provenance:
+    touching a stale binary defeats mtimes but not the recorded source
+    hashes — any source whose hash differs from the manifest marks every
+    binary depending on it stale until rebuilt (which rewrites the
+    manifest)."""
+    manifest = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else None
     stale, missing = [], []
     for name, c_files in DEPLOY_BINARIES.items():
         binary = LAMBDA / name
@@ -87,15 +104,25 @@ def check():
         for src in include_closure(c_files):
             if src.stat().st_mtime > bin_mtime:
                 stale.append((name, str(src.relative_to(ROOT)),
-                              src.stat().st_mtime - bin_mtime))
+                              f"{src.stat().st_mtime - bin_mtime:.0f}s newer mtime"))
+        if manifest and name in manifest.get("binaries", {}):
+            entry = manifest["binaries"][name]
+            recorded = entry.get("source_sha256", {})
+            for src in include_closure(c_files):
+                rel = str(src.relative_to(ROOT))
+                if rel in recorded and sha256_file(src) != recorded[rel]:
+                    stale.append((name, rel, "source hash differs from manifest"))
+            if sha256_file(binary) != entry["sha256"]:
+                stale.append((name, "(binary)", "binary hash differs from manifest"))
     for name in missing:
         print(f"MISSING: lambda/{name}")
-    for name, src, delta in stale:
-        print(f"STALE: lambda/{name} is {delta:.0f}s older than {src}")
+    for name, src, why in stale:
+        print(f"STALE: lambda/{name} vs {src}: {why}")
     if missing or stale:
         print("\nFAIL: rebuild with scripts/build-deploy-binaries.sh")
         return 1
-    print(f"ok: all {len(DEPLOY_BINARIES)} deploy binaries newer than their sources")
+    print(f"ok: all {len(DEPLOY_BINARIES)} deploy binaries newer than their sources"
+          + (" and consistent with the manifest" if manifest else ""))
     return 0
 
 
@@ -111,7 +138,8 @@ def write_manifest():
             "sha256": sha256_file(binary),
             "size": st.st_size,
             "built_mtime": int(st.st_mtime),
-            "sources": [str(p.relative_to(ROOT)) for p in include_closure(c_files)],
+            "source_sha256": {str(p.relative_to(ROOT)): sha256_file(p)
+                              for p in include_closure(c_files)},
         }
     manifest = {
         "generated_at": int(time.time()),

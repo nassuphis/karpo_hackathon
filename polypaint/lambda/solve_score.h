@@ -1815,17 +1815,34 @@ static int solve_score_eval_metric_slots(const float *roots, int degree,
      * single slot takes the pre-CR31 direct path verbatim — same bytes, same
      * cost, no feature-cache preparation at all. Pair-feature masks are the
      * union across the source's slots so ONE traversal serves them all. */
-    int cacheableSlots[2] = {0, 0};   /* [0]=solve roots, [1]=coeff roots */
+    /* CR32 follow-up: engagement requires provable REUSE, not merely two
+     * slots — two DISTINCT cheap metrics share nothing worth the cache's
+     * malloc/prepare cost (measured +27% for max_re+min_re when gated on
+     * slot count alone). Reuse exists iff a source has duplicate
+     * (metric) slots (memo pays) or >= 2 pair-family slots (one traversal
+     * serves them all). */
+    int pairSlots[2] = {0, 0};        /* [0]=solve roots, [1]=coeff roots */
+    int dupSlots[2] = {0, 0};
+    int engage[2] = {0, 0};
     int needCrowd[2] = {0, 0}, needNN[2] = {0, 0};
     for (int i = 0; i < program->metricCount; i++) {
         enum SolveMetric metric = program->metrics[i];
         enum SolveScoreMetricSource source = program->metricSources[i];
         if (source == SOLVE_SCORE_SOURCE_PARAM || solve_metric_is_param_metric(metric)) continue;
         int si = (source == SOLVE_SCORE_SOURCE_COEFF) ? 1 : 0;
-        cacheableSlots[si]++;
+        if (solve_metric_in_pair_family(metric)) pairSlots[si]++;
+        for (int j = 0; j < i; j++) {
+            if (program->metrics[j] == metric &&
+                program->metricSources[j] == source) {
+                dupSlots[si] = 1;
+                break;
+            }
+        }
         if (metric == SOLVE_METRIC_CROWDING) needCrowd[si] = 1;
         else if (metric == SOLVE_METRIC_CLUSTERINESS || metric == SOLVE_METRIC_NN_VARIATION) needNN[si] = 1;
     }
+    engage[0] = (pairSlots[0] >= 2) || dupSlots[0];
+    engage[1] = (pairSlots[1] >= 2) || dupSlots[1];
     /* Lazy, heap-backed feature state: nothing is allocated (and no 16.6 KiB
      * object lives on this frame) unless a source actually engages the cache. */
     SolveSourceFeatures *feat[2] = {NULL, NULL};
@@ -1839,8 +1856,8 @@ static int solve_score_eval_metric_slots(const float *roots, int degree,
             continue;
         }
         int si = (source == SOLVE_SCORE_SOURCE_COEFF) ? 1 : 0;
-        if (cacheableSlots[si] < 2) {
-            /* single-slot source: original direct path (bit-identical) */
+        if (!engage[si]) {
+            /* no reuse for this source: original direct path (bit-identical) */
             outMetricBuffer[i] = solve_score_eval_metric_slot_normalized(
                 roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, i);
             continue;

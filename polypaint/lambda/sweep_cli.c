@@ -10216,8 +10216,13 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     }
     long recordBytes = 4 * sizeof(float);  /* t1r, t1i, t2r, t2i */
 
-    /* Probe degree from first record */
+    /* Probe degree from first record. CR32 follow-up: counted — the
+     * direct_* counters must cover EVERY direct pread, including this one
+     * (a chunked run performs blocks + 1 probe read). */
     float probe[4];
+#ifdef PP_VM_PERF
+    PP_PERF_COUNT(pp_perf_pread_calls);
+#endif
     if (pread(paramsFd, probe, sizeof(probe), (off_t)(stepStart * recordBytes)) != (ssize_t)sizeof(probe)) {
         fprintf(stderr, "Cannot read probe record\n");
         close(paramsFd);

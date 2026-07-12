@@ -159,6 +159,7 @@ static int parse_root_xform_json(const char *p, RootXformEntry *entries, int max
         p = rt_skip(p);
         if (*p != '"') break;
         p++;
+        memset(&entries[count], 0, sizeof(entries[count]));
         int i = 0;
         while (*p && *p != '"' && i < 63) entries[count].name[i++] = *p++;
         entries[count].name[i] = '\0';
@@ -188,6 +189,11 @@ static int parse_root_xform_json(const char *p, RootXformEntry *entries, int max
         if (*p == ']') p++;
         count++;
     }
+    /* CR32 follow-up: EVERY parser output is prepared — string parsers
+     * previously returned unprepared entries (prep_fn garbage for tuple
+     * rows on uninitialized arrays), so direct callers silently ran the
+     * fallback and the parity probe compared fallback against fallback. */
+    rt_prepare_chain(entries, count);
     return count;
 }
 
@@ -207,13 +213,24 @@ static int parse_root_xform_file(const char *path, RootXformEntry *entries, int 
     if (got != (size_t)sz) { free(buf); fclose(f); return 0; }
     buf[sz] = '\0';
     fclose(f);
-    int n = parse_root_xform_json(buf, entries, maxCount);
+    int n = parse_root_xform_json(buf, entries, maxCount);   /* prepares */
     free(buf);
-    rt_prepare_chain(entries, n);   /* resolve dispatch + hoist constants once (CR31 F8) */
     return n;
 }
 
 /* ---- Transforms ---- */
+
+/* CR32 follow-up: rotate and the two pulls have exactly ONE compiled inner
+ * loop each (the _pre body). The unprepared wrappers compute the constants
+ * per call and delegate — two separately compiled copies of the "same"
+ * arithmetic diverged in FMA contraction at -O3, which non-finite inputs
+ * amplified into different NaN bit patterns (found by the prepared-parity
+ * probe on a 16-transform chain with an inf root). */
+static void rt_rotate_roots_pre(float *re, float *im, int degree, double c, double s);
+static void rt_pull_unit_circle_pre(float *re, float *im, int degree,
+                                    double alpha, double inv_sig2);
+static void rt_pull_towards_center_pre(float *re, float *im, int degree,
+                                       double alpha, double inv_sig2);
 
 /* Undefined / pole outputs are encoded as NaN so downstream rasterizers can clip them. */
 static void rt_mark_undefined(float *re, float *im, int idx) {
@@ -225,29 +242,14 @@ static void rt_mark_undefined(float *re, float *im, int idx) {
  * Positive = CW, negative = CCW. 1 = full turn. */
 static void rt_rotate_roots(float *re, float *im, int degree, double turns) {
     double theta = 2.0 * M_PI * turns;
-    double c = cos(theta), s = sin(theta);
-    for (int k = 0; k < degree; k++) {
-        double r = re[k], i = im[k];
-        re[k] = (float)(r * c - i * s);
-        im[k] = (float)(r * s + i * c);
-    }
+    rt_rotate_roots_pre(re, im, degree, cos(theta), sin(theta));
 }
 
 /* pull_unit_circle(sigma, alpha): radial deformation toward unit circle.
  * r' = r - alpha * d * exp(-(d/sigma)^2), d = r - 1. */
 static void rt_pull_unit_circle(float *re, float *im, int degree, double sigma, double alpha) {
     if (sigma < 1e-10) sigma = 1e-10;
-    double inv_sig2 = 1.0 / (sigma * sigma);
-    for (int k = 0; k < degree; k++) {
-        double r_re = re[k], r_im = im[k];
-        double r = sqrt(r_re * r_re + r_im * r_im);
-        if (r < 1e-30) continue;
-        double d = r - 1.0;
-        double rprime = r - alpha * d * exp(-d * d * inv_sig2);
-        double scale = rprime / r;
-        re[k] = (float)(r_re * scale);
-        im[k] = (float)(r_im * scale);
-    }
+    rt_pull_unit_circle_pre(re, im, degree, alpha, 1.0 / (sigma * sigma));
 }
 
 /* roots_toline(): Cayley transform w = i*(1+z)/(1-z).
@@ -335,16 +337,7 @@ static void rt_moebius(float *re, float *im, int degree, double a, double b, dou
  * r' = r * (1 - alpha * exp(-(r/sigma)^2)). */
 static void rt_pull_towards_center(float *re, float *im, int degree, double alpha, double sigma) {
     if (sigma < 1e-10) sigma = 1e-10;
-    double inv_sig2 = 1.0 / (sigma * sigma);
-    for (int k = 0; k < degree; k++) {
-        double x = re[k], y = im[k];
-        double r = sqrt(x * x + y * y);
-        if (r < 1e-30) continue;
-        double shrink = alpha * exp(-r * r * inv_sig2);
-        double s = 1.0 - shrink;
-        re[k] = (float)(x * s);
-        im[k] = (float)(y * s);
-    }
+    rt_pull_towards_center_pre(re, im, degree, alpha, 1.0 / (sigma * sigma));
 }
 
 /* ---- Prepared plan (CR31 F8) ---- */

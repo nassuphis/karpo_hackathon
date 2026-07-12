@@ -65,19 +65,21 @@ def _chunked(params_file, threads):
 
 
 def test_chunked_t1_uses_blocked_io(perf_binary, params_file, tmp_path):
-    """4096 rows / 128-row blocks = 32 preads + 32 pwrites at ONE worker —
-    the CR32 F3 pin that t1 actually enters the block engine."""
+    """4096 rows / 128-row blocks = 32 block preads + 1 probe pread and
+    32 pwrites at ONE worker — the CR32 F3 pin that t1 actually enters the
+    block engine (every direct pread is counted, probe included)."""
     perf = _run(perf_binary, _chunked(params_file, 1), tmp_path / "t1.bin")
     expected = math.ceil((N * N) / BLOCK_ROWS)
-    assert perf["direct_pread_calls"] == expected
+    assert perf["direct_pread_calls"] == expected + 1
     assert perf["direct_pwrite_calls"] == expected
 
 
 def test_chunked_t4_block_totals(perf_binary, params_file, tmp_path):
-    """Four workers, contiguous ranges of 1024 rows -> 8 blocks each."""
+    """Four workers, contiguous ranges of 1024 rows -> 8 blocks each,
+    plus the single probe pread."""
     perf = _run(perf_binary, _chunked(params_file, 4), tmp_path / "t4.bin")
     expected = 4 * math.ceil((N * N) / 4 / BLOCK_ROWS)
-    assert perf["direct_pread_calls"] == expected
+    assert perf["direct_pread_calls"] == expected + 1
     assert perf["direct_pwrite_calls"] == expected
 
 

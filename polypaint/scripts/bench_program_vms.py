@@ -245,9 +245,15 @@ def main():
                     help="interleaved A/B between two binaries (bytes must match)")
     ap.add_argument("--no-micro", action="store_true", help="skip the Root/Solve C microbench")
     ap.add_argument("--out", help="report path (default reports/vm_bench_<machine>_<git>.json)")
+    ap.add_argument("--meta", action="append", default=[], metavar="KEY=VALUE",
+                    help="extra provenance recorded verbatim in metadata (e.g. "
+                         "base_source_commit=32e01ff) — CR32 F9/F4 follow-up")
     args = ap.parse_args()
 
     meta = host_metadata()
+    for kv in args.meta:
+        key, _, value = kv.partition("=")
+        meta[f"note_{key}"] = value
     report = {"metadata": meta, "cases": {}}
     with tempfile.TemporaryDirectory(prefix="bench_program_vms_") as td:
         workdir = pathlib.Path(td)

@@ -247,7 +247,7 @@ into the block engine, param writes batched, atomic flags, counters complete):
 | micro: one-slot proximity (production entry) | 365.2 ns | 366.0 ns | flat (was 6.7× slower pre-CR32) |
 | micro: duplicate-slot proximity | 718.2 ns | 375.0 ns | **1.92×** (memo) |
 | micro: pair bundle | 4493.1 ns | 2597.5 ns | **1.73×** |
-| micro: prepared root affine3 chain (parsed) | 42.8 ns | 42.6 ns | flat at this arity (now measured, not assumed) |
+| micro: prepared root affine3 chain (parsed) | 44.1 ns (fallback) | 37.8 ns | **−14%** (follow-up: the first "flat" reading compared fallback to fallback — parse_root_xform_json did not prepare; it does now) |
 
 Controls: mqlacwaq_baseline −0.2%, param_baseline +0.1%. Param rows are from
 the final 32-row-block build (11 reps, interleaved); the ordered-ring BASE
@@ -257,6 +257,46 @@ New gates added by CR32: fast-kernel numerical policy, param seed-policy/CPU-cap
 byte pins, root prepared-vs-legacy parity (24 chains), cache-engaging solve
 parity, PP_VM_PERF count pins, TSan failure-path gate (validated to catch the
 pre-fix race), binary freshness checker wired into the Docker regression.
+
+## CR32 follow-up audit (six findings, all verified and fixed)
+
+A second audit of the remediation itself found six real gaps, closed the same
+day:
+
+1. **Cache gating** — engagement now requires provable reuse (duplicate
+   slots or ≥2 pair-family slots per source), not merely two slots. Two
+   distinct cheap metrics had regressed ~27%; now +5 ns (the plan scan),
+   duplicate cheap metrics are 1.20× FASTER than baseline (memo), two-pair
+   1.14×.
+2. **Root prepared parity was vacuous** — `parse_root_xform_json` never
+   called `rt_prepare_chain` (only the file wrapper did), so the probe and
+   the micro compared fallback against fallback. With real preparation the
+   16-transform non-finite chain FAILED bit parity: rotate and both pulls
+   had duplicated inner loops whose separate compilation diverged in FMA
+   contraction, flipping NaN sign bits (`7fc00000` vs `ffc00000`). Fixed by
+   construction: ONE compiled inner loop per transform (fallback wrappers
+   compute constants and delegate to the `_pre` body), and every parser
+   output is now prepared (tuple entries zeroed — they previously inherited
+   stack garbage in `prep_fn` for direct string-parser callers).
+   **Documented seam**: production has emitted the `_pre` NaN bit pattern
+   since CR31 shipped; NaN here is a sign-insensitive clip sentinel
+   (`isnan()` checks; no consumer persists transformed roots), so the
+   canonical bits are the prepared ones, not pre-CR31's. Genuinely prepared
+   affine3: **37.8 vs 44.1 ns fallback (−14%)** — the earlier "flat" row
+   was the vacuous comparison.
+3. **Freshness is provenance, not just mtimes** — the manifest now records
+   per-source sha256s and `--check` verifies them (touching a binary no
+   longer defeats it); the binary table covers the FULL deploy set (24:
+   musl + libcurl + libvips + LAPACK — assemble_greyscale and the libvips
+   set were missing); `--check`, `--verify-manifest`, and the TSan gate now
+   run inside `scripts/predeploy_check.sh`.
+4. **Counters are complete** — the chunked probe pread is counted
+   (`blocks + 1`), pinned by the counter tests.
+5. **TSan gate is gated** — wired into predeploy (was a standalone script).
+6. **Benchmark provenance** — the harness accepts `--meta key=value`
+   provenance notes; the final reports are re-measured from a clean
+   committed tree with binary/source hashes recorded, and micro results are
+   retained in a committed report (see reports/).
 
 ## Residual work (ranked)
 1. ~~Graviton re-measurement~~ — done twice: `cr-31-graviton.md` (pre-CR32,

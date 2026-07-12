@@ -23,6 +23,13 @@ if [ ! -x lambda/sweep_test ] || [ lambda/sweep_cli.c -nt lambda/sweep_test ]; t
 fi
 
 echo "Running predeploy contract gate..."
+
+# CR32 follow-up: deploy binaries must be fresh AND match the recorded
+# manifest (mtime + source/binary hashes), and the multi-worker failure
+# paths must be TSan-clean, BEFORE any deploy.
+python3 scripts/check_binary_freshness.py --check
+python3 scripts/check_binary_freshness.py --verify-manifest
+bash scripts/test-tsan-races.sh
 "${TEST_PYTHON[@]}" api_manifest.py --check
 "${TEST_PYTHON[@]}" deploy_manifest.py --check
 "${TEST_PYTHON[@]}" lambda/gen_program_profiles.py --check

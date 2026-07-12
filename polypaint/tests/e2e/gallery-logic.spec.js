@@ -138,11 +138,11 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
   test('carries validated scene settings; defaults bad/missing values', async ({ page }) => {
     const r = await withModules(page, (M, L, doc, ORIGIN) => {
       const norm = (s) => M.normalizeManifest(s ? { ...doc, settings: s } : { ...doc }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).settings;
-      return { good: norm({ sky: 'dark', wall_color: '#123ABC', wall_coverage: 250, wall_self_tint: false, wall_edge_px: 40 }), bad: norm({ sky: 'weird', wall_color: 'nope', wall_coverage: 'junk' }), none: norm(null) };
+      return { good: norm({ sky: 'dark', wall_color: '#123ABC', wall_coverage: 250, wall_self_tint: false, wall_edge_px: 40, wall_layout: 'exhibition' }), bad: norm({ sky: 'weird', wall_color: 'nope', wall_coverage: 'junk' }), none: norm(null) };
     }, galleryDoc());
-    expect(r.good).toEqual({ sky: 'dark', wall_color: '#123abc', wall_coverage: 100, wall_self_tint: false, wall_edge_px: 12 });  // valid kept + clamped; explicit false honored
-    expect(r.bad).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null, wall_self_tint: true, wall_edge_px: 1 }); // junk -> defaults
-    expect(r.none).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null, wall_self_tint: true, wall_edge_px: 1 });// absent -> defaults
+    expect(r.good).toEqual({ sky: 'dark', wall_color: '#123abc', wall_coverage: 100, wall_self_tint: false, wall_edge_px: 12, wall_layout: 'exhibition' });  // valid kept + clamped; explicit false honored
+    expect(r.bad).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null, wall_self_tint: true, wall_edge_px: 1, wall_layout: 'maze' }); // junk -> defaults
+    expect(r.none).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null, wall_self_tint: true, wall_edge_px: 1, wall_layout: 'maze' });// absent -> defaults
   });
 
   test('enforces the manifest row cap', async ({ page }) => {
@@ -207,6 +207,36 @@ test.describe('Gallery viewer layout (pure)', () => {
     expect(r.sparse).toBeGreaterThan(r.dense);   // 10% coverage -> larger grid
     expect(r.densePlaced).toBe(8);               // every piece still placed
     expect(r.sparsePlaced).toBe(8);
+  });
+
+  test('serpentine and exhibition layouts: connected, ordered, all pieces placed', async ({ page }) => {
+    const r = await withModules(page, (M, L, pieces) => {
+      const bfs = (m) => { const seen = new Set([0]); const q = [[0, 0]];
+        while (q.length) { const [rr, cc] = q.pop(); const w = m.grid[rr * m.cols + cc];
+          for (const [k, dr, dc] of [['N', -1, 0], ['S', 1, 0], ['E', 0, 1], ['W', 0, -1]]) {
+            if (!w[k]) { const nr = rr + dr, nc = cc + dc;
+              if (nr >= 0 && nr < m.rows && nc >= 0 && nc < m.cols && !seen.has(nr * m.cols + nc)) { seen.add(nr * m.cols + nc); q.push([nr, nc]); } } } }
+        return seen.size; };
+      const serp = L.computeLayout(pieces, { mode: 'serpentine', coverage: 35 });
+      const exhi = L.computeLayout(pieces, { mode: 'exhibition', coverage: 35 });
+      const maze = L.computeLayout(pieces, { mode: 'maze', seed: 5, coverage: 35 });
+      // curator ORDER preserved in the walk modes: placements indexed 0..n-1
+      const ordered = serp.placements.every((p, i) => p.piece_index === i)
+        && exhi.placements.every((p, i) => p.piece_index === i);
+      return {
+        serpReach: bfs(serp) === serp.cols * serp.rows, serpPlaced: serp.placedCount,
+        exhiReach: bfs(exhi) === exhi.cols * exhi.rows, exhiPlaced: exhi.placedCount,
+        distinct: JSON.stringify(serp.wallSegments) !== JSON.stringify(exhi.wallSegments)
+          && JSON.stringify(serp.wallSegments) !== JSON.stringify(maze.wallSegments),
+        ordered,
+      };
+    }, eightPieces());
+    expect(r.serpReach).toBe(true);      // one continuous corridor, fully reachable
+    expect(r.exhiReach).toBe(true);      // aisles connect around the partitions
+    expect(r.serpPlaced).toBe(8);
+    expect(r.exhiPlaced).toBe(8);
+    expect(r.distinct).toBe(true);       // the three modes are genuinely different rooms
+    expect(r.ordered).toBe(true);
   });
 
   test('swept collision blocks crossing a closed interior wall but passes open sides', async ({ page }) => {

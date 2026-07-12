@@ -13,7 +13,7 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { parseTrustedManifestUrl, normalizeManifest, GALLERY_LIMITS, isValidId } from './manifest.js';
-import { computeMaze, mazeClamp, mazeClampMove, MAZE, selectAndSort } from './layout.js';
+import { computeLayout, mazeClamp, mazeClampMove, MAZE, selectAndSort } from './layout.js';
 import { GalleryTextureManager, TEXTURE_LIMITS } from './texture-manager.js';
 
 const PREVIEW_FETCH_TIMEOUT_MS = 12_000;
@@ -204,7 +204,8 @@ class GalleryViewer {
   _buildScene() {
     const seed = (this.spec.layout && this.spec.layout.seed) || 1;
     const coverage = this.spec.settings ? this.spec.settings.wall_coverage : null;   // null -> legacy sizing
-    this.maze = computeMaze(this.pieces, { seed, coverage });
+    const mode = (this.spec.settings && this.spec.settings.wall_layout) || 'maze';
+    this.maze = computeLayout(this.pieces, { mode, seed, coverage });
     this.placements = this.maze.placements;
 
     this.scene = new THREE.Scene();

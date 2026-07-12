@@ -438,6 +438,13 @@ function _galleryOnWallCoverage(value) {
     _galleryState.dirty = true; _galleryUpdateActionButtons();
 }
 
+function _galleryOnWallLayout(value) {
+    const s = _gallerySettings(); if (!s) return;
+    if (!['maze', 'serpentine', 'exhibition'].includes(value)) return;
+    s.wall_layout = value;
+    _galleryState.dirty = true; _galleryUpdateActionButtons();
+}
+
 function _galleryOnWallEdge(value) {
     const s = _gallerySettings(); if (!s) return;
     const n = Math.round(Number(value));
@@ -474,6 +481,8 @@ function _galleryRenderSceneControls() {
     if (st) { st.disabled = !doc; st.checked = !s || s.wall_self_tint !== false; }
     const ew = document.getElementById('gallery-wall-edge');
     if (ew) { ew.disabled = !doc; ew.value = (s && Number.isFinite(s.wall_edge_px)) ? s.wall_edge_px : 1; }
+    const lay = document.getElementById('gallery-wall-layout');
+    if (lay) { lay.disabled = !doc; lay.value = (s && s.wall_layout) || 'maze'; }
 }
 
 function _galleryMovePiece(index, dir) {

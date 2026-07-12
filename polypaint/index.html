@@ -2262,6 +2262,13 @@ button {
     </div>
     <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-bottom:8px; font-size:12px; color:#9aa0b4">
         <span style="color:#c8cee0">Scene</span>
+        <label style="display:flex; align-items:center; gap:6px" title="Room layout: maze = seeded labyrinth; serpentine = one continuous switchback corridor; exhibition = freestanding parallel partition walls.">Layout
+            <select id="gallery-wall-layout" onchange="_galleryOnWallLayout(this.value)" style="background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:4px 6px; font-size:12px" disabled>
+                <option value="maze">maze</option>
+                <option value="serpentine">serpentine</option>
+                <option value="exhibition">exhibition</option>
+            </select>
+        </label>
         <label style="display:flex; align-items:center; gap:6px">Wall colour
             <input type="color" id="gallery-wall-color" value="#ece4d6" oninput="_galleryOnWallColor(this.value)" style="width:34px; height:24px; padding:0; border:1px solid #2b3a5e; border-radius:4px; background:#0d1320" disabled>
             <input type="text" id="gallery-wall-hex" value="#ece4d6" maxlength="7" spellcheck="false" oninput="_galleryOnWallHex(this.value)" style="width:74px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:4px 6px; font-size:12px" disabled>

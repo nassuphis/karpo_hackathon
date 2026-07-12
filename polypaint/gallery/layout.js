@@ -129,50 +129,20 @@ function pieceSizeOnWall(previewWidth, previewHeight) {
   return { width_m: width, height_m: height };
 }
 
-// Build a maze sized to the piece count and place each piece on its own interior
-// wall face. Returns grid (for collision), wall segments (for meshes), piece
-// placements (world position + rotationY + inward normal), spawn, and bounds.
-export function computeMaze(pieces, { seed = 1, coverage = null } = {}) {
-  const n = Math.max(1, pieces.length);
-  // coverage = desired % of interior wall faces carrying art. Interior faces
-  // ~= 2*(G-1)^2, so solve 2*(G-1)^2 >= n/frac for G. Lower coverage -> bigger,
-  // emptier maze; 100% -> the smallest maze that still fits every piece.
-  // coverage == null (shares written before the knob existed) keeps the LEGACY
-  // sizing so existing galleries don't silently re-lay out.
-  const G = coverage == null
-    ? Math.max(MAZE.MIN_GRID, Math.min(MAZE.MAX_GRID, Math.ceil(Math.sqrt(n)) + 2))
-    : Math.max(MAZE.MIN_GRID, Math.min(MAZE.MAX_GRID,
-        Math.ceil(Math.sqrt(n / (2 * (Math.max(5, Math.min(100, Number(coverage) || 35)) / 100))) + 1)));
-  const cols = G, rows = G, CELL = MAZE.CELL_M;
-  const rnd = mulberry32(hashSeed(seed));
-  const grid = [];
-  for (let i = 0; i < cols * rows; i++) grid.push({ N: true, E: true, S: true, W: true, visited: false });
+// ── Shared grid -> layout engine ────────────────────────────────────────────
+// All three layout modes (maze / serpentine / exhibition) are expressed as a
+// cols x rows grid of cells with N/E/S/W closed-wall flags. This one builder
+// derives everything else from the grid: dedup'd wall segments for meshes,
+// interior art faces, piece placements, spawn, bounds. Collision (mazeClamp /
+// mazeClampMove) reads the same grid, so every mode collides correctly for free.
+function _layoutFromGrid(pieces, grid, cols, rows, { rnd = null, placement = 'shuffle' } = {}) {
+  const CELL = MAZE.CELL_M;
   const at = (r, c) => grid[r * cols + c];
-
-  // recursive backtracker (iterative)
-  const stack = [[0, 0]];
-  at(0, 0).visited = true;
-  while (stack.length) {
-    const [r, c] = stack[stack.length - 1];
-    const nbrs = [];
-    for (const d of MAZE_DIRS) {
-      const nr = r + d.dr, nc = c + d.dc;
-      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !at(nr, nc).visited) nbrs.push({ d, nr, nc });
-    }
-    if (!nbrs.length) { stack.pop(); continue; }
-    const pick = nbrs[Math.floor(rnd() * nbrs.length)];
-    at(r, c)[pick.d.k] = false;
-    at(pick.nr, pick.nc)[pick.d.opp] = false;
-    at(pick.nr, pick.nc).visited = true;
-    stack.push([pick.nr, pick.nc]);
-  }
-  for (const cell of grid) delete cell.visited;
-
   const originX = -(cols * CELL) / 2, originZ = -(rows * CELL) / 2;
   const cellCenter = (r, c) => ({ x: originX + (c + 0.5) * CELL, z: originZ + (r + 0.5) * CELL });
 
   // Interior wall faces available for art (a closed wall bordering this cell's
-  // corridor), each with the inward normal + facing rotation.
+  // corridor), each with the inward normal + facing rotation. Row-major order.
   const faces = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -184,14 +154,21 @@ export function computeMaze(pieces, { seed = 1, coverage = null } = {}) {
       if (cell.E && interior.E) faces.push({ r, c, x: originX + (c + 1) * CELL, z: cen.z, normal: { x: -1, z: 0 }, rotationY: -Math.PI / 2 });
     }
   }
-  // Deterministic spread: shuffle faces by seed, one piece per face.
-  for (let i = faces.length - 1; i > 0; i--) {
-    const j = Math.floor(rnd() * (i + 1));
-    const t = faces[i]; faces[i] = faces[j]; faces[j] = t;
+  let chosen = faces;
+  if (placement === 'shuffle' && rnd) {
+    // Deterministic spread (maze): seeded shuffle, one piece per face.
+    for (let i = faces.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      const t = faces[i]; faces[i] = faces[j]; faces[j] = t;
+    }
+  } else if (placement === 'stride' && faces.length > pieces.length) {
+    // Ordered walks (serpentine/exhibition): keep curator order, spread evenly.
+    const stride = faces.length / Math.max(1, pieces.length);
+    chosen = Array.from({ length: pieces.length }, (_, i) => faces[Math.floor(i * stride)]);
   }
   const placements = [];
-  for (let i = 0; i < pieces.length && i < faces.length; i++) {
-    const f = faces[i], size = pieceSizeOnWall(pieces[i].preview_width, pieces[i].preview_height);
+  for (let i = 0; i < pieces.length && i < chosen.length; i++) {
+    const f = chosen[i], size = pieceSizeOnWall(pieces[i].preview_width, pieces[i].preview_height);
     placements.push({
       piece_index: i,
       position: { x: f.x + f.normal.x * MAZE.PLANE_OFFSET_M, y: MAZE.ART_CENTER_Y_M, z: f.z + f.normal.z * MAZE.PLANE_OFFSET_M },
@@ -228,8 +205,109 @@ export function computeMaze(pieces, { seed = 1, coverage = null } = {}) {
   };
 }
 
+function _closedGrid(cols, rows) {
+  const grid = [];
+  for (let i = 0; i < cols * rows; i++) grid.push({ N: true, E: true, S: true, W: true });
+  return grid;
+}
+
+// Build a maze sized to the piece count and place each piece on its own interior
+// wall face. Returns grid (for collision), wall segments (for meshes), piece
+// placements (world position + rotationY + inward normal), spawn, and bounds.
+export function computeMaze(pieces, { seed = 1, coverage = null } = {}) {
+  const n = Math.max(1, pieces.length);
+  // coverage = desired % of interior wall faces carrying art. Interior faces
+  // ~= 2*(G-1)^2, so solve 2*(G-1)^2 >= n/frac for G. Lower coverage -> bigger,
+  // emptier maze; 100% -> the smallest maze that still fits every piece.
+  // coverage == null (shares written before the knob existed) keeps the LEGACY
+  // sizing so existing galleries don't silently re-lay out.
+  const G = coverage == null
+    ? Math.max(MAZE.MIN_GRID, Math.min(MAZE.MAX_GRID, Math.ceil(Math.sqrt(n)) + 2))
+    : Math.max(MAZE.MIN_GRID, Math.min(MAZE.MAX_GRID,
+        Math.ceil(Math.sqrt(n / (2 * (Math.max(5, Math.min(100, Number(coverage) || 35)) / 100))) + 1)));
+  const cols = G, rows = G;
+  const rnd = mulberry32(hashSeed(seed));
+  const grid = [];
+  for (let i = 0; i < cols * rows; i++) grid.push({ N: true, E: true, S: true, W: true, visited: false });
+  const at = (r, c) => grid[r * cols + c];
+
+  // recursive backtracker (iterative)
+  const stack = [[0, 0]];
+  at(0, 0).visited = true;
+  while (stack.length) {
+    const [r, c] = stack[stack.length - 1];
+    const nbrs = [];
+    for (const d of MAZE_DIRS) {
+      const nr = r + d.dr, nc = c + d.dc;
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !at(nr, nc).visited) nbrs.push({ d, nr, nc });
+    }
+    if (!nbrs.length) { stack.pop(); continue; }
+    const pick = nbrs[Math.floor(rnd() * nbrs.length)];
+    at(r, c)[pick.d.k] = false;
+    at(pick.nr, pick.nc)[pick.d.opp] = false;
+    at(pick.nr, pick.nc).visited = true;
+    stack.push([pick.nr, pick.nc]);
+  }
+  for (const cell of grid) delete cell.visited;
+
+  return _layoutFromGrid(pieces, grid, cols, rows, { rnd, placement: 'shuffle' });
+}
+
+// Serpentine: one continuous switchback corridor. Parallel lanes along x,
+// connected alternately at opposite ends; art hangs (in curator order) on both
+// sides of the lane dividers.
+export function computeSerpentine(pieces, { coverage = null } = {}) {
+  const n = Math.max(1, pieces.length);
+  const frac = Math.max(5, Math.min(100, Number(coverage) || 35)) / 100;
+  const need = n / frac;                            // interior faces wanted
+  // faces = 2*(rows-1)*(cols-1); prefer lanes about twice as long as the count.
+  const rows = Math.max(2, Math.min(12, Math.ceil(Math.sqrt(need / 4)) + 1));
+  const cols = Math.max(3, Math.min(16, Math.ceil(need / (2 * (rows - 1))) + 1));
+  const grid = _closedGrid(cols, rows);
+  const at = (r, c) => grid[r * cols + c];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols - 1; c++) { at(r, c).E = false; at(r, c + 1).W = false; }   // lane corridor
+  }
+  for (let r = 0; r < rows - 1; r++) {
+    const gap = (r % 2 === 0) ? cols - 1 : 0;       // alternate connecting ends
+    at(r, gap).S = false; at(r + 1, gap).N = false;
+  }
+  return _layoutFromGrid(pieces, grid, cols, rows, { placement: 'stride' });
+}
+
+// Exhibition: freestanding parallel partition walls — equal length, equal
+// spacing, open at both ends so every aisle is reachable. Art hangs (in curator
+// order) on both sides of each partition.
+export function computeExhibition(pieces, { coverage = null } = {}) {
+  const n = Math.max(1, pieces.length);
+  const frac = Math.max(5, Math.min(100, Number(coverage) || 35)) / 100;
+  const need = n / frac;
+  // faces = 2*(rows-1)*(cols-2); prefer partitions a bit longer than the count.
+  const rows = Math.max(2, Math.min(12, Math.ceil(Math.sqrt(need / 2))));
+  const cols = Math.max(4, Math.min(16, Math.ceil(need / (2 * (rows - 1))) + 2));
+  const grid = _closedGrid(cols, rows);
+  const at = (r, c) => grid[r * cols + c];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols - 1; c++) { at(r, c).E = false; at(r, c + 1).W = false; }   // open floor E/W
+  }
+  for (let r = 0; r < rows - 1; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (c === 0 || c === cols - 1) { at(r, c).S = false; at(r + 1, c).N = false; }     // walk-around gaps
+    }
+  }
+  return _layoutFromGrid(pieces, grid, cols, rows, { placement: 'stride' });
+}
+
+// Mode dispatch — the viewer's single entry point.
+export function computeLayout(pieces, { mode = 'maze', seed = 1, coverage = null } = {}) {
+  if (mode === 'serpentine') return computeSerpentine(pieces, { coverage });
+  if (mode === 'exhibition') return computeExhibition(pieces, { coverage });
+  return computeMaze(pieces, { seed, coverage });
+}
+
 // Corridor collision: clamp a proposed (x,z) so the camera (radius r) cannot
 // cross a CLOSED wall of the cell it is in; open sides let it pass to a neighbor.
+// Point form — used for teleports/spawn; continuous movement uses mazeClampMove.
 export function mazeClamp(maze, x, z, r) {
   const CELL = maze.cell;
   x = Math.max(maze.bounds.minX + r, Math.min(maze.bounds.maxX - r, x));

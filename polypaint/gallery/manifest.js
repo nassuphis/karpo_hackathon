@@ -28,9 +28,10 @@ const LEAF_RE = /^[A-Za-z0-9._-]{1,96}$/;
 const PREVIEW_LEAF_RE = /^preview[A-Za-z0-9._-]{0,90}\.(png|jpe?g)$/i;
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const SKY_MODES = new Set(['stars', 'dark']);
+const LAYOUT_MODES = new Set(['maze', 'serpentine', 'exhibition']);
 // wall_coverage: null = "not specified" -> the viewer uses the LEGACY maze
 // sizing, so shares written before the knob existed keep their layout.
-const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null, wall_self_tint: true, wall_edge_px: 1 });
+const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null, wall_self_tint: true, wall_edge_px: 1, wall_layout: 'maze' });
 
 // Scene settings the viewer applies (untrusted → validated). Only two knobs:
 // sky mode and wall colour.
@@ -45,6 +46,7 @@ export function validateGallerySettings(raw) {
     wall_self_tint: s.wall_self_tint !== false,   // default ON; only explicit false disables
     wall_edge_px: Number.isFinite(s.wall_edge_px)
       ? Math.max(0, Math.min(12, Math.round(s.wall_edge_px))) : 1,
+    wall_layout: LAYOUT_MODES.has(s.wall_layout) ? s.wall_layout : 'maze',
   };
 }
 

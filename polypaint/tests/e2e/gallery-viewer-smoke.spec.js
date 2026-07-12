@@ -231,6 +231,27 @@ test('scene has moonlight, a moon disc, and a distinct textured floor', async ({
   expect(st.floorMap).toBe(true);             // floor has a distinct grid texture
 });
 
+test('a serpentine share builds a serpentine room in the viewer', async ({ page }) => {
+  const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/serp/manifest.json';
+  const mk = (j, a) => ({ ordinal: 0, job_id: j, artifact_id: a, preview_key: `renders/${j}/color/${a}/preview.jpg`, image_key: `renders/${j}/color/${a}/image.jpeg`, preview_width: 512, preview_height: 512, function: 'f', title: '', deepzoom: null });
+  const pieces = Array.from({ length: 10 }, (_, i) => mk('j' + i, 'a' + i)); pieces.forEach((p, i) => (p.ordinal = i));
+  await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color',
+    layout: { mode: 'auto', seed: 1 }, settings: { wall_layout: 'serpentine', wall_coverage: 35 }, pieces }) }));
+  await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(GALLERY + '?share=serp');
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  const st = await page.evaluate(() => {
+    const v = window.__galleryViewer, m = v.maze;
+    return { placed: m.placedCount, meshes: v._artMeshes.length, nonSquareGrid: m.cols !== m.rows,
+      layout: v.spec.settings.wall_layout };
+  });
+  expect(st.layout).toBe('serpentine');
+  expect(st.placed).toBe(10);
+  expect(st.meshes).toBe(10);
+});
+
 test('minimap renders the maze with a red you-are-here dot; textures are pre-flipped', async ({ page }) => {
   await routeManifest(page, validManifest());
   await page.goto(GALLERY + '?share=smoke');

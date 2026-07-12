@@ -4828,8 +4828,11 @@ def _clean_gallery_settings(raw):
     if edge_px is None:
         edge_px = 1
     edge_px = max(0, min(12, edge_px))
+    layout = str(raw.get("wall_layout") or "maze")
+    if layout not in ("maze", "serpentine", "exhibition"):
+        layout = "maze"
     return {"sky": sky, "wall_color": wall.lower(), "wall_coverage": coverage,
-            "wall_self_tint": self_tint, "wall_edge_px": edge_px}
+            "wall_self_tint": self_tint, "wall_edge_px": edge_px, "wall_layout": layout}
 
 
 def _new_gallery_doc(gallery_id, name, pieces=None):

@@ -316,6 +316,36 @@ test.describe('Gallery viewer layout (pure)', () => {
     expect(r.overlapFree).toBe(true);               // no coincident geometry left to z-fight
   });
 
+  test('standalone layout: lonely checkerboard panels, NO perimeter, fully open field', async ({ page }) => {
+    const r = await withModules(page, (M, L, pieces) => {
+      const st = L.computeLayout(pieces, { mode: 'standalone', coverage: 35 });
+      const bfs = (m) => { const seen = new Set([0]); const q = [[0, 0]];
+        while (q.length) { const [rr, cc] = q.pop(); const w = m.grid[rr * m.cols + cc];
+          for (const [k, dr, dc] of [['N', -1, 0], ['S', 1, 0], ['E', 0, 1], ['W', 0, -1]]) {
+            if (!w[k]) { const nr = rr + dr, nc = cc + dc;
+              if (nr >= 0 && nr < m.rows && nc >= 0 && nc < m.cols && !seen.has(nr * m.cols + nc)) { seen.add(nr * m.cols + nc); q.push([nr, nc]); } } } }
+        return seen.size; };
+      const eps = 1e-6, b = st.bounds;
+      const touchesBoundary = st.wallSegments.some((s) => (s.axis === 'x')
+        ? (s.z < b.minZ + eps || s.z > b.maxZ - eps)
+        : (s.x < b.minX + eps || s.x > b.maxX - eps));
+      return {
+        placed: st.placedCount,
+        reach: bfs(st) === st.cols * st.rows,
+        ordered: st.placements.every((p, i) => p.piece_index === i),
+        noPerimeter: !touchesBoundary,                                   // open sky to the horizon
+        allDetached: L.mergeWallRuns(st.wallSegments).length === st.wallSegments.length,
+        panelFaces: st.faceCount === st.wallSegments.length * 2,          // art on BOTH panel faces
+      };
+    }, eightPieces());
+    expect(r.placed).toBe(8);
+    expect(r.reach).toBe(true);          // an open field — everything walkable
+    expect(r.ordered).toBe(true);
+    expect(r.noPerimeter).toBe(true);    // the surrounding wall is GONE
+    expect(r.allDetached).toBe(true);    // no panel touches any other (lonely stands)
+    expect(r.panelFaces).toBe(true);
+  });
+
   test('gridPath: BFS corridor paths never cross a closed wall, all placements reachable', async ({ page }) => {
     const r = await withModules(page, (M, L, pieces) => {
       const maze = L.computeMaze(pieces, { seed: 5, coverage: 60 });

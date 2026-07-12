@@ -745,6 +745,10 @@ class GalleryBackendTests(unittest.TestCase):
         s = hs._clean_gallery_settings({"wall_layout": "spiral"})
         self.assertEqual(s["wall_layout"], "spiral")
 
+    def test_settings_accept_standalone_layout(self):
+        s = hs._clean_gallery_settings({"wall_layout": "standalone"})
+        self.assertEqual(s["wall_layout"], "standalone")
+
     def test_describe_gallery_titles_selection(self):
         import book_describe
         gid = self._seed_dzi_piece_gallery()

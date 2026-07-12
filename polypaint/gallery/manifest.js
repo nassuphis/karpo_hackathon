@@ -28,7 +28,7 @@ const LEAF_RE = /^[A-Za-z0-9._-]{1,96}$/;
 const PREVIEW_LEAF_RE = /^preview[A-Za-z0-9._-]{0,90}\.(png|jpe?g)$/i;
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const SKY_MODES = new Set(['stars', 'dark', 'galaxies', 'milkyway', 'moonlit']);
-const LAYOUT_MODES = new Set(['maze', 'serpentine', 'exhibition', 'spiral']);
+const LAYOUT_MODES = new Set(['maze', 'serpentine', 'exhibition', 'spiral', 'standalone']);
 // wall_coverage: null = "not specified" -> the viewer uses the LEGACY maze
 // sizing, so shares written before the knob existed keep their layout.
 const DEFAULT_SETTINGS = Object.freeze({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null, wall_self_tint: true, wall_edge_px: 1, wall_layout: 'maze' });

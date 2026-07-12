@@ -401,11 +401,35 @@ export function gridPath(maze, from, to) {
   return null;
 }
 
+// Standalone: free-standing panels on a checkerboard — each work hangs on a
+// single lonely stand (art on BOTH faces), detached from every other panel and
+// from the field edge. NO perimeter wall at all: the sky runs to the horizon,
+// and the bounds clamp (not geometry) keeps the visitor on the field.
+export function computeStandalone(pieces, { coverage = null } = {}) {
+  const n = Math.max(1, pieces.length);
+  const frac = Math.max(5, Math.min(100, Number(coverage) || 35)) / 100;
+  // Panels sit on interior row boundaries of checkerboard cells; each carries
+  // two faces, so a G-grid offers ~G*(G-1) faces.
+  const G = Math.max(MAZE.MIN_GRID, Math.min(MAZE.MAX_GRID,
+    Math.ceil(Math.sqrt(n / frac)) + 1));
+  const cols = G, rows = G;
+  const grid = [];
+  for (let i = 0; i < cols * rows; i++) grid.push({ N: false, S: false, E: false, W: false });
+  const at = (r, c) => grid[r * cols + c];
+  for (let r = 1; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if ((r + c) % 2 === 0) { at(r, c).N = true; at(r - 1, c).S = true; }
+    }
+  }
+  return _layoutFromGrid(pieces, grid, cols, rows, { placement: 'stride' });
+}
+
 // Mode dispatch — the viewer's single entry point.
 export function computeLayout(pieces, { mode = 'maze', seed = 1, coverage = null } = {}) {
   if (mode === 'serpentine') return computeSerpentine(pieces, { coverage });
   if (mode === 'exhibition') return computeExhibition(pieces, { coverage });
   if (mode === 'spiral') return computeSpiral(pieces, { coverage });
+  if (mode === 'standalone') return computeStandalone(pieces, { coverage });
   return computeMaze(pieces, { seed, coverage });
 }
 

@@ -335,6 +335,38 @@ export function computeSpiral(pieces, { coverage = null } = {}) {
   return _layoutFromGrid(pieces, grid, cols, rows, { placement: 'stride', cellOrder: order });
 }
 
+// BFS shortest corridor path between two cells through OPEN walls. Returns
+// [{r,c}, ...] inclusive of both endpoints, or null when unreachable (layouts
+// are connected, so null only means out-of-bounds/corrupt input). Powers the
+// viewer's Tour mode: consecutive cells are always adjacent with the shared
+// wall open, so walking cell centers can never cross a wall.
+export function gridPath(maze, from, to) {
+  const { grid, cols, rows } = maze;
+  const id = (r, c) => r * cols + c;
+  const inb = (r, c) => r >= 0 && r < rows && c >= 0 && c < cols;
+  if (!inb(from.r, from.c) || !inb(to.r, to.c)) return null;
+  if (from.r === to.r && from.c === to.c) return [{ r: from.r, c: from.c }];
+  const prev = new Map([[id(from.r, from.c), null]]);
+  const queue = [{ r: from.r, c: from.c }];
+  for (let qi = 0; qi < queue.length; qi++) {
+    const { r, c } = queue[qi];
+    const cell = grid[id(r, c)];
+    for (const [k, nr, nc] of [['N', r - 1, c], ['S', r + 1, c], ['W', r, c - 1], ['E', r, c + 1]]) {
+      if (cell[k] || !inb(nr, nc) || prev.has(id(nr, nc))) continue;   // closed wall / seen
+      prev.set(id(nr, nc), id(r, c));
+      if (nr === to.r && nc === to.c) {
+        const path = [{ r: nr, c: nc }];
+        for (let cur = id(r, c); cur !== null; cur = prev.get(cur)) {
+          path.push({ r: (cur / cols) | 0, c: cur % cols });
+        }
+        return path.reverse();
+      }
+      queue.push({ r: nr, c: nc });
+    }
+  }
+  return null;
+}
+
 // Mode dispatch — the viewer's single entry point.
 export function computeLayout(pieces, { mode = 'maze', seed = 1, coverage = null } = {}) {
   if (mode === 'serpentine') return computeSerpentine(pieces, { coverage });

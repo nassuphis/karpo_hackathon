@@ -13,12 +13,18 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { parseTrustedManifestUrl, normalizeManifest, GALLERY_LIMITS, isValidId } from './manifest.js';
-import { computeLayout, mazeClamp, mazeClampMove, MAZE, selectAndSort } from './layout.js';
+import { computeLayout, mazeClamp, mazeClampMove, MAZE, selectAndSort, gridPath } from './layout.js';
 import { GalleryTextureManager, TEXTURE_LIMITS } from './texture-manager.js';
 
 const PREVIEW_FETCH_TIMEOUT_MS = 12_000;
 const SCHEDULE_INTERVAL_MS = 220;
 const MOVE_SPEED = 3.2;              // metres / second
+// Tour mode: an automatic walk-through — corridor speed a touch under walking
+// pace, gentle steering, a slower final turn onto each piece, then a dwell.
+const TOUR_SPEED = 2.3;              // metres / second
+const TOUR_TURN_RATE = 2.6;          // rad / s while walking
+const TOUR_FACE_RATE = 1.7;          // rad / s turning onto the art
+const TOUR_DWELL_S = 3.0;            // seconds in front of each piece
 const VIEW_DISTANCE_M = 2.4;        // guided-mode standoff from a piece
 const VIEWER_MAX_PIECES = 64;       // hard cap on meshes/queued previews (§5/§8)
 const ART_PLACEHOLDER_COLOR = 0x3a332a;
@@ -180,6 +186,7 @@ class GalleryViewer {
     this._lastSchedule = 0;
     this._focusIndex = -1;
     this._guidedIndex = -1;
+    this._tour = null;               // active walk-through state, or null
     this._pinnedFocusId = null;     // the id currently pinned for focus (unpin on change)
     this._contextLost = false;
     this._abort = new AbortController();
@@ -518,18 +525,19 @@ class GalleryViewer {
     on(document, 'visibilitychange', () => { this._keys.clear(); this.tm.setHidden(document.hidden); });
     on(this.renderer.domElement, 'webglcontextlost', (e) => this._onContextLost(e));
     on(this.renderer.domElement, 'webglcontextrestored', () => this._onContextRestored());
-    this.controls.addEventListener('lock', () => document.body.classList.add('locked'));
+    this.controls.addEventListener('lock', () => { this._tourStop(); document.body.classList.add('locked'); });
     this.controls.addEventListener('unlock', () => { document.body.classList.remove('locked'); this._keys.clear(); });
 
     on($('btn-prev'), 'click', () => this._guidedStep(-1));
     on($('btn-next'), 'click', () => this._guidedStep(1));
+    on($('btn-tour'), 'click', () => this._tourToggle());
     on($('btn-inspect'), 'click', () => this._inspectFocused());
     on($('overlay-close'), 'click', () => this._closeOverlay());
     on($('overlay-copy'), 'click', () => this._copyFocusedRef());
   }
 
   _onKey(e, down) {
-    if (e.key === 'Escape') { if (this._overlayOpen()) this._closeOverlay(); return; }
+    if (e.key === 'Escape') { if (this._overlayOpen()) this._closeOverlay(); else this._tourStop(); return; }
     if (this._overlayOpen()) return;
     switch (e.code) {
       case 'KeyW': case 'ArrowUp': this._setKey('f', down); break;
@@ -599,6 +607,8 @@ class GalleryViewer {
       const p = mazeClampMove(this.maze, px, pz, this.camera.position.x, this.camera.position.z, MAZE.COLLISION_RADIUS_M);
       this.camera.position.set(p.x, MAZE.EYE_HEIGHT_M, p.z);
     }
+
+    if (this._tour && !this.controls.isLocked && !this._overlayOpen()) this._tourTick(dt);
 
     if (now - this._lastSchedule > SCHEDULE_INTERVAL_MS) {
       this._lastSchedule = now;
@@ -727,6 +737,7 @@ class GalleryViewer {
   }
 
   _guidedStep(dir) {
+    this._tourStop();                          // manual navigation takes over
     const placements = this.maze.placements;
     if (!placements.length) return;
     // placements[i].piece_index === i, so this index is also the piece index.
@@ -738,6 +749,101 @@ class GalleryViewer {
     const target = artPos.clone().add(normal.clone().multiplyScalar(VIEW_DISTANCE_M));
     this._moveCameraTo(target, artPos);
     this._setFocus(pl.piece_index);
+  }
+
+  // ---- Tour: continuous walk-through -----------------------------------------
+  // Visits every placement in curator order on a loop: BFS the corridor cells
+  // to the piece's guided standoff (gridPath — consecutive cells always share
+  // an OPEN wall, so the walk cannot cross geometry), steer along the path,
+  // turn onto the art, dwell, continue. Any manual act (Prev/Next/Inspect,
+  // pointer lock, Esc) stops it.
+  _tourToggle() {
+    if (this._tour) { this._tourStop(); return; }
+    if (!this.maze.placements.length) return;
+    if (this.controls.isLocked) this.controls.unlock();
+    this._tour = { index: this._guidedIndex, waypoints: [], wi: 0, phase: 'walk', dwellLeft: 0, artPos: null, faceQuat: null };
+    const btn = $('btn-tour');
+    btn.textContent = 'Stop tour'; btn.classList.add('active');
+    this._tourNextLeg();
+  }
+
+  _tourStop() {
+    if (!this._tour) return;
+    this._tour = null;
+    const btn = $('btn-tour');
+    if (btn) { btn.textContent = 'Tour'; btn.classList.remove('active'); }
+  }
+
+  _cellOf(x, z) {
+    const CELL = MAZE.CELL_M;
+    const originX = -(this.maze.cols * CELL) / 2, originZ = -(this.maze.rows * CELL) / 2;
+    return { r: Math.max(0, Math.min(this.maze.rows - 1, Math.floor((z - originZ) / CELL))),
+             c: Math.max(0, Math.min(this.maze.cols - 1, Math.floor((x - originX) / CELL))) };
+  }
+
+  _cellCenterPoint(r, c) {
+    const CELL = MAZE.CELL_M;
+    const originX = -(this.maze.cols * CELL) / 2, originZ = -(this.maze.rows * CELL) / 2;
+    return new THREE.Vector3(originX + (c + 0.5) * CELL, MAZE.EYE_HEIGHT_M, originZ + (r + 0.5) * CELL);
+  }
+
+  // Camera-convention look quaternion (−Z toward the target) without touching
+  // the live camera: orient a scratch camera and copy its rotation.
+  _lookQuat(from, to) {
+    if (!this._scratchCam) this._scratchCam = new THREE.PerspectiveCamera();
+    const s = this._scratchCam;
+    s.position.copy(from); s.lookAt(to); s.updateMatrixWorld();
+    return s.quaternion.clone();
+  }
+
+  _tourNextLeg() {
+    const placements = this.maze.placements;
+    const t = this._tour;
+    t.index = (t.index + 1 + placements.length) % placements.length;   // loops forever
+    const pl = placements[t.index];
+    const normal = new THREE.Vector3(pl.normal.x, 0, pl.normal.z);
+    const artPos = new THREE.Vector3(pl.position.x, MAZE.EYE_HEIGHT_M, pl.position.z);
+    const stand = artPos.clone().add(normal.clone().multiplyScalar(VIEW_DISTANCE_M));
+    const clamped = mazeClamp(this.maze, stand.x, stand.z, MAZE.COLLISION_RADIUS_M);
+    stand.set(clamped.x, MAZE.EYE_HEIGHT_M, clamped.z);
+    const cells = gridPath(this.maze,
+      this._cellOf(this.camera.position.x, this.camera.position.z),
+      this._cellOf(stand.x, stand.z)) || [];
+    const pts = cells.map((cc) => this._cellCenterPoint(cc.r, cc.c));
+    pts.push(stand);
+    while (pts.length > 1 && pts[0].distanceTo(this.camera.position) < 0.5) pts.shift();
+    t.waypoints = pts; t.wi = 0; t.phase = 'walk';
+    t.artPos = artPos; t.faceQuat = null;
+    this._guidedIndex = t.index;          // Prev/Next/Inspect continue from here
+    this._setFocus(pl.piece_index);       // HUD + pin now: the texture loads while we walk
+  }
+
+  _tourTick(dt) {
+    const t = this._tour;
+    if (t.phase === 'walk') {
+      const target = t.waypoints[t.wi];
+      const pos = this.camera.position;
+      const dir = target.clone().sub(pos); dir.y = 0;
+      const dist = dir.length();
+      if (dist < 0.12) {
+        t.wi++;
+        if (t.wi >= t.waypoints.length) { t.phase = 'turn'; t.faceQuat = this._lookQuat(pos, t.artPos); }
+        return;
+      }
+      dir.normalize();
+      pos.addScaledVector(dir, Math.min(TOUR_SPEED * dt, dist));
+      pos.y = MAZE.EYE_HEIGHT_M;
+      if (dist > 0.3) {                    // steering is unstable when on top of the point
+        this.camera.quaternion.rotateTowards(
+          this._lookQuat(pos, target.clone().setY(MAZE.EYE_HEIGHT_M)), TOUR_TURN_RATE * dt);
+      }
+    } else if (t.phase === 'turn') {
+      this.camera.quaternion.rotateTowards(t.faceQuat, TOUR_FACE_RATE * dt);
+      if (this.camera.quaternion.angleTo(t.faceQuat) < 0.02) { t.phase = 'dwell'; t.dwellLeft = TOUR_DWELL_S; }
+    } else {
+      t.dwellLeft -= dt;
+      if (t.dwellLeft <= 0) this._tourNextLeg();
+    }
   }
 
   _moveCameraTo(target, lookAt) {
@@ -752,6 +858,7 @@ class GalleryViewer {
   _overlayOpen() { return $('overlay').classList.contains('open'); }
 
   _inspectFocused() {
+    this._tourStop();                          // inspection pauses the walk-through
     const index = this._focusIndex >= 0 ? this._focusIndex : this._guidedIndex;
     if (index < 0) return;
     if (this._inspecting != null) this.tm.unpin(this._pieceId(this.pieces[this._inspecting]));

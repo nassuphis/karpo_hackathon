@@ -281,6 +281,43 @@ test.describe('Gallery viewer layout (pure)', () => {
     expect(r.ordered).toBe(true);
   });
 
+  test('gridPath: BFS corridor paths never cross a closed wall, all placements reachable', async ({ page }) => {
+    const r = await withModules(page, (M, L, pieces) => {
+      const maze = L.computeMaze(pieces, { seed: 5, coverage: 60 });
+      const spiral = L.computeLayout(pieces, { mode: 'spiral', coverage: 35 });
+      const openBetween = (m, a, b) => {
+        const cell = m.grid[a.r * m.cols + a.c];
+        if (b.r === a.r - 1) return !cell.N;
+        if (b.r === a.r + 1) return !cell.S;
+        if (b.c === a.c - 1) return !cell.W;
+        if (b.c === a.c + 1) return !cell.E;
+        return false;                               // not adjacent at all
+      };
+      const CELL = 3.6;
+      const cellOf = (m, p) => ({ r: Math.floor((p.z + (m.rows * CELL) / 2) / CELL),
+                                  c: Math.floor((p.x + (m.cols * CELL) / 2) / CELL) });
+      const legal = (m) => {
+        const from = m.spawn ? cellOf(m, m.spawn) : { r: 0, c: 0 };
+        return m.placements.every((pl) => {
+          const to = cellOf(m, { x: pl.position.x + pl.normal.x * 1.2, z: pl.position.z + pl.normal.z * 1.2 });
+          const path = L.gridPath(m, from, to);
+          if (!path) return false;
+          for (let i = 1; i < path.length; i++) if (!openBetween(m, path[i - 1], path[i])) return false;
+          return true;
+        });
+      };
+      // unreachable: two cells fully walled off from each other
+      const closed = { cols: 2, rows: 1, grid: [{ N: true, S: true, E: true, W: true }, { N: true, S: true, E: true, W: true }] };
+      return { maze: legal(maze), spiral: legal(spiral),
+               same: L.gridPath(maze, { r: 0, c: 0 }, { r: 0, c: 0 }).length === 1,
+               blocked: L.gridPath(closed, { r: 0, c: 0 }, { r: 0, c: 1 }) };
+    }, eightPieces());
+    expect(r.maze).toBe(true);       // every piece is walkable from spawn...
+    expect(r.spiral).toBe(true);     // ...in every layout mode
+    expect(r.same).toBe(true);
+    expect(r.blocked).toBeNull();    // a sealed wall is never crossed
+  });
+
   test('swept collision blocks crossing a closed interior wall but passes open sides', async ({ page }) => {
     const r = await withModules(page, (M, L, pieces) => {
       const m = L.computeMaze(pieces, { seed: 5 });

@@ -153,6 +153,46 @@ test('Zoom opens OpenSeadragon on the piece DZI without forcing CORS', async ({ 
   expect(opts.crossOriginPolicy).toBeUndefined();   // must NOT force CORS — the bucket has none
 });
 
+test('Tour walks the gallery continuously and stops on demand', async ({ page }) => {
+  const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/tour/manifest.json';
+  const mk = (j, a) => ({ ordinal: 0, job_id: j, artifact_id: a, preview_key: `renders/${j}/color/${a}/preview.jpg`, image_key: null, preview_width: 512, preview_height: 512, function: 'f', title: '', deepzoom: null });
+  const pieces = Array.from({ length: 6 }, (_, i) => mk('j' + i, 'a' + i)); pieces.forEach((p, i) => (p.ordinal = i));
+  await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color',
+    layout: { mode: 'auto', seed: 4 }, settings: { sky: 'dark' }, pieces }) }));
+  await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(GALLERY + '?share=tour');
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+
+  const before = await page.evaluate(() => { const p = window.__galleryViewer.camera.position; return { x: p.x, z: p.z }; });
+  await page.click('#btn-tour');
+  await expect(page.locator('#btn-tour')).toHaveText('Stop tour');   // busy/active feedback ON the button
+  await expect(page.locator('#btn-tour')).toHaveClass(/active/);
+  // it WALKS: the camera moves over frames, and guided state tracks the tour
+  await page.waitForFunction(({ x, z }) => {
+    const p = window.__galleryViewer.camera.position;
+    return Math.hypot(p.x - x, p.z - z) > 0.4;
+  }, before, { timeout: 8000 });
+  const st = await page.evaluate(() => ({
+    guided: window.__galleryViewer._guidedIndex,
+    hud: document.getElementById('hud-title').textContent || '',
+  }));
+  expect(st.guided).toBeGreaterThanOrEqual(0);   // Next/Prev/Inspect continue from the tour
+  expect(st.hud.length).toBeGreaterThan(0);      // walking toward a titled piece
+
+  await page.click('#btn-tour');                 // toggle OFF
+  await expect(page.locator('#btn-tour')).toHaveText('Tour');
+  expect(await page.evaluate(() => window.__galleryViewer._tour)).toBeNull();
+
+  // manual navigation also stops a running tour
+  await page.click('#btn-tour');
+  await expect(page.locator('#btn-tour')).toHaveText('Stop tour');
+  await page.click('#btn-next');
+  await expect(page.locator('#btn-tour')).toHaveText('Tour');
+  expect(await page.evaluate(() => window.__galleryViewer._tour)).toBeNull();
+});
+
 test('a photographic sky becomes the scene background texture', async ({ page }) => {
   const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/sky/manifest.json';
   const mk = (j, a) => ({ ordinal: 0, job_id: j, artifact_id: a, preview_key: `renders/${j}/color/${a}/preview.jpg`, image_key: `renders/${j}/color/${a}/image.jpeg`, preview_width: 512, preview_height: 512, function: 'f', title: '', deepzoom: null });

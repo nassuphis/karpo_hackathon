@@ -98,6 +98,7 @@
   #message h1 { font-size: 17px; margin: 0 0 10px; font-weight: 600; }
   #message p { font-size: 14px; line-height: 1.6; opacity: .82; margin: 6px 0; }
   #message a { color: #e0b877; }
+#btn-tour.active { background: #e0b877; color: #131313; border-color: #e0b877; }
 </style>
 </head>
 <body>
@@ -114,6 +115,7 @@
     <button id="btn-prev" type="button">‹ Prev</button>
     <button id="btn-next" type="button">Next ›</button>
     <button id="btn-inspect" type="button" disabled>Inspect</button>
+    <button id="btn-tour" type="button" title="Auto walk-through: visits every piece in curator order, on a loop. Click again (or Esc / take control) to stop.">Tour</button>
   </div>
 
   <div id="overlay" aria-hidden="true">

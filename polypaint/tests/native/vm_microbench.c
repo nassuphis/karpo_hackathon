@@ -154,6 +154,44 @@ static double bench_solve_vm(SolveScoreProgram *program, long calls) {
     return median_ns_per_call(elapsed, calls);
 }
 
+/* CR31 F4: five slots (proximity, crowding, clusteriness, nn_variation, and a
+ * duplicate-quantile proximity) evaluated the way production does — through
+ * solve_score_eval_metric_slots. Before the feature cache this ran the O(d^2)
+ * pair loop three times plus two NN passes; after, exactly one traversal. */
+static double bench_metric_bundle(long calls) {
+    float roots[ROOT_DEGREE * 2];
+    float outBuf[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    uint64_t elapsed[REPS];
+    for (int i = 0; i < ROOT_DEGREE; i++) {
+        const double theta = 2.0 * M_PI * (double)i / (double)ROOT_DEGREE;
+        roots[2 * i] = (float)((0.6 + 0.01 * i) * cos(theta));
+        roots[2 * i + 1] = (float)((0.6 + 0.01 * i) * sin(theta));
+    }
+    SolveScoreProgram prog;
+    memset(&prog, 0, sizeof(prog));
+    prog.metricCount = 5;
+    prog.metrics[0] = SOLVE_METRIC_PROXIMITY;
+    prog.metrics[1] = SOLVE_METRIC_CROWDING;
+    prog.metrics[2] = SOLVE_METRIC_CLUSTERINESS;
+    prog.metrics[3] = SOLVE_METRIC_NN_VARIATION;
+    prog.metrics[4] = SOLVE_METRIC_PROXIMITY;   /* duplicate, different clip */
+    for (int i = 0; i < prog.metricCount; i++) {
+        prog.metricSources[i] = SOLVE_SCORE_SOURCE_SOLVE;
+        prog.clipLo[i] = 0.0;
+        prog.clipHi[i] = 4.0 + i;
+    }
+    for (int rep = 0; rep < REPS; rep++) {
+        const uint64_t t0 = now_ns();
+        for (long call = 0; call < calls; call++) {
+            roots[0] += (float)((call & 1L) ? 1e-7 : -1e-7);
+            solve_score_eval_metric_slots(roots, ROOT_DEGREE, NULL, 0, NULL, 0, &prog, outBuf);
+            bench_sink += outBuf[0] + outBuf[3];
+        }
+        elapsed[rep] = now_ns() - t0;
+    }
+    return median_ns_per_call(elapsed, calls);
+}
+
 static double bench_metric(enum SolveMetric metric, long calls) {
     float roots[ROOT_DEGREE * 2];
     uint64_t elapsed[REPS];
@@ -187,6 +225,8 @@ int main(void) {
     }
 
     SolveScoreProgram pass = program_pass();
+    /* CR31 F4 acceptance case: the four pair-family metrics from one source,
+     * plus a duplicate-quantile proximity slot — one traversal expected. */
     SolveScoreProgram arithmetic = program_arithmetic();
     SolveScoreProgram transcendental = program_transcendental();
     SolveScoreProgram long_program = program_long();
@@ -211,6 +251,7 @@ int main(void) {
     printf("  \"metric_proximity_ns\": %.3f,\n", bench_metric(SOLVE_METRIC_PROXIMITY, metric_calls));
     printf("  \"metric_clusteriness_ns\": %.3f,\n", bench_metric(SOLVE_METRIC_CLUSTERINESS, metric_calls));
     printf("  \"metric_min_angular_ns\": %.3f,\n", bench_metric(SOLVE_METRIC_MIN_ANGULAR_SEPARATION, metric_calls));
+    printf("  \"metric_bundle_pair4_ns\": %.3f,\n", bench_metric_bundle(metric_calls));
     printf("  \"sink\": %.17g\n", bench_sink);
     printf("}\n");
     return 0;

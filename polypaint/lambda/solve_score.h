@@ -1622,17 +1622,209 @@ static float solve_score_eval_metric_slot_normalized(const float *roots, int deg
     return (float)solve_score_clamp_unit(u);
 }
 
+/* ── Shared per-row metric features (code-review-31 F4) ─────────────────────
+ *
+ * Related metrics repeated the same expensive work per slot: proximity and
+ * crowding each ran the O(d^2) pair loop, clusteriness and nn_variation each
+ * recomputed nearest-neighbour scores, and every extra clip-quantile slot
+ * re-ran its raw metric from scratch. This cache computes, per SOURCE and row:
+ *   - the finite-root filter once (identical logic to the per-metric filter);
+ *   - ONE pair traversal feeding min-distance, the crowding sum (accumulated
+ *     in the same i<j order as the original loop), and per-root nearest-
+ *     neighbour d2 ((a-b)^2 == (b-a)^2 exactly, min is order-free — bit-equal
+ *     to the original per-metric passes);
+ *   - a raw-score memo so duplicate (metric,source) slots (differing only in
+ *     clip quantiles) reuse the identical raw value.
+ * Metrics outside the pair family fall through to compute_solve_metric_score
+ * with the PRE-FILTERED roots (its own filter then no-ops). Lagged slots keep
+ * the direct path — their root sets vary per lag depth. */
+typedef struct {
+    int prepared;
+    const float *roots;      /* finite-filtered view */
+    int degree;
+    float *owned;            /* heap copy when filtering allocated */
+    float stackRoots[SOLVE_SCORE_FILTER_MAXDEG * 2];
+    int pairDone;
+    double d2_min;
+    double crowd_sum;
+    double s1Stack[1024];
+    double *s1;              /* per-root -0.5*log10(clamped nn d2) */
+    int s1Heap;
+    int rawCount;            /* raw-score memo (linear scan; <= slot cap) */
+    int rawMetric[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    double rawVal[SOLVE_SCORE_MAX_METRIC_SLOTS];
+} SolveSourceFeatures;
+
+static void solve_features_init(SolveSourceFeatures *f) {
+    memset(f, 0, sizeof(*f));
+}
+
+static void solve_features_release(SolveSourceFeatures *f) {
+    if (f->owned && f->owned != f->stackRoots) free(f->owned);
+    if (f->s1 && f->s1Heap) free(f->s1);
+    f->owned = NULL;
+    f->s1 = NULL;
+}
+
+/* Mirrors the finite filter at the top of compute_solve_metric_score. */
+static void solve_features_prepare(SolveSourceFeatures *f, const float *roots, int degree) {
+    if (f->prepared) return;
+    f->prepared = 1;
+    f->roots = roots;
+    f->degree = degree;
+    if (roots_all_finite(roots, degree)) return;
+    int finiteDegree = count_finite_roots(roots, degree);
+    f->degree = finiteDegree;
+    if (finiteDegree <= 0) { f->roots = roots; return; }
+    f->owned = (finiteDegree <= SOLVE_SCORE_FILTER_MAXDEG)
+        ? f->stackRoots
+        : (float *)malloc((size_t)finiteDegree * 2 * sizeof(float));
+    if (!f->owned) { f->degree = 0; return; }
+    int out = 0;
+    for (int i = 0; i < degree; i++) {
+        double re = roots[i * 2];
+        double im = roots[i * 2 + 1];
+        if (!isfinite(re) || !isfinite(im)) continue;
+        f->owned[out * 2] = (float)re;
+        f->owned[out * 2 + 1] = (float)im;
+        out++;
+    }
+    f->roots = f->owned;
+}
+
+/* ONE pair traversal for the whole pair-metric family. Accumulators observe
+ * pairs in the original (i<j ascending) order. */
+static int solve_features_pair_pass(SolveSourceFeatures *f) {
+    if (f->pairDone) return 1;
+    int degree = f->degree;
+    if (degree < 2) return 0;
+    f->s1 = degree <= 1024 ? f->s1Stack : (double *)malloc((size_t)degree * sizeof(double));
+    if (!f->s1) return 0;
+    f->s1Heap = degree > 1024;
+    double *nn_d2 = f->s1;   /* holds raw min d2 first, converted below */
+    for (int i = 0; i < degree; i++) nn_d2[i] = 1e300;
+    double d2_min = 1e300;
+    double crowd_sum = 0.0;
+    const float *roots = f->roots;
+    for (int i = 0; i < degree; i++) {
+        double ri_re = roots[i * 2], ri_im = roots[i * 2 + 1];
+        for (int j = i + 1; j < degree; j++) {
+            double dr = ri_re - roots[j * 2];
+            double di = ri_im - roots[j * 2 + 1];
+            double d2 = dr * dr + di * di;
+            if (d2 < d2_min) d2_min = d2;
+            crowd_sum += -0.5 * log10(d2 > SOLVE_SCORE_EPS2 ? d2 : SOLVE_SCORE_EPS2);
+            if (d2 < nn_d2[i]) nn_d2[i] = d2;
+            if (d2 < nn_d2[j]) nn_d2[j] = d2;
+        }
+    }
+    for (int i = 0; i < degree; i++) {
+        nn_d2[i] = -0.5 * log10(nn_d2[i] > SOLVE_SCORE_EPS2 ? nn_d2[i] : SOLVE_SCORE_EPS2);
+    }
+    f->d2_min = d2_min;
+    f->crowd_sum = crowd_sum;
+    f->pairDone = 1;
+    return 1;
+}
+
+static int solve_metric_in_pair_family(enum SolveMetric metric) {
+    return metric == SOLVE_METRIC_PROXIMITY || metric == SOLVE_METRIC_CROWDING ||
+           metric == SOLVE_METRIC_CLUSTERINESS || metric == SOLVE_METRIC_NN_VARIATION;
+}
+
+/* Raw (pre-normalization) score via the shared features; tail math matches
+ * each metric's original branch exactly. */
+static double solve_features_pair_metric(SolveSourceFeatures *f, enum SolveMetric metric) {
+    int degree = f->degree;
+    if (degree <= 0) return 0.0;
+    if (degree < solve_metric_min_roots(metric)) return 0.0;
+    if (degree < 2) return 0.0;
+    if (!solve_features_pair_pass(f)) return 0.0;
+    if (metric == SOLVE_METRIC_PROXIMITY) {
+        return -0.5 * log10(f->d2_min > SOLVE_SCORE_EPS2 ? f->d2_min : SOLVE_SCORE_EPS2);
+    }
+    if (metric == SOLVE_METRIC_CROWDING) {
+        int M = degree * (degree - 1) / 2;
+        return f->crowd_sum / M;
+    }
+    if (metric == SOLVE_METRIC_CLUSTERINESS) {
+        /* median_inplace sorts — work on a copy so nn_variation later sees the
+         * pristine index order (its stddev summation order must not change). */
+        double scratchStack[1024];
+        double *scratch = degree <= 1024 ? scratchStack : (double *)malloc((size_t)degree * sizeof(double));
+        if (!scratch) return 0.0;
+        memcpy(scratch, f->s1, (size_t)degree * sizeof(double));
+        double s1_max = scratch[0];
+        for (int i = 1; i < degree; i++)
+            if (scratch[i] > s1_max) s1_max = scratch[i];
+        double s1_med = median_inplace(scratch, degree);
+        if (scratch != scratchStack) free(scratch);
+        return s1_max - s1_med;
+    }
+    /* nn_variation */
+    double s1_mean = mean_of(f->s1, degree);
+    return stddev_of(f->s1, degree, s1_mean);
+}
+
 static int solve_score_eval_metric_slots(const float *roots, int degree,
                                          const float *coeffRoots, int coeffDegree,
                                          const float *paramValues, int paramDegree,
                                          const SolveScoreProgram *program,
                                          float *outMetricBuffer) {
     if (!program || !outMetricBuffer) return 0;
+    SolveSourceFeatures featSolve, featCoeff;
+    solve_features_init(&featSolve);
+    solve_features_init(&featCoeff);
     for (int i = 0; i < program->metricCount; i++) {
-        outMetricBuffer[i] = solve_score_eval_metric_slot_normalized(
-            roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, i
-        );
+        enum SolveMetric metric = program->metrics[i];
+        enum SolveScoreMetricSource source = program->metricSources[i];
+        if (source == SOLVE_SCORE_SOURCE_PARAM || solve_metric_is_param_metric(metric)) {
+            /* param metrics read the RAW (unfiltered) values — unchanged path */
+            outMetricBuffer[i] = solve_score_eval_metric_slot_normalized(
+                roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, i);
+            continue;
+        }
+        const float *metricRoots = roots;
+        int metricDegree = degree;
+        SolveSourceFeatures *f = &featSolve;
+        if (source == SOLVE_SCORE_SOURCE_COEFF) {
+            metricRoots = coeffRoots;
+            metricDegree = coeffDegree;
+            f = &featCoeff;
+        }
+        double score = 0.0;
+        if (metricRoots && metricDegree > 0) {
+            int memoHit = 0;
+            for (int m = 0; m < f->rawCount; m++) {
+                if (f->rawMetric[m] == (int)metric) {
+                    score = f->rawVal[m];
+                    memoHit = 1;
+                    break;
+                }
+            }
+            if (!memoHit) {
+                solve_features_prepare(f, metricRoots, metricDegree);
+                if (solve_metric_in_pair_family(metric)) {
+                    score = solve_features_pair_metric(f, metric);
+                } else {
+                    /* pre-filtered roots: the callee's own filter no-ops */
+                    score = (f->degree > 0)
+                        ? compute_solve_metric_score(f->roots, f->degree, metric)
+                        : 0.0;
+                }
+                if (f->rawCount < SOLVE_SCORE_MAX_METRIC_SLOTS) {
+                    f->rawMetric[f->rawCount] = (int)metric;
+                    f->rawVal[f->rawCount] = score;
+                    f->rawCount++;
+                }
+            }
+        }
+        double range = program->clipHi[i] - program->clipLo[i];
+        double u = (score - program->clipLo[i]) / range;
+        outMetricBuffer[i] = (float)solve_score_clamp_unit(u);
     }
+    solve_features_release(&featSolve);
+    solve_features_release(&featCoeff);
     return 1;
 }
 

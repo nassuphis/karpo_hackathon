@@ -684,6 +684,10 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertEqual(body["described"], 0)
         self.assertIn("time budget", body["errors"][0]["error"])
 
+    def test_settings_accept_photo_skies(self):
+        for sky in ("galaxies", "milkyway", "moonlit"):
+            self.assertEqual(hs._clean_gallery_settings({"sky": sky})["sky"], sky)
+
     def test_settings_accept_spiral_layout(self):
         s = hs._clean_gallery_settings({"wall_layout": "spiral"})
         self.assertEqual(s["wall_layout"], "spiral")

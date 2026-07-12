@@ -2274,7 +2274,15 @@ button {
             <input type="color" id="gallery-wall-color" value="#ece4d6" oninput="_galleryOnWallColor(this.value)" style="width:34px; height:24px; padding:0; border:1px solid #2b3a5e; border-radius:4px; background:#0d1320" disabled>
             <input type="text" id="gallery-wall-hex" value="#ece4d6" maxlength="7" spellcheck="false" oninput="_galleryOnWallHex(this.value)" style="width:74px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:4px 6px; font-size:12px" disabled>
         </label>
-        <label style="display:flex; align-items:center; gap:6px"><input type="checkbox" id="gallery-sky-stars" onchange="_galleryOnSkyToggle(this.checked)" disabled> Starry sky</label>
+        <label style="display:flex; align-items:center; gap:6px">Sky
+            <select id="gallery-sky" onchange="_galleryOnSky(this.value)" style="background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:4px 6px; font-size:12px" disabled>
+                <option value="dark">none</option>
+                <option value="stars" selected>starry sky</option>
+                <option value="galaxies">galaxies</option>
+                <option value="milkyway">milky way</option>
+                <option value="moonlit">moonlit night</option>
+            </select>
+        </label>
         <label style="display:flex; align-items:center; gap:6px" title="Show the picked wall colour true-to-selection (the colour glows through the moonlight). Off: walls take the blue moonlight fully."><input type="checkbox" id="gallery-wall-selftint" onchange="_galleryOnWallSelfTint(this.checked)" checked disabled> True wall colour</label>
         <label style="display:flex; align-items:center; gap:6px" title="Thickness of the accent lines along wall edges/corners, in pixels. 0 = no lines.">Edge lines
             <input type="number" id="gallery-wall-edge" min="0" max="12" step="1" value="1" oninput="_galleryOnWallEdge(this.value)" style="width:52px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:4px 6px; font-size:12px" disabled> px

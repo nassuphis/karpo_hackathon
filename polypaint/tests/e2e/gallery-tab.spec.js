@@ -152,6 +152,15 @@ test('layout dropdown marks dirty and Save carries it', async ({ page }) => {
   expect(saved.body.gallery.settings.wall_layout).toBe('serpentine');
 });
 
+test('sky dropdown marks dirty and Save carries it', async ({ page }) => {
+  await setup(page, docWith(pieces()));
+  await page.selectOption('#gallery-sky', 'galaxies');
+  await expect(page.locator('#btn-gallery-save')).toBeEnabled();
+  await page.click('#btn-gallery-save');
+  const saved = await page.evaluate(() => window._galleryPosts.filter((p) => p.path === '/save-gallery').pop());
+  expect(saved.body.gallery.settings.sky).toBe('galaxies');
+});
+
 test('remove piece shrinks the list', async ({ page }) => {
   await setup(page, docWith(pieces()));
   await expect(page.locator('#gallery-piece-list > div')).toHaveCount(2);

@@ -23,6 +23,9 @@ const VIEW_DISTANCE_M = 2.4;        // guided-mode standoff from a piece
 const VIEWER_MAX_PIECES = 64;       // hard cap on meshes/queued previews (§5/§8)
 const ART_PLACEHOLDER_COLOR = 0x3a332a;
 const DEFAULT_WALL_COLOR = 0xece4d6;
+// Photographic skies (Gallery tab Sky selector): id -> skybox/<id>.jpg
+const IMAGE_SKIES = new Set(['galaxies', 'milkyway', 'moonlit']);
+
 const MOON_AZ = -Math.PI * 0.32;    // moon direction (a touch N of E), high in the sky
 const MOON_ALT = 0.82;
 
@@ -228,8 +231,16 @@ class GalleryViewer {
     this.scene.add(moon);
 
     this._skyMats = [];
-    this._buildMoon();                                    // the moon disc + halo (always)
-    if ((this.spec.settings && this.spec.settings.sky) !== 'dark') this._buildSky();
+    const skyMode = (this.spec.settings && this.spec.settings.sky) || 'stars';
+    if (IMAGE_SKIES.has(skyMode)) {
+      // Photographic sky: the equirect JPEG becomes the scene background. The
+      // moon disc + procedural stars stay off (these skies bring their own);
+      // the scene LIGHTS are unchanged, so the gallery reads the same.
+      this._buildImageSky(skyMode);
+    } else {
+      this._buildMoon();                                  // the moon disc + halo
+      if (skyMode !== 'dark') this._buildSky();
+    }
 
     this.controls = new PointerLockControls(this.camera, this.renderer.domElement);
     this._raycaster = new THREE.Raycaster();
@@ -360,6 +371,16 @@ class GalleryViewer {
 
   // A large moon disc + soft halo (the actual light is a directional from the
   // same direction, set in _buildScene). Present even when the starfield is off.
+  // Equirectangular photo sky — settings.sky ids map to <origin>/skybox/<id>.jpg
+  // (published by deploy.sh from the converted skybox/ sources). Loads async:
+  // the dark background stays until the texture arrives; a failed load keeps it.
+  _buildImageSky(sky) {
+    const tex = new THREE.TextureLoader().load(location.origin + '/skybox/' + sky + '.jpg');
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    this.scene.background = tex;
+  }
+
   _buildMoon() {
     const p = _domePoint(MOON_AZ, MOON_ALT, 285);
     const moonMat = new THREE.MeshBasicMaterial({ color: 0xf6f2e6, toneMapped: false });

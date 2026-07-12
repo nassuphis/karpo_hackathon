@@ -105,6 +105,15 @@ frontend_asset_keys() {
             find "gallery" -name "*.js" -type f | sort
         )
     fi
+    # Photographic gallery skies (Gallery tab Sky selector): equirect JPEGs
+    # converted from the skybox/ TIFF/EXR sources (sources stay local — only
+    # the web-ready JPEGs publish, at stable skybox/<id>.jpg keys).
+    if [ -d "$SCRIPT_DIR/skybox" ]; then
+        (
+            cd "$SCRIPT_DIR"
+            find "skybox" -maxdepth 1 -name "*.jpg" -type f | sort
+        )
+    fi
     # Vendored, version-stamped libraries (Three.js + OpenSeadragon). The
     # directory name pins the version, so these keep STABLE keys — an upgrade
     # bumps the directory (three-r161/...) rather than overwriting in place.
@@ -124,6 +133,7 @@ frontend_asset_content_type() {
         *.js) echo "application/javascript" ;;
         *.json) echo "application/json" ;;
         *.png) echo "image/png" ;;                 # OpenSeadragon control images
+        *.jpg|*.jpeg) echo "image/jpeg" ;;         # skybox equirect skies
         */LICENSE|*.txt) echo "text/plain" ;;      # vendored license files
         *) echo "application/octet-stream" ;;
     esac

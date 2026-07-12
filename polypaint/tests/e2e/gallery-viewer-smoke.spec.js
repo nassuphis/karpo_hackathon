@@ -153,6 +153,35 @@ test('Zoom opens OpenSeadragon on the piece DZI without forcing CORS', async ({ 
   expect(opts.crossOriginPolicy).toBeUndefined();   // must NOT force CORS — the bucket has none
 });
 
+test('a photographic sky becomes the scene background texture', async ({ page }) => {
+  const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/sky/manifest.json';
+  const mk = (j, a) => ({ ordinal: 0, job_id: j, artifact_id: a, preview_key: `renders/${j}/color/${a}/preview.jpg`, image_key: `renders/${j}/color/${a}/image.jpeg`, preview_width: 512, preview_height: 512, function: 'f', title: '', deepzoom: null });
+  const pieces = [mk('j0', 'a0'), mk('j1', 'a1')]; pieces.forEach((p, i) => (p.ordinal = i));
+  await page.route(url, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, manifest_type: 'virtual_gallery', document_kind: 'share', artifact_kind: 'color',
+    layout: { mode: 'auto', seed: 1 }, settings: { sky: 'galaxies' }, pieces }) }));
+  await page.route('**/preview.jpg', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.goto(GALLERY + '?share=sky');
+  const built = await page.waitForFunction(() => !!window.__galleryViewer, { timeout: 8000 }).then(() => true).catch(() => false);
+  test.skip(!built, 'WebGL scene not built in this browser');
+  // The equirect skybox JPEG (served from the repo's own skybox/ dir) loads
+  // async — poll until the background is the texture.
+  await page.waitForFunction(() => {
+    const v = window.__galleryViewer;
+    return v && v.scene.background && v.scene.background.isTexture === true;
+  }, { timeout: 8000 });
+  const st = await page.evaluate(() => {
+    const v = window.__galleryViewer;
+    return {
+      mapping: v.scene.background.mapping,
+      equirect: v.scene.background.mapping === 303,   // THREE.EquirectangularReflectionMapping
+      skyGroup: !!v._skyGroup,                        // procedural stars must be OFF
+    };
+  });
+  expect(st.equirect).toBe(true);
+  expect(st.skyGroup).toBe(false);
+});
+
 test('builds a maze with settings applied and collision that clamps to bounds', async ({ page }) => {
   const url = 'http://localhost:8765/renders/_shared_mosaic/gallery/mz/manifest.json';
   const mk = (j, a) => ({ ordinal: 0, job_id: j, artifact_id: a, preview_key: `renders/${j}/color/${a}/preview.jpg`, image_key: `renders/${j}/color/${a}/image.jpeg`, preview_width: 512, preview_height: 512, function: 'f', title: '', deepzoom: null });

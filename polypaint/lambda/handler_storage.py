@@ -4989,7 +4989,10 @@ def _clean_gallery_title(value):
     return title
 
 
-GALLERY_SKY_MODES = ("stars", "dark")
+# 'stars' = procedural starfield, 'dark' = none; the rest are photographic
+# equirect JPEGs published by deploy.sh under s3://<bucket>/skybox/<id>.jpg
+# (converted from skybox/ source TIFF/EXR files).
+GALLERY_SKY_MODES = ("stars", "dark", "galaxies", "milkyway", "moonlit")
 _GALLERY_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 

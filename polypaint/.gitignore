@@ -113,3 +113,8 @@ book*-content*.pdf
 book*-cover*.pdf
 book*-source*.zip
 compute_*_pdf_*.pdf
+
+# skybox sources (huge TIFF/EXR) stay local — only converted JPEGs are tracked
+skybox/*.tif
+skybox/*.tiff
+skybox/*.exr

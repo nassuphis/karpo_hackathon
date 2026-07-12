@@ -173,11 +173,13 @@ test.describe('Gallery viewer manifest validation (pure)', () => {
   test('carries validated scene settings; defaults bad/missing values', async ({ page }) => {
     const r = await withModules(page, (M, L, doc, ORIGIN) => {
       const norm = (s) => M.normalizeManifest(s ? { ...doc, settings: s } : { ...doc }, { pathKind: 'virtual_gallery', trustedOrigin: ORIGIN }).settings;
-      return { good: norm({ sky: 'dark', wall_color: '#123ABC', wall_coverage: 250, wall_self_tint: false, wall_edge_px: 40, wall_layout: 'exhibition' }), bad: norm({ sky: 'weird', wall_color: 'nope', wall_coverage: 'junk' }), none: norm(null) };
+      return { good: norm({ sky: 'dark', wall_color: '#123ABC', wall_coverage: 250, wall_self_tint: false, wall_edge_px: 40, wall_layout: 'exhibition' }), bad: norm({ sky: 'weird', wall_color: 'nope', wall_coverage: 'junk' }), none: norm(null),
+        photoSkies: ['galaxies', 'milkyway', 'moonlit'].map((sky) => norm({ sky }).sky) };
     }, galleryDoc());
     expect(r.good).toEqual({ sky: 'dark', wall_color: '#123abc', wall_coverage: 100, wall_self_tint: false, wall_edge_px: 12, wall_layout: 'exhibition' });  // valid kept + clamped; explicit false honored
     expect(r.bad).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null, wall_self_tint: true, wall_edge_px: 1, wall_layout: 'maze' }); // junk -> defaults
     expect(r.none).toEqual({ sky: 'stars', wall_color: '#ece4d6', wall_coverage: null, wall_self_tint: true, wall_edge_px: 1, wall_layout: 'maze' });// absent -> defaults
+    expect(r.photoSkies).toEqual(['galaxies', 'milkyway', 'moonlit']);   // photo skies are valid ids
   });
 
   test('enforces the manifest row cap', async ({ page }) => {

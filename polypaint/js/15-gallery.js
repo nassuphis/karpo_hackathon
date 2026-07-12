@@ -493,9 +493,12 @@ function _galleryOnWallEdge(value) {
     _galleryState.dirty = true; _galleryUpdateActionButtons();
 }
 
-function _galleryOnSkyToggle(on) {
+const GALLERY_SKY_IDS = ['dark', 'stars', 'galaxies', 'milkyway', 'moonlit'];
+
+function _galleryOnSky(value) {
     const s = _gallerySettings(); if (!s) return;
-    s.sky = on ? 'stars' : 'dark';
+    if (!GALLERY_SKY_IDS.includes(value)) return;
+    s.sky = value;
     _galleryState.dirty = true; _galleryUpdateActionButtons();
 }
 
@@ -510,12 +513,12 @@ function _galleryRenderSceneControls() {
     const s = (doc && doc.settings) || null;
     const wc = document.getElementById('gallery-wall-color');
     const wh = document.getElementById('gallery-wall-hex');
-    const sk = document.getElementById('gallery-sky-stars');
+    const sk = document.getElementById('gallery-sky');
     const cov = document.getElementById('gallery-wall-coverage');
     const color = (s && s.wall_color) || '#ece4d6';
     if (wc) { wc.disabled = !doc; wc.value = color; }
     if (wh) { wh.disabled = !doc; wh.value = color; }
-    if (sk) { sk.disabled = !doc; sk.checked = !s || s.sky !== 'dark'; }
+    if (sk) { sk.disabled = !doc; sk.value = (s && s.sky) || 'stars'; }
     if (cov) { cov.disabled = !doc; cov.value = (s && s.wall_coverage) || 35; }
     const st = document.getElementById('gallery-wall-selftint');
     if (st) { st.disabled = !doc; st.checked = !s || s.wall_self_tint !== false; }

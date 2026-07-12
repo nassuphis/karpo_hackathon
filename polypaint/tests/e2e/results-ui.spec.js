@@ -164,13 +164,16 @@ test.describe('Results UI', () => {
       window._newResults = results.concat([{ job_id: 'compute_new', function: 'poly_new', degree: 5, N: 100, times: 1, total_size: 10, n_chunks: 1 }]);
     }, { results: RESULTS });
     await page.click('.tab-btn:text("Results")');              // refresh in flight
+    await page.waitForFunction(() => window._listResolvers.length === 1);
     const pending = page.evaluate(() => _ensureResultsSelection('compute_new').then(() => 'ok', (e) => 'err:' + e.message));
-    await page.waitForFunction(() => window._listResolvers.length >= 1);
+    await page.waitForTimeout(120);                            // selection is now awaiting the join
     await page.evaluate(() => {
       const payload = { results: window._newResults, count: window._newResults.length, list_us: 1000 };
-      window._listResolvers.forEach((res) => res(payload));    // resolve all joined loads
+      window._listResolvers.forEach((res) => res(payload));
     });
     expect(await pending).toBe('ok');                          // selection waited for the refresh
+    // JOIN, not double-fetch: the forced selection shared the in-flight request
+    expect(await page.evaluate(() => window._listResolvers.length)).toBe(1);
     // a REJECTED load surfaces its own error, never a fake "not found"
     await page.evaluate(() => {
       window.lambdaPost = async function (name, body, path) {

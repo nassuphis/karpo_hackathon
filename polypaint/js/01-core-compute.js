@@ -79,7 +79,7 @@ function switchTab(name) {
 let _resultsCache = [];      // last fetched results
 let _resultsLoaded = false;  // session cache: tab re-entry renders _resultsCache
 let _resultsLoadPromise = null;  // in-flight load — awaitable by every caller (F4)
-let _resultsLoadForced = false;  // whether the in-flight load was a forced refresh
+let _resultsLoadRebuild = false; // whether the in-flight load carries rebuild:true
                              // with ZERO requests (favorites-speedup idea 1);
                              // Refresh/compute-completion/missing-job force a fetch
 let _selectedJobId = null;   // currently selected job_id
@@ -238,15 +238,17 @@ function openResultsRefreshPopup() {
 
 async function loadResults(options = null) {
     const force = !!(options && options.force);
+    const rebuild = !!(options && options.rebuild);
     // A caller awaiting loadResults must get POST-REFRESH state (code-review-30
-    // F4): join the in-flight request instead of returning early, and if this
-    // call is forced but the active one wasn't, run one follow-up afterwards.
+    // F4): JOIN the in-flight request — it is fetching fresh data by definition,
+    // so forced callers are satisfied by it too. The only semantic an in-flight
+    // load can't deliver is rebuild:true; that one runs a follow-up after it.
     if (_resultsLoadPromise) {
-        if (!force || _resultsLoadForced) return _resultsLoadPromise;
+        if (!rebuild || _resultsLoadRebuild) return _resultsLoadPromise;
         return _resultsLoadPromise.catch(() => {}).then(() => loadResults(options));
     }
     if (_resultsLoaded && !force) return;   // cached — the table DOM is already live
-    _resultsLoadForced = force;
+    _resultsLoadRebuild = rebuild;
     _resultsLoadPromise = _loadResultsNow(options);
     try {
         return await _resultsLoadPromise;

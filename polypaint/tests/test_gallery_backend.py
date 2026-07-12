@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import unittest
+import unittest.mock
 from unittest.mock import Mock, patch
 
 from botocore.exceptions import ClientError
@@ -653,18 +654,70 @@ class GalleryBackendTests(unittest.TestCase):
         self.assertEqual(m["artifact_kind"], "mixed")
         self.assertEqual({p["family"] for p in m["pieces"]}, {"color", "bilevel"})
 
-    # ── code-review-29 F4: describe stays inside the interactive budget ──
-    def test_describe_uses_interactive_vision_budget(self):
+    # ── async describe: the ROUTE dispatches, the WORKER titles ──────────
+    # Vision I/O cannot live in the request path (a provider read can outlast
+    # the API gateway window — "The read operation timed out").
+    def test_describe_route_dispatches_and_never_calls_vision(self):
         import book_describe
         gid = self._seed_dzi_piece_gallery()
-        with patch.object(book_describe, "_vision_call",
-                          return_value='{"title": "T"}') as vc, \
+        invokes = []
+
+        class _Lambda:
+            def invoke(self, **kw):
+                invokes.append(kw)
+                return {"StatusCode": 202}
+
+        statuses = []
+        with patch.object(book_describe, "_vision_call") as vc, \
              patch.object(book_describe, "_load_vision_config",
                           return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
-             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
-            self._route(hs.handle_describe_gallery, gallery_id=gid,
-                        pieces=[{"job_id": "jobT", "artifact_id": "cT"}], overwrite=True)
-        self.assertIs(vc.call_args.kwargs.get("interactive"), True)
+             patch.object(hs, "report_status", side_effect=lambda *a, **k: statuses.append(a)), \
+             patch.object(hs.boto3, "client", return_value=_Lambda()):
+            resp, body = self._route(hs.handle_describe_gallery, gallery_id=gid,
+                                     pieces=[{"job_id": "jobT", "artifact_id": "cT"}], overwrite=True)
+        vc.assert_not_called()                                  # request path is vision-free
+        self.assertTrue(body["dispatched"])
+        self.assertTrue(body["task_id"].startswith("describe_"))
+        self.assertEqual(body["job_id"], gid)
+        self.assertEqual(len(invokes), 1)
+        self.assertEqual(invokes[0]["InvocationType"], "Event")
+        payload = json.loads(invokes[0]["Payload"])
+        self.assertEqual(payload["internal_action"], "describe_gallery")
+        self.assertEqual(payload["params"]["task_id"], body["task_id"])
+        self.assertEqual(payload["params"]["gallery_id"], gid)
+        self.assertEqual(statuses[0][:3], (gid, body["task_id"], "started"))
+
+    def test_internal_action_runs_worker_and_marks_done(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        statuses = []
+        with patch.object(book_describe, "_vision_call", return_value='{"title": "Night Lattice"}'), \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b), \
+             patch.object(hs, "report_status", side_effect=lambda *a, **k: statuses.append(a)):
+            resp = hs.handler({"internal_action": "describe_gallery",
+                               "params": {"gallery_id": gid, "overwrite": True, "task_id": "describe_x1",
+                                          "pieces": [{"job_id": "jobT", "artifact_id": "cT"}]}}, None)
+        body = json.loads(resp["body"])
+        self.assertEqual(body["described"], 1)
+        self.assertEqual(statuses[-1][:3], (gid, "describe_x1", "done"))
+        _, fetched = self._route(hs.handle_fetch_gallery, gallery_id=gid)
+        self.assertEqual(fetched["gallery"]["pieces"][0]["title"], "Night Lattice")
+
+    def test_worker_marks_error_row_when_nothing_titled(self):
+        import book_describe
+        gid = self._seed_dzi_piece_gallery()
+        statuses = []
+        with patch.object(book_describe, "_vision_call", side_effect=RuntimeError("model exploded")), \
+             patch.object(book_describe, "_load_vision_config",
+                          return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
+             patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b), \
+             patch.object(hs, "report_status", side_effect=lambda *a, **k: statuses.append(a)):
+            hs.handler({"internal_action": "describe_gallery",
+                        "params": {"gallery_id": gid, "overwrite": True, "task_id": "describe_x2"}}, None)
+        self.assertEqual(statuses[-1][2], "error")
+        self.assertIn("model exploded", statuses[-1][3])
 
     def test_describe_stops_at_time_budget(self):
         import book_describe
@@ -676,8 +729,8 @@ class GalleryBackendTests(unittest.TestCase):
                  patch.object(book_describe, "_load_vision_config",
                               return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
                  patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
-                _, body = self._route(hs.handle_describe_gallery, gallery_id=gid,
-                                      pieces=[{"job_id": "jobT", "artifact_id": "cT"}], overwrite=True)
+                body = hs._describe_gallery_run({"gallery_id": gid, "overwrite": True,
+                                                 "pieces": [{"job_id": "jobT", "artifact_id": "cT"}]})
         finally:
             hs.DESCRIBE_TIME_BUDGET_S = old_budget
         vc.assert_not_called()
@@ -699,8 +752,8 @@ class GalleryBackendTests(unittest.TestCase):
              patch.object(book_describe, "_load_vision_config",
                           return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
              patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
-            resp, body = self._route(hs.handle_describe_gallery, gallery_id=gid,
-                                     pieces=[{"job_id": "jobT", "artifact_id": "cT"}], overwrite=True)
+            body = hs._describe_gallery_run({"gallery_id": gid, "overwrite": True,
+                                             "pieces": [{"job_id": "jobT", "artifact_id": "cT"}]})
         self.assertEqual(body["described"], 1, body)
         self.assertEqual(body["errors"], [])
         self.assertEqual(body["gallery"]["pieces"][0]["title"], "Night Lattice")
@@ -718,7 +771,7 @@ class GalleryBackendTests(unittest.TestCase):
              patch.object(book_describe, "_load_vision_config",
                           return_value={"model": "gemini-2.5-flash", "api_key_gemini": "k"}), \
              patch.object(book_describe, "_downscale_for_vision", side_effect=lambda b: b):
-            _, body = self._route(hs.handle_describe_gallery, gallery_id=gid, overwrite=True)
+            body = hs._describe_gallery_run({"gallery_id": gid, "overwrite": True})
         self.assertEqual(body["described"], 0)
         self.assertEqual(len(body["errors"]), 1)
         self.assertIn("model exploded", body["errors"][0]["error"])
@@ -729,9 +782,13 @@ class GalleryBackendTests(unittest.TestCase):
         gid = self._seed_dzi_piece_gallery()
         with patch.object(book_describe, "_load_vision_config", return_value={}), \
              patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
-            _, body = self._route(hs.handle_describe_gallery, gallery_id=gid, overwrite=True)
-        self.assertIn("error", body)
+            resp, body = self._route(hs.handle_describe_gallery, gallery_id=gid, overwrite=True)
+        self.assertIn("error", body)                 # fails FAST — nothing dispatched
         self.assertIn("vision API key", body["error"])
+        with patch.object(book_describe, "_load_vision_config", return_value={}), \
+             patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
+            run = hs._describe_gallery_run({"gallery_id": gid, "overwrite": True})
+        self.assertIn("vision API key", run["errors"][0]["error"])   # worker degrades too
 
 
 if __name__ == "__main__":
@@ -753,6 +810,22 @@ class InteractiveVisionBudgetTests(unittest.TestCase):
         self.assertEqual(kw["timeout"], 12.0)
         self.assertEqual(kw["max_retry_wait"], 4.0)
         self.assertEqual(kw["pacing"], 0.0)
+
+    def test_read_timeout_is_retried_then_fatal_with_clear_message(self):
+        import book_describe
+        ok = unittest.mock.MagicMock()
+        ok.__enter__ = lambda s: unittest.mock.MagicMock(read=lambda: b'{"content": [{"text": "hi"}]}')
+        ok.__exit__ = lambda s, *a: False
+        with patch.object(book_describe.urllib.request, "urlopen",
+                          side_effect=[TimeoutError("The read operation timed out"), ok]), \
+             patch.object(book_describe.time, "sleep"):
+            out = book_describe._gemini_call("https://x", b"{}", "k", attempts=2, pacing=0)
+        self.assertEqual(out["content"][0]["text"], "hi")
+        with patch.object(book_describe.urllib.request, "urlopen",
+                          side_effect=TimeoutError("The read operation timed out")), \
+             patch.object(book_describe.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "timeout"):
+                book_describe._gemini_call("https://x", b"{}", "k", attempts=2, pacing=0)
 
     def test_batch_profile_is_unchanged(self):
         import book_describe

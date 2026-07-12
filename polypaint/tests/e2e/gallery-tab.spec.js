@@ -44,14 +44,22 @@ async function setup(page, { docs = {}, active = '' } = {}) {
         return { gallery: window.__docs[body.gallery.gallery_id], revision: 'r' + (++window._rev) };
       }
       if (path === '/describe-gallery') {
+        // ASYNC contract: the route only dispatches; the worker titles the doc
+        // server-side (simulated here at dispatch), and the client polls
+        // /check-status then refetches the gallery.
         const d = JSON.parse(JSON.stringify(window.__docs[body.gallery_id]));
         const t = body.pieces && body.pieces[0];
         for (const p of d.pieces) {
           if (t && p.job_id === t.job_id && p.artifact_id === t.artifact_id) p.title = 'Night Lattice';
         }
         window.__docs[body.gallery_id] = d;
-        return { gallery: d, revision: 'r' + (++window._rev), described: 1, errors: [] };
+        window._rev++;
+        return { dispatched: true, task_id: 'describe_t1', job_id: body.gallery_id };
       }
+      if (path === '/check-status') {
+        return { complete: true, errors: 0, status_counts: { done: 1 } };
+      }
+      if (path === '/delete-task') return { deleted: 1 };
       if (path === '/create-gallery-share') {
         const d = window.__docs[body.gallery_id];
         return { manifest_url: 'https://polypaint.s3.us-east-1.amazonaws.com/renders/_shared_mosaic/gallery/s1/manifest.json',

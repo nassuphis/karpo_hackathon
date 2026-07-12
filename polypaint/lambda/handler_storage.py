@@ -43,7 +43,7 @@ from logical_sections import (
 from shared import (BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response,
                     _get_ddb, parse_boolish, assert_safe_render_image_key,
                     assert_render_identity, is_missing_s3_error, s3_error_reason,
-                    s3_error_code, assert_safe_id, CACHE_IMMUTABLE)
+                    s3_error_code, assert_safe_id, CACHE_IMMUTABLE, report_status)
 from coeff_program_chain import (
     PROGRAM_KIND as COEFF_PROGRAM_KIND,
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
@@ -1468,6 +1468,8 @@ def _ensure_favorites_store_ready():
 
 
 def handler(event, context):
+    if event.get("internal_action") == "describe_gallery":
+        return _run_describe_gallery_worker(event.get("params") or {})
     if event.get("internal_action") == "build_color_mosaic":
         refresh_id = str(event.get("refresh_id") or "").strip()
         if not refresh_id:
@@ -4600,9 +4602,10 @@ def handle_share_mosaic(event):
 GALLERY_SHARE_PREFIX = MOSAIC_SHARE_PREFIX + "gallery/"   # renders/_shared_mosaic/gallery/ (immutable shares)
 GALLERIES_PREFIX = "polypaint/galleries/"                 # editable gallery documents
 GALLERY_MAX_PIECES = 64
-# Sync /describe-gallery must fit the API-gateway window (code-review-29 F4):
-# once this budget is spent, remaining pieces are reported back, not attempted.
-DESCRIBE_TIME_BUDGET_S = 22.0
+# Describe runs in a self-invoked storage worker (async — the interactive
+# route only dispatches), so the budget is a worker wall-time bound, not an
+# API-gateway fit. Leftover pieces are reported back, not attempted.
+DESCRIBE_TIME_BUDGET_S = 240.0
 GALLERY_SCHEMA_VERSION = 1
 GALLERY_NAME_MAX = 120
 GALLERY_TITLE_MAX = 160
@@ -5274,13 +5277,68 @@ def _gallery_title_from_reply(raw):
 
 
 def handle_describe_gallery(event):
-    """Generate short curator titles for gallery pieces from their thumbnails,
-    reusing the Book tab's vision engine + model/key config (lambda/book_describe).
-    Synchronous, SMALL-BATCH (Describe Selection): at most 4 pieces per call —
-    each success is CAS-saved immediately so progress survives later failures."""
-    from book_describe import _vision_call, _load_vision_config, _downscale_for_vision
+    """Dispatch a describe run: vision I/O CANNOT live in the request path (a
+    provider read can outlast the API gateway window — "The read operation
+    timed out"), so this route only validates, writes a task row, and
+    self-invokes the storage worker (the mosaic-build pattern). The client
+    polls /check-status on the returned task and refetches the gallery."""
+    from book_describe import _load_vision_config
     from shared import vision_provider
     params = parse_body(event)
+    gallery_id = assert_safe_id(params.get("gallery_id"), "gallery_id")
+    if not isinstance(params.get("pieces"), (list, type(None))):
+        raise ValueError("pieces must be a list when present")
+    # Fail fast on missing config — no point dispatching a doomed worker.
+    cfg = _load_vision_config()
+    model = str(cfg.get("model") or "") or "gemini-2.5-flash"
+    prov = vision_provider(model)
+    api_key = cfg.get(f"api_key_{prov}") or (os.environ.get("GEMINI_API_KEY", "") if prov == "gemini" else "")
+    if not api_key:
+        return ok_response({"error": "no vision API key configured — set one in the Book tab gear panel"})
+    task_id = f"describe_{uuid.uuid4().hex[:8]}"
+    report_status(gallery_id, task_id, "started")
+    worker_params = dict(params)
+    worker_params["task_id"] = task_id
+    try:
+        boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")).invoke(
+            FunctionName=os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "polypaint-storage"),
+            InvocationType="Event",
+            Payload=json.dumps({"internal_action": "describe_gallery",
+                                "params": worker_params}).encode("utf-8"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        report_status(gallery_id, task_id, "error", f"describe dispatch failed: {exc}")
+        raise
+    return ok_response({"dispatched": True, "task_id": task_id, "job_id": gallery_id})
+
+
+def _run_describe_gallery_worker(params):
+    """Self-invoked worker wrapper: run the describe, then mark the task row.
+    Partial success is DONE (titles were CAS-saved per piece); zero successes
+    with errors is an error row carrying the first cause."""
+    gallery_id = str(params.get("gallery_id") or "")
+    task_id = str(params.get("task_id") or "describe")
+    try:
+        result = _describe_gallery_run(params)
+    except Exception as exc:  # noqa: BLE001
+        report_status(gallery_id, task_id, "error", str(exc)[:300])
+        raise
+    errors = result.get("errors") or []
+    if not result.get("described") and errors:
+        report_status(gallery_id, task_id, "error", str(errors[0].get("error") or "describe failed")[:300])
+    else:
+        report_status(gallery_id, task_id, "done")
+    return ok_response({"described": result.get("described", 0), "errors": errors})
+
+
+def _describe_gallery_run(params):
+    """Generate short curator titles for gallery pieces from their thumbnails,
+    reusing the Book tab's vision engine + model/key config (lambda/book_describe).
+    SMALL-BATCH (Describe Selection): at most 4 pieces per run — each success is
+    CAS-saved immediately so progress survives later failures. Runs inside the
+    self-invoked worker: the batch vision profile (patient retries) applies."""
+    from book_describe import _vision_call, _load_vision_config, _downscale_for_vision
+    from shared import vision_provider
     gallery_id = assert_safe_id(params.get("gallery_id"), "gallery_id")
     raw_targets = params.get("pieces")
     overwrite = bool(params.get("overwrite"))
@@ -5306,14 +5364,15 @@ def handle_describe_gallery(event):
         targets = [p for p in targets if not str(p.get("title") or "").strip()]
     targets = targets[:4]   # sync route — stay well inside the API gateway budget
     if not targets:
-        return ok_response({"gallery": doc, "revision": revision, "described": 0, "errors": []})
+        return {"gallery": doc, "revision": revision, "described": 0, "errors": []}
 
     cfg = _load_vision_config()
     model = str(cfg.get("model") or "") or "gemini-2.5-flash"
     prov = vision_provider(model)
     api_key = cfg.get(f"api_key_{prov}") or (os.environ.get("GEMINI_API_KEY", "") if prov == "gemini" else "")
     if not api_key:
-        return ok_response({"error": "no vision API key configured — set one in the Book tab gear panel"})
+        return {"gallery": doc, "revision": revision, "described": 0,
+                "errors": [{"artifact_id": "", "error": "no vision API key configured"}]}
 
     used = [str(p.get("title") or "").strip() for p in pieces if str(p.get("title") or "").strip()]
     described, errors = 0, []
@@ -5332,7 +5391,7 @@ def handle_describe_gallery(event):
                 "2-4 words, evocative but concrete, no colons, no quotes inside. "
                 + ("Do not reuse any of these existing titles: " + "; ".join(used[-20:]) + ". " if used else "")
             )
-            title = _gallery_title_from_reply(_vision_call(model, api_key, img, prompt, interactive=True))
+            title = _gallery_title_from_reply(_vision_call(model, api_key, img, prompt))
             p["title"] = _clean_gallery_title(title)
             doc["updated_at"] = _utc_now_iso()
             revision = _put_gallery_doc(doc, expected_revision=revision)   # per-piece persistence
@@ -5342,7 +5401,7 @@ def handle_describe_gallery(event):
             if isinstance(exc, GalleryConflictError):
                 raise
             errors.append({"artifact_id": str(p.get("artifact_id") or ""), "error": str(exc)[:200]})
-    return ok_response({"gallery": doc, "revision": revision, "described": described, "errors": errors})
+    return {"gallery": doc, "revision": revision, "described": described, "errors": errors}
 
 
 def handle_create_gallery_share(event):

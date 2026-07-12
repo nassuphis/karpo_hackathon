@@ -173,6 +173,20 @@ def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TI
                 delay = min(delay * 2, 60)
                 continue
             raise RuntimeError(f"vision API HTTP {exc.code}: {detail or exc.reason}") from exc
+        except (TimeoutError, urllib.error.URLError) as exc:
+            # Socket read timeouts ("The read operation timed out") and connect
+            # failures were FATAL before — a slow provider response killed the
+            # call instead of retrying like any other transient (CR: gallery
+            # describe broke on exactly this). URLError wraps connect timeouts;
+            # TimeoutError covers read timeouts (socket.timeout is its alias).
+            if attempt < attempts:
+                wait = min(delay, max_retry_wait)
+                print(f"    vision API {type(exc).__name__} — "
+                      f"retry {attempt}/{attempts - 1} in {wait:.0f}s")
+                time.sleep(wait)
+                delay = min(delay * 2, 60)
+                continue
+            raise RuntimeError(f"vision API timeout: {exc}") from exc
     raise RuntimeError("unreachable")
 
 

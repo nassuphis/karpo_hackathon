@@ -410,24 +410,45 @@ async function galleryDescribeSelection() {
     const gid = _galleryState.activeId;
     const epoch = _galleryState.epoch;
     _galleryBtnBusy('btn-gallery-describe', true, 'Describing…');
+    // ASYNC (the vision provider can outlast the API gateway window — "The
+    // read operation timed out"): the route only dispatches a storage worker;
+    // we poll its task row, then refetch the gallery. Rides the jobs rail.
+    const railId = 'describe:' + gid + ':' + Date.now().toString(36);
+    const rail = (patch) => { if (typeof _jobsRailUpsert === 'function') _jobsRailUpsert({
+        id: railId, kind: 'describe', label: 'describe · ' + gid, jobId: gid,
+        tab: 'gallery', ...patch }); };
     try {
         const resp = await lambdaPost('storage', {
             gallery_id: gid, overwrite: true,
             pieces: [{ job_id: p.job_id, family: p.family || 'color', artifact_id: p.artifact_id }],
         }, '/describe-gallery', { idempotent: false });
         if (resp && resp.error) throw new Error(resp.error);
-        if ((resp.errors || []).length) throw new Error(resp.errors[0].error || 'describe failed');
-        if (_galleryState.epoch === epoch && _galleryState.activeId === gid && resp.gallery) {
-            _galleryState.doc = resp.gallery;
-            _galleryState.dirty = false;
-            _gallerySyncBase(resp.gallery, resp.revision);
-            _renderGalleryTab();
+        if (!resp.dispatched || !resp.task_id) throw new Error('describe dispatch failed');
+        rail({ state: 'running', startedAt: Date.now(), detail: 'vision title…' });
+        const t0 = performance.now();
+        while (true) {
+            const check = await lambdaPost('storage', { job_id: gid, task_prefix: resp.task_id, expected: 1 }, '/check-status');
+            if (check.errors > 0) throw new Error(check.error_details?.[0]?.error_msg || 'describe failed');
+            if (check.complete) break;
+            if (performance.now() - t0 > 180000) throw new Error('describe timed out — check the jobs rail later');
+            if (typeof _jobsRailProgress === 'function') _jobsRailProgress(railId, 'titling ' + Math.round((performance.now() - t0) / 1000) + 's');
+            await new Promise((r) => setTimeout(r, 2000));
         }
-        const titled = (resp.gallery.pieces || []).find((q) => _galleryPieceKey(q) === _galleryPieceKey(p));
+        void lambdaPost('storage', { job_id: gid, task_id: resp.task_id }, '/delete-task').catch(() => {});
+        const fetched = await lambdaPost('storage', { gallery_id: gid }, '/fetch-gallery');
+        if (fetched && fetched.error) throw new Error(fetched.error);
+        // Adopt through the merge machinery: clean -> adopt; edited-meanwhile ->
+        // the pure-adds check refuses safely instead of clobbering local work.
+        if (_galleryState.epoch === epoch && _galleryState.activeId === gid && fetched.gallery) {
+            _galleryNotifyChanged(gid, fetched.gallery, fetched.revision);
+        }
+        const titled = ((fetched.gallery || {}).pieces || []).find((q) => _galleryPieceKey(q) === _galleryPieceKey(p));
+        rail({ state: 'done', detail: (titled && titled.title) ? '“' + titled.title + '”' : 'titled' });
         _galleryBtnBusy('btn-gallery-describe', false);
         _galleryBtnFlash('btn-gallery-describe', '✓ Titled');
         _galleryStatus('Titled: “' + ((titled && titled.title) || '?') + '”');
     } catch (e) {
+        rail({ state: 'failed', detail: String(e.message || e) });
         _galleryBtnBusy('btn-gallery-describe', false);
         _galleryBtnFlash('btn-gallery-describe', '✗ Failed');
         _galleryStatus('Describe failed: ' + e.message, true);

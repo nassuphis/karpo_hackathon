@@ -9155,6 +9155,138 @@ static int runParamGenThreadedRange(FILE *fout, int n1, int n2, int gridN,
     return 0;
 }
 
+/* CR31 F5: static contiguous ranges for SEEKABLE output. The ring scheduler
+ * above serialized every row through one mutex and broadcast to all waiters —
+ * eight workers ran 5.5x slower than four. Here each worker owns [rowLo,rowHi)
+ * and pwrites its rows at their exact offsets: zero synchronization on the
+ * success path (the error mutex is touched only on failure). Rows are seeded
+ * per (pass,row) in computeParamGenRow, so output bytes match the ordered
+ * scheduler exactly. Streaming ("-") output keeps the ordered ring. */
+typedef struct {
+    int n1;
+    int n2;
+    int gridN;
+    int nPt;
+    int hasParamProgram;
+    const PtEntry *ptEntries;
+    const ParamProgram *paramProgram;
+    long stepStart;
+    long stepEnd;
+    int outFd;
+    pthread_mutex_t errMutex;
+    int failed;
+    char error[256];
+} ParamGenStaticCtx;
+
+typedef struct {
+    ParamGenStaticCtx *ctx;
+    long rowLo;
+    long rowHi;
+} ParamGenStaticArg;
+
+static void paramGenStaticSetError(ParamGenStaticCtx *ctx, const char *msg) {
+    pthread_mutex_lock(&ctx->errMutex);
+    if (!ctx->failed) {
+        ctx->failed = 1;
+        snprintf(ctx->error, sizeof(ctx->error), "%s", msg);
+    }
+    pthread_mutex_unlock(&ctx->errMutex);
+}
+
+static void *paramGenStaticWorkerMain(void *vp) {
+    ParamGenStaticArg *arg = (ParamGenStaticArg *)vp;
+    ParamGenStaticCtx *ctx = arg->ctx;
+    float *rowData = (float *)malloc((size_t)ctx->n2 * 4u * sizeof(float));
+    if (!rowData) {
+        paramGenStaticSetError(ctx, "param_gen static row buffer alloc failed");
+        return NULL;
+    }
+    for (long row = arg->rowLo; row < arg->rowHi; row++) {
+        if (ctx->failed) break;
+        if (computeParamGenRow(row, ctx->n1, ctx->n2, ctx->gridN,
+                               ctx->paramProgram, ctx->hasParamProgram,
+                               ctx->ptEntries, ctx->nPt, rowData) != 0) {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "param_gen param program evaluation failed at row %ld", row);
+            paramGenStaticSetError(ctx, msg);
+            break;
+        }
+        /* crop to the requested step range — same math as writeParamGenRowSlice */
+        long rowFirstStep = row * (long)ctx->n2;
+        long rowEndStep = rowFirstStep + (long)ctx->n2;
+        long lo = rowFirstStep > ctx->stepStart ? rowFirstStep : ctx->stepStart;
+        long hi = rowEndStep < ctx->stepEnd ? rowEndStep : ctx->stepEnd;
+        if (hi <= lo) continue;
+        const char *src = (const char *)(rowData + (size_t)(lo - rowFirstStep) * 4u);
+        size_t len = (size_t)(hi - lo) * 4u * sizeof(float);
+        off_t off = (off_t)(lo - ctx->stepStart) * (off_t)(4u * sizeof(float));
+        size_t done = 0;
+        while (done < len) {
+            ssize_t wrote = pwrite(ctx->outFd, src + done, len - done, off + (off_t)done);
+            if (wrote <= 0) {
+                paramGenStaticSetError(ctx, "param_gen static write failed");
+                break;
+            }
+            done += (size_t)wrote;
+        }
+        if (ctx->failed) break;
+    }
+    free(rowData);
+    return NULL;
+}
+
+static int runParamGenThreadedStatic(int outFd, int n1, int n2, int gridN,
+                                     const ParamProgram *paramProgram, int hasParamProgram,
+                                     const PtEntry *ptEntries, int nPt, int nThreads,
+                                     long stepStart, long stepCount) {
+    long stepEnd = stepStart + stepCount;
+    long rowStart = stepStart / (long)n2;
+    long rowEnd = (stepEnd + (long)n2 - 1L) / (long)n2;
+    long rowCount = rowEnd - rowStart;
+    if (nThreads > rowCount) nThreads = (int)rowCount;
+    if (nThreads < 1) nThreads = 1;
+
+    ParamGenStaticCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.n1 = n1; ctx.n2 = n2; ctx.gridN = gridN; ctx.nPt = nPt;
+    ctx.hasParamProgram = hasParamProgram;
+    ctx.ptEntries = ptEntries;
+    ctx.paramProgram = paramProgram;
+    ctx.stepStart = stepStart;
+    ctx.stepEnd = stepEnd;
+    ctx.outFd = outFd;
+    pthread_mutex_init(&ctx.errMutex, NULL);
+
+    pthread_t *threads = (pthread_t *)calloc((size_t)nThreads, sizeof(pthread_t));
+    ParamGenStaticArg *args = (ParamGenStaticArg *)calloc((size_t)nThreads, sizeof(ParamGenStaticArg));
+    if (!threads || !args) {
+        free(threads);
+        free(args);
+        pthread_mutex_destroy(&ctx.errMutex);
+        fprintf(stderr, "param_gen static alloc failed\n");
+        return 1;
+    }
+    int created = 0;
+    for (int i = 0; i < nThreads; i++) {
+        args[i].ctx = &ctx;
+        args[i].rowLo = rowStart + (rowCount * i) / nThreads;
+        args[i].rowHi = rowStart + (rowCount * (i + 1)) / nThreads;
+        if (pthread_create(&threads[i], NULL, paramGenStaticWorkerMain, &args[i]) != 0) {
+            paramGenStaticSetError(&ctx, "param_gen static pthread_create failed");
+            break;
+        }
+        created++;
+    }
+    for (int i = 0; i < created; i++) pthread_join(threads[i], NULL);
+    int failed = ctx.failed;
+    if (failed) fprintf(stderr, "%s\n", ctx.error[0] ? ctx.error : "param_gen static worker failed");
+    pthread_mutex_destroy(&ctx.errMutex);
+    free(threads);
+    free(args);
+    return failed ? 1 : 0;
+}
+
 static int runParamGenThreaded(FILE *fout, int n1, int n2, int gridN, int times,
                                const ParamProgram *paramProgram, int hasParamProgram,
                                const PtEntry *ptEntries, int nPt, int nThreads) {
@@ -9228,6 +9360,11 @@ static int runParamGen(const char *buf, const char *outPath) {
     long rowEnd = (stepStart + stepCount + (long)n2 - 1L) / (long)n2;
     long rowCount = rowEnd - rowStart;
     if (threadsUsed > rowCount) threadsUsed = (int)rowCount;
+    /* CR31 F5: cap by online CPUs — an execution-plan choice only (never a
+     * reproducibility input). Extra workers past the cores just serialized
+     * through the old scheduler and made runs SLOWER. */
+    long onlineCpus = sysconf(_SC_NPROCESSORS_ONLN);
+    if (onlineCpus > 0 && threadsUsed > onlineCpus) threadsUsed = (int)onlineCpus;
     if (threadsUsed < 1) threadsUsed = 1;
 
     int rc = 0;
@@ -9244,9 +9381,16 @@ static int runParamGen(const char *buf, const char *outPath) {
                 ptEntries, nPt
             );
         }
-    } else {
+    } else if (streamMode) {
+        /* stdout can't seek: keep the ordered ring writer */
         rc = runParamGenThreadedRange(
             fout, n1, n2, gridN, &paramProgram, hasParamProgram > 0,
+            ptEntries, nPt, threadsUsed, stepStart, stepCount
+        );
+    } else {
+        fflush(fout);   /* nothing buffered; all bytes go through pwrite below */
+        rc = runParamGenThreadedStatic(
+            fileno(fout), n1, n2, gridN, &paramProgram, hasParamProgram > 0,
             ptEntries, nPt, threadsUsed, stepStart, stepCount
         );
     }
@@ -9699,92 +9843,134 @@ static void coeffGenSetThreadError(CoeffGenThreadCtx *ctx, const char *msg) {
     pthread_mutex_unlock(&ctx->mutex);
 }
 
+/* CR31 F2: block size for chunked coefficient I/O. One pread + one pwrite
+ * per BLOCK instead of per row turns 131,072 syscalls (256x256 rows) into
+ * ~1,024, and makes each worker's I/O sequential within its range. */
+#define COEFFGEN_IO_BLOCK_ROWS 128
+
+/* Full pread/pwrite with short-transfer loops: partial reads/writes resume at
+ * the exact offset; 0-byte progress reports the FIRST affected global row so
+ * error text matches the per-row implementation it replaces. */
+static int coeffGenReadBlock(int fd, void *buf, size_t len, off_t off) {
+    size_t done = 0;
+    while (done < len) {
+        ssize_t got = pread(fd, (char *)buf + done, len - done, off + (off_t)done);
+        if (got <= 0) return -1;
+        done += (size_t)got;
+    }
+    return 0;
+}
+
+static int coeffGenWriteBlock(int fd, const void *buf, size_t len, off_t off) {
+    size_t done = 0;
+    while (done < len) {
+        ssize_t wrote = pwrite(fd, (const char *)buf + done, len - done, off + (off_t)done);
+        if (wrote <= 0) return -1;
+        done += (size_t)wrote;
+    }
+    return 0;
+}
+
 static void *coeffGenWorkerMain(void *vp) {
     CoeffGenWorkerArg *arg = (CoeffGenWorkerArg *)vp;
     CoeffGenThreadCtx *ctx = arg->ctx;
-    float params[4];
     double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
-    float *stepBuf = (float *)malloc((size_t)ctx->outRowBytes);
-    if (!stepBuf) {
-        coeffGenSetThreadError(ctx, "coeffgen threaded step buffer alloc failed");
+    float *paramBlock = (float *)malloc((size_t)COEFFGEN_IO_BLOCK_ROWS * 4 * sizeof(float));
+    float *outBlock = (float *)malloc((size_t)COEFFGEN_IO_BLOCK_ROWS * (size_t)ctx->outRowBytes);
+    if (!paramBlock || !outBlock) {
+        free(paramBlock);
+        free(outBlock);
+        coeffGenSetThreadError(ctx, "coeffgen threaded block buffer alloc failed");
         return NULL;
     }
     CoeffProgramWorkspace *coeffWs = NULL;
     if (ctx->hasCoeffProgram) {
         coeffWs = coeff_program_workspace_new();
         if (!coeffWs) {
-            free(stepBuf);
+            free(paramBlock);
+            free(outBlock);
             coeffGenSetThreadError(ctx, "coeffgen threaded workspace alloc failed");
             return NULL;
         }
     }
 
-    for (long s = arg->stepLo; s < arg->stepHi; s++) {
+    for (long blockLo = arg->stepLo; blockLo < arg->stepHi; blockLo += COEFFGEN_IO_BLOCK_ROWS) {
         if (ctx->failed) break;
+        long blockHi = blockLo + COEFFGEN_IO_BLOCK_ROWS;
+        if (blockHi > arg->stepHi) blockHi = arg->stepHi;   /* partial tail block */
+        long nRows = blockHi - blockLo;
 
-        off_t paramOff = (off_t)(ctx->paramBaseOffset + s * (long)(4 * sizeof(float)));
-        ssize_t got = pread(ctx->paramsFd, params, sizeof(params), paramOff);
-        if (got != (ssize_t)sizeof(params)) {
+        off_t paramOff = (off_t)(ctx->paramBaseOffset + blockLo * (long)(4 * sizeof(float)));
+        if (coeffGenReadBlock(ctx->paramsFd, paramBlock,
+                              (size_t)nRows * 4 * sizeof(float), paramOff) != 0) {
             char msg[256];
-            snprintf(msg, sizeof(msg), "Short read at step %ld", ctx->globalStepStart + s);
+            snprintf(msg, sizeof(msg), "Short read at step %ld", ctx->globalStepStart + blockLo);
             coeffGenSetThreadError(ctx, msg);
             break;
         }
 
-        double t1r = 0.0, t1i = 0.0, t2r = 0.0, t2i = 0.0;
-        coeffgenSourceParamsForStep(ctx->globalStepStart + s, ctx->sourceN1, ctx->sourceN2,
-                                    params, &t1r, &t1i, &t2r, &t2i);
+        for (long r = 0; r < nRows; r++) {
+            long s = blockLo + r;
+            const float *params = &paramBlock[r * 4];
 
-        int nCoeffs = 0;
-        ctx->coeffFunc((double)params[0], (double)params[1],
-                       (double)params[2], (double)params[3],
-                       ctx->cfpv, ctx->n_cfpv, cRe, cIm, &nCoeffs);
-        if (ctx->hasCoeffProgram) {
-            if (evalCoeffProgram(ctx->coeffProgram,
-                                 (double)params[0], (double)params[1],
-                                 (double)params[2], (double)params[3],
-                                 t1r, t1i, t2r, t2i,
-                                 cRe, cIm, nCoeffs,
-                                 cRe, cIm, &nCoeffs, coeffWs,
-                                 (uint64_t)(ctx->globalStepStart + s),
-                                 ctx->nCoeffsOut) != 0) {
-                coeffGenSetThreadError(ctx, "coeffgen threaded coeff program failed");
-            }
-        } else {
-            for (int t = 0; t < ctx->nCt; t++) {
-                if (dispatchCt(&ctx->ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
-                    coeffGenSetThreadError(ctx, "coeffgen threaded coeff transform failed");
-                    break;
+            double t1r = 0.0, t1i = 0.0, t2r = 0.0, t2i = 0.0;
+            coeffgenSourceParamsForStep(ctx->globalStepStart + s, ctx->sourceN1, ctx->sourceN2,
+                                        params, &t1r, &t1i, &t2r, &t2i);
+
+            int nCoeffs = 0;
+            ctx->coeffFunc((double)params[0], (double)params[1],
+                           (double)params[2], (double)params[3],
+                           ctx->cfpv, ctx->n_cfpv, cRe, cIm, &nCoeffs);
+            if (ctx->hasCoeffProgram) {
+                if (evalCoeffProgram(ctx->coeffProgram,
+                                     (double)params[0], (double)params[1],
+                                     (double)params[2], (double)params[3],
+                                     t1r, t1i, t2r, t2i,
+                                     cRe, cIm, nCoeffs,
+                                     cRe, cIm, &nCoeffs, coeffWs,
+                                     (uint64_t)(ctx->globalStepStart + s),
+                                     ctx->nCoeffsOut) != 0) {
+                    coeffGenSetThreadError(ctx, "coeffgen threaded coeff program failed");
+                }
+            } else {
+                for (int t = 0; t < ctx->nCt; t++) {
+                    if (dispatchCt(&ctx->ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
+                        coeffGenSetThreadError(ctx, "coeffgen threaded coeff transform failed");
+                        break;
+                    }
                 }
             }
+            if (ctx->failed) break;
+
+            if (nCoeffs != ctx->nCoeffsOut) {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "nCoeffs mismatch: probe returned %d but step %ld returned %d",
+                         ctx->nCoeffsOut, ctx->globalStepStart + s, nCoeffs);
+                coeffGenSetThreadError(ctx, msg);
+                break;
+            }
+
+            float *rowOut = outBlock + r * (ctx->outRowBytes / (long)sizeof(float));
+            for (int k = 0; k < ctx->nCoeffsOut; k++) {
+                rowOut[k * 2]     = (float)cRe[k];
+                rowOut[k * 2 + 1] = (float)cIm[k];
+            }
         }
         if (ctx->failed) break;
 
-        if (nCoeffs != ctx->nCoeffsOut) {
+        off_t outOff = (off_t)(blockLo * ctx->outRowBytes);
+        if (coeffGenWriteBlock(ctx->outFd, outBlock,
+                               (size_t)nRows * (size_t)ctx->outRowBytes, outOff) != 0) {
             char msg[256];
-            snprintf(msg, sizeof(msg),
-                     "nCoeffs mismatch: probe returned %d but step %ld returned %d",
-                     ctx->nCoeffsOut, ctx->globalStepStart + s, nCoeffs);
-            coeffGenSetThreadError(ctx, msg);
-            break;
-        }
-
-        for (int k = 0; k < ctx->nCoeffsOut; k++) {
-            stepBuf[k * 2]     = (float)cRe[k];
-            stepBuf[k * 2 + 1] = (float)cIm[k];
-        }
-
-        off_t outOff = (off_t)(s * ctx->outRowBytes);
-        ssize_t wrote = pwrite(ctx->outFd, stepBuf, (size_t)ctx->outRowBytes, outOff);
-        if (wrote != (ssize_t)ctx->outRowBytes) {
-            char msg[256];
-            snprintf(msg, sizeof(msg), "Short write at step %ld", ctx->globalStepStart + s);
+            snprintf(msg, sizeof(msg), "Short write at step %ld", ctx->globalStepStart + blockLo);
             coeffGenSetThreadError(ctx, msg);
             break;
         }
     }
 
-    free(stepBuf);
+    free(paramBlock);
+    free(outBlock);
     free(coeffWs);
     return NULL;
 }

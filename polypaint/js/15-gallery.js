@@ -440,7 +440,7 @@ function _galleryOnWallCoverage(value) {
 
 function _galleryOnWallLayout(value) {
     const s = _gallerySettings(); if (!s) return;
-    if (!['maze', 'serpentine', 'exhibition'].includes(value)) return;
+    if (!['maze', 'serpentine', 'exhibition', 'spiral'].includes(value)) return;
     s.wall_layout = value;
     _galleryState.dirty = true; _galleryUpdateActionButtons();
 }

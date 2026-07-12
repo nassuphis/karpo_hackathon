@@ -412,7 +412,7 @@ class GalleryBackendTests(unittest.TestCase):
         self._add(gid, "jobA", "cA")
         fetched = json.loads(hs.handle_fetch_gallery(self._event({"gallery_id": gid}))["body"])
         doc = fetched["gallery"]
-        doc["settings"] = {"sky": "rainbow", "wall_color": "not-a-hex", "wall_coverage": "junk", "wall_layout": "spiral"}
+        doc["settings"] = {"sky": "rainbow", "wall_color": "not-a-hex", "wall_coverage": "junk", "wall_layout": "zigzag"}
         _, saved = self._route(hs.handle_save_gallery, gallery=doc, expected_revision=fetched["revision"])
         self.assertEqual(saved["gallery"]["settings"], {"sky": "stars", "wall_color": "#ece4d6", "wall_coverage": 35, "wall_self_tint": True, "wall_edge_px": 1, "wall_layout": "maze"})
 
@@ -579,6 +579,10 @@ class GalleryBackendTests(unittest.TestCase):
             "body": b"fakepng"}
         self._add(gid, "jobT", "cT", "dz_T")
         return gid
+
+    def test_settings_accept_spiral_layout(self):
+        s = hs._clean_gallery_settings({"wall_layout": "spiral"})
+        self.assertEqual(s["wall_layout"], "spiral")
 
     def test_describe_gallery_titles_selection(self):
         import book_describe

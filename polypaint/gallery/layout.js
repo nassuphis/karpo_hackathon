@@ -135,17 +135,23 @@ function pieceSizeOnWall(previewWidth, previewHeight) {
 // derives everything else from the grid: dedup'd wall segments for meshes,
 // interior art faces, piece placements, spawn, bounds. Collision (mazeClamp /
 // mazeClampMove) reads the same grid, so every mode collides correctly for free.
-function _layoutFromGrid(pieces, grid, cols, rows, { rnd = null, placement = 'shuffle' } = {}) {
+function _layoutFromGrid(pieces, grid, cols, rows, { rnd = null, placement = 'shuffle', cellOrder = null } = {}) {
   const CELL = MAZE.CELL_M;
   const at = (r, c) => grid[r * cols + c];
   const originX = -(cols * CELL) / 2, originZ = -(rows * CELL) / 2;
   const cellCenter = (r, c) => ({ x: originX + (c + 0.5) * CELL, z: originZ + (r + 0.5) * CELL });
 
   // Interior wall faces available for art (a closed wall bordering this cell's
-  // corridor), each with the inward normal + facing rotation. Row-major order.
+  // corridor), each with the inward normal + facing rotation. Row-major order,
+  // or an explicit walk order (spiral: faces must follow the corridor).
+  const cells = cellOrder || (() => {
+    const o = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) o.push([r, c]);
+    return o;
+  })();
   const faces = [];
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
+  for (const [r, c] of cells) {
+    {
       const cell = at(r, c), cen = cellCenter(r, c);
       const interior = { N: r > 0, S: r < rows - 1, E: c < cols - 1, W: c > 0 };
       if (cell.N && interior.N) faces.push({ r, c, x: cen.x, z: originZ + r * CELL, normal: { x: 0, z: 1 }, rotationY: 0 });
@@ -298,10 +304,42 @@ export function computeExhibition(pieces, { coverage = null } = {}) {
   return _layoutFromGrid(pieces, grid, cols, rows, { placement: 'stride' });
 }
 
+// Spiral: one square spiral corridor from the outer corner to the center. The
+// walk order IS the curator order; art hangs on both sides of the spiral arms.
+// Interior faces = 2*(G-1)^2 (same as the maze), so coverage sizing carries over.
+export function computeSpiral(pieces, { coverage = null } = {}) {
+  const n = Math.max(1, pieces.length);
+  const frac = Math.max(5, Math.min(100, Number(coverage) || 35)) / 100;
+  const G = Math.max(MAZE.MIN_GRID, Math.min(MAZE.MAX_GRID,
+    Math.ceil(Math.sqrt(n / (2 * frac)) + 1)));
+  const cols = G, rows = G;
+  // Square-spiral cell walk covering every cell, outside -> center.
+  const order = [];
+  let top = 0, bottom = rows - 1, left = 0, right = cols - 1;
+  while (top <= bottom && left <= right) {
+    for (let c = left; c <= right; c++) order.push([top, c]);
+    for (let r = top + 1; r <= bottom; r++) order.push([r, right]);
+    if (top < bottom) for (let c = right - 1; c >= left; c--) order.push([bottom, c]);
+    if (left < right) for (let r = bottom - 1; r > top; r--) order.push([r, left]);
+    top++; bottom--; left++; right--;
+  }
+  const grid = _closedGrid(cols, rows);
+  const at = (r, c) => grid[r * cols + c];
+  for (let i = 1; i < order.length; i++) {
+    const [r1, c1] = order[i - 1], [r2, c2] = order[i];
+    if (r2 === r1 && c2 === c1 + 1) { at(r1, c1).E = false; at(r2, c2).W = false; }
+    else if (r2 === r1 && c2 === c1 - 1) { at(r1, c1).W = false; at(r2, c2).E = false; }
+    else if (c2 === c1 && r2 === r1 + 1) { at(r1, c1).S = false; at(r2, c2).N = false; }
+    else { at(r1, c1).N = false; at(r2, c2).S = false; }
+  }
+  return _layoutFromGrid(pieces, grid, cols, rows, { placement: 'stride', cellOrder: order });
+}
+
 // Mode dispatch — the viewer's single entry point.
 export function computeLayout(pieces, { mode = 'maze', seed = 1, coverage = null } = {}) {
   if (mode === 'serpentine') return computeSerpentine(pieces, { coverage });
   if (mode === 'exhibition') return computeExhibition(pieces, { coverage });
+  if (mode === 'spiral') return computeSpiral(pieces, { coverage });
   return computeMaze(pieces, { seed, coverage });
 }
 

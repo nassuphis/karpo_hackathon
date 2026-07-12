@@ -219,23 +219,28 @@ test.describe('Gallery viewer layout (pure)', () => {
         return seen.size; };
       const serp = L.computeLayout(pieces, { mode: 'serpentine', coverage: 35 });
       const exhi = L.computeLayout(pieces, { mode: 'exhibition', coverage: 35 });
+      const spir = L.computeLayout(pieces, { mode: 'spiral', coverage: 35 });
       const maze = L.computeLayout(pieces, { mode: 'maze', seed: 5, coverage: 35 });
       // curator ORDER preserved in the walk modes: placements indexed 0..n-1
       const ordered = serp.placements.every((p, i) => p.piece_index === i)
-        && exhi.placements.every((p, i) => p.piece_index === i);
+        && exhi.placements.every((p, i) => p.piece_index === i)
+        && spir.placements.every((p, i) => p.piece_index === i);
+      const sig = (m) => JSON.stringify(m.wallSegments);
       return {
         serpReach: bfs(serp) === serp.cols * serp.rows, serpPlaced: serp.placedCount,
         exhiReach: bfs(exhi) === exhi.cols * exhi.rows, exhiPlaced: exhi.placedCount,
-        distinct: JSON.stringify(serp.wallSegments) !== JSON.stringify(exhi.wallSegments)
-          && JSON.stringify(serp.wallSegments) !== JSON.stringify(maze.wallSegments),
+        spirReach: bfs(spir) === spir.cols * spir.rows, spirPlaced: spir.placedCount,
+        distinct: new Set([sig(serp), sig(exhi), sig(spir), sig(maze)]).size === 4,
         ordered,
       };
     }, eightPieces());
     expect(r.serpReach).toBe(true);      // one continuous corridor, fully reachable
     expect(r.exhiReach).toBe(true);      // aisles connect around the partitions
+    expect(r.spirReach).toBe(true);      // the spiral walks outside -> center
     expect(r.serpPlaced).toBe(8);
     expect(r.exhiPlaced).toBe(8);
-    expect(r.distinct).toBe(true);       // the three modes are genuinely different rooms
+    expect(r.spirPlaced).toBe(8);
+    expect(r.distinct).toBe(true);       // all four modes are genuinely different rooms
     expect(r.ordered).toBe(true);
   });
 

@@ -3385,6 +3385,25 @@ done:
  * Source names are resolved by Python before this point. The row loop
  * dispatches only on integer opcodes/function indices and fixed selectors. */
 #define COEFF_PROGRAM_MAX_TOKENS 256
+
+/* CR31 F10: opt-in performance attribution. Compile with -DPP_VM_PERF to
+ * count the events that separate VM cost from plumbing cost; disabled builds
+ * compile the macros away so the hot path carries zero instrumentation. */
+#ifdef PP_VM_PERF
+static _Atomic long pp_perf_pread_calls;
+static _Atomic long pp_perf_pwrite_calls;
+static _Atomic long pp_perf_dyn_arg_resolves;
+#define PP_PERF_COUNT(counter) ((void)(counter++))
+static void pp_perf_report(const char *mode) {
+    fprintf(stderr,
+            "{\"pp_vm_perf\":{\"mode\":\"%s\",\"pread_calls\":%ld,"
+            "\"pwrite_calls\":%ld,\"dyn_arg_resolves\":%ld}}\n",
+            mode, (long)pp_perf_pread_calls, (long)pp_perf_pwrite_calls,
+            (long)pp_perf_dyn_arg_resolves);
+}
+#else
+#define PP_PERF_COUNT(counter) ((void)0)
+#endif
 #define COEFF_PROGRAM_MAX_VECTOR_STACK 64
 #define COEFF_PROGRAM_MAX_VECTOR_LEN 256
 #define COEFF_PROGRAM_MAX_ARGS 8
@@ -4788,16 +4807,44 @@ static int coeffProgramTypedBinaryOp(CoeffProgramWorkspace *ws, const CoeffProgr
         return 1;
     }
     if (coeff_program_check_len(n, "typed binary") != 0) return 1;
-    for (int i = 0; i < n; i++) {
-        double ar = leftType == COEFF_STACK_VECTOR ? ws->stack_re[left][i] : ws->stack_scalar_re[left];
-        double ai = leftType == COEFF_STACK_VECTOR ? ws->stack_im[left][i] : ws->stack_scalar_im[left];
-        double br = rightType == COEFF_STACK_VECTOR ? ws->stack_re[right][i] : ws->stack_scalar_re[right];
-        double bi = rightType == COEFF_STACK_VECTOR ? ws->stack_im[right][i] : ws->stack_scalar_im[right];
-        if (coeffProgramApplyBinaryFn(tok->fn_index, ar, ai, br, bi,
-                                         &ws->scratch_re[i], &ws->scratch_im[i]) != 0) return 1;
+    /* CR31 F3 (scoped): write results directly into the LEFT popped slot — the
+     * subsequent push lands on exactly that slot in the circular stack, so the
+     * old scratch round-trip copied the whole vector twice for nothing. Every
+     * push copies, so slots are exclusively owned and in-place is alias-free;
+     * per-element reads capture their values before the write. */
+    /* CR31 F7: vector-vector add/subtract/multiply get dedicated loops (the
+     * common shapes); everything else — broadcasts included — keeps the exact
+     * generic path. */
+    if (leftType == COEFF_STACK_VECTOR && rightType == COEFF_STACK_VECTOR &&
+        (tok->fn_index == COEFF_VEC_ADD || tok->fn_index == COEFF_VEC_SUBTRACT ||
+         tok->fn_index == COEFF_VEC_MULTIPLY)) {
+        double *lre = ws->stack_re[left], *lim = ws->stack_im[left];
+        const double *rre = ws->stack_re[right], *rim = ws->stack_im[right];
+        if (tok->fn_index == COEFF_VEC_ADD) {
+            for (int i = 0; i < n; i++) { lre[i] = lre[i] + rre[i]; lim[i] = lim[i] + rim[i]; }
+        } else if (tok->fn_index == COEFF_VEC_SUBTRACT) {
+            for (int i = 0; i < n; i++) { lre[i] = lre[i] - rre[i]; lim[i] = lim[i] - rim[i]; }
+        } else {
+            for (int i = 0; i < n; i++) {
+                double ar = lre[i], ai = lim[i];
+                c_mul(ar, ai, rre[i], rim[i], &lre[i], &lim[i]);
+            }
+        }
+    } else {
+        for (int i = 0; i < n; i++) {
+            double ar = leftType == COEFF_STACK_VECTOR ? ws->stack_re[left][i] : ws->stack_scalar_re[left];
+            double ai = leftType == COEFF_STACK_VECTOR ? ws->stack_im[left][i] : ws->stack_scalar_im[left];
+            double br = rightType == COEFF_STACK_VECTOR ? ws->stack_re[right][i] : ws->stack_scalar_re[right];
+            double bi = rightType == COEFF_STACK_VECTOR ? ws->stack_im[right][i] : ws->stack_scalar_im[right];
+            if (coeffProgramApplyBinaryFn(tok->fn_index, ar, ai, br, bi,
+                                             &ws->stack_re[left][i], &ws->stack_im[left][i]) != 0) return 1;
+        }
     }
-    ws->scratch_len = (uint16_t)n;
-    return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, n);
+    ws->stack_len[left] = (uint16_t)n;
+    ws->stack_type[left] = COEFF_STACK_VECTOR;
+    ws->stack_head = (uint16_t)((ws->stack_head + 1) % COEFF_PROGRAM_MAX_VECTOR_STACK);
+    ws->stack_depth++;
+    return 0;
 }
 
 static int coeffProgramTypedUnaryOp(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
@@ -4816,13 +4863,34 @@ static int coeffProgramTypedUnaryOp(CoeffProgramWorkspace *ws, const CoeffProgra
     }
     int n = ws->stack_len[slot];
     if (coeff_program_check_len(n, "typed unary") != 0) return 1;
-    for (int i = 0; i < n; i++) {
-        if (coeffProgramApplyUnaryFn(tok->fn_index,
-                                        ws->stack_re[slot][i], ws->stack_im[slot][i],
-                                        &ws->scratch_re[i], &ws->scratch_im[i]) != 0) return 1;
+    /* CR31 F3 (scoped): in place — pop parked the head ON this slot, so the
+     * push re-occupies it; the scratch round-trip was pure copy overhead.
+     * Arguments pass by value, so writing element i after reading it is safe.
+     * CR31 F7: the operation is constant for the whole vector — select the
+     * cheap kernels ONCE instead of walking the dispatch ladder per element.
+     * Each kernel's arithmetic matches its ladder branch exactly. */
+    double *sre = ws->stack_re[slot];
+    double *sim = ws->stack_im[slot];
+    if (tok->fn_index == COEFF_VEC_NEG) {
+        for (int i = 0; i < n; i++) { sre[i] = -sre[i]; sim[i] = -sim[i]; }
+    } else if (tok->fn_index == COEFF_VEC_CONJ) {
+        for (int i = 0; i < n; i++) { sim[i] = -sim[i]; }
+    } else if (tok->fn_index == COEFF_VEC_REAL) {
+        for (int i = 0; i < n; i++) { sim[i] = 0.0; }
+    } else if (tok->fn_index == COEFF_VEC_IMAG) {
+        for (int i = 0; i < n; i++) { sre[i] = sim[i]; sim[i] = 0.0; }
+    } else {
+        for (int i = 0; i < n; i++) {
+            if (coeffProgramApplyUnaryFn(tok->fn_index,
+                                            sre[i], sim[i],
+                                            &sre[i], &sim[i]) != 0) return 1;
+        }
     }
-    ws->scratch_len = (uint16_t)n;
-    return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, n);
+    ws->stack_len[slot] = (uint16_t)n;
+    ws->stack_type[slot] = COEFF_STACK_VECTOR;
+    ws->stack_head = (uint16_t)((ws->stack_head + 1) % COEFF_PROGRAM_MAX_VECTOR_STACK);
+    ws->stack_depth++;
+    return 0;
 }
 
 static int coeffProgramTypedIndexFromSlot(const CoeffProgramWorkspace *ws,
@@ -5643,6 +5711,9 @@ static int evalCoeffProgram(const CoeffProgram *program,
         } else if (program->arg_mode[k] == COEFF_ARG_MODE_STATIC) {
             resolvedArgs = &program->prepared_args[k];
         } else {
+#ifdef PP_VM_PERF
+            PP_PERF_COUNT(pp_perf_dyn_arg_resolves);
+#endif
             if (coeffResolveTokenArgs(ctx, tok, &dynArgs) != 0) return 1;
             resolvedArgs = &dynArgs;
         }
@@ -9416,6 +9487,9 @@ static int runParamGen(const char *buf, const char *outPath) {
            n1, n2, times, stepCount, totalSteps, stepStart, stepCount,
            dataBytes, threadsUsed, elapsed_us,
            hasParamProgram > 0 ? paramProgram.token_count : 0);
+#ifdef PP_VM_PERF
+    pp_perf_report("param_gen");
+#endif
     return 0;
 }
 
@@ -9854,6 +9928,9 @@ static void coeffGenSetThreadError(CoeffGenThreadCtx *ctx, const char *msg) {
 static int coeffGenReadBlock(int fd, void *buf, size_t len, off_t off) {
     size_t done = 0;
     while (done < len) {
+#ifdef PP_VM_PERF
+        PP_PERF_COUNT(pp_perf_pread_calls);
+#endif
         ssize_t got = pread(fd, (char *)buf + done, len - done, off + (off_t)done);
         if (got <= 0) return -1;
         done += (size_t)got;
@@ -9864,6 +9941,9 @@ static int coeffGenReadBlock(int fd, void *buf, size_t len, off_t off) {
 static int coeffGenWriteBlock(int fd, const void *buf, size_t len, off_t off) {
     size_t done = 0;
     while (done < len) {
+#ifdef PP_VM_PERF
+        PP_PERF_COUNT(pp_perf_pwrite_calls);
+#endif
         ssize_t wrote = pwrite(fd, (const char *)buf + done, len - done, off + (off_t)done);
         if (wrote <= 0) return -1;
         done += (size_t)wrote;
@@ -10262,6 +10342,9 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
            stepStart, stepCount,
            stepCount, dataBytes, threadsUsed, elapsed_us,
            hasCoeffProgram > 0 ? coeffProgram.token_count : 0);
+#ifdef PP_VM_PERF
+    pp_perf_report("coeffgen_chunked");
+#endif
     return 0;
 }
 

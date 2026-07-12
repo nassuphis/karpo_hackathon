@@ -61,9 +61,19 @@ class _FakeDDB:
         k = (Key["job_id"]["S"], Key["task_id"]["S"])
         if ConditionExpression and "attribute_exists" in ConditionExpression and k not in self.items:
             raise _ce("ConditionalCheckFailedException", 400, "UpdateItem")
-        self.items[k]["snapshot_version"] = ExpressionAttributeValues[":v"]
-        self.items[k]["snapshot"] = ExpressionAttributeValues[":s"]
-        self.items[k]["updated_at_ms"] = ExpressionAttributeValues[":u"]
+        # crude generic SET a = :x, b = :y ... REMOVE c, d parser
+        expr = UpdateExpression or ""
+        set_part, remove_part = expr, ""
+        if " REMOVE " in expr:
+            set_part, remove_part = expr.split(" REMOVE ", 1)
+        item = self.items[k]
+        if set_part.strip().startswith("SET"):
+            for assign in set_part.strip()[3:].split(","):
+                name, _, val = assign.partition("=")
+                item[name.strip()] = ExpressionAttributeValues[val.strip()]
+        for name in remove_part.split(","):
+            if name.strip():
+                item.pop(name.strip(), None)
         return {}
 
 
@@ -261,6 +271,72 @@ class FavoritesStorageTests(unittest.TestCase):
             "job_id": "jobA", "artifact_id": "cA", "family": "color"}))["body"])
         self.assertFalse(body["added"])
         self.assertEqual(body["favorite"]["favorite_artifact_id"], "cA")
+
+    # ── code-review-30 F7: authoritative missing PERSISTS (no resurrection) ──
+    def test_missing_verdict_persists_across_cached_lists(self):
+        self._seed_fav("jobA", "cA", snapshot={"image_key": "renders/jobA/color/cA/image.jpeg", "width": 1})
+        # artifact deleted; forced refresh discovers it authoritatively
+        body = json.loads(hs.handle_list_favorites(self._event({"refresh": True}))["body"])
+        self.assertEqual(body["favorites"][0]["hydration_state"], "missing")
+        # the STALE snapshot is gone from the row and the verdict is stored
+        row = self.ddb.items[(hs.FAVORITES_DDB_JOB_ID, hs._favorite_task_id("jobA", "cA"))]
+        self.assertNotIn("snapshot", row)
+        self.assertEqual(row["hydration_state"]["S"], "missing")
+        # a NORMAL cached list keeps it missing with ZERO S3 work — no resurrection
+        self.s3.head_calls = 0
+        body2 = json.loads(hs.handle_list_favorites(self._event({}))["body"])
+        self.assertEqual(self.s3.head_calls, 0)
+        self.assertEqual(body2["favorites"][0]["hydration_state"], "missing")
+        self.assertTrue(body2["favorites"][0]["missing"])
+
+    def test_missing_row_heals_when_artifact_returns(self):
+        self._seed_fav("jobA", "cA", snapshot={"image_key": "renders/jobA/color/cA/image.jpeg", "width": 1})
+        json.loads(hs.handle_list_favorites(self._event({"refresh": True}))["body"])   # -> missing persisted
+        self._seed_artifact("jobA", "cA")                                              # artifact restored
+        body = json.loads(hs.handle_list_favorites(self._event({"refresh": True}))["body"])
+        self.assertEqual(body["favorites"][0]["hydration_state"], "ready")
+        row = self.ddb.items[(hs.FAVORITES_DDB_JOB_ID, hs._favorite_task_id("jobA", "cA"))]
+        self.assertNotIn("hydration_state", row)          # marker cleared by the backfill
+        self.assertIn("snapshot", row)
+
+    def test_transient_error_never_persists_missing(self):
+        self._seed_fav("jobT", "slow", snapshot={"image_key": "renders/jobT/color/slow/image.jpeg", "width": 1})
+        self.s3.fail["renders/jobT/color/slow/image.jpeg"] = _ce("SlowDown", 503)
+        body = json.loads(hs.handle_list_favorites(self._event({"refresh": True}))["body"])
+        self.assertEqual(body["favorites"][0]["hydration_state"], "error")
+        row = self.ddb.items[(hs.FAVORITES_DDB_JOB_ID, hs._favorite_task_id("jobT", "slow"))]
+        self.assertIn("snapshot", row)                    # old ready snapshot preserved
+        self.assertNotIn("hydration_state", row)          # never converted to missing
+
+    # ── code-review-30 F8: duplicates return the AUTHORITATIVE stored row ──
+    def test_duplicate_add_returns_stored_row_not_fabricated(self):
+        self._seed_artifact("jobA", "cA")
+        hs.handle_add_favorite(self._event({
+            "job_id": "jobA", "artifact_id": "cA", "family": "color", "display_name": "Original Name"}))
+        stored = self.ddb.items[(hs.FAVORITES_DDB_JOB_ID, hs._favorite_task_id("jobA", "cA"))]
+        original_added_at = stored["added_at"]["S"]
+        body = json.loads(hs.handle_add_favorite(self._event({
+            "job_id": "jobA", "artifact_id": "cA", "family": "color", "display_name": "Renamed Later"}))["body"])
+        self.assertFalse(body["added"])
+        self.assertEqual(body["favorite"]["display_name"], "Original Name")     # stored, not caller's
+        self.assertEqual(body["favorite"]["favorite_added_at"], original_added_at)
+
+    # ── code-review-30 F11: ONE bounded executor for a forced refresh ──
+    def test_forced_refresh_uses_a_single_executor(self):
+        import concurrent.futures as cf
+        self._seed_fav("jobA", "cA")
+        self._seed_fav("jobB", "cB", added_at="2026-02-01T00:00:00Z")
+        self._seed_artifact("jobA", "cA")
+        self._seed_artifact("jobB", "cB")
+        real = cf.ThreadPoolExecutor
+        count = {"n": 0}
+        def counting(*a, **kw):
+            count["n"] += 1
+            return real(*a, **kw)
+        with patch("concurrent.futures.ThreadPoolExecutor", side_effect=counting):
+            body = json.loads(hs.handle_list_favorites(self._event({"refresh": True}))["body"])
+        self.assertEqual(len(body["favorites"]), 2)
+        self.assertEqual(count["n"], 1)                   # outer pool only — no nested executors
 
     def test_add_rejects_bad_ids(self):
         for bad in ({"job_id": "../evil", "artifact_id": "cA"},

@@ -409,8 +409,19 @@ async function _addColorFavorite(ref, options = {}) {
     const row = resp && resp.favorite;
     if (row) {
         const key = _favoriteRefKey(_favoriteRefJob(row), _favoriteRefArtifact(row));
-        _favoriteRefs = [row, ...(_favoriteRefs || []).filter(
-            r => _favoriteRefKey(_favoriteRefJob(r), _favoriteRefArtifact(r)) !== key)];
+        if (resp.added === false) {
+            // Duplicate: the backend returned the AUTHORITATIVE stored row —
+            // update in place, never reorder or fabricate recency (CR30 F8).
+            _favoriteRefs = (_favoriteRefs || []).map(
+                r => _favoriteRefKey(_favoriteRefJob(r), _favoriteRefArtifact(r)) === key ? row : r);
+            if (!(_favoriteRefs || []).some(
+                r => _favoriteRefKey(_favoriteRefJob(r), _favoriteRefArtifact(r)) === key)) {
+                _favoriteRefs = [..._favoriteRefs, row];   // unknown locally: append, don't front-run
+            }
+        } else {
+            _favoriteRefs = [row, ...(_favoriteRefs || []).filter(
+                r => _favoriteRefKey(_favoriteRefJob(r), _favoriteRefArtifact(r)) !== key)];
+        }
         _favoriteRefsLoaded = true;
         if (_favoriteArtifactsReady) {
             _rebuildFavoriteArtifactsFromRefs();

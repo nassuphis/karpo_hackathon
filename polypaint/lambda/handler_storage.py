@@ -132,6 +132,10 @@ RESULTS_CATALOG_DDB_JOB_ID = "results#catalog"
 # A renders/<job>/ prefix can exist before calc.json lands (mid-compute):
 # re-probe calc-less rows younger than this; older ones are permanently junk.
 RESULTS_CATALOG_NO_CALC_RETRY_MS = 24 * 3600 * 1000
+# Bump whenever _results_entry_fields() or the stored row shape changes: rows
+# from older schemas reconcile automatically instead of decoding as zeros
+# forever (code-review-30 F10).
+RESULTS_CATALOG_SCHEMA_VERSION = 2
 FAVORITES_DDB_META_TASK_ID = "__meta__"
 FAVORITES_DDB_TASK_PREFIX = "favorite#"
 # Bump when the persisted favorite display snapshot shape changes; a row whose
@@ -1276,6 +1280,8 @@ def _favorite_from_row(row):
         "family": row.get("family", {}).get("S", "color"),
         "added_at": row.get("added_at", {}).get("S", ""),
     }
+    if row.get("hydration_state", {}).get("S") == "missing":
+        entry["hydration_state"] = "missing"   # persisted authoritative verdict (CR30 F7)
     for field in ("display_name", "image_key", "preview_key"):
         value = row.get(field, {}).get("S")
         if value:
@@ -1362,7 +1368,7 @@ def _favorite_snapshot_from_entry(entry):
     return snap
 
 
-def _resolve_favorite_color_snapshot(job_id, artifact_id, *, s3_client=None):
+def _resolve_favorite_color_snapshot(job_id, artifact_id, *, s3_client=None, parallel_heads=True):
     """Resolve a favorite's Color artifact by EXACT key: HEAD the known image /
     preview candidates and read that artifact's own overlay. No job scan, no
     /render-summary, no list_objects_v2 (favorites-speedup.md Proposal 3).
@@ -1379,7 +1385,7 @@ def _resolve_favorite_color_snapshot(job_id, artifact_id, *, s3_client=None):
     preview_candidates = [prefix + k for k in shape["preview_candidates"]]
     try:
         head = _head_artifact_keys(image_candidates + preview_candidates,
-                                   presign=False, s3_client=client)
+                                   presign=False, s3_client=client, parallel=parallel_heads)
     except Exception as exc:
         return None, "error", s3_error_reason(exc)
     image_info = _first_existing(head, image_candidates)
@@ -1432,18 +1438,43 @@ def _favorite_panel_row(ref, snapshot, state, reason):
 
 def _backfill_favorite_snapshot(job_id, artifact_id, snapshot):
     """Persist a resolved snapshot onto an existing (legacy) favorite row so the
-    next list is zero-S3 for it. Conditioned on the row still existing."""
+    next list is zero-S3 for it. Conditioned on the row still existing. Also
+    clears any persisted missing marker — the artifact evidently exists again."""
     _get_ddb().update_item(
         TableName=JOBS_TABLE,
         Key={
             "job_id": {"S": FAVORITES_DDB_JOB_ID},
             "task_id": {"S": _favorite_task_id(job_id, artifact_id)},
         },
-        UpdateExpression="SET snapshot_version = :v, snapshot = :s, updated_at_ms = :u",
+        UpdateExpression="SET snapshot_version = :v, snapshot = :s, updated_at_ms = :u"
+                         " REMOVE hydration_state, missing_at_ms",
         ExpressionAttributeValues={
             ":v": {"N": str(FAVORITE_SNAPSHOT_VERSION)},
             ":s": {"S": json.dumps(snapshot, separators=(",", ":"))},
             ":u": {"N": str(int(time.time() * 1000))},
+        },
+        ConditionExpression="attribute_exists(task_id)",
+    )
+
+
+def _persist_favorite_missing(job_id, artifact_id):
+    """Persist an AUTHORITATIVE missing verdict (code-review-30 F7): drop the
+    stale snapshot and mark the row, so the next zero-S3 cached list shows the
+    favorite as missing instead of resurrecting the old snapshot. The row stays
+    (product rule: a stale favorite remains visible until the user removes it);
+    a later forced refresh that finds the artifact again heals it via the
+    backfill. Transient/throttle/access errors must never reach here."""
+    _get_ddb().update_item(
+        TableName=JOBS_TABLE,
+        Key={
+            "job_id": {"S": FAVORITES_DDB_JOB_ID},
+            "task_id": {"S": _favorite_task_id(job_id, artifact_id)},
+        },
+        UpdateExpression="SET hydration_state = :m, missing_at_ms = :t, updated_at_ms = :t"
+                         " REMOVE snapshot, snapshot_version",
+        ExpressionAttributeValues={
+            ":m": {"S": "missing"},
+            ":t": {"N": str(int(time.time() * 1000))},
         },
         ConditionExpression="attribute_exists(task_id)",
     )
@@ -1663,15 +1694,17 @@ def handle_list_favorites(event):
         refs, snapshots, _ = _favorite_refs_from_rows(rows)
 
     to_resolve = [r for r in refs
-                  if refresh or (r["job_id"], r["artifact_id"]) not in snapshots]
+                  if refresh or ((r["job_id"], r["artifact_id"]) not in snapshots
+                                 and r.get("hydration_state") != "missing")]
     resolved = {}
     if to_resolve:
         import concurrent.futures
         client = _results_list_s3_client(len(to_resolve))
 
         def work(ref):
+            # serial HEADs inside this bounded pool — ONE executor total (CR30 F11)
             return (ref["job_id"], ref["artifact_id"]), _resolve_favorite_color_snapshot(
-                ref["job_id"], ref["artifact_id"], s3_client=client)
+                ref["job_id"], ref["artifact_id"], s3_client=client, parallel_heads=False)
 
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=min(len(to_resolve), 16)) as pool:
@@ -1681,6 +1714,7 @@ def handle_list_favorites(event):
     panel = []
     diag = {"snapshot_hits": 0, "snapshot_backfills": 0, "missing": 0, "errors": 0}
     backfills = []
+    fresh_missing = []
     for ref in refs:
         keypair = (ref["job_id"], ref["artifact_id"])
         if keypair in resolved:
@@ -1690,18 +1724,28 @@ def handle_list_favorites(event):
                 backfills.append((ref["job_id"], ref["artifact_id"], snap))
                 diag["snapshot_backfills"] += 1
             elif state == "missing":
+                fresh_missing.append(keypair)
                 diag["missing"] += 1
             elif state == "error":
                 diag["errors"] += 1
-        else:
+        elif keypair in snapshots:
             panel.append(_favorite_panel_row(ref, snapshots[keypair], "ready", ""))
             diag["snapshot_hits"] += 1
+        else:
+            # persisted missing verdict: shown WITHOUT any S3 probing (CR30 F7)
+            panel.append(_favorite_panel_row(ref, None, "missing", "not found"))
+            diag["missing"] += 1
 
     for job_id, artifact_id, snap in backfills:
         try:
             _backfill_favorite_snapshot(job_id, artifact_id, snap)
         except Exception:
             pass  # backfill is an optimization; never fail the list on it
+    for job_id, artifact_id in fresh_missing:
+        try:
+            _persist_favorite_missing(job_id, artifact_id)   # no resurrection (CR30 F7)
+        except Exception:
+            pass
 
     return ok_response({
         "favorites": panel,
@@ -1743,8 +1787,26 @@ def handle_add_favorite(event):
         "preview_key": snapshot.get("preview_key", ""),
     }
     added = _put_favorite_entry(entry, snapshot=snapshot)
-    # A conditional-put miss (already favorited) is not an error; return the
-    # freshly-resolved row so the caller can ensure it is in the local list.
+    if not added:
+        # Already favorited: return the STORED row (original added_at and
+        # display_name), never a freshly fabricated one — the frontend would
+        # otherwise reorder/rename an existing favorite (code-review-30 F8).
+        resp = _get_ddb().get_item(
+            TableName=JOBS_TABLE,
+            Key={"job_id": {"S": FAVORITES_DDB_JOB_ID},
+                 "task_id": {"S": _favorite_task_id(job_id, artifact_id)}})
+        row = resp.get("Item")
+        if row:
+            stored_ref = _favorite_from_row(row)
+            stored_snap = None
+            snap_raw = (row.get("snapshot") or {}).get("S")
+            if _parse_int((row.get("snapshot_version") or {}).get("N")) == FAVORITE_SNAPSHOT_VERSION and snap_raw:
+                try:
+                    stored_snap = json.loads(snap_raw)
+                except (ValueError, TypeError):
+                    stored_snap = None
+            return ok_response({"added": False,
+                                "favorite": _favorite_panel_row(stored_ref, stored_snap or snapshot, "ready", "")})
     return ok_response({"added": added, "favorite": _favorite_panel_row(entry, snapshot, "ready", "")})
 
 
@@ -2743,10 +2805,14 @@ def _results_catalog_item(entry, *, no_calc=False):
         "task_id": {"S": _results_catalog_task_id(entry["job_id"])},
         "result_job_id": {"S": entry["job_id"]},
         "cached_at_ms": {"N": str(int(time.time() * 1000))},
+        "v": {"N": str(RESULTS_CATALOG_SCHEMA_VERSION)},
     }
     if no_calc:
         item["no_calc"] = {"S": "1"}
         return item
+    etag = str(entry.get("_calc_etag") or "").strip('"')
+    if etag:
+        item["calc_etag"] = {"S": etag}   # source identity for repair tooling/diagnostics
     item["fn"] = {"S": str(entry.get("function", "?"))}
     for field in _RESULTS_CATALOG_NUM_FIELDS:
         try:
@@ -2785,6 +2851,36 @@ def _read_results_catalog():
         if not lek:
             return rows
         kwargs["ExclusiveStartKey"] = lek
+
+
+def _results_catalog_write_batch(put_items, delete_job_ids):
+    """Best-effort BatchWriteItem in 25-item chunks with bounded
+    UnprocessedItems retries (code-review-30 F9) — the first catalog build /
+    rebuild=true writes hundreds of rows, and serial PutItem round trips put
+    tens of seconds inside the /list request. Failures self-heal on the next
+    reconcile. Returns (attempted, failed)."""
+    requests = [{"PutRequest": {"Item": it}} for it in put_items]
+    requests += [{"DeleteRequest": {"Key": {
+        "job_id": {"S": RESULTS_CATALOG_DDB_JOB_ID},
+        "task_id": {"S": _results_catalog_task_id(j)}}}} for j in delete_job_ids]
+    if not requests:
+        return 0, 0
+    ddb = _get_ddb()
+    attempted, failed = len(requests), 0
+    for i in range(0, len(requests), 25):
+        chunk = requests[i:i + 25]
+        for _retry in range(3):
+            try:
+                resp = ddb.batch_write_item(RequestItems={JOBS_TABLE: chunk})
+            except Exception:
+                failed += len(chunk)
+                chunk = []
+                break
+            chunk = (resp.get("UnprocessedItems") or {}).get(JOBS_TABLE) or []
+            if not chunk:
+                break
+        failed += len(chunk)
+    return attempted, failed
 
 
 def _results_catalog_put(item):
@@ -2853,6 +2949,8 @@ def handle_list(event):
         item = rows.get(job_id)
         if item is None or rebuild:
             return True
+        if _parse_int((item.get("v") or {}).get("N")) != RESULTS_CATALOG_SCHEMA_VERSION:
+            return True   # older/unversioned schema — reconcile, don't decode as zeros (F10)
         if "no_calc" in item:
             cached = int(item.get("cached_at_ms", {}).get("N", "0"))
             return (now_ms - cached) < RESULTS_CATALOG_NO_CALC_RETRY_MS
@@ -2868,6 +2966,7 @@ def handle_list(event):
                                      Key=f"renders/{job_id}/calc.json")
             calc = json.loads(obj["Body"].read())
             entry = _results_entry_fields(job_id, calc)
+            entry["_calc_etag"] = str(obj.get("ETag") or "")
         except Exception as exc:
             if isinstance(exc, ClientError) and _is_missing_s3_error(exc):
                 # A render prefix without calc.json is not a usable compute
@@ -2895,16 +2994,19 @@ def handle_list(event):
     # calc caches its fields, a TRANSIENT error is returned but never cached.
     metadata_errors = []
     entries = {}
+    pending_items = []
     for entry in fresh:
         if entry.pop("_skip_missing_calc", False):
-            _results_catalog_put(_results_catalog_item(entry, no_calc=True))
+            pending_items.append(_results_catalog_item(entry, no_calc=True))
             continue
         err = entry.pop("_metadata_error", None)
         if err:
             metadata_errors.append({"job_id": entry["job_id"], "error": err[:200]})
+            entry.pop("_calc_etag", None)
             entries[entry["job_id"]] = entry
             continue
-        _results_catalog_put(_results_catalog_item(entry))
+        pending_items.append(_results_catalog_item(entry))
+        entry.pop("_calc_etag", None)
         entries[entry["job_id"]] = entry
 
     # Cached rows serve every job not read this call.
@@ -2916,13 +3018,18 @@ def handle_list(event):
         if entry is not None:
             entries[job_id] = entry
 
+    # 4b) Flush fresh rows in bounded batches (code-review-30 F9).
+    t_w0 = time.time()
+    writes_attempted, writes_failed = _results_catalog_write_batch(pending_items, [])
+    catalog_write_us = int((time.time() - t_w0) * 1e6)
+
     # 5) Prune rows whose job prefix vanished (deletes, manual surgery).
     present = set(job_ids)
-    pruned = 0
-    for jid in list(rows):
-        if jid not in present:
-            _results_catalog_delete(jid)
-            pruned += 1
+    prune_jobs = [jid for jid in rows if jid not in present]
+    t_p0 = time.time()
+    _results_catalog_write_batch([], prune_jobs)
+    catalog_prune_us = int((time.time() - t_p0) * 1e6)
+    pruned = len(prune_jobs)
 
     skipped_missing_calc = len([j for j in job_ids if j not in entries])
     fresh_jobs = {e.get("job_id") for e in fresh}
@@ -2941,6 +3048,10 @@ def handle_list(event):
         "prefix_list_us": prefix_list_us,
         "calc_fetch_us": calc_fetch_us,
         "catalog_read_us": catalog_read_us,
+        "catalog_write_us": catalog_write_us,
+        "catalog_writes_attempted": writes_attempted,
+        "catalog_writes_failed": writes_failed,
+        "catalog_prune_us": catalog_prune_us,
         "catalog_hits": catalog_hits,
         "catalog_misses": len(to_read),
         "catalog_pruned": pruned,
@@ -6190,8 +6301,11 @@ def handle_detail(event):
     return ok_response(result)
 
 
-def _head_artifact_keys(keys, presign=True, *, s3_client=None):
-    """HEAD-check a list of S3 keys in parallel."""
+def _head_artifact_keys(keys, presign=True, *, s3_client=None, parallel=True):
+    """HEAD-check a list of S3 keys — in parallel by default; parallel=False
+    runs serially for callers ALREADY inside a bounded pool (code-review-30
+    F11: an inner executor per favorite nested inside the refresh pool just
+    multiplied threads contending for one shared S3 connection pool)."""
     import concurrent.futures
     if not keys:
         return {}
@@ -6235,6 +6349,8 @@ def _head_artifact_keys(keys, presign=True, *, s3_client=None):
                 absent["error_reason"] = s3_error_reason(exc)
             return key, absent
 
+    if not parallel:
+        return dict(check(key) for key in keys)
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(keys), 20)) as pool:
         results = dict(pool.map(check, keys))
     return results

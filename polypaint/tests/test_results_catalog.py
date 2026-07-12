@@ -52,6 +52,28 @@ class _FakeDDB:
         k = (Key["job_id"]["S"], Key["task_id"]["S"])
         return {"Item": self.items[k]} if k in self.items else {}
 
+    def batch_write_item(self, RequestItems=None):
+        self.batch_calls = getattr(self, "batch_calls", 0) + 1
+        if getattr(self, "unprocessed_once", False):
+            self.unprocessed_once = False
+            table, reqs = next(iter(RequestItems.items()))
+            # process all but one, hand the last back as unprocessed
+            for req in reqs[:-1]:
+                self._apply(req)
+            return {"UnprocessedItems": {table: reqs[-1:]}}
+        for reqs in RequestItems.values():
+            for req in reqs:
+                self._apply(req)
+        return {"UnprocessedItems": {}}
+
+    def _apply(self, req):
+        if "PutRequest" in req:
+            it = req["PutRequest"]["Item"]
+            self.items[(it["job_id"]["S"], it["task_id"]["S"])] = it
+        else:
+            k = req["DeleteRequest"]["Key"]
+            self.items.pop((k["job_id"]["S"], k["task_id"]["S"]), None)
+
     def catalog_rows(self):
         return {t.split("#", 1)[1]: v for (j, t), v in self.items.items()
                 if j == hs.RESULTS_CATALOG_DDB_JOB_ID and t.startswith("result#")}
@@ -71,7 +93,9 @@ class _FakeS3:
             raise self.fail[Key]
         if Key not in self.objects:
             raise _ce("NoSuchKey", 404)
-        return {"Body": io.BytesIO(self.objects[Key])}
+        import hashlib
+        return {"Body": io.BytesIO(self.objects[Key]),
+                "ETag": '"' + hashlib.md5(self.objects[Key]).hexdigest() + '"'}
 
     def get_paginator(self, name):
         outer = self
@@ -259,13 +283,57 @@ class ResultsCatalogTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             hs._assert_mutable_job_partition("results#catalog")
 
+    # ── code-review-30 F9: batched writes, observable cost ───────────────
+    def test_first_build_uses_bounded_batches_not_per_row_puts(self):
+        for i in range(60):
+            self._seed_job(f"compute_{i:03d}")
+        puts = []
+        self.ddb.put_item = lambda **kw: puts.append(kw)   # any per-row put is a regression
+        body = self._list()
+        self.assertEqual(body["count"], 60)
+        self.assertEqual(puts, [])                          # no serial PutItem round trips
+        self.assertEqual(self.ddb.batch_calls, 3)           # ceil(60/25) bounded batches
+        self.assertEqual(body["catalog_writes_attempted"], 60)
+        self.assertEqual(body["catalog_writes_failed"], 0)
+        self.assertIn("catalog_write_us", body)
+        self.assertIn("catalog_prune_us", body)
+
+    def test_unprocessed_items_are_retried(self):
+        self._seed_job("compute_a")
+        self._seed_job("compute_b")
+        self.ddb.unprocessed_once = True
+        body = self._list()
+        self.assertEqual(body["catalog_writes_failed"], 0)  # retried to completion
+        self.assertEqual(set(self.ddb.catalog_rows()), {"compute_a", "compute_b"})
+
+    # ── code-review-30 F10: schema-versioned rows ────────────────────────
+    def test_old_schema_rows_reconcile_automatically(self):
+        self._seed_job("compute_a")
+        self._list()
+        key = (hs.RESULTS_CATALOG_DDB_JOB_ID, hs._results_catalog_task_id("compute_a"))
+        row = self.ddb.items[key]
+        self.assertEqual(row["v"]["N"], str(hs.RESULTS_CATALOG_SCHEMA_VERSION))
+        self.assertIn("calc_etag", row)                     # source identity recorded
+        # simulate a row written by an OLDER release
+        del row["v"]
+        n = len(self._calc_gets())
+        body = self._list()
+        self.assertEqual(len(self._calc_gets()), n + 1)     # re-read, not trusted
+        self.assertEqual(body["catalog_misses"], 1)
+        self.assertEqual(self.ddb.items[key]["v"]["N"], str(hs.RESULTS_CATALOG_SCHEMA_VERSION))
+        # current-version row is trusted again
+        n = len(self._calc_gets())
+        self._list()
+        self.assertEqual(len(self._calc_gets()), n)
+
     def test_catalog_write_failure_never_breaks_the_read(self):
         self._seed_job("compute_a")
         def boom(**kw):
-            raise _ce("ProvisionedThroughputExceededException", 400, "PutItem")
-        self.ddb.put_item = boom
+            raise _ce("ProvisionedThroughputExceededException", 400, "BatchWriteItem")
+        self.ddb.batch_write_item = boom
         body = self._list()                                       # still answers
         self.assertEqual([r["job_id"] for r in body["results"]], ["compute_a"])
+        self.assertEqual(body["catalog_writes_failed"], body["catalog_writes_attempted"])
 
 
 if __name__ == "__main__":

@@ -173,6 +173,25 @@ test.describe('Favorites UI', () => {
     expect(lines.some((l) => /Favorites refreshed/.test(l.msg))).toBe(false);
   });
 
+  test('a duplicate add never reorders or renames the existing row (CR30 F8)', async ({ page }) => {
+    await page.evaluate((rows) => {
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-favorites') return { favorites: rows };
+        if (path === '/add-favorite') {
+          // backend returns the AUTHORITATIVE stored row for a duplicate
+          return { added: false, favorite: { ...rows[1] } };
+        }
+        throw new Error('unexpected ' + path);
+      };
+    }, FAVORITE_ROWS);
+    await page.click('.tab-btn:text("Favorites")');
+    await expect(page.locator('.favorite-art-row')).toHaveCount(2);
+    const before = await page.evaluate(() => (_favoriteRefs || []).map((r) => r.display_name));
+    await page.evaluate(() => _addColorFavorite({ job_id: 'job_fav_b', artifact_id: 'color_b' }, { force: true }));
+    const after = await page.evaluate(() => (_favoriteRefs || []).map((r) => r.display_name));
+    expect(after).toEqual(before);          // no front-running, no rename
+  });
+
   test('GoRender switches to Render and selects the artifact', async ({ page }) => {
     await page.evaluate(({ rows, summaryA, detail }) => {
       window._mockFavoriteRows = rows.slice();

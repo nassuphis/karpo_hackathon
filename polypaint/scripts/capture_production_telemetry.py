@@ -94,6 +94,11 @@ FIELD_CLASSES = {
     "step_score_channels": "count",
     # finalize results
     "assemble_ms": "stage_wall_ms",
+    "dl_ms": "stage_wall_ms",          # clip task download span
+    "compute_ms": "stage_wall_ms",     # clip task compute span
+    # legacy finalize field: histories predating CR33-telemetry carry the
+    # hardcoded 0 — class is known, the VALUE from old runs is untrustworthy
+    "encode_ms": "stage_wall_ms",
     "render_ms": "stage_wall_ms",
     "render_encode_ms": "stage_wall_ms",
     "upload_ms": "stage_wall_ms",
@@ -149,18 +154,44 @@ def fetch_history_live(execution_arn, region):
 
 
 def parse_state_walls(events):
-    """Pair Entered/Exited per state name (map iterations produce repeats)."""
-    open_stack = {}
+    """§4.4: name-only FIFO pairing is unsafe when map iterations run the
+    same state concurrently — an exit can pair with another iteration's
+    enter, skewing max/p50 (sums survive by coincidence). Each StateExited
+    walks its previousEventId ancestry to the StateEntered event that
+    actually opened it; FIFO remains only as a last-resort fallback for
+    histories without usable event links."""
+    by_id = {e["id"]: e for e in events if "id" in e}
+    entered_ids = {}
+    fifo = {}
     walls = {}
     for e in events:
         d = e.get("stateEnteredEventDetails")
         if d:
-            open_stack.setdefault(d["name"], []).append(_ts(e))
+            entered_ids[e.get("id")] = _ts(e)
+            fifo.setdefault(d["name"], []).append(e.get("id"))
             continue
         d = e.get("stateExitedEventDetails")
-        if d and open_stack.get(d["name"]):
-            t0 = open_stack[d["name"]].pop(0)
-            walls.setdefault(d["name"], []).append(round((_ts(e) - t0) * 1000.0, 3))
+        if not d:
+            continue
+        name = d["name"]
+        enter_id = None
+        cursor = e
+        for _ in range(4096):
+            prev_id = cursor.get("previousEventId")
+            if not prev_id or prev_id not in by_id:
+                break
+            cursor = by_id[prev_id]
+            if (cursor.get("stateEnteredEventDetails") or {}).get("name") == name:
+                enter_id = cursor.get("id")
+                break
+        if enter_id is None and fifo.get(name):
+            enter_id = fifo[name][0]
+        if enter_id is None or enter_id not in entered_ids:
+            continue
+        if fifo.get(name) and enter_id in fifo[name]:
+            fifo[name].remove(enter_id)
+        t0 = entered_ids.pop(enter_id)
+        walls.setdefault(name, []).append(round((_ts(e) - t0) * 1000.0, 3))
     return walls
 
 
@@ -174,29 +205,69 @@ def extract_request_id(output_obj):
 
 
 def parse_task_results(events):
-    """Every TaskSucceeded payload with a JSON Payload.body, plus request ID."""
+    """§4.4: reconstruct each successful task through its previousEventId
+    causal chain (TaskSucceeded -> ... -> TaskScheduled), so the exact
+    FunctionName and chunk/section identity travel with the metrics instead
+    of being associated by array order or state name. Decode failures are
+    RETAINED (flagged), never silently dropped (§4.10)."""
+    by_id = {e["id"]: e for e in events if "id" in e}
     tasks = []
     for e in events:
         if e["type"] != "TaskSucceeded":
             continue
         raw = e.get("taskSucceededEventDetails", {}).get("output")
-        if not raw:
-            continue
-        try:
-            out = json.loads(raw)
-        except Exception:
-            continue
-        payload = out.get("Payload") if isinstance(out, dict) else None
+        out = None
         body = None
-        if isinstance(payload, dict) and payload.get("body"):
+        decode_error = None
+        if raw:
             try:
-                body = json.loads(payload["body"])
-            except Exception:
-                body = None
+                out = json.loads(raw)
+            except Exception as exc:
+                decode_error = f"output: {exc}"
+        if isinstance(out, dict):
+            payload = out.get("Payload")
+            if isinstance(payload, dict) and payload.get("body"):
+                try:
+                    body = json.loads(payload["body"])
+                except Exception as exc:
+                    decode_error = f"Payload.body: {exc}"
+        # walk the causal chain to the scheduling event
+        function_name = None
+        chunk_identity = {}
+        cursor = e
+        for _ in range(64):
+            prev_id = cursor.get("previousEventId")
+            if not prev_id or prev_id not in by_id:
+                break
+            cursor = by_id[prev_id]
+            if cursor["type"] == "TaskScheduled":
+                params_raw = cursor.get("taskScheduledEventDetails", {}).get("parameters")
+                if params_raw:
+                    try:
+                        params = json.loads(params_raw)
+                        function_name = params.get("FunctionName")
+                        inner = params.get("Payload")
+                        if isinstance(inner, dict):
+                            inner_body = inner.get("body")
+                            probe = inner
+                            if isinstance(inner_body, str):
+                                try:
+                                    probe = json.loads(inner_body)
+                                except Exception:
+                                    probe = inner
+                            for key in ("chunk_idx", "section_idx", "group_idx", "task_id"):
+                                if isinstance(probe, dict) and key in probe:
+                                    chunk_identity[key] = probe[key]
+                    except Exception as exc:
+                        decode_error = decode_error or f"parameters: {exc}"
+                break
         tasks.append({
             "timestamp": _ts(e),
             "request_id": extract_request_id(out if isinstance(out, dict) else {}),
             "body": body,
+            "function_name": function_name,
+            "chunk_identity": chunk_identity,
+            "decode_error": decode_error,
         })
     return tasks
 
@@ -253,6 +324,75 @@ def classify_and_aggregate(tasks):
         "identity": identity,
         "unclassified_time_fields": sorted(unclassified),
     }
+
+
+def count_retries(events):
+    """§4.5: a general collector must report retry counts and must not count
+    multiple attempts as distinct successes. Failure-class task events are
+    counted per state name; TaskScheduled in excess of TaskSucceeded for the
+    same state is reported as attempts_in_excess."""
+    failures = {}
+    scheduled = {}
+    succeeded = {}
+    for e in events:
+        t = e["type"]
+        if t in ("TaskFailed", "TaskTimedOut", "TaskStartFailed"):
+            for det_key in ("taskFailedEventDetails", "taskTimedOutEventDetails",
+                            "taskStartFailedEventDetails"):
+                det = e.get(det_key)
+                if det:
+                    name = det.get("resourceType", "") + ":" + det.get("resource", "")
+                    failures[name] = failures.get(name, 0) + 1
+                    break
+            else:
+                failures["unknown"] = failures.get("unknown", 0) + 1
+        elif t == "TaskScheduled":
+            scheduled["all"] = scheduled.get("all", 0) + 1
+        elif t == "TaskSucceeded":
+            succeeded["all"] = succeeded.get("all", 0) + 1
+    return {
+        "task_failure_events": sum(failures.values()),
+        "failures_by_resource": failures,
+        "tasks_scheduled": scheduled.get("all", 0),
+        "tasks_succeeded": succeeded.get("all", 0),
+        "attempts_in_excess": max(0, scheduled.get("all", 0) - succeeded.get("all", 0)),
+    }
+
+
+def validate_reconstruction(events, tasks, state_walls, identity):
+    """§4.10 invariants. Violations are REPORTED, and the CLI exits nonzero
+    on them just as it does for unclassified timing fields."""
+    problems = []
+    decode_failures = [t for t in tasks if t.get("decode_error")]
+    if decode_failures:
+        problems.append(
+            f"{len(decode_failures)} task result(s) failed to decode: "
+            + "; ".join(sorted({t["decode_error"] for t in decode_failures}))[:400])
+    rids = [t["request_id"] for t in tasks if t.get("request_id")]
+    if len(rids) != len(set(rids)):
+        problems.append("duplicate Lambda request IDs across task results")
+    # enter/exit balance per state
+    opened = {}
+    for e in events:
+        d = e.get("stateEnteredEventDetails")
+        if d:
+            opened[d["name"]] = opened.get(d["name"], 0) + 1
+        d = e.get("stateExitedEventDetails")
+        if d:
+            opened[d["name"]] = opened.get(d["name"], 0) - 1
+    unbalanced = {k: v for k, v in opened.items() if v != 0}
+    if unbalanced:
+        problems.append(f"unbalanced state enter/exit: {unbalanced}")
+    # expected map iterations vs observed (when the input declares them)
+    expected = identity.get("n_chunks")
+    if expected:
+        chunked = [t for t in tasks
+                   if isinstance(t.get("body"), dict) and "chunk_idx" in
+                   (t.get("chunk_identity") or {})]
+        if chunked and len(chunked) != int(expected):
+            problems.append(
+                f"expected {expected} chunk tasks, reconstructed {len(chunked)}")
+    return problems
 
 
 def join_cloudwatch(tasks, region, window):
@@ -353,6 +493,7 @@ def build_report(events, *, kind, execution_arn="", cw_joined=None,
 
     tasks = parse_task_results(events)
     aggregate = classify_and_aggregate(tasks)
+    retries = count_retries(events)
     walls = parse_state_walls(events)
     state_walls = {
         name: {
@@ -397,8 +538,14 @@ def build_report(events, *, kind, execution_arn="", cw_joined=None,
     except Exception:
         pass
 
+    validation = validate_reconstruction(events, tasks, state_walls, identity)
+    per_function = {}
+    for t in tasks:
+        fn = t.get("function_name")
+        if fn:
+            per_function[fn] = per_function.get(fn, 0) + 1
     return {
-        "schema": "pp-production-telemetry-v1",
+        "schema": "pp-production-telemetry-v2",
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "source": source,
         "kind": kind,
@@ -406,6 +553,9 @@ def build_report(events, *, kind, execution_arn="", cw_joined=None,
         "workflow_wall_ms": workflow_wall_ms,
         "state_walls_ms": state_walls,
         "task_aggregate": aggregate,
+        "tasks_by_function": per_function,
+        "retries": retries,
+        "validation_problems": validation,
         "handler_report": handler or {"note": "no CloudWatch join (offline mode)"},
         "function_configs": fn_configs or {},
         "workload_identity": identity,
@@ -436,6 +586,19 @@ def render_markdown(report):
     if agg["unclassified_time_fields"]:
         lines.append("\n**FLAGGED — timing fields with unknown class (not aggregated):** "
                      + ", ".join(f"`{k}`" for k in agg["unclassified_time_fields"]))
+    if report.get("tasks_by_function"):
+        lines.append("\n## Invocations by function\n")
+        for fn, n in sorted(report["tasks_by_function"].items()):
+            lines.append(f"- `{fn}`: {n}")
+    retr = report.get("retries") or {}
+    lines.append("\n## Retries (§4.5)\n")
+    lines.append(f"- task failure events: {retr.get('task_failure_events', 0)}")
+    lines.append(f"- scheduled/succeeded: {retr.get('tasks_scheduled', 0)}/{retr.get('tasks_succeeded', 0)}"
+                 f" (attempts in excess: {retr.get('attempts_in_excess', 0)})")
+    if report.get("validation_problems"):
+        lines.append("\n**VALIDATION PROBLEMS (§4.10):**\n")
+        for pr in report["validation_problems"]:
+            lines.append(f"- {pr}")
     hr = report.get("handler_report") or {}
     lines.append("\n## Lambda handler report\n")
     for k, v in hr.items():
@@ -495,9 +658,13 @@ def main():
     base.with_suffix(".md").write_text(render_markdown(report))
     print(f"wrote {base}.json")
     print(f"wrote {base}.md")
+    problems = list(report.get("validation_problems") or [])
     if report["task_aggregate"]["unclassified_time_fields"]:
-        print("WARNING: unclassified timing fields flagged in the report:",
-              ", ".join(report["task_aggregate"]["unclassified_time_fields"]))
+        problems.append("unclassified timing fields: "
+                        + ", ".join(report["task_aggregate"]["unclassified_time_fields"]))
+    if problems:
+        for pr in problems:
+            print(f"WARNING: {pr}")
         return 2
     return 0
 

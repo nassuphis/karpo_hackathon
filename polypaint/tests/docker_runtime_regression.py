@@ -355,6 +355,79 @@ class _MemS3ObjectHandler(http.server.BaseHTTPRequestHandler):
 
 # ── AE/CM Solver Tests ───────────────────────────────────────────────────
 
+def test_sweep_mt_stream_flush_byte_identity():
+    """CR34 §12-1b A/B gate: the incremental pwrite writer (with and without
+    the progress sidecar) must produce byte-identical output to the retired
+    single-fwrite writer. The input is deterministic and the expected SHA was
+    captured from the pre-change binary on ARM64 Linux (commit a5c7d97 tree).
+    avg_iterations is pinned too — it moves if solve order or chains change.
+    """
+    import hashlib
+    import math
+    import struct
+
+    print("--- sweep_mt streaming-flush byte identity ---")
+    n_steps, n_coeffs = 50000, 8
+    coeffs_path = "/tmp/stream_ab_cf.bin"
+    with open(coeffs_path, "wb") as f:
+        for s in range(n_steps):
+            t = s / n_steps
+            row = []
+            for k in range(n_coeffs):
+                re = math.cos(2 * math.pi * (k + 1) * t) + (0.25 if k == 0 else 0.0)
+                im = math.sin(2 * math.pi * (k + 2) * t) * 0.5
+                row += [re, im]
+            f.write(struct.pack("<%df" % (2 * n_coeffs), *row))
+    got = hashlib.sha256(open(coeffs_path, "rb").read()).hexdigest()
+    assert got == "12ba957b406633b56b40c3919736a1279e4f87b28c7c643f47beabb1e51f3d72", \
+        "A/B input drifted: " + got
+
+    expected_out = "3ab87cbd0a69cebe88918fed4a9136ad51c2cf30d41f834eea9d274d77e00c6e"
+    base_spec = {
+        "mode": "solve_mt", "coeffs_file": coeffs_path,
+        "n_coeffs": n_coeffs, "n2": n_steps,
+        "i1_start": 0, "i1_end": 1, "match_roots": False, "n_threads": 4,
+    }
+
+    r = subprocess.run(["/src/sweep_mt", "/tmp/stream_ab_plain.bin"],
+                       input=json.dumps(base_spec), capture_output=True,
+                       text=True, timeout=120)
+    assert r.returncode == 0, "plain solve FAILED: " + r.stderr[:200]
+    meta_plain = json.loads(r.stdout)
+    sha_plain = hashlib.sha256(open("/tmp/stream_ab_plain.bin", "rb").read()).hexdigest()
+    assert sha_plain == expected_out, "no-sidecar output drifted: " + sha_plain
+
+    prog_spec = dict(base_spec)
+    prog_spec["progress_file"] = "/tmp/stream_ab.progress"
+    prog_spec["flush_bytes"] = 8192   # force MANY flushes per thread
+    r = subprocess.run(["/src/sweep_mt", "/tmp/stream_ab_prog.bin"],
+                       input=json.dumps(prog_spec), capture_output=True,
+                       text=True, timeout=120)
+    assert r.returncode == 0, "sidecar solve FAILED: " + r.stderr[:200]
+    meta_prog = json.loads(r.stdout)
+    sha_prog = hashlib.sha256(open("/tmp/stream_ab_prog.bin", "rb").read()).hexdigest()
+    assert sha_prog == expected_out, "sidecar output drifted: " + sha_prog
+
+    for key in meta_plain:
+        if key != "elapsed_us":
+            assert meta_plain[key] == meta_prog[key], \
+                "meta drifted at %s: %r vs %r" % (key, meta_plain[key], meta_prog[key])
+    assert abs(meta_plain["avg_iterations"] - 2.01) < 1e-9, meta_plain["avg_iterations"]
+
+    blob = open("/tmp/stream_ab.progress", "rb").read()
+    assert blob[:4] == b"PPR1", blob[:4]
+    n_threads, total = struct.unpack_from("<IQ", blob, 4)
+    expected_total = n_steps * (n_coeffs - 1) * 2 * 4
+    assert n_threads == 4 and total == expected_total, (n_threads, total)
+    covered = 0
+    for i in range(n_threads):
+        rs, re, fe = struct.unpack_from("<QQQ", blob, 16 + i * 24)
+        assert rs <= re <= total and fe == re, (i, rs, re, fe)
+        covered += re - rs
+    assert covered == total, covered
+    print("sweep_mt stream flush: SHA %s… identical plain/sidecar; sidecar valid" % sha_prog[:12])
+
+
 def test_ae_cm_solvers():
     print("--- AE/AE-MT/CM solver regression ---")
 
@@ -3520,6 +3593,7 @@ if __name__ == "__main__":
     test_libcurl_binaries_use_rpath_not_runpath()
 
     print("--- Generating test fixtures ---")
+    test_sweep_mt_stream_flush_byte_identity()
     test_ae_cm_solvers()
     test_cfpv_coeffgen()
     test_param_gen_threaded_runtime()

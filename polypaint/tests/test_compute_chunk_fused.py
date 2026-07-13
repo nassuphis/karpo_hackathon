@@ -7,8 +7,47 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 
+class _FakeStreamer:
+    """Stands in for RootsStreamUploader: records lifecycle calls and lets
+    tests force the fallback path."""
+    instances = []
+    finish_ok = True
+
+    def __init__(self, s3_client, bucket, key, data_path, progress_path,
+                 total_bytes, **kwargs):
+        self.key = key
+        self.data_path = data_path
+        self.progress_path = progress_path
+        self.total_bytes = total_bytes
+        self.started = False
+        self.finished = False
+        self.aborted = False
+        self.parts_during_solve = 3
+        self.span_us = 4200
+        _FakeStreamer.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+    def finish(self):
+        self.finished = True
+        return _FakeStreamer.finish_ok
+
+    def abort(self):
+        self.aborted = True
+
+    @classmethod
+    def reset(cls, *, finish_ok=True):
+        cls.instances = []
+        cls.finish_ok = finish_ok
+
+
 class TestComputeChunkFused(unittest.TestCase):
 
+    def setUp(self):
+        _FakeStreamer.reset()
+
+    @patch("handler_compute_chunk_fused.RootsStreamUploader", _FakeStreamer)
     @patch("handler_compute_chunk_fused.os.path.getsize")
     @patch("handler_compute_chunk_fused.report_status")
     @patch("handler_compute_chunk_fused._upload_file")
@@ -69,7 +108,27 @@ class TestComputeChunkFused(unittest.TestCase):
                     "lambda_memory_mb", "arch"):
             self.assertIn(key, telemetry)
         self.assertEqual(telemetry["roots_size"], 560)
-        self.assertEqual(mock_upload.call_count, 3)
+        # CR34 §12-1 contract: params+coeffs go through the background
+        # executor (still _upload_file underneath); roots go through the
+        # streaming uploader, so _upload_file sees exactly 2 calls.
+        self.assertEqual(mock_upload.call_count, 2)
+        streamer = _FakeStreamer.instances[-1]
+        self.assertTrue(streamer.started)
+        self.assertTrue(streamer.finished)
+        self.assertFalse(streamer.aborted)
+        self.assertEqual(streamer.key, "renders/compute_j/chunk_2.bin")
+        self.assertEqual(streamer.total_bytes, 10 * 7 * 8)
+        self.assertEqual(body["roots_upload_fallback"], 0)
+        self.assertEqual(body["roots_parts_during_solve"], 3)
+        self.assertEqual(body["upload_roots_span_us"], 4200)
+        self.assertNotIn("upload_roots_us", body)
+        self.assertGreaterEqual(body["upload_roots_tail_us"], 0)
+        self.assertGreaterEqual(body["pre_solve_upload_wait_us"], 0)
+        self.assertGreaterEqual(body["upload_params_us"], 0)
+        self.assertGreaterEqual(body["upload_coeffs_us"], 0)
+        # the solver was pointed at the progress sidecar (aberth_mt)
+        self.assertEqual(mock_solve.call_args.kwargs["progress_path"],
+                         streamer.progress_path)
         self.assertEqual(mock_report.call_args_list[-1].args[:3], ("compute_j", "compute_run_fused_2", "done"))
         self.assertEqual(mock_param.call_args.kwargs["fused_threads"], 4)
         self.assertEqual(mock_match.call_args_list[0].kwargs["expected_metadata"], {
@@ -99,6 +158,7 @@ class TestComputeChunkFused(unittest.TestCase):
         self.assertEqual(mock_coeff.call_args.kwargs["n"], 100)
         self.assertEqual(mock_coeff.call_args.kwargs["source_step_start"], 20)
 
+    @patch("handler_compute_chunk_fused.RootsStreamUploader", _FakeStreamer)
     @patch("handler_compute_chunk_fused.os.path.getsize")
     @patch("handler_compute_chunk_fused.report_status")
     @patch("handler_compute_chunk_fused._download_file")
@@ -142,8 +202,12 @@ class TestComputeChunkFused(unittest.TestCase):
         self.assertEqual(mock_param.call_count, 0)
         self.assertEqual(mock_coeff.call_count, 0)
         self.assertEqual(mock_download.call_count, 2)
-        self.assertEqual(mock_upload.call_count, 1)
+        # nothing to background-upload; roots go through the streamer
+        self.assertEqual(mock_upload.call_count, 0)
+        self.assertTrue(_FakeStreamer.instances[-1].finished)
+        self.assertEqual(body["roots_upload_fallback"], 0)
 
+    @patch("handler_compute_chunk_fused.RootsStreamUploader", _FakeStreamer)
     @patch("handler_compute_chunk_fused.os.path.getsize")
     @patch("handler_compute_chunk_fused.report_status")
     @patch("handler_compute_chunk_fused._download_file")
@@ -184,13 +248,113 @@ class TestComputeChunkFused(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(body["reused_params"], 0)
         self.assertEqual(body["reused_coeffs"], 1)
-        self.assertGreater(body["upload_params_us"], 0)
+        self.assertGreaterEqual(body["upload_params_us"], 0)
         self.assertEqual(body["upload_coeffs_us"], 0)
         self.assertEqual(mock_param.call_count, 1)
         self.assertEqual(mock_coeff.call_count, 0)
         self.assertEqual(mock_download.call_count, 1)
-        self.assertEqual(mock_upload.call_count, 2)
+        # only the regenerated params background-upload; roots stream
+        self.assertEqual(mock_upload.call_count, 1)
         self.assertEqual(mock_download.call_args.args[0], "renders/compute_j/coeffs_0001.bin")
+
+    @patch("handler_compute_chunk_fused.RootsStreamUploader", _FakeStreamer)
+    @patch("handler_compute_chunk_fused.os.path.getsize")
+    @patch("handler_compute_chunk_fused.report_status")
+    @patch("handler_compute_chunk_fused._upload_file")
+    @patch("handler_compute_chunk_fused._s3_size_matches")
+    @patch("handler_compute_chunk_fused._run_solve_local")
+    @patch("handler_compute_chunk_fused._run_coeffgen_local")
+    @patch("handler_compute_chunk_fused._run_param_gen_local")
+    def test_fused_chunk_stream_failure_falls_back_to_serial_put(self, mock_param, mock_coeff, mock_solve, mock_match, mock_upload, mock_report, mock_getsize):
+        import handler_compute_chunk_fused as mod
+
+        _FakeStreamer.reset(finish_ok=False)
+        mock_match.return_value = False
+        mock_param.return_value = {"elapsed_us": 111, "threads": 4}
+        mock_coeff.return_value = {"threads": 4}
+        mock_solve.return_value = {"n_t": 10, "degree": 7, "avg_iterations": 3.5}
+        mock_getsize.side_effect = [160, 560, 560]
+
+        result = mod.handle_fused_chunk(self._base_params(chunk_idx=5))
+        body = json.loads(result["body"])
+        self.assertEqual(body["roots_upload_fallback"], 1)
+        self.assertIn("upload_roots_us", body)
+        # params + coeffs backgrounded + the serial roots fallback PUT
+        # (background calls record from worker threads, so order is not
+        # deterministic — assert presence, not position)
+        self.assertEqual(mock_upload.call_count, 3)
+        uploaded_keys = {c.args[1] for c in mock_upload.call_args_list}
+        self.assertIn("renders/compute_j/chunk_5.bin", uploaded_keys)
+
+    @patch("handler_compute_chunk_fused.RootsStreamUploader", _FakeStreamer)
+    @patch("handler_compute_chunk_fused.os.path.getsize")
+    @patch("handler_compute_chunk_fused.report_status")
+    @patch("handler_compute_chunk_fused._upload_file")
+    @patch("handler_compute_chunk_fused._s3_size_matches")
+    @patch("handler_compute_chunk_fused._run_solve_local")
+    @patch("handler_compute_chunk_fused._run_coeffgen_local")
+    @patch("handler_compute_chunk_fused._run_param_gen_local")
+    def test_fused_chunk_solve_failure_aborts_multipart(self, mock_param, mock_coeff, mock_solve, mock_match, mock_upload, mock_report, mock_getsize):
+        import handler_compute_chunk_fused as mod
+
+        mock_match.return_value = False
+        mock_param.return_value = {"elapsed_us": 111, "threads": 4}
+        mock_coeff.return_value = {"threads": 4}
+        mock_solve.side_effect = RuntimeError("fused solve failed: boom")
+        mock_getsize.side_effect = [160, 560]
+
+        with self.assertRaises(RuntimeError):
+            mod.handle_fused_chunk(self._base_params(chunk_idx=6))
+        streamer = _FakeStreamer.instances[-1]
+        self.assertTrue(streamer.started)
+        self.assertTrue(streamer.aborted)
+        self.assertFalse(streamer.finished)
+        self.assertEqual(mock_report.call_args_list[-1].args[2], "error")
+
+    @patch("handler_compute_chunk_fused.RootsStreamUploader", _FakeStreamer)
+    @patch("handler_compute_chunk_fused.os.path.getsize")
+    @patch("handler_compute_chunk_fused.report_status")
+    @patch("handler_compute_chunk_fused._upload_file")
+    @patch("handler_compute_chunk_fused._s3_size_matches")
+    @patch("handler_compute_chunk_fused._run_solve_local")
+    @patch("handler_compute_chunk_fused._run_coeffgen_local")
+    @patch("handler_compute_chunk_fused._run_param_gen_local")
+    def test_fused_chunk_background_upload_failure_fails_the_task(self, mock_param, mock_coeff, mock_solve, mock_match, mock_upload, mock_report, mock_getsize):
+        import handler_compute_chunk_fused as mod
+
+        mock_match.return_value = False
+        mock_param.return_value = {"elapsed_us": 111, "threads": 4}
+        mock_coeff.return_value = {"threads": 4}
+        mock_solve.return_value = {"n_t": 10, "degree": 7, "avg_iterations": 3.5}
+        mock_getsize.side_effect = [160, 560, 560]
+        mock_upload.side_effect = RuntimeError("params PUT failed")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            mod.handle_fused_chunk(self._base_params(chunk_idx=7))
+        self.assertIn("params PUT failed", str(ctx.exception))
+        self.assertEqual(mock_report.call_args_list[-1].args[2], "error")
+
+    def _base_params(self, *, chunk_idx):
+        return {
+            "job_id": "compute_j",
+            "chunk_idx": chunk_idx,
+            "step_start": 0,
+            "step_count": 10,
+            "N": 100,
+            "times": 1,
+            "n_coeffs": 7,
+            "degree": 7,
+            "fused_threads": 4,
+            "solver_mode": "aberth_mt",
+            "task_id": f"compute_run_fused_{chunk_idx}",
+            "function": "g1",
+            "param_transforms": [],
+            "coeff_transforms": [],
+            "cfpv": [],
+            "params_key": f"renders/compute_j/params_{chunk_idx:04d}.bin",
+            "coeffs_key": f"renders/compute_j/coeffs_{chunk_idx:04d}.bin",
+            "bin_key": f"renders/compute_j/chunk_{chunk_idx}.bin",
+        }
 
     @patch("handler_compute_chunk_fused.time.time", side_effect=[100.0, 100.25])
     @patch("handler_compute_chunk_fused.subprocess.run")

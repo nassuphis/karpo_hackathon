@@ -1570,7 +1570,7 @@ echo "  CmpPlan: $(du -h /tmp/polypaint-compute-plan.zip | cut -f1)  (plan + fin
 COMPUTE_FUSED_CHUNK_DIR=/tmp/polypaint-compute-fused-chunk
 rm -rf "$COMPUTE_FUSED_CHUNK_DIR"
 mkdir -p "$COMPUTE_FUSED_CHUNK_DIR"
-cp lambda/handler_compute_chunk_fused.py lambda/shared.py "$COMPUTE_FUSED_CHUNK_DIR/"
+cp lambda/handler_compute_chunk_fused.py lambda/roots_stream_upload.py lambda/shared.py "$COMPUTE_FUSED_CHUNK_DIR/"
 cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMPUTE_FUSED_CHUNK_DIR/"
 chmod +x "$COMPUTE_FUSED_CHUNK_DIR"/sweep_coeffgen "$COMPUTE_FUSED_CHUNK_DIR"/sweep_mt "$COMPUTE_FUSED_CHUNK_DIR"/sweep_cm
 cd "$COMPUTE_FUSED_CHUNK_DIR" && zip -FS -r9 /tmp/polypaint-compute-fused-chunk.zip . -q && cd "$SCRIPT_DIR"

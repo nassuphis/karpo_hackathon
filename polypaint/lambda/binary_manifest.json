@@ -1,7 +1,7 @@
 {
   "binaries": {
     "assemble_greyscale": {
-      "built_mtime": 1783936744,
+      "built_mtime": 1783944396,
       "sha256": "0082832b62a6508e53b2ac15e838c0bac6ac65d8f7fe8cfa866a9149a89c1719",
       "size": 204656,
       "source_sha256": {
@@ -9,7 +9,7 @@
       }
     },
     "autolevels_render": {
-      "built_mtime": 1783936814,
+      "built_mtime": 1783944463,
       "sha256": "532f26aa33cb764c3dd9d6a4adf833edf0f53ad49a628ceca8168946ee101674",
       "size": 204568,
       "source_sha256": {
@@ -17,7 +17,7 @@
       }
     },
     "bilevel_merge": {
-      "built_mtime": 1783936813,
+      "built_mtime": 1783944462,
       "sha256": "aef99c616f1849d02dbf1e9496a41363f2fae8fa31141556d716b8698c5e3e39",
       "size": 203728,
       "source_sha256": {
@@ -25,7 +25,7 @@
       }
     },
     "bilevel_section_raster": {
-      "built_mtime": 1783936472,
+      "built_mtime": 1783944124,
       "sha256": "a7a4c79a1d9c639b1f5525851c7450e6652be099535609704a7426c084812441",
       "size": 247232,
       "source_sha256": {
@@ -34,7 +34,7 @@
       }
     },
     "coeffs_bilevel_raster": {
-      "built_mtime": 1783936472,
+      "built_mtime": 1783944124,
       "sha256": "ce9fdb789d6623005cecbc7099d47dcc5ce129fd5c029791fb9dc634d7ec5cef",
       "size": 180728,
       "source_sha256": {
@@ -42,7 +42,7 @@
       }
     },
     "dz_export": {
-      "built_mtime": 1783936813,
+      "built_mtime": 1783944463,
       "sha256": "5281c7a0ac8b7df3e1c8005fca9704e1e7e512d191232a2f0465ae402e0b68c2",
       "size": 202936,
       "source_sha256": {
@@ -50,7 +50,7 @@
       }
     },
     "palette_bins_render": {
-      "built_mtime": 1783936474,
+      "built_mtime": 1783944126,
       "sha256": "42f5c2be569650f40cfe7e547be3242ca33baa4246cb40fd7ab873e8bc11087d",
       "size": 233360,
       "source_sha256": {
@@ -61,7 +61,7 @@
       }
     },
     "png_export": {
-      "built_mtime": 1783936813,
+      "built_mtime": 1783944463,
       "sha256": "aaeddd7e720ef409a5a81d16b8379c2e61260a01d433388cd7a3b70fe0f4e19f",
       "size": 203184,
       "source_sha256": {
@@ -69,7 +69,7 @@
       }
     },
     "raw2jpeg": {
-      "built_mtime": 1783936812,
+      "built_mtime": 1783944462,
       "sha256": "32e026d795f832ec43b827638f138a45d33049a4689579385c7dc27751666c52",
       "size": 203560,
       "source_sha256": {
@@ -77,7 +77,7 @@
       }
     },
     "raw_to_bilevel": {
-      "built_mtime": 1783936813,
+      "built_mtime": 1783944462,
       "sha256": "86dba12c9a202812ccf7ca4ed9a08fb1abe1afcddc18a7468f94bf35d3c7b13d",
       "size": 203504,
       "source_sha256": {
@@ -85,7 +85,7 @@
       }
     },
     "roots2pix_mt": {
-      "built_mtime": 1783936551,
+      "built_mtime": 1783944202,
       "sha256": "cf28aeef4308ec720f9197d93af5d4b9ba3ec21d824456b5cebd455c5dcb2316",
       "size": 207288,
       "source_sha256": {
@@ -97,7 +97,7 @@
       }
     },
     "score_raw_render": {
-      "built_mtime": 1783936813,
+      "built_mtime": 1783944462,
       "sha256": "9d7ef04a00a36196ae7e463875fe830d16659e1a881cf5e9547d00976ccc6376",
       "size": 228144,
       "source_sha256": {
@@ -108,7 +108,7 @@
       }
     },
     "solve_palette_chunk": {
-      "built_mtime": 1783936474,
+      "built_mtime": 1783944126,
       "sha256": "32e2c7347e5daddcd9d88230aa65d432c68491eaa8500201072591650e41a313",
       "size": 250616,
       "source_sha256": {
@@ -118,7 +118,7 @@
       }
     },
     "solve_palette_chunk_mt": {
-      "built_mtime": 1783936689,
+      "built_mtime": 1783944331,
       "sha256": "275c0375bbd559595cbb757731756669eb3d740d55159155f7d3190cb847acbb",
       "size": 207160,
       "source_sha256": {
@@ -130,7 +130,7 @@
       }
     },
     "solve_palette_debug": {
-      "built_mtime": 1783936473,
+      "built_mtime": 1783944126,
       "sha256": "d64cf62382fc13f76ce75b504fd6c65e1ea6da6537f37fea27390a5daab6f3e5",
       "size": 338352,
       "source_sha256": {
@@ -143,7 +143,7 @@
       }
     },
     "solve_proximity_hist_sectioned": {
-      "built_mtime": 1783936615,
+      "built_mtime": 1783944263,
       "sha256": "75e1f4a00b482097f365cbc38bf631338a81d156f173239298b8562debe9fbbc",
       "size": 207800,
       "source_sha256": {
@@ -155,7 +155,7 @@
       }
     },
     "solve_proximity_stats": {
-      "built_mtime": 1783936473,
+      "built_mtime": 1783944125,
       "sha256": "fa5ea53498e848079e963b654b1416ed3ea01fa65a572cd4fb0e46fbd3ee452f",
       "size": 322840,
       "source_sha256": {
@@ -165,7 +165,7 @@
       }
     },
     "step_scores_to_palette_raw": {
-      "built_mtime": 1783936474,
+      "built_mtime": 1783944126,
       "sha256": "105967512a95e9413b5300ac7694f4c57bf6dd2a15c3680387d5ff70ecad2460",
       "size": 144664,
       "source_sha256": {
@@ -173,7 +173,7 @@
       }
     },
     "sweep": {
-      "built_mtime": 1783936471,
+      "built_mtime": 1783944124,
       "sha256": "c1a181c80c0970467420b93a431ad0138c8eac8a990390161d52b62e5d27bded",
       "size": 1951192,
       "source_sha256": {
@@ -213,7 +213,7 @@
       }
     },
     "sweep_cm": {
-      "built_mtime": 1783936895,
+      "built_mtime": 1783944558,
       "sha256": "526e14988711ae246b409092fb693319e1be0f2980a53926674563256275749f",
       "size": 203656,
       "source_sha256": {
@@ -222,7 +222,7 @@
       }
     },
     "sweep_coeffgen": {
-      "built_mtime": 1783936895,
+      "built_mtime": 1783944558,
       "sha256": "80e31f90ac9b5036c0a26d8266a0262fec6692ab81d34e1c1133bbd82fa97275",
       "size": 1958488,
       "source_sha256": {
@@ -262,15 +262,15 @@
       }
     },
     "sweep_mt": {
-      "built_mtime": 1783936471,
-      "sha256": "bb38b0fa1d085914db7a8b6c62c4565700b65d9732d4bad6aabaf0f19f72017e",
-      "size": 252640,
+      "built_mtime": 1783944124,
+      "sha256": "ca9110d3eea0b6555685fc6abec226fcea80f8ad5b68c244f6c1b0db5dbe3fe3",
+      "size": 253096,
       "source_sha256": {
-        "lambda/sweep_mt.c": "0263cebd80c6e41074d1c6a8a94ba99aefc73ac62dc7c1d6272339b7c9b150f2"
+        "lambda/sweep_mt.c": "76c2450d35f8ca59003686b5ff4b2df9d8edad496dd361e83ac3d86fc03153b1"
       }
     },
     "tiff_compat": {
-      "built_mtime": 1783936813,
+      "built_mtime": 1783944463,
       "sha256": "c99135897734087c55453c1108b67ae2df469afaebb21646c22b1cb3d214aaba",
       "size": 203624,
       "source_sha256": {
@@ -278,7 +278,7 @@
       }
     },
     "wall_dz": {
-      "built_mtime": 1783936814,
+      "built_mtime": 1783944463,
       "sha256": "67d4865dbbed5b3dc40c4c635557964ab3e0bf53416ab784e046959b3a70a80f",
       "size": 203800,
       "source_sha256": {
@@ -286,7 +286,7 @@
       }
     }
   },
-  "generated_at": 1783936895,
+  "generated_at": 1783944558,
   "git_dirty": true,
-  "git_sha": "621d82cde1c60f8ca7b468df3abc910603eb0f2a"
+  "git_sha": "a5c7d9763f7b3ddae1b936d0b7ac3a0c8464f013"
 }

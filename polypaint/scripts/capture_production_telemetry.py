@@ -55,9 +55,19 @@ METRIC_SCHEMA = {
     "solve_us": _m("stage_wall_us", "additive"),
     "compute_us": _m("stage_wall_us", "additive", alias_of="solve_us"),
     "elapsed_us": _m("stage_wall_us", "distribution"),
-    "upload_params_us": _m("stage_wall_us", "additive"),
-    "upload_coeffs_us": _m("stage_wall_us", "additive"),
+    # CR34 §12-1: params/coeffs uploads run on background threads overlapping
+    # the solve, so their spans are DISTRIBUTIONS — summing them against the
+    # handler wall would double-count. The serial critical-path remainders
+    # are the join wait and the roots tail (additive). upload_roots_us keeps
+    # its original serial-PUT meaning (fallback path + pre-§12-1 histories).
+    "upload_params_us": _m("stage_wall_us", "distribution"),
+    "upload_coeffs_us": _m("stage_wall_us", "distribution"),
     "upload_roots_us": _m("stage_wall_us", "additive"),
+    "pre_solve_upload_wait_us": _m("stage_wall_us", "additive"),
+    "upload_roots_tail_us": _m("stage_wall_us", "additive"),
+    "upload_roots_span_us": _m("stage_wall_us", "distribution"),
+    "roots_parts_during_solve": _m("count", "additive"),
+    "roots_upload_fallback": _m("count", "additive"),
     "params_size": _m("bytes", "additive"),
     "coeffs_size": _m("bytes", "additive"),
     "bin_size": _m("bytes", "additive"),

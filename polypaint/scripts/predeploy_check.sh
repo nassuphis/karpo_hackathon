@@ -123,6 +123,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_param_debug_handler.py \
     tests/test_coeffgen_param_gen.py \
     tests/test_compute_chunk_fused.py \
+    tests/test_roots_stream_upload.py \
     tests/test_compute_workflow_definition.py \
     tests/test_compute_fused.py \
     tests/test_compute_status_handler.py \

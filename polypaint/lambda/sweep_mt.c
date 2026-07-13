@@ -15,6 +15,7 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -186,6 +187,33 @@ static unsigned long long detectMemoryLimitBytes(void) {
     return 0;
 }
 
+/* CR34 §12-1b: incremental output + progress sidecar.
+ *
+ * Each solver thread still fills its contiguous region of rootData in RAM
+ * exactly as before (chains, order, and results untouched), but flushes its
+ * completed slice to the pre-sized output file with pwrite every flushSteps
+ * steps instead of the old single post-join fwrite. Because regions are
+ * disjoint and each byte is written exactly once from the same buffer, the
+ * final file is byte-identical to the old writer.
+ *
+ * The optional sidecar (spec key "progress_file") lets the Python streaming
+ * uploader begin S3 multipart parts while the solve is still running:
+ *   bytes  0..3   magic "PPR1"
+ *   bytes  4..7   u32 LE nThreads
+ *   bytes  8..15  u64 LE total output bytes
+ *   16 + i*24     per-thread u64 LE {regionStartByte, regionEndByte,
+ *                                    flushedEndByte}
+ * flushedEndByte advances only AFTER the corresponding data pwrite returned,
+ * so every byte the sidecar claims is durable in the output file. The reader
+ * clamps values, so a torn 8-byte read can only under-report progress.
+ * Sidecar failures never fail the solve — it is an upload accelerator, not
+ * part of the data path. */
+#define PP_PROGRESS_HEADER 16
+#define PP_PROGRESS_RECORD 24
+#define PP_FLUSH_BYTES_DEFAULT (8L * 1024L * 1024L)
+#define PP_FLUSH_BYTES_MIN 4096L
+#define PP_FLUSH_BYTES_MAX (256L * 1024L * 1024L)
+
 typedef struct {
     long stepStart;
     long stepEnd;
@@ -194,7 +222,58 @@ typedef struct {
     const float *coeffData;
     float *rootData;
     long totalIters;
+    int outFd;
+    int progressFd;     /* -1 = no sidecar requested */
+    int threadIdx;
+    long flushSteps;
+    int ioError;
 } SolveThread;
+
+/* Full pwrite with short-transfer resume; returns 0 on success. */
+static int pwriteFull(int fd, const void *buf, size_t len, long long off) {
+    size_t done = 0;
+    while (done < len) {
+        ssize_t wrote = pwrite(fd, (const char *)buf + done, len - done,
+                               (off_t)(off + (long long)done));
+        if (wrote < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (wrote == 0) return -1;
+        done += (size_t)wrote;
+    }
+    return 0;
+}
+
+static void putU32LE(unsigned char *p, unsigned int v) {
+    for (int b = 0; b < 4; b++) p[b] = (unsigned char)((v >> (8 * b)) & 0xFF);
+}
+
+static void putU64LE(unsigned char *p, unsigned long long v) {
+    for (int b = 0; b < 8; b++) p[b] = (unsigned char)((v >> (8 * b)) & 0xFF);
+}
+
+/* Flush solved steps [fromStep, toStep) of this thread's region to the
+ * output file, then publish the new durable watermark to the sidecar. */
+static void solveThreadFlush(SolveThread *job, long fromStep, long toStep) {
+    if (toStep <= fromStep || job->ioError) return;
+    long rowBytes = (long)job->degree * 2L * (long)sizeof(float);
+    long long off = (long long)fromStep * rowBytes;
+    const char *src = (const char *)job->rootData + off;
+    if (pwriteFull(job->outFd, src,
+                   (size_t)((toStep - fromStep) * rowBytes), off) != 0) {
+        job->ioError = 1;
+        return;
+    }
+    if (job->progressFd >= 0) {
+        unsigned char le[8];
+        putU64LE(le, (unsigned long long)toStep * (unsigned long long)rowBytes);
+        /* flushedEndByte is the third u64 of record threadIdx; best effort */
+        (void)pwriteFull(job->progressFd, le, 8,
+                         (long long)PP_PROGRESS_HEADER
+                         + (long long)job->threadIdx * PP_PROGRESS_RECORD + 16);
+    }
+}
 
 static int solveOneRecordWarm(const float *coeffStep, float *rootStep, int nCoeffs, int degree,
                               double *rootRe, double *rootIm) {
@@ -270,11 +349,19 @@ static void *solveThreadMain(void *arg) {
 
     seedEAInitialGuess(rootRe, rootIm, job->degree);
 
+    long flushedThrough = job->stepStart;
     for (long step = job->stepStart; step < job->stepEnd; step++) {
         const float *coeffStep = job->coeffData + step * coeffStride;
         float *rootStep = job->rootData + step * rootStride;
         totalIters += solveOneRecordWarm(coeffStep, rootStep, job->nCoeffs, job->degree, rootRe, rootIm);
+        if ((step + 1 - flushedThrough) >= job->flushSteps) {
+            solveThreadFlush(job, flushedThrough, step + 1);
+            flushedThrough = step + 1;
+            if (job->ioError) break;   /* results cannot be persisted */
+        }
     }
+    if (!job->ioError && flushedThrough < job->stepEnd)
+        solveThreadFlush(job, flushedThrough, job->stepEnd);
     job->totalIters = totalIters;
     return NULL;
 }
@@ -326,6 +413,16 @@ static int runSolveMT(const char *buf, const char *outPath) {
         const char *envThreads = getenv("SWEEP_MT_THREADS");
         if (envThreads && *envThreads) requestedThreads = atoi(envThreads);
     }
+
+    char progressFile[512] = "";
+    cp = findKey(buf, "progress_file");
+    if (cp) parseString(cp, progressFile, sizeof(progressFile));
+
+    long flushBytes = PP_FLUSH_BYTES_DEFAULT;
+    cp = findKey(buf, "flush_bytes");
+    if (cp) flushBytes = (long)parseNum(&cp);
+    if (flushBytes < PP_FLUSH_BYTES_MIN) flushBytes = PP_FLUSH_BYTES_MIN;
+    if (flushBytes > PP_FLUSH_BYTES_MAX) flushBytes = PP_FLUSH_BYTES_MAX;
 
     FILE *fin = fopen(coeffsFile, "rb");
     if (!fin) {
@@ -420,6 +517,32 @@ static int runSolveMT(const char *buf, const char *outPath) {
         return 1;
     }
 
+    /* Output is opened and pre-sized BEFORE solving so worker threads can
+     * flush completed slices as they go (and an unwritable output fails
+     * fast instead of after the whole solve). */
+    int outFd = open(outPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (outFd < 0) {
+        free(threads);
+        free(jobs);
+        free(coeffData);
+        free(rootData);
+        fprintf(stderr, "Cannot open %s\n", outPath);
+        return 1;
+    }
+    if (ftruncate(outFd, (off_t)rootBytes) != 0) {
+        close(outFd);
+        free(threads);
+        free(jobs);
+        free(coeffData);
+        free(rootData);
+        fprintf(stderr, "Cannot pre-size %s to %ld bytes\n", outPath, rootBytes);
+        return 1;
+    }
+
+    long rowBytes = (long)degree * 2L * (long)sizeof(float);
+    long flushSteps = flushBytes / rowBytes;
+    if (flushSteps < 1) flushSteps = 1;
+
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
@@ -434,10 +557,58 @@ static int runSolveMT(const char *buf, const char *outPath) {
         jobs[i].degree = degree;
         jobs[i].coeffData = coeffData;
         jobs[i].rootData = rootData;
+        jobs[i].outFd = outFd;
+        jobs[i].progressFd = -1;
+        jobs[i].threadIdx = i;
+        jobs[i].flushSteps = flushSteps;
+        jobs[i].ioError = 0;
         cursor += block;
+    }
+
+    /* Optional progress sidecar; failures leave progressFd at -1 (the solve
+     * never depends on it). Header + all records are written up front so a
+     * reader always sees complete, clamped-safe region bounds. */
+    int progressFd = -1;
+    if (progressFile[0]) {
+        progressFd = open(progressFile, O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (progressFd >= 0) {
+            size_t sidecarBytes = (size_t)PP_PROGRESS_HEADER
+                                  + (size_t)nThreads * PP_PROGRESS_RECORD;
+            unsigned char *sidecar = (unsigned char *)calloc(1, sidecarBytes);
+            if (sidecar) {
+                memcpy(sidecar, "PPR1", 4);
+                putU32LE(sidecar + 4, (unsigned int)nThreads);
+                putU64LE(sidecar + 8, (unsigned long long)rootBytes);
+                for (int i = 0; i < nThreads; i++) {
+                    unsigned char *rec = sidecar + PP_PROGRESS_HEADER
+                                         + (size_t)i * PP_PROGRESS_RECORD;
+                    unsigned long long rs = (unsigned long long)jobs[i].stepStart
+                                            * (unsigned long long)rowBytes;
+                    unsigned long long re = (unsigned long long)jobs[i].stepEnd
+                                            * (unsigned long long)rowBytes;
+                    putU64LE(rec, rs);
+                    putU64LE(rec + 8, re);
+                    putU64LE(rec + 16, rs);   /* nothing flushed yet */
+                }
+                if (pwriteFull(progressFd, sidecar, sidecarBytes, 0) != 0) {
+                    close(progressFd);
+                    progressFd = -1;
+                }
+                free(sidecar);
+            } else {
+                close(progressFd);
+                progressFd = -1;
+            }
+        }
+        for (int i = 0; i < nThreads; i++) jobs[i].progressFd = progressFd;
+    }
+
+    for (int i = 0; i < nThreads; i++) {
         if (pthread_create(&threads[i], NULL, solveThreadMain, &jobs[i]) != 0) {
             fprintf(stderr, "pthread_create failed for worker %d\n", i);
             for (int j = 0; j < i; j++) pthread_join(threads[j], NULL);
+            if (progressFd >= 0) close(progressFd);
+            close(outFd);
             free(threads);
             free(jobs);
             free(coeffData);
@@ -447,22 +618,16 @@ static int runSolveMT(const char *buf, const char *outPath) {
     }
 
     long totalIters = 0;
+    int ioError = 0;
     for (int i = 0; i < nThreads; i++) {
         pthread_join(threads[i], NULL);
         totalIters += jobs[i].totalIters;
+        if (jobs[i].ioError) ioError = 1;
     }
 
-    FILE *fout = fopen(outPath, "wb");
-    if (!fout) {
-        free(threads);
-        free(jobs);
-        free(coeffData);
-        free(rootData);
-        fprintf(stderr, "Cannot open %s\n", outPath);
-        return 1;
-    }
-    if (fwrite(rootData, 1, (size_t)rootBytes, fout) != (size_t)rootBytes) {
-        fclose(fout);
+    if (progressFd >= 0) close(progressFd);
+    if (ioError || close(outFd) != 0) {
+        if (ioError) close(outFd);
         free(threads);
         free(jobs);
         free(coeffData);
@@ -470,7 +635,6 @@ static int runSolveMT(const char *buf, const char *outPath) {
         fprintf(stderr, "Failed to write %s\n", outPath);
         return 1;
     }
-    fclose(fout);
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
     long elapsed_us = (t1.tv_sec - t0.tv_sec) * 1000000L +

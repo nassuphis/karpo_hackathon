@@ -3,9 +3,11 @@ import os
 import platform
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 
+from roots_stream_upload import RootsStreamUploader
 from shared import BUCKET, build_identity, is_enospc, ok_response, parse_body, report_status
 
 s3 = boto3.client("s3")
@@ -75,6 +77,14 @@ def handle_fused_chunk(params):
     params_path = f"/tmp/fused_params_{chunk_idx}.bin"
     coeffs_path = f"/tmp/fused_coeffs_{chunk_idx}.bin"
     roots_path = f"/tmp/fused_roots_{chunk_idx}.bin"
+    progress_path = roots_path + ".progress"
+
+    # CR34 §12-1a: params/coeffs uploads run on background threads so solve
+    # starts the moment coeffgen finishes; the futures are joined (and their
+    # failures re-raised) before the task can report success.
+    pre_uploads = ThreadPoolExecutor(max_workers=2)
+    params_upload_future = None
+    coeffs_upload_future = None
 
     progress = {
         "phase": "compute_chunk_fused",
@@ -120,17 +130,16 @@ def handle_fused_chunk(params):
                 fused_threads=fused_threads,
             )
             param_gen_us = int(param_meta.get("elapsed_us", 0) or 0)
-            upload_t0 = time.time()
-            _upload_file(
+            params_upload_future = pre_uploads.submit(
+                _timed_upload,
                 params_path,
                 params_key,
-                metadata=_stage_metadata(
+                _stage_metadata(
                     stage="params",
                     step_start=step_start,
                     step_count=step_count,
                 ),
             )
-            upload_params_us = int((time.time() - upload_t0) * 1e6)
 
         params_size = os.path.getsize(params_path)
         if params_size != params_expected:
@@ -174,11 +183,11 @@ def handle_fused_chunk(params):
                 fused_threads=fused_threads,
             )
             coeffgen_us = int((time.time() - coeff_t0) * 1e6)
-            upload_t0 = time.time()
-            _upload_file(
+            coeffs_upload_future = pre_uploads.submit(
+                _timed_upload,
                 coeffs_path,
                 coeffs_key,
-                metadata=_stage_metadata(
+                _stage_metadata(
                     stage="coeffs",
                     step_start=step_start,
                     step_count=step_count,
@@ -186,7 +195,6 @@ def handle_fused_chunk(params):
                     degree=degree,
                 ),
             )
-            upload_coeffs_us = int((time.time() - upload_t0) * 1e6)
 
         coeffs_size = os.path.getsize(coeffs_path)
         if coeffs_size != coeffs_expected:
@@ -194,39 +202,56 @@ def handle_fused_chunk(params):
                 f"fused coeffgen size mismatch for chunk {chunk_idx}: expected {coeffs_expected}, got {coeffs_size}"
             )
 
-        try:
-            os.remove(params_path)
-        except OSError:
-            pass
+        # params_path/coeffs_path stay on disk until their background uploads
+        # are joined; the finally block removes every tmp file.
 
+        # CR34 §12-1b: the roots bin uploads as S3 multipart parts WHILE the
+        # solver writes it — sweep_mt flushes completed slices and publishes
+        # durable watermarks in the progress sidecar — so after solve only
+        # the tail parts and the multipart complete remain on the critical
+        # path. Any streaming failure falls back to the plain serial upload.
+        streamer = RootsStreamUploader(
+            s3, BUCKET, bin_key, roots_path, progress_path, roots_expected)
+        streamer.start()
         solve_t0 = time.time()
-        solve_meta = _run_solve_local(
-            output_path=roots_path,
-            coeffs_path=coeffs_path,
-            solver_mode=solver_mode,
-            n_coeffs=n_coeffs,
-            n_steps=step_count,
-            fused_threads=fused_threads,
-        )
-        solve_us = int((time.time() - solve_t0) * 1e6)
-
-        roots_size = os.path.getsize(roots_path)
-        if roots_size != roots_expected:
-            raise RuntimeError(
-                f"fused solve size mismatch for chunk {chunk_idx}: expected {roots_expected}, got {roots_size}"
+        try:
+            solve_meta = _run_solve_local(
+                output_path=roots_path,
+                coeffs_path=coeffs_path,
+                solver_mode=solver_mode,
+                n_coeffs=n_coeffs,
+                n_steps=step_count,
+                fused_threads=fused_threads,
+                progress_path=progress_path if solver_mode == "aberth_mt" else None,
             )
-        upload_t0 = time.time()
-        _upload_file(roots_path, bin_key)
-        upload_roots_us = int((time.time() - upload_t0) * 1e6)
+            solve_us = int((time.time() - solve_t0) * 1e6)
 
-        try:
-            os.remove(coeffs_path)
-        except OSError:
-            pass
-        try:
-            os.remove(roots_path)
-        except OSError:
-            pass
+            roots_size = os.path.getsize(roots_path)
+            if roots_size != roots_expected:
+                raise RuntimeError(
+                    f"fused solve size mismatch for chunk {chunk_idx}: expected {roots_expected}, got {roots_size}"
+                )
+        except BaseException:
+            streamer.abort()
+            raise
+        tail_t0 = time.time()
+        stream_ok = streamer.finish()
+        upload_roots_us = None
+        if not stream_ok:
+            put_t0 = time.time()
+            _upload_file(roots_path, bin_key)
+            upload_roots_us = int((time.time() - put_t0) * 1e6)
+        upload_roots_tail_us = int((time.time() - tail_t0) * 1e6)
+
+        # Join the pre-solve uploads: their failures surface HERE, before the
+        # task can report success. The wait is the only critical-path cost
+        # they retain (expected ~0 — solve far exceeds the upload spans).
+        wait_t0 = time.time()
+        if params_upload_future is not None:
+            upload_params_us = params_upload_future.result()
+        if coeffs_upload_future is not None:
+            upload_coeffs_us = coeffs_upload_future.result()
+        pre_solve_upload_wait_us = int((time.time() - wait_t0) * 1e6)
 
         result_data = {
             "chunk_idx": chunk_idx,
@@ -248,7 +273,16 @@ def handle_fused_chunk(params):
             "solve_us": int(solve_us),
             "upload_params_us": 0 if reused_params else int(upload_params_us),
             "upload_coeffs_us": int(upload_coeffs_us),
-            "upload_roots_us": int(upload_roots_us),
+            # CR34 §12-1 truthful names: upload_params/coeffs_us are now
+            # SPANS that overlap the solve, not serial critical-path stages;
+            # the serial remainder is the join wait + the roots tail.
+            # upload_roots_us keeps its original serial-PUT meaning and is
+            # emitted only on the fallback path (added below).
+            "pre_solve_upload_wait_us": int(pre_solve_upload_wait_us),
+            "upload_roots_tail_us": int(upload_roots_tail_us),
+            "upload_roots_span_us": int(streamer.span_us) if stream_ok else int(upload_roots_tail_us),
+            "roots_parts_during_solve": int(streamer.parts_during_solve),
+            "roots_upload_fallback": 0 if stream_ok else 1,
             "param_gen_threads": int(fused_threads),
             "coeffgen_threads": int(coeff_meta.get("threads", fused_threads) or fused_threads),
             "fused_threads": int(fused_threads),
@@ -284,6 +318,8 @@ def handle_fused_chunk(params):
                 **build_identity(),
             },
         }
+        if upload_roots_us is not None:
+            result_data["upload_roots_us"] = int(upload_roots_us)
         if "skipped_overflow" in solve_meta:
             result_data["skipped_overflow"] = int(solve_meta.get("skipped_overflow", 0) or 0)
         report_status(job_id, task_id, "done", result_data=result_data)
@@ -294,7 +330,11 @@ def handle_fused_chunk(params):
             raise RuntimeError(f"fused compute chunk {chunk_idx} ran out of /tmp: {e}") from e
         raise
     finally:
-        for path in (params_path, coeffs_path, roots_path):
+        # Background uploads must be joined before their source files go
+        # away (this shutdown only waits; failures were surfaced by the
+        # .result() calls on the success path).
+        pre_uploads.shutdown(wait=True)
+        for path in (params_path, coeffs_path, roots_path, progress_path):
             try:
                 os.remove(path)
             except OSError:
@@ -373,7 +413,15 @@ def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, p
     return meta
 
 
-def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps, fused_threads):
+def _timed_upload(local_path, key, metadata=None):
+    """Upload wrapper for background futures: returns the upload span in µs
+    so the joined future carries its own honest timing."""
+    t0 = time.time()
+    _upload_file(local_path, key, metadata=metadata)
+    return int((time.time() - t0) * 1e6)
+
+
+def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps, fused_threads, progress_path=None):
     if solver_mode == "companion_matrix":
         spec = {
             "mode": "solve_cm",
@@ -393,6 +441,10 @@ def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps
             "match_roots": False,
             "n_threads": fused_threads,
         }
+        if progress_path:
+            # sweep_mt publishes durable flush watermarks here so the
+            # streaming uploader can ship parts while the solve runs
+            spec["progress_file"] = progress_path
         binary = SWEEP_MT
     result = subprocess.run(
         [binary, output_path],

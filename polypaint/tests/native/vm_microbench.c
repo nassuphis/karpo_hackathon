@@ -306,6 +306,40 @@ int main(void) {
         printf("  \"metric_slot1_proximity_ns\": %.3f,\n", bench_metric_slots(one_prox, 1, metric_calls));
         printf("  \"metric_slot2_dup_proximity_ns\": %.3f,\n", bench_metric_slots(dup_prox, 2, metric_calls));
     }
+    /* CR33 F12: non-pair family bundles through the production entry — the
+     * durable before/after seams for the family-pass work (F4/F5/F6). */
+    {
+        const enum SolveMetric extrema4[4] = {
+            SOLVE_METRIC_MAX_RE, SOLVE_METRIC_MIN_RE,
+            SOLVE_METRIC_MAX_IM, SOLVE_METRIC_MIN_IM};
+        const enum SolveMetric radial7[7] = {
+            SOLVE_METRIC_DIST_UNIT_CIRCLE, SOLVE_METRIC_MIN_MOD,
+            SOLVE_METRIC_MAX_MOD, SOLVE_METRIC_MEAN_LOG_MOD,
+            SOLVE_METRIC_SD_LOG_MOD, SOLVE_METRIC_INSIDE_UNIT_FRACTION,
+            SOLVE_METRIC_UNIT_ANNULUS_FRACTION_01};
+        const enum SolveMetric axis_median3[3] = {
+            SOLVE_METRIC_REAL_AXIS_PROXIMITY, SOLVE_METRIC_IMAG_AXIS_PROXIMITY,
+            SOLVE_METRIC_DIAGONAL_PROXIMITY};
+        const enum SolveMetric angular_hist2[2] = {
+            SOLVE_METRIC_ANGULAR_ENTROPY_16, SOLVE_METRIC_SECTOR_MAX_SHARE_16};
+        const enum SolveMetric angular_orders3[3] = {
+            SOLVE_METRIC_ANGULAR_ORDER_2, SOLVE_METRIC_ANGULAR_ORDER_3,
+            SOLVE_METRIC_ANGULAR_ORDER_4};
+        const enum SolveMetric centroid9[9] = {
+            SOLVE_METRIC_CENTROID_RE, SOLVE_METRIC_CENTROID_IM,
+            SOLVE_METRIC_CENTROID_DIST, SOLVE_METRIC_SPREAD,
+            SOLVE_METRIC_ANISOTROPY, SOLVE_METRIC_AREA,
+            SOLVE_METRIC_ASYMMETRY_RE, SOLVE_METRIC_OUTLIERNESS,
+            SOLVE_METRIC_SHELLINESS};
+        const enum SolveMetric one_dist_uc[1] = {SOLVE_METRIC_DIST_UNIT_CIRCLE};
+        printf("  \"metric_family_extrema4_ns\": %.3f,\n", bench_metric_slots(extrema4, 4, metric_calls));
+        printf("  \"metric_family_radial7_ns\": %.3f,\n", bench_metric_slots(radial7, 7, metric_calls));
+        printf("  \"metric_family_axis_median3_ns\": %.3f,\n", bench_metric_slots(axis_median3, 3, metric_calls));
+        printf("  \"metric_family_angular_hist2_ns\": %.3f,\n", bench_metric_slots(angular_hist2, 2, metric_calls));
+        printf("  \"metric_family_angular_orders3_ns\": %.3f,\n", bench_metric_slots(angular_orders3, 3, metric_calls));
+        printf("  \"metric_family_centroid9_ns\": %.3f,\n", bench_metric_slots(centroid9, 9, metric_calls));
+        printf("  \"metric_slot1_dist_unit_circle_ns\": %.3f,\n", bench_metric_slots(one_dist_uc, 1, metric_calls));
+    }
     {
         RootXformEntry preparedChain[MAX_RT_CHAIN];
         int nPrepared = parse_prepared_chain(preparedChain, MAX_RT_CHAIN);

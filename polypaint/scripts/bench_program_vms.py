@@ -172,6 +172,13 @@ def build_cases(workdir, binary):
                        "n_threads": 4}, params_file)
     cases = {
         "param_baseline": param_payload(),
+        # CR33 F12 seams: production invocation mode (ordered ring via "-")
+        "param_expr_stream_t2": dict(param_payload(PARAM_EXPR, threads=2), _invoke="stream"),
+        "param_expr_stream_t4": dict(param_payload(PARAM_EXPR, threads=4), _invoke="stream"),
+        # CR33 F12 seams: static vs dynamic legacy transform forms
+        "param_rect_static": param_payload([["rect", "4", "1.618", "0.125"]]),
+        "param_rect_dynamic": param_payload([["rect", "real(4 + 0*t1)", "1.618", "0.125"]]),
+        "param_rtheta_static": param_payload([["rtheta", "0.7"]]),
         "param_identity_4tok": param_payload([["push", "t1"], ["emit", "p1"],
                                               ["push", "t2"], ["emit", "p2"]]),
         "param_arith_8tok": param_payload([["push", "t1"], ["push", "t2"], ["add"], ["emit", "p1"],
@@ -192,6 +199,11 @@ def build_cases(workdir, binary):
             "poly[0] = 1", "poly[1] = p1 + p2", "poly[2] = p1 * p2",
             "poly[3] = sin(p1) + cos(p2)", "poly = rev(poly)"]), function="const", n=128),
         "coeff4_baseline": coeff_payload(function="const", n=128),
+        # CR33 F12 seams: direct-selector ops at high degree + repetition
+        "coeff128_add": coeff_payload("fill(129, 1.5)\npoly = pop\npoly = add(poly, poly)", n=64),
+        "coeff256_add": coeff_payload("fill(257, 1.5)\npoly = pop\npoly = add(poly, poly)", n=64),
+        "coeff128_neg16": coeff_payload("fill(129, 1.5)\npoly = pop\n" + "\n".join(["poly = neg(poly)"] * 16), n=64),
+        "coeff256_neg16": coeff_payload("fill(257, 1.5)\npoly = pop\n" + "\n".join(["poly = neg(poly)"] * 16), n=64),
         "chunked35_t1": chunked_payload(params_file, 1),
         "chunked35_t2": chunked_payload(params_file, 2),
         "chunked35_t4": chunked_payload(params_file, 4),
@@ -203,11 +215,32 @@ def build_cases(workdir, binary):
     return cases
 
 
+def _run_json_stream(binary, payload, out_path):
+    """CR33 F12: invoke exactly like the pre-CR33 fused handler — argv "-",
+    stdout redirected to a regular file — selecting the ordered-ring
+    scheduler. Metadata arrives on stderr in stream mode."""
+    import subprocess as sp
+    with open(out_path, "wb") as out:
+        result = sp.run([str(binary), "-"],
+                        input=json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
+                        stdout=out, stderr=sp.PIPE, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(f"stream benchmark command failed: {result.stderr.decode()}")
+    return json.loads(result.stderr.decode().strip().splitlines()[-1])
+
+
+def _dispatch_run(binary, payload, out_path):
+    if payload.get("_invoke") == "stream":
+        clean = {k: v for k, v in payload.items() if k != "_invoke"}
+        return _run_json_stream(binary, clean, out_path)
+    return _run_json(binary, payload, out_path)
+
+
 def run_case(binary, payload, workdir, name, reps):
     values, hashes = [], set()
     for i in range(reps):
         out = workdir / f"{name}_{i}.bin"
-        meta = _run_json(binary, payload, out)
+        meta = _dispatch_run(binary, payload, out)
         values.append(int(meta["elapsed_us"]))
         hashes.add(sha256_file(out))
         out.unlink(missing_ok=True)
@@ -223,8 +256,8 @@ def run_compare(bin_a, bin_b, payload, workdir, name, reps):
     for i in range(reps):  # interleaved to defeat thermal/scheduler drift
         out_a = workdir / f"{name}_a{i}.bin"
         out_b = workdir / f"{name}_b{i}.bin"
-        va.append(int(_run_json(bin_a, payload, out_a)["elapsed_us"]))
-        vb.append(int(_run_json(bin_b, payload, out_b)["elapsed_us"]))
+        va.append(int(_dispatch_run(bin_a, payload, out_a)["elapsed_us"]))
+        vb.append(int(_dispatch_run(bin_b, payload, out_b)["elapsed_us"]))
         ha.add(sha256_file(out_a)); hb.add(sha256_file(out_b))
         out_a.unlink(missing_ok=True); out_b.unlink(missing_ok=True)
     if ha != hb or len(ha) != 1:

@@ -3672,6 +3672,13 @@ typedef struct {
     CoeffLoweredExprPlan expr_plans[COEFF_PROGRAM_MAX_SCALAR_EXPRS];
     uint8_t arg_mode[COEFF_PROGRAM_MAX_TOKENS];
     CoeffResolvedArgs prepared_args[COEFF_PROGRAM_MAX_TOKENS];
+    /* CR33 F7: straight-line typed-scalar fusion. For a region-start token k,
+     * fused_region_end[k] is the exclusive end of a validated run of
+     * {typed_push_scalar, typed_binary, typed_unary, typed_poke_poly} with
+     * net stack effect zero — executed by a tight scalar interpreter that
+     * calls the SAME Apply*Fn primitives and index conversion, skipping only
+     * the per-token dispatch and circular-stack bookkeeping. 0 = no region. */
+    uint16_t fused_region_end[COEFF_PROGRAM_MAX_TOKENS];
 } CoeffProgram;
 
 typedef struct {
@@ -4007,6 +4014,50 @@ static int coeffBuildLoweredExprPlan(const CoeffScalarExpr *expr, CoeffLoweredEx
     return 0;
 }
 
+/* CR33 F7: mark maximal straight-line typed-scalar regions. Validation is
+ * conservative: any op outside the four scalar ops, any depth underflow, a
+ * region not returning to depth zero, or depth beyond the fused stack cap
+ * leaves fused_region_end at 0 and the normal token loop runs unchanged. */
+#define COEFF_FUSED_MAX_DEPTH 16
+#define COEFF_FUSED_MIN_TOKENS 6
+
+static void coeffPrepareScalarFusion(CoeffProgram *program) {
+    memset(program->fused_region_end, 0, sizeof(program->fused_region_end));
+    int k = 0;
+    while (k < program->token_count) {
+        if (program->tokens[k].op != COEFF_OP_TYPED_PUSH_SCALAR) { k++; continue; }
+        int depth = 0, maxDepth = 0, valid = 1;
+        int end = k;
+        while (end < program->token_count) {
+            int op = program->tokens[end].op;
+            if (op == COEFF_OP_TYPED_PUSH_SCALAR) {
+                depth++;
+                if (depth > maxDepth) maxDepth = depth;
+            } else if (op == COEFF_OP_TYPED_BINARY) {
+                if (depth < 2) { valid = 0; break; }
+                depth--;
+            } else if (op == COEFF_OP_TYPED_UNARY) {
+                if (depth < 1) { valid = 0; break; }
+            } else if (op == COEFF_OP_TYPED_POKE_POLY) {
+                if (depth < 2) { valid = 0; break; }
+                depth -= 2;
+            } else {
+                break;   /* region ends before this op */
+            }
+            end++;
+            if (depth == 0 && end < program->token_count &&
+                program->tokens[end].op != COEFF_OP_TYPED_PUSH_SCALAR) {
+                break;   /* clean boundary */
+            }
+        }
+        if (valid && depth == 0 && maxDepth <= COEFF_FUSED_MAX_DEPTH &&
+            end - k >= COEFF_FUSED_MIN_TOKENS) {
+            program->fused_region_end[k] = (uint16_t)end;
+        }
+        k = (end > k) ? end : k + 1;
+    }
+}
+
 static void coeffPrepareArgPlan(CoeffProgram *program) {
     /* CR31 F1: classify every token's argument needs once. Semantics match
      * coeffResolveTokenArgs exactly: NONE == the zeroed frame it produced for
@@ -4156,6 +4207,7 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
     }
     program->token_count = count;
     coeffPrepareArgPlan(program);
+    coeffPrepareScalarFusion(program);
     return 1;
 }
 
@@ -5051,6 +5103,100 @@ static int coeffProgramTypedPokePoly(CoeffProgramWorkspace *ws) {
     return 0;
 }
 
+/* CR33 F7: tight interpreter for validated straight-line typed-scalar
+ * regions. Calls the SAME coeffProgramApplyBinaryFn/ApplyUnaryFn primitives,
+ * the same integer conversion, and the same argument resolution as the token
+ * loop — only the dispatch switch and circular-stack bookkeeping are gone.
+ * Error messages match the originals so failures are indistinguishable. */
+static int coeffRunFusedScalarRegion(const CoeffEvalContext *ctx,
+                                     const CoeffProgram *program,
+                                     int start, int end,
+                                     CoeffProgramWorkspace *ws) {
+    static const CoeffResolvedArgs kFusedNoArgs;
+    double sr[COEFF_FUSED_MAX_DEPTH], si_[COEFF_FUSED_MAX_DEPTH];
+    int sp = 0;
+    for (int k = start; k < end; k++) {
+        const CoeffProgramToken *tok = &program->tokens[k];
+        switch (tok->op) {
+        case COEFF_OP_TYPED_PUSH_SCALAR: {
+            double vr = 0.0, vi = 0.0;
+            if (tok->fn_index == COEFF_SCALAR_SRC_P1) {
+                vr = ctx->p1r; vi = ctx->p1i;
+            } else if (tok->fn_index == COEFF_SCALAR_SRC_P2) {
+                vr = ctx->p2r; vi = ctx->p2i;
+            } else if (tok->fn_index == COEFF_SCALAR_SRC_T1) {
+                vr = ctx->t1r; vi = ctx->t1i;
+            } else if (tok->fn_index == COEFF_SCALAR_SRC_T2) {
+                vr = ctx->t2r; vi = ctx->t2i;
+            } else if (tok->fn_index == COEFF_SCALAR_SRC_POLY_LEN) {
+                vr = (double)ws->poly_len; vi = 0.0;
+            } else if (tok->fn_index == 0) {
+                CoeffResolvedArgs dynArgs;
+                const CoeffResolvedArgs *resolvedArgs;
+                if (program->arg_mode[k] == COEFF_ARG_MODE_NONE) {
+                    resolvedArgs = &kFusedNoArgs;
+                } else if (program->arg_mode[k] == COEFF_ARG_MODE_STATIC) {
+                    resolvedArgs = &program->prepared_args[k];
+                } else {
+#ifdef PP_VM_PERF
+                    PP_PERF_COUNT(pp_perf_dyn_arg_resolves);
+#endif
+                    if (coeffResolveTokenArgs(ctx, tok, &dynArgs) != 0) return 1;
+                    resolvedArgs = &dynArgs;
+                }
+                if (coeffArgValue(resolvedArgs, 0, &vr, &vi) != 0) return 1;
+            } else {
+                fprintf(stderr, "coeff_program unknown typed scalar source %d\n", tok->fn_index);
+                return 1;
+            }
+            sr[sp] = vr; si_[sp] = vi; sp++;
+            break;
+        }
+        case COEFF_OP_TYPED_BINARY: {
+            sp -= 2;
+            double rr = 0.0, ri = 0.0;
+            if (coeffProgramApplyBinaryFn(tok->fn_index,
+                                             sr[sp], si_[sp],
+                                             sr[sp + 1], si_[sp + 1],
+                                             &rr, &ri) != 0) return 1;
+            sr[sp] = rr; si_[sp] = ri; sp++;
+            break;
+        }
+        case COEFF_OP_TYPED_UNARY: {
+            double rr = 0.0, ri = 0.0;
+            if (coeffProgramApplyUnaryFn(tok->fn_index,
+                                            sr[sp - 1], si_[sp - 1],
+                                            &rr, &ri) != 0) return 1;
+            sr[sp - 1] = rr; si_[sp - 1] = ri;
+            break;
+        }
+        case COEFF_OP_TYPED_POKE_POLY: {
+            sp -= 2;
+            double idxR = sr[sp], idxI = si_[sp];
+            double valR = sr[sp + 1], valI = si_[sp + 1];
+            int idx = 0;
+            if (fabs(idxI) > COEFF_PROGRAM_IMAG_TOL) {
+                fprintf(stderr, "coeff_program typed_poke_poly index must be real\n");
+                return 1;
+            }
+            if (coeffProgramIntegerFromReal(idxR, "typed_poke_poly", &idx) != 0) return 1;
+            if (idx < 0 || idx >= ws->poly_len) {
+                fprintf(stderr, "coeff_program typed_poke_poly index %d out of range for poly length %d\n",
+                        idx, ws->poly_len);
+                return 1;
+            }
+            ws->poly_re[idx] = valR;
+            ws->poly_im[idx] = valI;
+            break;
+        }
+        default:
+            fprintf(stderr, "coeff_program fused region hit unsupported op %d\n", tok->op);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int coeffProgramTypedFill(CoeffProgramWorkspace *ws) {
     uint16_t valueSlot = 0, lengthSlot = 0;
     int len = 0;
@@ -5820,6 +5966,15 @@ static int evalCoeffProgram(const CoeffProgram *program,
     static const CoeffResolvedArgs kCoeffNoArgs;   /* zero frame for NONE tokens */
     for (int k = 0; k < program->token_count; k++) {
         const CoeffProgramToken *tok = &program->tokens[k];
+        /* CR33 F7: validated straight-line scalar regions run on the tight
+         * interpreter (same primitives, no per-token switch or circular
+         * stack); k jumps to the region end. */
+        if (program->fused_region_end[k] > (uint16_t)k) {
+            if (coeffRunFusedScalarRegion(ctx, program, k,
+                                          program->fused_region_end[k], ws) != 0) return 1;
+            k = program->fused_region_end[k] - 1;
+            continue;
+        }
         CoeffResolvedArgs dynArgs;
         const CoeffResolvedArgs *resolvedArgs;
         if (program->arg_mode[k] == COEFF_ARG_MODE_NONE) {

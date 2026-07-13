@@ -1,0 +1,46 @@
+{
+  "cases": {
+    "param_expr_t2": {
+      "base_mad_us": 104,
+      "base_median_us": 11206,
+      "cand_mad_us": 18,
+      "cand_median_us": 10320,
+      "delta_pct": -7.91,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    },
+    "param_expr_t4": {
+      "base_mad_us": 25,
+      "base_median_us": 5736,
+      "cand_mad_us": 14,
+      "cand_median_us": 5451,
+      "delta_pct": -4.97,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    },
+    "param_expr_t8": {
+      "base_mad_us": 268,
+      "base_median_us": 5714,
+      "cand_mad_us": 35,
+      "cand_median_us": 3189,
+      "delta_pct": -44.19,
+      "output_sha256": "fea270dc41c8e25f2bd745d9215c883d4160a66e2aa8873d68df1e7c8cddafcd",
+      "reps_each": 11
+    }
+  },
+  "metadata": {
+    "base_binary_sha256": "75b3ae0ce5848df25f36562f93cb2ae322996a898365c341de3ad11eb5ea50f8",
+    "bench_script_sha256": "219087e09a0c82a1c98348d80faa6151a1ae27f57459967593e1a6485c87369d",
+    "cand_binary_sha256": "d5562be222043b0e8e146170becc96bd252195f89f68cb28d2f5a7773664d256",
+    "cc_flags": "-O3 -pthread -I lambda",
+    "compiler": "cc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5)",
+    "cpu_count": 8,
+    "git_dirty": false,
+    "git_sha": "",
+    "harvested_fixture_sha256": "c38d51c89e2912ba0877e6706c00ce40a5af56ebb08661d9444378a40bc8fbd4",
+    "machine": "aarch64",
+    "micro_source_sha256": "698ccd42f5aba9c75c7ca0331520d7da85c1d81f7917bef43433895bdc0ef396",
+    "platform": "Linux-6.1.176-221.360.amzn2023.aarch64-aarch64-with-glibc2.34",
+    "python": "3.9.25"
+  }
+}

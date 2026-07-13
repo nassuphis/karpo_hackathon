@@ -1039,7 +1039,11 @@ class TestCleanRenderDynamoDB(unittest.TestCase):
 
     @patch("handler_storage._get_ddb")
     @patch("handler_storage.s3")
-    def test_clean_render_clears_ddb(self, mock_s3, mock_get_ddb):
+    def test_clean_render_preserves_ddb_telemetry(self, mock_s3, mock_get_ddb):
+        """CR33 telemetry retention: CleanRender must NOT touch DynamoDB
+        status rows — progress readers are run-scoped and rows expire via
+        TTL; the old partition wipe destroyed compute and prior-render
+        telemetry with no correctness benefit."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -1050,21 +1054,18 @@ class TestCleanRenderDynamoDB(unittest.TestCase):
 
         mock_ddb = MagicMock()
         mock_get_ddb.return_value = mock_ddb
-        mock_ddb.query.return_value = {
-            "Items": [
-                {"job_id": {"S": "j"}, "task_id": {"S": "raster_0"}},
-                {"job_id": {"S": "j"}, "task_id": {"S": "tile_0"}},
-            ],
-        }
-        mock_ddb.batch_write_item.return_value = {"UnprocessedItems": {}}
 
         event = {"body": json.dumps({"job_id": "j"})}
         result = handle_clean_render(event)
         body = json.loads(result["body"])
 
+        mock_ddb.query.assert_not_called()
+        mock_ddb.batch_write_item.assert_not_called()
+
         self.assertEqual(body["deleted"], 1)
-        self.assertEqual(body["ddb_deleted"], 2)
-        mock_ddb.batch_write_item.assert_called_once()
+        # CR33 telemetry retention: CleanRender no longer deletes status rows
+        # (run-scoped readers + TTL make the wipe pure evidence destruction)
+        self.assertEqual(body["ddb_deleted"], 0)
 
 
 # ── Test: handler_coeffgen.py (striped coefficient generation) ────────────

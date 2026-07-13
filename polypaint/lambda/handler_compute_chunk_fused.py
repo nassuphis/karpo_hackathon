@@ -6,7 +6,7 @@ import time
 
 import boto3
 
-from shared import BUCKET, is_enospc, ok_response, parse_body, report_status
+from shared import BUCKET, build_identity, is_enospc, ok_response, parse_body, report_status
 
 s3 = boto3.client("s3")
 SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
@@ -276,6 +276,7 @@ def handle_fused_chunk(params):
                 "roots_size": int(roots_size),
                 "lambda_memory_mb": int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", 0) or 0),
                 "arch": platform.machine(),
+                **build_identity(),
             },
         }
         if "skipped_overflow" in solve_meta:

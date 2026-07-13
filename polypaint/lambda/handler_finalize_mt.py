@@ -22,7 +22,7 @@ from color_artifact_meta import split_color_artifact_metadata, write_color_artif
 from color_render_contract import normalize_color_interpretation, validate_color_output_contract
 from raw_score_render import render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar
-from shared import BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response, parse_body, parse_boolish, report_status
+from shared import build_identity, BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response, parse_body, parse_boolish, report_status
 from solve_score_chain import (
     SOLVE_SCORE_LEGACY_SPEC_VERSION,
     SOLVE_SCORE_SPEC_VERSION,
@@ -712,18 +712,21 @@ def handler(event, context):
     if step_scores_grid_n > 0 and step_scores_pass_count > 0:
         step_scores_count = int(step_scores_grid_n) * int(step_scores_grid_n) * int(step_scores_pass_count)
         expected_step_score_bytes = step_scores_count * int(channels)
+        t_step_scores = time.time()
         actual_step_score_bytes = _concat_step_scores(
             finalize_s3=finalize_s3,
             fragment_prefix=fragment_prefix,
             source_item_count=source_item_count,
             out_path=step_scores_path,
         )
+        progress["step_scores_fetch_concat_ms"] = int((time.time() - t_step_scores) * 1000)
         if actual_step_score_bytes != expected_step_score_bytes:
             raise RuntimeError(
                 "FinalizeMT step score byte count mismatch: "
                 f"expected {expected_step_score_bytes}, got {actual_step_score_bytes}"
             )
         step_scores_key = raw_key.rsplit("/", 1)[0] + "/step_scores.raw"
+        t_step_scores = time.time()
         with open(step_scores_path, "rb") as scores_fh:
             finalize_s3.put_object(
                 Bucket=BUCKET,
@@ -731,13 +734,16 @@ def handler(event, context):
                 Body=scores_fh,
                 ContentType="application/octet-stream",
             )
+        progress["step_scores_upload_ms"] = int((time.time() - t_step_scores) * 1000)
         progress["step_scores_key"] = step_scores_key
         progress["step_scores_count"] = step_scores_count
         progress["step_scores_bytes"] = expected_step_score_bytes
         progress["step_scores_grid_n"] = step_scores_grid_n
         report_status(job_id, task_id, "wrote_step_scores", result_data=progress)
 
+    t_lut = time.time()
     write_equalization_lut(eq_lut_path, hist_meta["histogram"])
+    progress["lut_ms"] = int((time.time() - t_lut) * 1000)
     t_render = time.time()
     encode_meta = render_score_raw(
         raw_path=raw_path,
@@ -751,8 +757,11 @@ def handler(event, context):
         channels=channels,
         interpretation=clip_info["score_output_interpretation"],
     )
-    progress["render_ms"] = int((time.time() - t_render) * 1000)
-    progress["encode_ms"] = 0
+    # render_ms spans the native render binary, which renders AND encodes in
+    # one process — the boundary is not separable here. The fake encode_ms=0
+    # is removed rather than reported as a measurement (CR33 telemetry).
+    progress["render_encode_ms"] = int((time.time() - t_render) * 1000)
+    progress["render_ms"] = progress["render_encode_ms"]
     progress["file_size"] = int(encode_meta["file_size"])
     report_status(job_id, task_id, "rendered_rgb_tiles", result_data=progress)
     report_status(job_id, task_id, "encoded", result_data=progress)
@@ -795,7 +804,12 @@ def handler(event, context):
         output_channels=clip_info["score_output_channels"],
     )
 
+    # CR33 telemetry: the old upload_ms spanned raw upload, the whole
+    # associated-palette pipeline, the main image, the preview, and the
+    # metadata overlay — five unrelated paths in one number. Components are
+    # timed separately; upload_ms remains as the documented TOTAL span.
     t_upload = time.time()
+    t_component = time.time()
     with open(raw_path, "rb") as raw_fh:
         finalize_s3.put_object(
             Bucket=BUCKET,
@@ -809,9 +823,11 @@ def handler(event, context):
         Body=json.dumps(sidecar, separators=(",", ":")).encode("utf-8"),
         ContentType="application/json",
     )
+    progress["raw_upload_ms"] = int((time.time() - t_component) * 1000)
 
     associated_palette_result = None
     associated_palette_mode = str(associated_palette.get("mode") or "")
+    t_component = time.time()
     if associated_palette_mode == "generated":
         associated_palette_result = _finalize_associated_palette(
             finalize_s3=finalize_s3,
@@ -841,6 +857,7 @@ def handler(event, context):
         )
     elif associated_palette_mode not in ("", "none"):
         raise RuntimeError(f"FinalizeMT does not support associated_palette.mode={associated_palette_mode!r}")
+    progress["assoc_palette_total_ms"] = int((time.time() - t_component) * 1000)
 
     final_metadata = dict(metadata)
     final_metadata["render_execution"] = render_execution
@@ -894,6 +911,7 @@ def handler(event, context):
             f"image metadata too large before upload: {metadata_size} bytes > {S3_USER_METADATA_LIMIT_BYTES} limit"
         )
     content_type = "image/png" if ext == "png" else "image/jpeg"
+    t_component = time.time()
     with open(encode_out_path, "rb") as out_fh:
         finalize_s3.put_object(
             Bucket=BUCKET,
@@ -902,6 +920,8 @@ def handler(event, context):
             ContentType=content_type,
             Metadata=final_headers,
         )
+    progress["image_upload_ms"] = int((time.time() - t_component) * 1000)
+    t_component = time.time()
     if preview_key:
         with open(preview_out_path, "rb") as preview_fh:
             finalize_s3.put_object(
@@ -911,11 +931,15 @@ def handler(event, context):
                 ContentType="image/png",
                 CacheControl=CACHE_IMMUTABLE,
             )
+    progress["preview_upload_ms"] = int((time.time() - t_component) * 1000)
+    t_component = time.time()
     artifact_id = str(final_metadata.get("artifact_id") or "").strip()
     if artifact_id:
         write_color_artifact_meta_overlay(finalize_s3, BUCKET, job_id, artifact_id, overlay_meta)
+    progress["meta_overlay_ms"] = int((time.time() - t_component) * 1000)
 
     progress["upload_ms"] = int((time.time() - t_upload) * 1000)
+    progress.update(build_identity())
     progress["image_key"] = image_key
     progress["raw_key"] = raw_key
     if associated_palette_result:
@@ -933,10 +957,22 @@ def handler(event, context):
         "file_size": int(encode_meta["file_size"]),
         "timings": {
             "assemble_ms": progress["assemble_ms"],
+            # render_ms spans the native render+encode process; the fake
+            # encode_ms=0 is gone (CR33 telemetry — never report a
+            # measurement that is not one)
             "render_ms": progress["render_ms"],
-            "encode_ms": progress["encode_ms"],
+            "render_encode_ms": progress["render_encode_ms"],
             "upload_ms": progress["upload_ms"],
+            "raw_upload_ms": progress.get("raw_upload_ms", 0),
+            "assoc_palette_total_ms": progress.get("assoc_palette_total_ms", 0),
+            "image_upload_ms": progress.get("image_upload_ms", 0),
+            "preview_upload_ms": progress.get("preview_upload_ms", 0),
+            "meta_overlay_ms": progress.get("meta_overlay_ms", 0),
+            "step_scores_fetch_concat_ms": progress.get("step_scores_fetch_concat_ms", 0),
+            "step_scores_upload_ms": progress.get("step_scores_upload_ms", 0),
+            "lut_ms": progress.get("lut_ms", 0),
         },
+        **build_identity(),
     }
     if associated_palette_result:
         result["associated_palette"] = associated_palette_result

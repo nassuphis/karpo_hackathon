@@ -29,6 +29,24 @@ def _get_ddb():
     return _ddb
 
 
+# CR33 telemetry (build attribution): the deployer stamps these env vars at
+# deploy time; every status row and task result then self-describes which
+# build produced it. Empty when running outside a deployed environment.
+PP_GIT_SHA = os.environ.get("PP_GIT_SHA", "")
+PP_BUILD_ID = os.environ.get("PP_BUILD_ID", "")
+
+
+def build_identity():
+    """Build attribution fields for task results (empty dict when unset,
+    so local/test payloads stay unchanged)."""
+    out = {}
+    if PP_GIT_SHA:
+        out["git_sha"] = PP_GIT_SHA
+    if PP_BUILD_ID:
+        out["build_id"] = PP_BUILD_ID
+    return out
+
+
 def report_status(job_id, task_id, status, error_msg=None, result_data=None):
     """Write task completion status to DynamoDB. TTL = 24h auto-cleanup.
     Optional result_data dict is stored as JSON string for later retrieval."""
@@ -40,6 +58,10 @@ def report_status(job_id, task_id, status, error_msg=None, result_data=None):
         "updated_at_ms": {"N": str(now_ms)},
         "ttl": {"N": str(int(time.time()) + 86400)},
     }
+    if PP_BUILD_ID:
+        item["build_id"] = {"S": PP_BUILD_ID}
+    if PP_GIT_SHA:
+        item["git_sha"] = {"S": PP_GIT_SHA}
     if error_msg:
         item["error_msg"] = {"S": str(error_msg)[:1000]}
     if result_data:

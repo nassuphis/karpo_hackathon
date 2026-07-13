@@ -24,11 +24,11 @@ fi
 
 echo "Running predeploy contract gate..."
 
-# CR32 follow-up: deploy binaries must be fresh AND match the recorded
-# manifest (mtime + source/binary hashes), and the multi-worker failure
-# paths must be TSan-clean, BEFORE any deploy.
-python3 scripts/check_binary_freshness.py --check
-python3 scripts/check_binary_freshness.py --verify-manifest
+# Native deploy binaries are built later by deploy.sh. Checking them here
+# would reject every legitimate native source change before deploy has a
+# chance to rebuild it. deploy.sh records and verifies the final binaries
+# immediately before the Docker runtime regression instead.
+# The multi-worker source paths can and should still be TSan-clean here.
 bash scripts/test-tsan-races.sh
 "${TEST_PYTHON[@]}" api_manifest.py --check
 "${TEST_PYTHON[@]}" deploy_manifest.py --check
@@ -66,6 +66,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_param_seed_policy.py \
     tests/test_root_prepared_parity.py \
     tests/test_vm_perf_counters.py \
+    tests/test_production_telemetry_collector.py \
     tests/test_program_starter_snippets.py \
     tests/test_program_profiles_drift.py \
     tests/test_program_v2_migration.py \

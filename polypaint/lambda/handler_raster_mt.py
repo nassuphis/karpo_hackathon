@@ -36,6 +36,7 @@ from solve_score_pipeline_programs import solve_score_program_for_run
 from shared import (
     BUCKET,
     attach_contract_warnings,
+    build_identity,
     contract_param,
     ok_response,
     parse_body,
@@ -530,14 +531,24 @@ def _handle_fused_raster_request(params):
         if params["pix"] <= 0:
             raise RuntimeError(f"fused raster requires pix > 0, got {params['pix']}")
 
+        t_handler = time.perf_counter()
         perf = attach_contract_warnings({
             "engine": "mt",
             "threads": threads,
             "input_mode": "sectioned",
             "retries": raster_sectioned_retries,
+            # legacy worker-sum names (retained one cycle); the explicit
+            # wall/worker split follows CR33 telemetry naming rules
             "download_us": 0,
             "native_us": 0,
             "upload_us": 0,
+            "download_worker_us": 0,
+            "native_worker_us": 0,
+            "download_wall_us": 0,
+            "native_wall_us": 0,
+            "prep_wall_us": 0,
+            "upload_wall_us": 0,
+            "handler_wall_us": 0,
             "fragment_files_uploaded": 0,
             "roots_plotted": 0,
             "roots_clipped": 0,
@@ -610,6 +621,7 @@ def _handle_fused_raster_request(params):
         section_params = _prepare_fused_section_inputs(section_params)
         report_status(job_id, task_id, "bin_downloaded_1/1")
 
+        perf["prep_wall_us"] = int((time.perf_counter() - t_handler) * 1e6)
         t_native = time.perf_counter()
         cmd = _build_cmd(section_params)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -623,7 +635,13 @@ def _handle_fused_raster_request(params):
         perf["retries"] = int(raster_meta.get("retries", raster_sectioned_retries))
         if perf["input_mode"] in ("sectioned", "multispan_sectioned"):
             perf["download_us"] += int(raster_meta.get("download_us", 0))
+            perf["download_worker_us"] += int(raster_meta.get("download_worker_us", raster_meta.get("download_us", 0)) or 0)
+            perf["download_wall_us"] += int(raster_meta.get("download_wall_us", 0) or 0)
         perf["native_us"] += int(raster_meta.get("native_us", native_wall_us))
+        perf["native_worker_us"] += int(raster_meta.get("native_worker_us", raster_meta.get("native_us", 0)) or 0)
+        # CR33 telemetry: the WALL span around the subprocess was measured and
+        # then discarded pre-CR33; it is the latency-relevant number.
+        perf["native_wall_us"] += int(native_wall_us)
         perf["roots_plotted"] += int(raster_meta.get("roots_plotted", 0))
         perf["roots_clipped"] += int(raster_meta.get("roots_clipped", 0))
 
@@ -682,6 +700,8 @@ def _handle_fused_raster_request(params):
                 )
 
         perf["upload_us"] = int((time.perf_counter() - t_upload) * 1e6)
+        perf["upload_wall_us"] = perf["upload_us"]   # elapsed span; explicit name
+        perf["handler_wall_us"] = int((time.perf_counter() - t_handler) * 1e6)
         perf["fragment_files_uploaded"] = 1
         perf["fragment_bytes_uploaded"] = fused_fragment_size
         perf["associated_palette_fragment_files_uploaded"] = 1 if emit_associated_palette_bins else 0
@@ -710,6 +730,16 @@ def _handle_fused_raster_request(params):
             "engine": "mt",
             "threads": perf["threads"],
             "input_mode": perf["input_mode"],
+            # CR33 telemetry: explicit timing classes in the Step Functions
+            # result so reports survive DynamoDB cleanup.
+            "handler_wall_us": perf["handler_wall_us"],
+            "prep_wall_us": perf["prep_wall_us"],
+            "native_wall_us": perf["native_wall_us"],
+            "native_worker_us": perf["native_worker_us"],
+            "download_wall_us": perf["download_wall_us"],
+            "download_worker_us": perf["download_worker_us"],
+            "upload_wall_us": perf["upload_wall_us"],
+            **build_identity(),
         })
     except Exception as e:
         error_perf = dict(perf or {"engine": "mt", "phase": "raster", "phase_label": "Raster"})

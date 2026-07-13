@@ -446,7 +446,12 @@ deploy_book_pdf_image() {
     echo "--- book-pdf image: lambda ---"
     # GEMINI_API_KEY comes from the deployer's shell (never committed);
     # empty is fine — the describe op errors informatively until it is set
-    local ENV_VARS="BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,GEMINI_API_KEY=${GEMINI_API_KEY:-}"
+    # CR33 telemetry (build attribution): every deployed function knows the
+    # source revision that produced it; task results and status rows carry it.
+    local PP_GIT_SHA_VAL PP_BUILD_ID_VAL
+    PP_GIT_SHA_VAL=$(git rev-parse --short=9 HEAD 2>/dev/null || echo unknown)
+    PP_BUILD_ID_VAL="${PP_GIT_SHA_VAL}-$(date -u +%Y%m%dT%H%M%SZ)"
+    local ENV_VARS="BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,GEMINI_API_KEY=${GEMINI_API_KEY:-},PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL"
     if aws lambda get-function --function-name "$BOOK_PDF_NAME" --region "$REGION" >/dev/null 2>&1; then
         aws lambda update-function-code --function-name "$BOOK_PDF_NAME" \
             --image-uri "${REPO_URI}:${TAG}" --region "$REGION" >/dev/null
@@ -1105,6 +1110,16 @@ assert abs(roots[0]-1)<0.01 and abs(roots[1]-2)<0.01 and abs(roots[2]-3)<0.01, f
 print(\"  sweep_cm smoke test: PASSED (roots 1,2,3)\")
 "
     '
+
+# The predeploy suite validates source and rebuilds its host test binary, but
+# the ARM deploy binaries only become authoritative after every native build
+# above has completed. Record that exact set now, then verify both source and
+# binary hashes before any runtime test or package can consume it.
+echo ""
+echo "Recording native binary manifest..."
+python3 "$SCRIPT_DIR/scripts/check_binary_freshness.py" --write-manifest
+python3 "$SCRIPT_DIR/scripts/check_binary_freshness.py" --check
+python3 "$SCRIPT_DIR/scripts/check_binary_freshness.py" --verify-manifest
 
 # --- Docker Runtime Regression Test (AE + CM) ---
 echo ""

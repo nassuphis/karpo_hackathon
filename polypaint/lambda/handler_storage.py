@@ -6075,52 +6075,16 @@ def handle_clean_render(event):
             )
             total_deleted += len(resp.get("Deleted", []))
 
-    # Also clear DynamoDB status entries for this job
+    # CR33 telemetry retention: this handler used to delete EVERY DynamoDB
+    # status row in the job partition, destroying compute telemetry (24h TTL)
+    # whenever a render started and the previous render's telemetry whenever
+    # the next one did. Every progress reader queries with a RUN-SCOPED
+    # task_id prefix (e.g. "render_<run>_raster_"), and run IDs are unique,
+    # so stale rows are invisible to the UI and expire via TTL on their own.
+    # Broad partition deletion discarded benchmark evidence without providing
+    # a correctness benefit — rows are now left to TTL.
     ddb_deleted = 0
     ddb_errors = []
-    try:
-        ddb = _get_ddb()
-        kwargs = {
-            "TableName": JOBS_TABLE,
-            "KeyConditionExpression": "job_id = :jid",
-            "ExpressionAttributeValues": {":jid": {"S": job_id}},
-            "ProjectionExpression": "job_id, task_id",
-        }
-        items_to_delete = []
-        while True:
-            resp = ddb.query(**kwargs)
-            items_to_delete.extend(resp["Items"])
-            if "LastEvaluatedKey" not in resp:
-                break
-            kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
-
-        import time
-        for i in range(0, len(items_to_delete), 25):
-            batch = items_to_delete[i:i + 25]
-            request_items = {
-                JOBS_TABLE: [
-                    {"DeleteRequest": {"Key": {
-                        "job_id": item["job_id"],
-                        "task_id": item["task_id"],
-                    }}}
-                    for item in batch
-                ]
-            }
-            # Retry unprocessed items up to 3 times with backoff
-            for attempt in range(4):
-                resp = ddb.batch_write_item(RequestItems=request_items)
-                unprocessed = resp.get("UnprocessedItems", {}).get(JOBS_TABLE, [])
-                processed = len(request_items[JOBS_TABLE]) - len(unprocessed)
-                ddb_deleted += processed
-                if not unprocessed:
-                    break
-                request_items = {JOBS_TABLE: unprocessed}
-                if attempt < 3:
-                    time.sleep(0.1 * (2 ** attempt))
-            else:
-                ddb_errors.append(f"{len(unprocessed)} items unprocessed after retries")
-    except Exception as e:
-        ddb_errors.append(str(e))
 
     result = {
         "job_id": job_id,

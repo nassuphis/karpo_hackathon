@@ -311,11 +311,56 @@ static double apply_solve_score_transfer(double u, int omegaEnabled, double omeg
 }
 
 /* Exact median: sort + middle element(s). Modifies values[] in-place. */
+/* CR33 F6: deterministic bounded selection instead of a full qsort — every
+ * caller needs only the middle order statistic(s) and never reads the buffer
+ * afterwards (audited: max/mean accumulations all happen before the call).
+ * Median-of-three pivots with a depth budget; if partitioning degenerates
+ * (adversarial patterns), the remaining window falls back to qsort, so the
+ * worst case stays O(n log n). The returned value equals the sorted-median
+ * exactly: selection yields the same order statistics, and the even-length
+ * rule keeps the original 0.5*(lower+upper) operand order. */
+static void _ss_select_nth(double *v, int n, int k) {
+    int lo = 0, hi = n - 1;
+    int depth = 0;
+    while (hi > lo) {
+        if (++depth > 64 || hi - lo < 8) {
+            qsort(v + lo, (size_t)(hi - lo + 1), sizeof(double), _ss_dbl_cmp);
+            return;
+        }
+        int mid = lo + (hi - lo) / 2;
+        /* median-of-three pivot, moved to lo */
+        if (v[mid] < v[lo]) { double t = v[mid]; v[mid] = v[lo]; v[lo] = t; }
+        if (v[hi] < v[lo]) { double t = v[hi]; v[hi] = v[lo]; v[lo] = t; }
+        if (v[hi] < v[mid]) { double t = v[hi]; v[hi] = v[mid]; v[mid] = t; }
+        double pivot = v[mid];
+        int i = lo, j = hi;
+        while (i <= j) {
+            while (v[i] < pivot) i++;
+            while (v[j] > pivot) j--;
+            if (i <= j) {
+                double t = v[i]; v[i] = v[j]; v[j] = t;
+                i++; j--;
+            }
+        }
+        if (k <= j) hi = j;
+        else if (k >= i) lo = i;
+        else return;   /* k landed between partitions: v[k] is final */
+    }
+}
+
 static double median_inplace(double *values, int n) {
     if (n <= 0) return 0.0;
-    qsort(values, n, sizeof(double), _ss_dbl_cmp);
-    if (n % 2 == 1) return values[n / 2];
-    return 0.5 * (values[n / 2 - 1] + values[n / 2]);
+    if (n % 2 == 1) {
+        _ss_select_nth(values, n, n / 2);
+        return values[n / 2];
+    }
+    _ss_select_nth(values, n, n / 2);
+    double upper = values[n / 2];
+    double lower = values[0];
+    for (int i = 1; i < n / 2; i++) {
+        if (values[i] > lower) lower = values[i];
+    }
+    return 0.5 * (lower + upper);
 }
 
 static double mean_of(const double *values, int n) {
@@ -1028,18 +1073,40 @@ typedef struct {
      * every row. lagPrepared == 0 (hand-built structs) falls back to scans. */
     int lagPrepared;
     uint8_t slotUsesLag[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    /* CR33 F8/F11: the requirement plan is program-invariant — computed once
+     * at parse instead of rediscovered on every row. planPrepared == 0
+     * (hand-built structs) recomputes it per call via the same helper. */
+    int planPrepared;
+    uint8_t planUsesLag;
+    uint8_t planEngage[2];
+    uint8_t planNeedMin[2], planNeedCrowd[2], planNeedNN[2];
+    uint8_t planFamExtrema[2], planFamRadial[2];
 } SolveScoreProgram;
+
+static void solve_score_compute_plan(const SolveScoreProgram *program,
+                                     uint8_t engage[2], uint8_t needMin[2],
+                                     uint8_t needCrowd[2], uint8_t needNN[2],
+                                     uint8_t famExtrema[2], uint8_t famRadial[2]);
 
 static void solve_score_prepare_lag_flags(SolveScoreProgram *program) {
     memset(program->slotUsesLag, 0, sizeof(program->slotUsesLag));
+    program->planUsesLag = 0;
     for (int i = 0; i < program->tokenCount; i++) {
         const SolveScoreProgramToken *token = &program->tokens[i];
-        if (token->op == SOLVE_SCORE_OP_PUSH_METRIC && token->lagDepth > 0 &&
-            token->metricSlot >= 0 && token->metricSlot < SOLVE_SCORE_MAX_METRIC_SLOTS) {
-            program->slotUsesLag[token->metricSlot] = 1;
+        if (token->op == SOLVE_SCORE_OP_PUSH_METRIC && token->lagDepth > 0) {
+            program->planUsesLag = 1;   /* CR33 F11: program-level bit */
+            if (token->metricSlot >= 0 && token->metricSlot < SOLVE_SCORE_MAX_METRIC_SLOTS) {
+                program->slotUsesLag[token->metricSlot] = 1;
+            }
         }
     }
     program->lagPrepared = 1;
+    /* CR33 F8: the requirement plan is program-invariant — store it here so
+     * per-row evaluation stops rediscovering it. */
+    solve_score_compute_plan(program, program->planEngage, program->planNeedMin,
+                             program->planNeedCrowd, program->planNeedNN,
+                             program->planFamExtrema, program->planFamRadial);
+    program->planPrepared = 1;
 }
 
 static double solve_score_clamp_unit(double v) {
@@ -1591,6 +1658,7 @@ static double compute_param_metric_score(const float *params, int paramDegree, e
 
 static int solve_score_program_uses_lag(const SolveScoreProgram *program) {
     if (!program) return 0;
+    if (program->lagPrepared) return program->planUsesLag;   /* CR33 F11 */
     for (int i = 0; i < program->tokenCount; i++) {
         if (program->tokens[i].op == SOLVE_SCORE_OP_PUSH_METRIC && program->tokens[i].lagDepth > 0) return 1;
     }
@@ -1663,6 +1731,109 @@ static float solve_score_eval_metric_slot_normalized(const float *roots, int deg
  * Metrics outside the pair family fall through to compute_solve_metric_score
  * with the PRE-FILTERED roots (its own filter then no-ops). Lagged slots keep
  * the direct path — their root sets vary per lag depth. */
+/* ── CR33 F5: shared feature-family passes ────────────────────────────────
+ * Related metrics recomputed the same per-root values in separate calls.
+ * When a source requests >= 2 members of a family, ONE pass computes every
+ * member with each metric's EXACT original expressions and accumulation
+ * order (SD keeps its two-pass mean/ss structure; min-modulus keeps its
+ * zero-skip; extrema keep their roots[0]/roots[1] seeds). A single member
+ * stays on the direct per-metric path. */
+static int solve_metric_in_extrema_family(enum SolveMetric metric) {
+    return metric == SOLVE_METRIC_MAX_RE || metric == SOLVE_METRIC_MIN_RE ||
+           metric == SOLVE_METRIC_MAX_IM || metric == SOLVE_METRIC_MIN_IM;
+}
+
+static int solve_metric_in_radial_family(enum SolveMetric metric) {
+    return metric == SOLVE_METRIC_DIST_UNIT_CIRCLE || metric == SOLVE_METRIC_MIN_MOD ||
+           metric == SOLVE_METRIC_MAX_MOD || metric == SOLVE_METRIC_MEAN_LOG_MOD ||
+           metric == SOLVE_METRIC_SD_LOG_MOD || metric == SOLVE_METRIC_INSIDE_UNIT_FRACTION ||
+           metric == SOLVE_METRIC_UNIT_ANNULUS_FRACTION_01;
+}
+
+typedef struct {
+    int extremaDone, radialDone;
+    double maxRe, minRe, maxIm, minIm;
+    double distUC, minMod, maxMod, meanLogMod, sdLogMod, insideFrac, annulusFrac;
+} SolveFamilyValues;
+
+static void solve_family_extrema_pass(const float *roots, int degree, SolveFamilyValues *v) {
+    double maxRe = roots[0], minRe = roots[0];
+    double maxIm = roots[1], minIm = roots[1];
+    for (int i = 1; i < degree; i++) {
+        double re = roots[i * 2];
+        double im = roots[i * 2 + 1];
+        if (re > maxRe) maxRe = re;
+        if (re < minRe) minRe = re;
+        if (im > maxIm) maxIm = im;
+        if (im < minIm) minIm = im;
+    }
+    v->maxRe = maxRe; v->minRe = minRe;
+    v->maxIm = maxIm; v->minIm = minIm;
+    v->extremaDone = 1;
+}
+
+static int solve_family_radial_pass(const float *roots, int degree, SolveFamilyValues *v) {
+    double lmStack[1024];
+    double *lm = degree <= 1024 ? lmStack : (double *)malloc((size_t)degree * sizeof(double));
+    if (!lm) return 0;
+    double distSum = 0.0, maxMod = 0.0, minMod = 0.0, lmSum = 0.0;
+    int foundNonzero = 0, inside = 0, inBand = 0;
+    for (int i = 0; i < degree; i++) {
+        double re = roots[i * 2];
+        double im = roots[i * 2 + 1];
+        double mod = hypot(re, im);
+        distSum += fabs(mod - 1.0);
+        if (mod > maxMod) maxMod = mod;
+        if (!(re == 0.0 && im == 0.0)) {
+            if (!foundNonzero || mod < minMod) { minMod = mod; foundNonzero = 1; }
+        }
+        if (mod < 1.0) inside++;
+        if (fabs(mod - 1.0) < 0.1) inBand++;
+        double l = log(mod + SOLVE_SCORE_EPS);
+        lm[i] = l;
+        lmSum += l;
+    }
+    v->distUC = log10(distSum / degree + SOLVE_SCORE_EPS);
+    v->maxMod = maxMod;
+    v->minMod = foundNonzero ? minMod : 0.0;
+    v->insideFrac = (double)inside / (double)degree;
+    v->annulusFrac = (double)inBand / (double)degree;
+    v->meanLogMod = lmSum / degree;
+    if (degree >= 2) {
+        double mean = lmSum / degree;
+        double ss = 0.0;
+        for (int i = 0; i < degree; i++) {
+            double d = lm[i] - mean;
+            ss += d * d;
+        }
+        v->sdLogMod = sqrt(ss / degree);
+    } else {
+        v->sdLogMod = 0.0;
+    }
+    if (lm != lmStack) free(lm);
+    v->radialDone = 1;
+    return 1;
+}
+
+static double solve_family_value(const SolveFamilyValues *v, enum SolveMetric metric, int degree) {
+    /* replicate the callee's min-roots gate per member */
+    if (degree < solve_metric_min_roots(metric)) return 0.0;
+    switch (metric) {
+    case SOLVE_METRIC_MAX_RE:  return v->maxRe;
+    case SOLVE_METRIC_MIN_RE:  return v->minRe;
+    case SOLVE_METRIC_MAX_IM:  return v->maxIm;
+    case SOLVE_METRIC_MIN_IM:  return v->minIm;
+    case SOLVE_METRIC_DIST_UNIT_CIRCLE:          return v->distUC;
+    case SOLVE_METRIC_MIN_MOD:                   return v->minMod;
+    case SOLVE_METRIC_MAX_MOD:                   return v->maxMod;
+    case SOLVE_METRIC_MEAN_LOG_MOD:              return v->meanLogMod;
+    case SOLVE_METRIC_SD_LOG_MOD:                return degree < 2 ? 0.0 : v->sdLogMod;
+    case SOLVE_METRIC_INSIDE_UNIT_FRACTION:      return v->insideFrac;
+    case SOLVE_METRIC_UNIT_ANNULUS_FRACTION_01:  return v->annulusFrac;
+    default: return 0.0;
+    }
+}
+
 typedef struct {
     int prepared;
     const float *roots;      /* finite-filtered view */
@@ -1678,6 +1849,7 @@ typedef struct {
     int rawCount;            /* raw-score memo (linear scan; <= slot cap) */
     int rawMetric[SOLVE_SCORE_MAX_METRIC_SLOTS];
     double rawVal[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    SolveFamilyValues fam;   /* CR33 F5: lazily computed family passes */
 } SolveSourceFeatures;
 
 static void solve_features_init(SolveSourceFeatures *f) {
@@ -1696,6 +1868,8 @@ static void solve_features_init(SolveSourceFeatures *f) {
     f->s1 = NULL;
     f->s1Heap = 0;
     f->rawCount = 0;
+    f->fam.extremaDone = 0;
+    f->fam.radialDone = 0;
 }
 
 static void solve_features_release(SolveSourceFeatures *f) {
@@ -1738,7 +1912,7 @@ static void solve_features_prepare(SolveSourceFeatures *f, const float *roots, i
  * single traversal or provably never read. A proximity-only program no longer
  * pays crowding's per-pair log10 or the NN bookkeeping. */
 static int solve_features_pair_pass(SolveSourceFeatures *f,
-                                    int needCrowd, int needNN) {
+                                    int needMin, int needCrowd, int needNN) {
     if (f->pairDone) return 1;
     int degree = f->degree;
     if (degree < 2) return 0;
@@ -1759,7 +1933,7 @@ static int solve_features_pair_pass(SolveSourceFeatures *f,
             double dr = ri_re - roots[j * 2];
             double di = ri_im - roots[j * 2 + 1];
             double d2 = dr * dr + di * di;
-            if (d2 < d2_min) d2_min = d2;
+            if (needMin && d2 < d2_min) d2_min = d2;
             if (needCrowd) crowd_sum += -0.5 * log10(d2 > SOLVE_SCORE_EPS2 ? d2 : SOLVE_SCORE_EPS2);
             if (needNN) {
                 if (d2 < nn_d2[i]) nn_d2[i] = d2;
@@ -1786,12 +1960,12 @@ static int solve_metric_in_pair_family(enum SolveMetric metric) {
 /* Raw (pre-normalization) score via the shared features; tail math matches
  * each metric's original branch exactly. */
 static double solve_features_pair_metric(SolveSourceFeatures *f, enum SolveMetric metric,
-                                         int needCrowd, int needNN) {
+                                         int needMin, int needCrowd, int needNN) {
     int degree = f->degree;
     if (degree <= 0) return 0.0;
     if (degree < solve_metric_min_roots(metric)) return 0.0;
     if (degree < 2) return 0.0;
-    if (!solve_features_pair_pass(f, needCrowd, needNN)) return 0.0;
+    if (!solve_features_pair_pass(f, needMin, needCrowd, needNN)) return 0.0;
     if (metric == SOLVE_METRIC_PROXIMITY) {
         return -0.5 * log10(f->d2_min > SOLVE_SCORE_EPS2 ? f->d2_min : SOLVE_SCORE_EPS2);
     }
@@ -1818,6 +1992,48 @@ static double solve_features_pair_metric(SolveSourceFeatures *f, enum SolveMetri
     return stddev_of(f->s1, degree, s1_mean);
 }
 
+/* CR33 F8: the requirement plan — engagement, pair-feature masks, family
+ * member counts — is program-invariant. One helper computes it; parse stores
+ * it on the program (planPrepared) and per-row evaluation just reads it.
+ * Hand-built structs (planPrepared == 0) recompute per call, same values.
+ * Engagement requires provable REUSE (the CR32 follow-up lesson): duplicate
+ * (metric,source) slots, >= 2 pair-family slots, or >= 2 members of a
+ * shared feature family. */
+static void solve_score_compute_plan(const SolveScoreProgram *program,
+                                     uint8_t engage[2], uint8_t needMin[2],
+                                     uint8_t needCrowd[2], uint8_t needNN[2],
+                                     uint8_t famExtrema[2], uint8_t famRadial[2]) {
+    int pairSlots[2] = {0, 0};        /* [0]=solve roots, [1]=coeff roots */
+    int dupSlots[2] = {0, 0};
+    for (int si = 0; si < 2; si++) {
+        engage[si] = 0; needMin[si] = 0; needCrowd[si] = 0; needNN[si] = 0;
+        famExtrema[si] = 0; famRadial[si] = 0;
+    }
+    for (int i = 0; i < program->metricCount; i++) {
+        enum SolveMetric metric = program->metrics[i];
+        enum SolveScoreMetricSource source = program->metricSources[i];
+        if (source == SOLVE_SCORE_SOURCE_PARAM || solve_metric_is_param_metric(metric)) continue;
+        int si = (source == SOLVE_SCORE_SOURCE_COEFF) ? 1 : 0;
+        if (solve_metric_in_pair_family(metric)) pairSlots[si]++;
+        if (solve_metric_in_extrema_family(metric) && famExtrema[si] < 255) famExtrema[si]++;
+        if (solve_metric_in_radial_family(metric) && famRadial[si] < 255) famRadial[si]++;
+        for (int j = 0; j < i; j++) {
+            if (program->metrics[j] == metric &&
+                program->metricSources[j] == source) {
+                dupSlots[si] = 1;
+                break;
+            }
+        }
+        if (metric == SOLVE_METRIC_PROXIMITY) needMin[si] = 1;
+        else if (metric == SOLVE_METRIC_CROWDING) needCrowd[si] = 1;
+        else if (metric == SOLVE_METRIC_CLUSTERINESS || metric == SOLVE_METRIC_NN_VARIATION) needNN[si] = 1;
+    }
+    for (int si = 0; si < 2; si++) {
+        engage[si] = (uint8_t)((pairSlots[si] >= 2) || dupSlots[si] ||
+                               (famExtrema[si] >= 2) || (famRadial[si] >= 2));
+    }
+}
+
 static int solve_score_eval_metric_slots(const float *roots, int degree,
                                          const float *coeffRoots, int coeffDegree,
                                          const float *paramValues, int paramDegree,
@@ -1833,40 +2049,21 @@ static int solve_score_eval_metric_slots(const float *roots, int degree,
             roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, 0);
         return 1;
     }
-    /* CR32 F2: build the requirement plan BEFORE evaluating anything.
-     * The cache only pays off when a source's filter/traversal/memo work is
-     * reused, i.e. when that source has >= 2 cacheable slots. A source with a
-     * single slot takes the pre-CR31 direct path verbatim — same bytes, same
-     * cost, no feature-cache preparation at all. Pair-feature masks are the
-     * union across the source's slots so ONE traversal serves them all. */
-    /* CR32 follow-up: engagement requires provable REUSE, not merely two
-     * slots — two DISTINCT cheap metrics share nothing worth the cache's
-     * malloc/prepare cost (measured +27% for max_re+min_re when gated on
-     * slot count alone). Reuse exists iff a source has duplicate
-     * (metric) slots (memo pays) or >= 2 pair-family slots (one traversal
-     * serves them all). */
-    int pairSlots[2] = {0, 0};        /* [0]=solve roots, [1]=coeff roots */
-    int dupSlots[2] = {0, 0};
-    int engage[2] = {0, 0};
-    int needCrowd[2] = {0, 0}, needNN[2] = {0, 0};
-    for (int i = 0; i < program->metricCount; i++) {
-        enum SolveMetric metric = program->metrics[i];
-        enum SolveScoreMetricSource source = program->metricSources[i];
-        if (source == SOLVE_SCORE_SOURCE_PARAM || solve_metric_is_param_metric(metric)) continue;
-        int si = (source == SOLVE_SCORE_SOURCE_COEFF) ? 1 : 0;
-        if (solve_metric_in_pair_family(metric)) pairSlots[si]++;
-        for (int j = 0; j < i; j++) {
-            if (program->metrics[j] == metric &&
-                program->metricSources[j] == source) {
-                dupSlots[si] = 1;
-                break;
-            }
+    uint8_t engage[2], needMin[2], needCrowd[2], needNN[2], famExtrema[2], famRadial[2];
+    if (program->planPrepared) {
+        /* CR33 F8: program-invariant plan computed once at parse */
+        for (int si = 0; si < 2; si++) {
+            engage[si] = program->planEngage[si];
+            needMin[si] = program->planNeedMin[si];
+            needCrowd[si] = program->planNeedCrowd[si];
+            needNN[si] = program->planNeedNN[si];
+            famExtrema[si] = program->planFamExtrema[si];
+            famRadial[si] = program->planFamRadial[si];
         }
-        if (metric == SOLVE_METRIC_CROWDING) needCrowd[si] = 1;
-        else if (metric == SOLVE_METRIC_CLUSTERINESS || metric == SOLVE_METRIC_NN_VARIATION) needNN[si] = 1;
+    } else {
+        solve_score_compute_plan(program, engage, needMin, needCrowd, needNN,
+                                 famExtrema, famRadial);
     }
-    engage[0] = (pairSlots[0] >= 2) || dupSlots[0];
-    engage[1] = (pairSlots[1] >= 2) || dupSlots[1];
     /* Lazy, heap-backed feature state: nothing is allocated (and no 16.6 KiB
      * object lives on this frame) unless a source actually engages the cache. */
     SolveSourceFeatures *feat[2] = {NULL, NULL};
@@ -1913,7 +2110,27 @@ static int solve_score_eval_metric_slots(const float *roots, int degree,
             if (!memoHit) {
                 solve_features_prepare(f, metricRoots, metricDegree);
                 if (solve_metric_in_pair_family(metric)) {
-                    score = solve_features_pair_metric(f, metric, needCrowd[si], needNN[si]);
+                    score = solve_features_pair_metric(f, metric, needMin[si], needCrowd[si], needNN[si]);
+                } else if (famExtrema[si] >= 2 && solve_metric_in_extrema_family(metric)) {
+                    /* CR33 F5: one pass serves every requested member */
+                    if (!f->fam.extremaDone && f->degree > 0) {
+                        solve_family_extrema_pass(f->roots, f->degree, &f->fam);
+                    }
+                    score = f->fam.extremaDone
+                        ? solve_family_value(&f->fam, metric, f->degree)
+                        : 0.0;
+                } else if (famRadial[si] >= 2 && solve_metric_in_radial_family(metric)) {
+                    if (!f->fam.radialDone && f->degree > 0) {
+                        if (!solve_family_radial_pass(f->roots, f->degree, &f->fam)) {
+                            /* allocation failure: correctness over reuse */
+                            score = (f->degree > 0)
+                                ? compute_solve_metric_score(f->roots, f->degree, metric)
+                                : 0.0;
+                        }
+                    }
+                    if (f->fam.radialDone) {
+                        score = solve_family_value(&f->fam, metric, f->degree);
+                    }
                 } else {
                     /* pre-filtered roots: the callee's own filter no-ops */
                     score = (f->degree > 0)

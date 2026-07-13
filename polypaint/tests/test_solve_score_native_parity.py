@@ -291,6 +291,76 @@ class TestSolveScoreNativeParity(unittest.TestCase):
             self._assert_close_list(native_outputs, py.outputs)
 
 
+    def test_family_pass_programs_match_python(self):
+        """CR33 F5/F6: >= 2 same-source members of the extrema or radial
+        family run through ONE shared pass, and median metrics use bounded
+        selection instead of qsort. All must match the Python reference,
+        including non-finite roots through the shared filter."""
+        from solve_score_eval import eval_solve_score
+
+        roots = [
+            (0.31 * i - 1.4, 0.27 * ((i * 7) % 11) - 1.2) for i in range(14)
+        ]
+        roots[5] = (0.0, 0.0)          # min_mod zero-skip
+        dirty = list(roots)
+        dirty[2] = (float("inf"), 0.1)
+        dirty[9] = (float("nan"), 0.0)
+        coeff_roots = [(-1.0, 0.0), (0.5, 0.2), (0.1, -0.6), (0.9, 0.9)]
+        param_values = [(0.2, -0.3), (0.7, 0.1)]
+
+        cases = [
+            # full extrema family, one source
+            ([["max_re", "slv", "1"], ["min_re", "slv", "1"],
+              ["max_im", "slv", "1"], ["min_im", "slv", "1"],
+              ["weighted_sum", "0.5", "0.5"], ["weighted_sum", "0.5", "0.5"],
+              ["weighted_sum", "0.5", "0.5"]],
+             {"max_re": (-10, 10), "min_re": (-10, 10),
+              "max_im": (-10, 10), "min_im": (-10, 10)}, roots),
+            # full radial family (7 members incl. two-pass sd)
+            ([["dist_unit_circle", "slv", "1"], ["min_mod", "slv", "1"],
+              ["max_mod", "slv", "1"], ["mean_log_mod", "slv", "1"],
+              ["sd_log_mod", "slv", "1"], ["inside_unit_fraction", "slv", "1"],
+              ["unit_annulus_fraction_01", "slv", "1"],
+              ["weighted_sum", "0.5", "0.5"], ["weighted_sum", "0.5", "0.5"],
+              ["weighted_sum", "0.5", "0.5"], ["weighted_sum", "0.5", "0.5"],
+              ["weighted_sum", "0.5", "0.5"], ["weighted_sum", "0.5", "0.5"]],
+             {"dist_unit_circle": (-10, 10), "min_mod": (-10, 10),
+              "max_mod": (-10, 10), "mean_log_mod": (-10, 10),
+              "sd_log_mod": (-10, 10), "inside_unit_fraction": (0, 1),
+              "unit_annulus_fraction_01": (0, 1)}, roots),
+            # two radial members only (minimum engagement)
+            ([["min_mod", "slv", "1"], ["max_mod", "slv", "1"],
+              ["weighted_sum", "0.5", "0.5"]],
+             {"min_mod": (-10, 10), "max_mod": (-10, 10)}, roots),
+            # radial + extrema together, non-finite roots through the filter
+            ([["max_re", "slv", "1"], ["min_im", "slv", "1"],
+              ["dist_unit_circle", "slv", "1"], ["mean_log_mod", "slv", "1"],
+              ["weighted_sum", "0.5", "0.5"], ["weighted_sum", "0.5", "0.5"],
+              ["weighted_sum", "0.5", "0.5"]],
+             {"max_re": (-10, 10), "min_im": (-10, 10),
+              "dist_unit_circle": (-10, 10), "mean_log_mod": (-10, 10)}, dirty),
+            # median metrics (introselect) alongside a family
+            ([["real_axis_proximity", "slv", "1"], ["imag_axis_proximity", "slv", "1"],
+              ["diagonal_proximity", "slv", "1"], ["outlierness", "slv", "1"],
+              ["weighted_sum", "0.5", "0.5"], ["weighted_sum", "0.5", "0.5"],
+              ["weighted_sum", "0.5", "0.5"]],
+             {"real_axis_proximity": (-10, 10), "imag_axis_proximity": (-10, 10),
+              "diagonal_proximity": (-10, 10), "outlierness": (-10, 10)}, roots),
+        ]
+        for chain, clips, case_roots in cases:
+            compiled, payload = self._compile_case(chain, clips)
+            native_metrics, native_outputs = self._native_eval(
+                compiled, payload, case_roots,
+                coeff_roots=coeff_roots, param_values=param_values,
+            )
+            py = eval_solve_score(
+                compiled, case_roots,
+                coeff_roots=coeff_roots, param_values=param_values,
+            )
+            self._assert_close_list(native_metrics, py.metrics)
+            self._assert_close_list(native_outputs, py.outputs)
+
+
 class TestSolveScoreCPartitionDrift(unittest.TestCase):
     def test_c_param_metric_partition_matches_python(self):
         """solve_metric_is_param_metric (C) vs PARAM_SOLVE_SCORE_METRICS.

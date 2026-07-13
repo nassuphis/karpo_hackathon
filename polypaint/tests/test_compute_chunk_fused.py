@@ -56,6 +56,18 @@ class TestComputeChunkFused(unittest.TestCase):
         self.assertEqual(body["param_gen_us"], 111)
         self.assertEqual(body["fused_threads"], 4)
         self.assertEqual(body["execution_method"], "fused_chunk_pipeline")
+        # CR33 telemetry contract: one structured stage summary per chunk
+        telemetry = body["stage_telemetry"]
+        for key in ("param_scheduler", "param_native_us", "param_tokens",
+                    "param_legacy_static", "param_legacy_dynamic",
+                    "param_legacy_prepared", "online_cpus",
+                    "coeff_native_us", "coeff_tokens",
+                    "coeff_tok_typed_scalar", "coeff_tok_typed_vector",
+                    "coeff_tok_selector", "coeff_tok_native",
+                    "coeff_fused_regions", "coeff_fused_tokens",
+                    "roots_size", "lambda_memory_mb", "arch"):
+            self.assertIn(key, telemetry)
+        self.assertEqual(telemetry["roots_size"], 560)
         self.assertEqual(mock_upload.call_count, 3)
         self.assertEqual(mock_report.call_args_list[-1].args[:3], ("compute_j", "compute_run_fused_2", "done"))
         self.assertEqual(mock_param.call_args.kwargs["fused_threads"], 4)

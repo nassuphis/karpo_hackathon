@@ -1107,6 +1107,35 @@ static void solve_score_prepare_lag_flags(SolveScoreProgram *program) {
                              program->planNeedCrowd, program->planNeedNN,
                              program->planFamExtrema, program->planFamRadial);
     program->planPrepared = 1;
+    /* CR33 telemetry: one structured line per PROGRAM PARSE (not per row),
+     * emitted only when the caller opts in via PP_PLAN_TELEMETRY=1 — Lambda
+     * stderr lands in CloudWatch, so this is the "which shapes does
+     * production actually run" signal the review asked for. */
+    if (getenv("PP_PLAN_TELEMETRY")) {
+        int dupCount = 0;
+        for (int i = 0; i < program->metricCount; i++) {
+            for (int j = 0; j < i; j++) {
+                if (program->metrics[j] == program->metrics[i] &&
+                    program->metricSources[j] == program->metricSources[i]) {
+                    dupCount++;
+                    break;
+                }
+            }
+        }
+        fprintf(stderr,
+                "{\"pp_solve_plan\":{\"metric_count\":%d,\"token_count\":%d,"
+                "\"dup_slots\":%d,\"uses_lag\":%d,"
+                "\"engage\":[%d,%d],\"pair_min\":[%d,%d],\"pair_crowd\":[%d,%d],"
+                "\"pair_nn\":[%d,%d],\"fam_extrema\":[%d,%d],\"fam_radial\":[%d,%d]}}\n",
+                program->metricCount, program->tokenCount,
+                dupCount, program->planUsesLag,
+                program->planEngage[0], program->planEngage[1],
+                program->planNeedMin[0], program->planNeedMin[1],
+                program->planNeedCrowd[0], program->planNeedCrowd[1],
+                program->planNeedNN[0], program->planNeedNN[1],
+                program->planFamExtrema[0], program->planFamExtrema[1],
+                program->planFamRadial[0], program->planFamRadial[1]);
+    }
 }
 
 static double solve_score_clamp_unit(double v) {

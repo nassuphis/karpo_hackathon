@@ -361,6 +361,44 @@ class TestSolveScoreNativeParity(unittest.TestCase):
             self._assert_close_list(native_outputs, py.outputs)
 
 
+    def test_plan_telemetry_line_is_env_gated(self):
+        """CR33 telemetry: PP_PLAN_TELEMETRY=1 makes program parse emit ONE
+        structured pp_solve_plan line on stderr (CloudWatch-visible in
+        production); without the env, stderr stays clean."""
+        import os as _os
+
+        chain = [["proximity", "slv", "1"], ["crowding", "slv", "1"],
+                 ["max_re", "slv", "1"],
+                 ["weighted_sum", "0.6", "0.4"], ["weighted_sum", "0.7", "0.3"]]
+        compiled, payload = self._compile_case(
+            chain, {"proximity": (-10, 10), "crowding": (-10, 10), "max_re": (-10, 10)})
+        roots = [(0.1 * i, 0.05 * i) for i in range(8)]
+        argv = [
+            str(self._probe), payload["score_metrics"],
+            payload.get("score_sources", ""), payload["score_clip_los"],
+            payload["score_clip_his"], payload["score_program"],
+            _csv(roots), _csv(None), _csv(None), _csv(None),
+        ]
+        env = dict(_os.environ)
+        env.pop("PP_PLAN_TELEMETRY", None)
+        clean = subprocess.run(argv, capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        self.assertNotIn("pp_solve_plan", clean.stderr)
+
+        env["PP_PLAN_TELEMETRY"] = "1"
+        told = subprocess.run(argv, capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(told.returncode, 0, told.stderr)
+        lines = [l for l in told.stderr.splitlines() if "pp_solve_plan" in l]
+        self.assertEqual(len(lines), 1, told.stderr)
+        plan = json.loads(lines[0])["pp_solve_plan"]
+        self.assertEqual(plan["metric_count"], 3)
+        self.assertEqual(plan["uses_lag"], 0)
+        self.assertEqual(plan["engage"], [1, 0])       # two pair slots, solve source
+        self.assertEqual(plan["pair_min"], [1, 0])     # proximity present
+        self.assertEqual(plan["pair_crowd"], [1, 0])
+        self.assertEqual(plan["dup_slots"], 0)
+
+
 class TestSolveScoreCPartitionDrift(unittest.TestCase):
     def test_c_param_metric_partition_matches_python(self):
         """solve_metric_is_param_metric (C) vs PARAM_SOLVE_SCORE_METRICS.

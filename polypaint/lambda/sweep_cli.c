@@ -4014,6 +4014,37 @@ static int coeffBuildLoweredExprPlan(const CoeffScalarExpr *expr, CoeffLoweredEx
     return 0;
 }
 
+/* CR33 telemetry: coeff token histogram + fusion coverage — one fragment,
+ * printed into both the buffered and chunked meta lines (no leading brace,
+ * begins with a comma). */
+static void coeffPrintTelemetryFields(FILE *out, const CoeffProgram *program) {
+    int tokTypedScalar = 0, tokTypedVector = 0, tokSelector = 0, tokNative = 0;
+    int fusedRegions = 0, fusedTokens = 0;
+    if (program) {
+        for (int tk = 0; tk < program->token_count; tk++) {
+            int op = program->tokens[tk].op;
+            if (op == COEFF_OP_TYPED_PUSH_SCALAR || op == COEFF_OP_TYPED_BINARY ||
+                op == COEFF_OP_TYPED_UNARY || op == COEFF_OP_TYPED_POKE_POLY ||
+                op == COEFF_OP_TYPED_GET_SCALAR) tokTypedScalar++;
+            else if (op == COEFF_OP_TYPED_PUSH_VECTOR || op == COEFF_OP_TYPED_SET_POLY ||
+                     op == COEFF_OP_TYPED_FILL || op == COEFF_OP_TYPED_BLEND) tokTypedVector++;
+            else if (op == COEFF_OP_VECTOR_BINARY || op == COEFF_OP_VECTOR_UNARY ||
+                     op == COEFF_OP_VECTOR_ROLL || op == COEFF_OP_VECTOR_ARGSORT) tokSelector++;
+            else if (op == COEFF_OP_LEGACY || op == COEFF_OP_NATIVE_TRANSFORM) tokNative++;
+            if (program->fused_region_end[tk] > (uint16_t)tk) {
+                fusedRegions++;
+                fusedTokens += program->fused_region_end[tk] - tk;
+            }
+        }
+    }
+    fprintf(out,
+            ",\"tok_typed_scalar\":%d,\"tok_typed_vector\":%d"
+            ",\"tok_selector\":%d,\"tok_native\":%d"
+            ",\"fused_regions\":%d,\"fused_tokens\":%d",
+            tokTypedScalar, tokTypedVector, tokSelector, tokNative,
+            fusedRegions, fusedTokens);
+}
+
 /* CR33 F7: mark maximal straight-line typed-scalar regions. Validation is
  * conservative: any op outside the four scalar ops, any depth underflow, a
  * region not returning to depth zero, or depth beyond the fused stack cap
@@ -9162,12 +9193,14 @@ static int runCoeffGen(const char *buf, const char *outPath) {
            "\"n1\":%d,\"n2\":%d,"
            "\"i1_start\":%d,\"i1_end\":%d,"
            "\"n_t\":%ld,\"data_bytes\":%ld,"
-           "\"elapsed_us\":%ld,\"param_program_tokens\":%d,\"coeff_program_tokens\":%d}\n",
+           "\"elapsed_us\":%ld,\"param_program_tokens\":%d,\"coeff_program_tokens\":%d",
            funcName, nCoeffsOut, degree,
            n1, n2, i1_start, i1_end,
            totalSteps, dataBytes, elapsed_us,
            hasParamProgram > 0 ? paramProgram.token_count : 0,
            hasCoeffProgram > 0 ? coeffProgram.token_count : 0);
+    coeffPrintTelemetryFields(stdout, hasCoeffProgram > 0 ? &coeffProgram : NULL);
+    printf("}\n");
     return 0;
 }
 
@@ -9958,15 +9991,34 @@ static int runParamGen(const char *buf, const char *outPath) {
     else fflush(stdout);
 
     long dataBytes = stepCount * 4 * (long)sizeof(float);
+    /* CR33 telemetry: scheduler mode + legacy argument classification, once
+     * per run — the fields the review asked for to rank future param work
+     * against real production programs. */
+    const char *schedName = (threadsUsed <= 1) ? "serial"
+                          : (streamMode ? "stream_ring" : "static_file");
+    int legacyStatic = 0, legacyDynamic = 0, legacyPrepared = 0;
+    if (hasParamProgram > 0) {
+        for (int tk = 0; tk < paramProgram.token_count; tk++) {
+            if (paramProgram.tokens[tk].op != PARAM_OP_LEGACY) continue;
+            if (paramProgram.legacy_prep[tk].argMode == PARAM_ARGS_DYNAMIC) legacyDynamic++;
+            else legacyStatic++;
+            if (paramProgram.legacy_prep[tk].preparedKind != PARAM_PREP_NONE) legacyPrepared++;
+        }
+    }
     /* In stream mode, metadata goes to stderr (stdout is binary data) */
     FILE *metaOut = streamMode ? stderr : stdout;
     fprintf(metaOut, "{\"mode\":\"param_gen\",\"n1\":%d,\"n2\":%d,\"times\":%d,"
            "\"n_steps\":%ld,\"total_steps\":%ld,\"step_start\":%ld,\"step_count\":%ld,"
            "\"data_bytes\":%ld,\"threads\":%d,\"elapsed_us\":%ld,"
-           "\"param_program_tokens\":%d}\n",
+           "\"param_program_tokens\":%d,"
+           "\"scheduler\":\"%s\",\"online_cpus\":%ld,"
+           "\"legacy_static_tokens\":%d,\"legacy_dynamic_tokens\":%d,"
+           "\"legacy_prepared_tokens\":%d}\n",
            n1, n2, times, stepCount, totalSteps, stepStart, stepCount,
            dataBytes, threadsUsed, elapsed_us,
-           hasParamProgram > 0 ? paramProgram.token_count : 0);
+           hasParamProgram > 0 ? paramProgram.token_count : 0,
+           schedName, onlineCpus,
+           legacyStatic, legacyDynamic, legacyPrepared);
 #ifdef PP_VM_PERF
     pp_perf_report("param_gen");
 #endif
@@ -10783,11 +10835,13 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
            "\"n_coeffs\":%d,\"degree\":%d,"
            "\"step_start\":%ld,\"step_count\":%ld,"
            "\"n_t\":%ld,\"data_bytes\":%ld,\"threads\":%d,"
-           "\"elapsed_us\":%ld,\"coeff_program_tokens\":%d}\n",
+           "\"elapsed_us\":%ld,\"coeff_program_tokens\":%d",
            funcName, nCoeffsOut, degree,
            stepStart, stepCount,
            stepCount, dataBytes, threadsUsed, elapsed_us,
            hasCoeffProgram > 0 ? coeffProgram.token_count : 0);
+    coeffPrintTelemetryFields(stdout, hasCoeffProgram > 0 ? &coeffProgram : NULL);
+    printf("}\n");
 #ifdef PP_VM_PERF
     pp_perf_report("coeffgen_chunked");
 #endif

@@ -499,3 +499,70 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_param_gen_meta_reports_scheduler_and_legacy_classes(tmp_path):
+    """CR33 telemetry: the param_gen meta line carries the scheduler mode,
+    online CPU count, and legacy argument classification."""
+    import json as _json
+    import os as _os
+    import subprocess as _sp
+    import sys as _sys
+    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), "..", "lambda"))
+    from param_program_chain import compile_param_program_chain
+
+    sweep = _os.path.join(_os.path.dirname(__file__), "..", "lambda", "sweep_test")
+    payload = {"mode": "param_gen", "n1": 8, "n2": 8, "times": 1, "n_threads": 4,
+               "param_program": compile_param_program_chain(
+                   [["rect", "4", "1.618", "0.125"]])}
+    out = tmp_path / "p.bin"
+    proc = _sp.run([sweep, str(out)], input=_json.dumps(payload),
+                   capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    meta = _json.loads(proc.stdout.strip().splitlines()[-1])
+    assert meta["scheduler"] == "static_file"
+    assert meta["online_cpus"] >= 1
+    assert meta["legacy_static_tokens"] == 1
+    assert meta["legacy_dynamic_tokens"] == 0
+    assert meta["legacy_prepared_tokens"] == 1   # rect has a prepared plan
+    # serial request reports the serial scheduler
+    payload_serial = dict(payload, n_threads=1)
+    proc = _sp.run([sweep, str(out)], input=_json.dumps(payload_serial),
+                   capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    meta = _json.loads(proc.stdout.strip().splitlines()[-1])
+    assert meta["scheduler"] == "serial"
+
+
+def test_coeffgen_chunked_meta_reports_token_histogram(tmp_path):
+    """CR33 telemetry: the chunked coeff meta line carries the token
+    histogram and fusion coverage."""
+    import json as _json
+    import os as _os
+    import subprocess as _sp
+    import sys as _sys
+    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), "..", "lambda"))
+    from coeff_program_source import compile_coeff_program_source
+
+    sweep = _os.path.join(_os.path.dirname(__file__), "..", "lambda", "sweep_test")
+    params = tmp_path / "params.bin"
+    proc = _sp.run([sweep, str(params)],
+                   input=_json.dumps({"mode": "param_gen", "n1": 8, "n2": 8,
+                                      "times": 1, "n_threads": 2}),
+                   capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    compiled = compile_coeff_program_source(
+        "poly[0] = p1 * 2 + 1\npoly[1] = p2 - 3\npoly = rev(poly)")
+    payload = {"mode": "coeffgen_chunked", "function": "poly_1", "cfpv": [],
+               "params_file": str(params), "step_start": 0, "step_count": 64,
+               "source_step_start": 0, "source_n1": 8, "source_n2": 8,
+               "n_threads": 2, "coeff_program": compiled}
+    out = tmp_path / "coeffs.bin"
+    proc = _sp.run([sweep, str(out)], input=_json.dumps(payload),
+                   capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    meta = _json.loads(proc.stdout.strip().splitlines()[-1])
+    assert meta["tok_typed_scalar"] > 0
+    assert meta["tok_native"] >= 1              # rev(poly)
+    assert meta["fused_regions"] >= 1           # the poke assignments fuse
+    assert meta["fused_tokens"] > 0

@@ -1,5 +1,6 @@
 import json
 import os
+import platform
 import subprocess
 import time
 
@@ -253,6 +254,29 @@ def handle_fused_chunk(params):
             "execution_method": "fused_chunk_pipeline",
             "reused_params": int(reused_params),
             "reused_coeffs": int(reused_coeffs),
+            # CR33 telemetry: one structured stage summary per chunk (never
+            # per row) — the fields code-review-33 asked production to
+            # report so future optimization is ranked against real programs.
+            "stage_telemetry": {
+                "param_scheduler": str(param_meta.get("param_scheduler") or param_meta.get("scheduler") or ""),
+                "param_native_us": int(param_meta.get("native_elapsed_us", 0) or 0),
+                "param_tokens": int(param_meta.get("param_program_tokens", 0) or 0),
+                "param_legacy_static": int(param_meta.get("legacy_static_tokens", 0) or 0),
+                "param_legacy_dynamic": int(param_meta.get("legacy_dynamic_tokens", 0) or 0),
+                "param_legacy_prepared": int(param_meta.get("legacy_prepared_tokens", 0) or 0),
+                "online_cpus": int(param_meta.get("online_cpus", 0) or 0),
+                "coeff_native_us": int(coeff_meta.get("native_elapsed_us", 0) or 0),
+                "coeff_tokens": int(coeff_meta.get("coeff_program_tokens", 0) or 0),
+                "coeff_tok_typed_scalar": int(coeff_meta.get("tok_typed_scalar", 0) or 0),
+                "coeff_tok_typed_vector": int(coeff_meta.get("tok_typed_vector", 0) or 0),
+                "coeff_tok_selector": int(coeff_meta.get("tok_selector", 0) or 0),
+                "coeff_tok_native": int(coeff_meta.get("tok_native", 0) or 0),
+                "coeff_fused_regions": int(coeff_meta.get("fused_regions", 0) or 0),
+                "coeff_fused_tokens": int(coeff_meta.get("fused_tokens", 0) or 0),
+                "roots_size": int(roots_size),
+                "lambda_memory_mb": int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", 0) or 0),
+                "arch": platform.machine(),
+            },
         }
         if "skipped_overflow" in solve_meta:
             result_data["skipped_overflow"] = int(solve_meta.get("skipped_overflow", 0) or 0)
@@ -301,7 +325,11 @@ def _run_param_gen_local(*, output_path, n, times, step_start, step_count, param
     if result.returncode != 0:
         raise RuntimeError(f"fused param_gen failed: {result.stderr.strip()}")
     meta = json.loads(result.stdout.strip())
-    meta["param_scheduler"] = "static_file" if fused_threads > 1 else "serial"
+    # CR33 telemetry: native elapsed_us stays visible next to the wall time —
+    # their difference is process startup + JSON plumbing, one of the fields
+    # the review asked production to report.
+    meta["native_elapsed_us"] = int(meta.get("elapsed_us", 0) or 0)
+    meta["param_scheduler"] = meta.get("scheduler") or ("static_file" if fused_threads > 1 else "serial")
     meta["elapsed_us"] = int((time.time() - t0) * 1e6)
     return meta
 
@@ -323,6 +351,7 @@ def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, p
         spec["coeff_program"] = coeff_program
     if cfpv:
         spec["cfpv"] = list(cfpv)
+    t0 = time.time()
     result = subprocess.run(
         [SWEEP_COEFFGEN, output_path],
         input=json.dumps(spec),
@@ -332,7 +361,10 @@ def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, p
     )
     if result.returncode != 0:
         raise RuntimeError(f"fused coeffgen failed: {result.stderr.strip()}")
-    return json.loads(result.stdout)
+    meta = json.loads(result.stdout)
+    meta["native_elapsed_us"] = int(meta.get("elapsed_us", 0) or 0)
+    meta["wall_elapsed_us"] = int((time.time() - t0) * 1e6)
+    return meta
 
 
 def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps, fused_threads):

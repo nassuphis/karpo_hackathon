@@ -119,7 +119,22 @@ harvested program's −40% (M3) is −62% on the deployment architecture.
 - The review's F9 (param peepholes/batch VM) and F10 (architectural fusion,
   upload overlap) are deliberately not started, per its own sequencing:
   production telemetry should first show the local evaluator work no longer
-  dominates. The `param_scheduler` meta field is the first telemetry crumb.
+  dominates.
+- **Production telemetry (the review's "Production Telemetry Needed" list)
+  is implemented** as one structured summary per stage, never per row:
+  the param meta line reports scheduler mode (serial / stream_ring /
+  static_file), online CPUs, and legacy token classification
+  (static/dynamic/prepared); the coeff meta lines (buffered and chunked)
+  report the token histogram (typed-scalar / typed-vector / selector /
+  native) and fusion coverage (regions + tokens); score-program parses emit
+  one `pp_solve_plan` stderr line (metric/dup counts, lag bit, engagement,
+  pair masks, family counts) when the caller opts in with
+  `PP_PLAN_TELEMETRY=1` — Lambda stderr lands in CloudWatch; the fused
+  chunk result carries `stage_telemetry` (all of the above forwarded, plus
+  native-vs-wall elapsed per stage — the difference is process startup —
+  file sizes, Lambda memory size, and architecture). All shapes are pinned
+  by contract tests; the meta additions are byte-neutral on outputs
+  (A/B verified).
 - Deploy binaries rebuilt from `e4e057d` and Docker-gated; the fused
   handler change needs a real Lambda deploy (user-run) before
   `fused_threads` defaults are revisited.

@@ -2303,6 +2303,27 @@ static void pt_dlt(double *z1r, double *z1i, double *z2r, double *z2i, int n, do
 }
 
 /* rply(n, sides, radius, turns): regular polygon perimeter walk. */
+/* CR33 F2: prepared twin uses a vertex table whose entries are computed with
+ * the IDENTICAL angle expression the original body uses per point. Both
+ * bodies run with FP_CONTRACT OFF so separately compiled copies of the same
+ * lerp/rotation arithmetic round identically (the CR32 NaN-sign lesson made
+ * contraction divergence a known hazard). */
+#pragma STDC FP_CONTRACT OFF
+static void pt_rply_one_pre(double *xr, double *xi, int ns, double radius,
+                            double ca, double sa,
+                            const double *cosT, const double *sinT) {
+    double t = fmod(*xr, 1.0);
+    if (t < 0) t += 1.0;
+    double pos = t * ns;           /* position along edges: [0, ns) */
+    int edge = (int)pos;
+    if (edge >= ns) edge = ns - 1;
+    double frac = pos - edge;      /* fraction along this edge */
+    double px = radius * ((1 - frac) * cosT[edge] + frac * cosT[edge + 1]);
+    double py = radius * ((1 - frac) * sinT[edge] + frac * sinT[edge + 1]);
+    *xr = ca * px - sa * py;
+    *xi = sa * px + ca * py;
+}
+
 static void pt_rply_one(double *xr, double *xi, double sides, double radius, double turns) {
     int ns = (int)sides;
     if (ns < 3) ns = 3;
@@ -2322,6 +2343,7 @@ static void pt_rply_one(double *xr, double *xi, double sides, double radius, dou
     *xr = cos(ra) * px - sin(ra) * py;
     *xi = sin(ra) * px + cos(ra) * py;
 }
+#pragma STDC FP_CONTRACT DEFAULT
 static void pt_rply(double *z1r, double *z1i, double *z2r, double *z2i, int n, double sides, double radius, double turns) {
     if (n == 0)      pt_rply_one(z1r, z1i, sides, radius, turns);
     else if (n == 1) pt_rply_one(z2r, z2i, sides, radius, turns);
@@ -2329,6 +2351,21 @@ static void pt_rply(double *z1r, double *z1i, double *z2r, double *z2i, int n, d
 }
 
 /* star(n, points, outer, inner_ratio): star perimeter walk. */
+#pragma STDC FP_CONTRACT OFF
+static void pt_star_one_pre(double *xr, double *xi, int nv, double rOuter,
+                            double rInner, const double *cosT, const double *sinT) {
+    double t = fmod(*xr, 1.0);
+    if (t < 0) t += 1.0;
+    double pos = t * nv;
+    int edge = (int)pos;
+    if (edge >= nv) edge = nv - 1;
+    double frac = pos - edge;
+    double r0 = (edge % 2 == 0) ? rOuter : rInner;
+    double r1 = ((edge + 1) % 2 == 0) ? rOuter : rInner;
+    *xr = (1 - frac) * r0 * cosT[edge] + frac * r1 * cosT[edge + 1];
+    *xi = (1 - frac) * r0 * sinT[edge] + frac * r1 * sinT[edge + 1];
+}
+
 static void pt_star_one(double *xr, double *xi, double points, double outer, double inner_ratio) {
     int np = (int)points;
     if (np < 3) np = 3;
@@ -2347,6 +2384,7 @@ static void pt_star_one(double *xr, double *xi, double points, double outer, dou
     *xr = (1 - frac) * r0 * cos(a0) + frac * r1 * cos(a1);
     *xi = (1 - frac) * r0 * sin(a0) + frac * r1 * sin(a1);
 }
+#pragma STDC FP_CONTRACT DEFAULT
 static void pt_star(double *z1r, double *z1i, double *z2r, double *z2i, int n, double points, double outer, double inner_ratio) {
     if (n == 0)      pt_star_one(z1r, z1i, points, outer, inner_ratio);
     else if (n == 1) pt_star_one(z2r, z2i, points, outer, inner_ratio);
@@ -2354,13 +2392,17 @@ static void pt_star(double *z1r, double *z1i, double *z2r, double *z2i, int n, d
 }
 
 /* rect(n, width, height, turns): rectangle perimeter walk by arc length, then rotate. */
-static void pt_rect_one(double *xr, double *xi, double w, double h, double turns) {
-    double perim = 2.0 * (w + h);
+/* CR33 F2: ONE compiled body (the CR32 lesson — duplicated loops diverge in
+ * FMA contraction). The unprepared wrapper computes the invariants per call;
+ * the prepared plan computes them once at parse. Expressions are the exact
+ * originals, so bytes cannot change. */
+static void pt_rect_one_pre(double *xr, double *xi, double w, double h,
+                            double perim, double hw, double hh,
+                            double ca, double sa) {
     double t = fmod(*xr, 1.0);
     if (t < 0) t += 1.0;
     double d = t * perim;           /* distance along perimeter */
     double px, py;
-    double hw = w / 2.0, hh = h / 2.0;
     if (d < w) {                    /* bottom: left to right */
         px = -hw + d;  py = -hh;
     } else if (d < w + h) {         /* right: bottom to top */
@@ -2370,9 +2412,15 @@ static void pt_rect_one(double *xr, double *xi, double w, double h, double turns
     } else {                         /* left: top to bottom */
         px = -hw;  py = hh - (d - 2 * w - h);
     }
+    *xr = ca * px - sa * py;
+    *xi = sa * px + ca * py;
+}
+
+static void pt_rect_one(double *xr, double *xi, double w, double h, double turns) {
+    double perim = 2.0 * (w + h);
+    double hw = w / 2.0, hh = h / 2.0;
     double ra = 2.0 * M_PI * turns;
-    *xr = cos(ra) * px - sin(ra) * py;
-    *xi = sin(ra) * px + cos(ra) * py;
+    pt_rect_one_pre(xr, xi, w, h, perim, hw, hh, cos(ra), sin(ra));
 }
 static void pt_rect(double *z1r, double *z1i, double *z2r, double *z2i, int n, double w, double h, double turns) {
     if (n == 0)      pt_rect_one(z1r, z1i, w, h, turns);
@@ -6645,6 +6693,42 @@ typedef struct {
     ParamLoweredExprTok toks[PARAM_PROGRAM_MAX_EXPR_NUMS / PARAM_PROGRAM_EXPR_STRIDE];
 } ParamLoweredExprPlan;
 
+/* CR33 F2: load-time plan for LEGACY tokens. Static arguments are resolved
+ * and real-validated ONCE at parse (the eval loop was copying, defaulting,
+ * and validating them per point); measured transform-specific plans hoist
+ * per-point-invariant geometry (rect: perimeter + rotation trig — four
+ * un-hoisted trig calls per point otherwise). DYNAMIC (expression/stack)
+ * arguments keep the existing per-point path untouched. */
+enum ParamLegacyArgMode {
+    PARAM_ARGS_DYNAMIC = 0,   /* zero-init default: always safe */
+    PARAM_ARGS_NONE = 1,
+    PARAM_ARGS_STATIC = 2
+};
+
+enum ParamLegacyPreparedKind {
+    PARAM_PREP_NONE = 0,
+    PARAM_PREP_RECT = 1,
+    PARAM_PREP_RPLY = 2,
+    PARAM_PREP_STAR = 3
+};
+
+/* Vertex-table cap for rply/star plans (nv+1 entries used). Larger shapes
+ * simply stay on the unprepared path — same bytes, just unhoisted. */
+#define PARAM_PREP_MAX_VERTS 33
+
+typedef struct {
+    uint8_t argMode;        /* enum ParamLegacyArgMode */
+    uint8_t preparedKind;   /* enum ParamLegacyPreparedKind */
+    ParamCx staticArgs[PARAM_PROGRAM_MAX_ARGS];
+    union {
+        struct { double w, h, perim, hw, hh, ca, sa; } rect;
+        struct { int ns; double radius, ca, sa;
+                 double cosT[PARAM_PREP_MAX_VERTS], sinT[PARAM_PREP_MAX_VERTS]; } rply;
+        struct { int nv; double rOuter, rInner;
+                 double cosT[PARAM_PREP_MAX_VERTS], sinT[PARAM_PREP_MAX_VERTS]; } star;
+    } u;
+} ParamPreparedLegacy;
+
 typedef struct {
     int token_count;
     int stack_max;
@@ -6656,6 +6740,7 @@ typedef struct {
     ParamScalarExpr scalar_exprs[PARAM_PROGRAM_MAX_SCALAR_EXPRS];
     ParamLoweredExprPlan expr_plans[PARAM_PROGRAM_MAX_SCALAR_EXPRS];
     ParamProgramToken tokens[PARAM_PROGRAM_MAX_TOKENS];
+    ParamPreparedLegacy legacy_prep[PARAM_PROGRAM_MAX_TOKENS];   /* CR33 F2 */
 } ParamProgram;
 
 static ParamCx param_cx(double r, double i) {
@@ -6871,6 +6956,9 @@ static const char *parseParamProgramTokenObject(const char *objStart, const char
     return objEnd;
 }
 
+static double paramArgReal(const ParamCx *args, int nArgs, int idx, double fallback);
+static int paramLegacyArgAllowsComplex(int fnIndex, int nArgs, int idx);
+
 static void paramPreparePlan(ParamProgram *program) {
     /* CR31 F6: derive once what evaluation used to rediscover per row.
      * (1) Lower every scalar expression's double-triples into typed tokens —
@@ -6909,6 +6997,89 @@ static void paramPreparePlan(ParamProgram *program) {
         }
     }
     program->reg_used_mask = mask;
+
+    /* (3) CR33 F2: classify every LEGACY token's arguments and resolve the
+     *     static ones once. Any expression-referenced or stack-sourced
+     *     argument keeps the per-point DYNAMIC path verbatim. The real-
+     *     valuedness validation runs here for static args — the same check
+     *     the eval loop applied per point, with the same message. */
+    for (int k = 0; k < program->token_count; k++) {
+        const ParamProgramToken *tok = &program->tokens[k];
+        ParamPreparedLegacy *prep = &program->legacy_prep[k];
+        memset(prep, 0, sizeof(*prep));   /* PARAM_ARGS_DYNAMIC */
+        if (tok->op != PARAM_OP_LEGACY) continue;
+        if (tok->stack_arg_count > 0) continue;
+        int dynamic = 0;
+        for (int ai = 0; ai < tok->n_args; ai++) {
+            if (tok->expr_refs[ai] >= 0) { dynamic = 1; break; }
+        }
+        if (dynamic) continue;
+        prep->argMode = (tok->n_args == 0) ? PARAM_ARGS_NONE : PARAM_ARGS_STATIC;
+        for (int ai = 0; ai < tok->n_args; ai++) {
+            prep->staticArgs[ai] = param_cx(tok->args[ai], tok->args_im[ai]);
+            if (!paramLegacyArgAllowsComplex(tok->fn_index, tok->n_args, ai) &&
+                fabs(prep->staticArgs[ai].i) > 1e-12) {
+                /* leave on the dynamic path: the eval loop reports the exact
+                 * historical per-point error for this program */
+                prep->argMode = PARAM_ARGS_DYNAMIC;
+                break;
+            }
+        }
+        if (prep->argMode == PARAM_ARGS_DYNAMIC) continue;
+        /* transform-specific plans: only measured ones (rect first) */
+        if (tok->fn_index == 33) {
+            double w = paramArgReal(prep->staticArgs, tok->n_args, 0, 2.0);
+            double h = paramArgReal(prep->staticArgs, tok->n_args, 1, 1.0);
+            double turns = paramArgReal(prep->staticArgs, tok->n_args, 2, 0.0);
+            double ra = 2.0 * M_PI * turns;
+            prep->preparedKind = PARAM_PREP_RECT;
+            prep->u.rect.w = w;
+            prep->u.rect.h = h;
+            prep->u.rect.perim = 2.0 * (w + h);
+            prep->u.rect.hw = w / 2.0;
+            prep->u.rect.hh = h / 2.0;
+            prep->u.rect.ca = cos(ra);
+            prep->u.rect.sa = sin(ra);
+        } else if (tok->fn_index == 31) {   /* rply */
+            double sides = paramArgReal(prep->staticArgs, tok->n_args, 0, 5.0);
+            double radius = paramArgReal(prep->staticArgs, tok->n_args, 1, 1.0);
+            double turns = paramArgReal(prep->staticArgs, tok->n_args, 2, 0.0);
+            int ns = (int)sides;
+            if (ns < 3) ns = 3;
+            if (ns + 1 <= PARAM_PREP_MAX_VERTS) {
+                prep->preparedKind = PARAM_PREP_RPLY;
+                prep->u.rply.ns = ns;
+                prep->u.rply.radius = radius;
+                double ra = 2.0 * M_PI * turns;
+                prep->u.rply.ca = cos(ra);
+                prep->u.rply.sa = sin(ra);
+                for (int v = 0; v <= ns; v++) {
+                    /* IDENTICAL expression to the per-point body's angles */
+                    double a = 2.0 * M_PI * v / ns;
+                    prep->u.rply.cosT[v] = cos(a);
+                    prep->u.rply.sinT[v] = sin(a);
+                }
+            }
+        } else if (tok->fn_index == 32) {   /* star */
+            double points = paramArgReal(prep->staticArgs, tok->n_args, 0, 5.0);
+            double outer = paramArgReal(prep->staticArgs, tok->n_args, 1, 1.0);
+            double inner_ratio = paramArgReal(prep->staticArgs, tok->n_args, 2, 0.5);
+            int np = (int)points;
+            if (np < 3) np = 3;
+            int nv = 2 * np;
+            if (nv + 1 <= PARAM_PREP_MAX_VERTS) {
+                prep->preparedKind = PARAM_PREP_STAR;
+                prep->u.star.nv = nv;
+                prep->u.star.rOuter = outer;
+                prep->u.star.rInner = outer * inner_ratio;
+                for (int v = 0; v <= nv; v++) {
+                    double a = 2.0 * M_PI * v / nv;
+                    prep->u.star.cosT[v] = cos(a);
+                    prep->u.star.sinT[v] = sin(a);
+                }
+            }
+        }
+    }
 }
 
 static int parseParamProgram(const char *buf, ParamProgram *program) {
@@ -7488,28 +7659,37 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
             case PARAM_OP_LEGACY: {
                 ParamCx in1 = p1, in2 = p2, out1, out2;
                 ParamCx resolvedArgs[PARAM_PROGRAM_MAX_ARGS];
+                const ParamPreparedLegacy *prep = &program->legacy_prep[k];
                 int stackArgCount = tok->stack_arg_count;
                 if (stackArgCount < 0 || stackArgCount > tok->n_args || stackArgCount > PARAM_PROGRAM_MAX_ARGS) return 1;
                 if (stackArgCount > 0 && stackArgCount != tok->n_args) {
                     fprintf(stderr, "param_program legacy mixed stack/static args are not supported\n");
                     return 1;
                 }
-                if (stackArgCount > 0) {
-                    if (sp < stackArgCount) return 1;
-                    for (int ai = stackArgCount - 1; ai >= 0; ai--) {
-                        resolvedArgs[ai] = stack[--sp];
+                if (prep->argMode != PARAM_ARGS_DYNAMIC) {
+                    /* CR33 F2: static/none arguments were resolved and
+                     * real-validated once at parse — no per-point work */
+                    for (int ai = 0; ai < tok->n_args; ai++) {
+                        resolvedArgs[ai] = prep->staticArgs[ai];
                     }
                 } else {
-                    for (int ai = 0; ai < tok->n_args; ai++) {
-                        if (paramArgValue(program, tok, ai, t1, t2, p1, p2, regs, &resolvedArgs[ai]) != 0) return 1;
+                    if (stackArgCount > 0) {
+                        if (sp < stackArgCount) return 1;
+                        for (int ai = stackArgCount - 1; ai >= 0; ai--) {
+                            resolvedArgs[ai] = stack[--sp];
+                        }
+                    } else {
+                        for (int ai = 0; ai < tok->n_args; ai++) {
+                            if (paramArgValue(program, tok, ai, t1, t2, p1, p2, regs, &resolvedArgs[ai]) != 0) return 1;
+                        }
                     }
-                }
-                for (int ai = 0; ai < tok->n_args; ai++) {
-                    if (!paramLegacyArgAllowsComplex(tok->fn_index, tok->n_args, ai) &&
-                        fabs(resolvedArgs[ai].i) > 1e-12) {
-                        fprintf(stderr, "param_program legacy fn_index=%d arg %d must be real-valued\n",
-                                tok->fn_index, ai);
-                        return 1;
+                    for (int ai = 0; ai < tok->n_args; ai++) {
+                        if (!paramLegacyArgAllowsComplex(tok->fn_index, tok->n_args, ai) &&
+                            fabs(resolvedArgs[ai].i) > 1e-12) {
+                            fprintf(stderr, "param_program legacy fn_index=%d arg %d must be real-valued\n",
+                                    tok->fn_index, ai);
+                            return 1;
+                        }
                     }
                 }
                 if (tok->src == PARAM_SEL_P1) {
@@ -7528,7 +7708,37 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                 } else {
                     return 1;
                 }
-                if (paramLegacyApply(tok->fn_index, resolvedArgs, tok->n_args, gridN, in1, in2, &out1, &out2) != 0) return 1;
+                if (prep->preparedKind != PARAM_PREP_NONE) {
+                    /* CR33 F2: hoisted invariants; rect shares the exact
+                     * compiled body with the unprepared wrapper, rply/star
+                     * twin bodies are FP_CONTRACT-OFF paired with their
+                     * originals so separately compiled arithmetic cannot
+                     * diverge (the CR32 NaN-sign lesson). */
+                    out1 = in1; out2 = in2;
+                    if (prep->preparedKind == PARAM_PREP_RECT) {
+                        pt_rect_one_pre(&out1.r, &out1.i, prep->u.rect.w, prep->u.rect.h,
+                                        prep->u.rect.perim, prep->u.rect.hw, prep->u.rect.hh,
+                                        prep->u.rect.ca, prep->u.rect.sa);
+                        pt_rect_one_pre(&out2.r, &out2.i, prep->u.rect.w, prep->u.rect.h,
+                                        prep->u.rect.perim, prep->u.rect.hw, prep->u.rect.hh,
+                                        prep->u.rect.ca, prep->u.rect.sa);
+                    } else if (prep->preparedKind == PARAM_PREP_RPLY) {
+                        pt_rply_one_pre(&out1.r, &out1.i, prep->u.rply.ns, prep->u.rply.radius,
+                                        prep->u.rply.ca, prep->u.rply.sa,
+                                        prep->u.rply.cosT, prep->u.rply.sinT);
+                        pt_rply_one_pre(&out2.r, &out2.i, prep->u.rply.ns, prep->u.rply.radius,
+                                        prep->u.rply.ca, prep->u.rply.sa,
+                                        prep->u.rply.cosT, prep->u.rply.sinT);
+                    } else {
+                        pt_star_one_pre(&out1.r, &out1.i, prep->u.star.nv, prep->u.star.rOuter,
+                                        prep->u.star.rInner, prep->u.star.cosT, prep->u.star.sinT);
+                        pt_star_one_pre(&out2.r, &out2.i, prep->u.star.nv, prep->u.star.rOuter,
+                                        prep->u.star.rInner, prep->u.star.cosT, prep->u.star.sinT);
+                    }
+                    /* paramLegacyApply sanitizes both outputs — match it */
+                    param_sanitize(&out1);
+                    param_sanitize(&out2);
+                } else if (paramLegacyApply(tok->fn_index, resolvedArgs, tok->n_args, gridN, in1, in2, &out1, &out2) != 0) return 1;
                 if (tok->tgt == PARAM_SEL_P1) {
                     p1 = out1;
                 } else if (tok->tgt == PARAM_SEL_P2) {

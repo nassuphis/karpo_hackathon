@@ -343,6 +343,28 @@ static double wrapped_angle_0_2pi(double re, double im) {
 
 static double compute_param_metric_score(const float *params, int paramDegree, enum SolveMetric metric);
 
+/* CR33 F4: metrics that consume the shared centroid pass. This predicate is
+ * the ONLY place that knows; compute_solve_metric_score guards the pass on
+ * it. Extrema, modulus, unit-circle-distance, and angular-separation metrics
+ * were paying an O(d) centroid they never read (measured 7-20% of their
+ * cost at degree 35). */
+static int solve_metric_uses_centroid(enum SolveMetric metric) {
+    switch (metric) {
+    case SOLVE_METRIC_CENTROID_RE:
+    case SOLVE_METRIC_CENTROID_IM:
+    case SOLVE_METRIC_CENTROID_DIST:
+    case SOLVE_METRIC_ASYMMETRY_RE:
+    case SOLVE_METRIC_SPREAD:
+    case SOLVE_METRIC_SHELLINESS:
+    case SOLVE_METRIC_OUTLIERNESS:
+    case SOLVE_METRIC_ANISOTROPY:
+    case SOLVE_METRIC_AREA:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 /* Compute centroid of interleaved roots. */
 static void compute_centroid(const float *roots, int degree, double *mean_re, double *mean_im) {
     double sr = 0, si = 0;
@@ -685,8 +707,10 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
     }
 
     /* ── Centroid-based metrics ── */
-    double mean_re, mean_im;
-    compute_centroid(roots, degree, &mean_re, &mean_im);
+    double mean_re = 0.0, mean_im = 0.0;
+    if (solve_metric_uses_centroid(metric)) {
+        compute_centroid(roots, degree, &mean_re, &mean_im);
+    }
 
     if (metric == SOLVE_METRIC_CENTROID_RE) {
         if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);

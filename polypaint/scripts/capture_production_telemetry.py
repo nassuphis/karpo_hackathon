@@ -1,125 +1,169 @@
 #!/usr/bin/env python3
-"""Production telemetry collector (cr-33-telemetry.md §9).
+"""Production telemetry collector (cr-33-telemetry.md §4/§10; post-mortem v3).
 
-Reconstructs a normalized, timing-class-labeled report for one Step Functions
-execution, joining three sources:
+Reconstructs a normalized, role-scoped, schema-labeled report for one Step
+Functions execution:
 
-  1. Step Functions execution history  — state walls + task result payloads
-  2. CloudWatch Lambda REPORT lines    — handler/billed/init/memory, joined
-                                         EXACTLY by Lambda request ID
-  3. Lambda GetFunctionConfiguration   — CodeSha256/LastModified/arch (the
-                                         build-attribution snapshot)
+  1. Step Functions history — causal task reconstruction (previousEventId),
+     state walls paired through event ancestry, retries counted.
+  2. CloudWatch REPORT lines — joined EXACTLY by request ID, per function,
+     FAIL-CLOSED: every successful task must join exactly once in live mode.
+  3. Lambda GetFunctionConfiguration — immediate build-attribution snapshot.
 
-Modes:
-  live     --execution-arn arn:...      (describe + paginate + CW + Lambda)
-  offline  --history-file history.json  (no AWS calls; joins marked absent)
+Post-mortem requirements this version implements:
+  F2  workload identity from the NESTED execution input (params), with a
+      required-field schema per workflow kind; missing identity invalidates.
+  F4  metrics aggregate BY ROLE (function); no cross-role mixing.
+  F6  identity fields collect DISTINCT values; mixed builds/architectures
+      fail validation instead of first-value-wins.
+  F3  CloudWatch joins derive exact log groups from task functions, retain
+      errors, validate coverage, and mark billed totals incomplete when
+      failed attempts exist.
+  F8  nearest-rank percentiles (ceil(q*n)-1) with min<=p50<=p95<=max.
+  F10 every metric declares class, aggregation (additive|distribution|
+      invariant), alias_of, and parent; sums are never emitted for
+      non-additive fields; invariant disagreement is a validation problem.
+  F11 reconstruction validation is fail-closed: cardinality compares run
+      even when zero tasks reconstruct; statusCode, request IDs, function
+      names, and bodies are required.
 
-Every metric is labeled with a timing class from §2 (wall, stage_wall,
-worker_sum, bytes, count). A payload field whose class is unknown is NOT
-silently summed — it lands in `unclassified` and is flagged in the report.
-
-Outputs (raw history is never copied into the repository):
+Outputs (raw history never enters the repository):
   reports/production/<date>-<kind>-<run-id>.json
   reports/production/<date>-<kind>-<run-id>.md
 """
 import argparse
+import hashlib
 import json
+import math
 import pathlib
 import re
-import statistics
 import sys
 from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-# ── §2 timing classes: the single registry of known payload fields ─────────
-# class ∈ {stage_wall_us, stage_wall_ms, worker_sum_us, bytes, count, ident}
-FIELD_CLASSES = {
-    # compute fused chunk results
-    "param_gen_us": "stage_wall_us",
-    "elapsed_us": "stage_wall_us",     # generic native meta: elapsed span
-    "compute_us": "stage_wall_us",     # solve stage span in solver results
-    "coeffgen_us": "stage_wall_us",
-    "solve_us": "stage_wall_us",
-    "upload_params_us": "stage_wall_us",
-    "upload_coeffs_us": "stage_wall_us",
-    "upload_roots_us": "stage_wall_us",
-    "params_size": "bytes",
-    "coeffs_size": "bytes",
-    "bin_size": "bytes",
-    "n_t": "count",
-    "reused_params": "count",
-    "reused_coeffs": "count",
-    "avg_iterations": "count",
-    # fused stage_telemetry sub-fields
-    "param_native_us": "stage_wall_us",
-    "coeff_native_us": "stage_wall_us",
-    "native_elapsed_us": "stage_wall_us",
-    "wall_elapsed_us": "stage_wall_us",
-    "param_tokens": "count",
-    "param_legacy_static": "count",
-    "param_legacy_dynamic": "count",
-    "param_legacy_prepared": "count",
-    "online_cpus": "count",
-    "coeff_tokens": "count",
-    "coeff_tok_typed_scalar": "count",
-    "coeff_tok_typed_vector": "count",
-    "coeff_tok_selector": "count",
-    "coeff_tok_native": "count",
-    "coeff_fused_regions": "count",
-    "coeff_fused_tokens": "count",
-    "roots_size": "bytes",
-    "lambda_memory_mb": "count",
-    # raster results (CR33 telemetry naming)
-    "handler_wall_us": "stage_wall_us",
-    "prep_wall_us": "stage_wall_us",
-    "native_wall_us": "stage_wall_us",
-    "download_wall_us": "stage_wall_us",
-    "upload_wall_us": "stage_wall_us",
-    "native_worker_us": "worker_sum_us",
-    "download_worker_us": "worker_sum_us",
-    # legacy raster names (worker sums, retained one cycle)
-    "download_us": "worker_sum_us",
-    "native_us": "worker_sum_us",
-    "raster_us": "worker_sum_us",
-    "upload_us": "stage_wall_us",
-    "fragment_bytes_uploaded": "bytes",
-    "associated_palette_fragment_bytes_uploaded": "bytes",
-    "step_scores_bytes_uploaded": "bytes",
-    "roots_plotted": "count",
-    "roots_clipped": "count",
-    "retries": "count",
-    "fragment_files_uploaded": "count",
-    "associated_palette_fragment_files_uploaded": "count",
-    "step_score_channels": "count",
-    # finalize results
-    "assemble_ms": "stage_wall_ms",
-    "dl_ms": "stage_wall_ms",          # clip task download span
-    "compute_ms": "stage_wall_ms",     # clip task compute span
-    # legacy finalize field: histories predating CR33-telemetry carry the
-    # hardcoded 0 — class is known, the VALUE from old runs is untrustworthy
-    "encode_ms": "stage_wall_ms",
-    "render_ms": "stage_wall_ms",
-    "render_encode_ms": "stage_wall_ms",
-    "upload_ms": "stage_wall_ms",
-    "raw_upload_ms": "stage_wall_ms",
-    "assoc_palette_total_ms": "stage_wall_ms",
-    "image_upload_ms": "stage_wall_ms",
-    "preview_upload_ms": "stage_wall_ms",
-    "meta_overlay_ms": "stage_wall_ms",
-    "step_scores_fetch_concat_ms": "stage_wall_ms",
-    "step_scores_upload_ms": "stage_wall_ms",
-    "lut_ms": "stage_wall_ms",
-    "file_size": "bytes",
-    "step_scores_bytes": "bytes",
-    "step_count": "count",
-    "step_scores_count": "count",
+
+# ── F10: the metric schema ──────────────────────────────────────────────────
+def _m(cls, agg, alias_of=None, parent=None):
+    return {"cls": cls, "agg": agg, "alias_of": alias_of, "parent": parent}
+
+
+METRIC_SCHEMA = {
+    # compute fused chunk
+    "param_gen_us": _m("stage_wall_us", "additive"),
+    "coeffgen_us": _m("stage_wall_us", "additive"),
+    "solve_us": _m("stage_wall_us", "additive"),
+    "compute_us": _m("stage_wall_us", "additive", alias_of="solve_us"),
+    "elapsed_us": _m("stage_wall_us", "distribution"),
+    "upload_params_us": _m("stage_wall_us", "additive"),
+    "upload_coeffs_us": _m("stage_wall_us", "additive"),
+    "upload_roots_us": _m("stage_wall_us", "additive"),
+    "params_size": _m("bytes", "additive"),
+    "coeffs_size": _m("bytes", "additive"),
+    "bin_size": _m("bytes", "additive"),
+    "roots_size": _m("bytes", "additive", alias_of="bin_size"),
+    "n_t": _m("count", "additive"),
+    "reused_params": _m("count", "additive"),
+    "reused_coeffs": _m("count", "additive"),
+    "avg_iterations": _m("count", "distribution"),
+    # fused stage_telemetry
+    "param_native_us": _m("stage_wall_us", "additive"),
+    "coeff_native_us": _m("stage_wall_us", "additive"),
+    "solve_native_us": _m("stage_wall_us", "additive"),
+    "handler_wall_us": _m("stage_wall_us", "distribution"),
+    "native_elapsed_us": _m("stage_wall_us", "distribution"),
+    "wall_elapsed_us": _m("stage_wall_us", "distribution"),
+    "param_tokens": _m("count", "invariant"),
+    "param_legacy_static": _m("count", "invariant"),
+    "param_legacy_dynamic": _m("count", "invariant"),
+    "param_legacy_prepared": _m("count", "invariant"),
+    "online_cpus": _m("count", "invariant"),
+    "coeff_tokens": _m("count", "invariant"),
+    "coeff_tok_typed_scalar": _m("count", "invariant"),
+    "coeff_tok_typed_vector": _m("count", "invariant"),
+    "coeff_tok_selector": _m("count", "invariant"),
+    "coeff_tok_native": _m("count", "invariant"),
+    "coeff_fused_regions": _m("count", "invariant"),
+    "coeff_fused_tokens": _m("count", "invariant"),
+    "lambda_memory_mb": _m("count", "invariant"),
+    # solve plan telemetry (invariant per program)
+    "plan_metric_count": _m("count", "invariant"),
+    "plan_dup_slots": _m("count", "invariant"),
+    "plan_uses_lag": _m("count", "invariant"),
+    # raster
+    "prep_wall_us": _m("stage_wall_us", "distribution"),
+    "subprocess_wall_us": _m("stage_wall_us", "distribution"),
+    "native_wall_us": _m("stage_wall_us", "distribution", parent="subprocess_wall_us"),
+    "download_wall_us": _m("stage_wall_us", "distribution", parent="subprocess_wall_us"),
+    "upload_wall_us": _m("stage_wall_us", "distribution"),
+    "native_worker_us": _m("worker_sum_us", "additive"),
+    "download_worker_us": _m("worker_sum_us", "additive"),
+    "download_us": _m("worker_sum_us", "additive", alias_of="download_worker_us"),
+    "native_us": _m("worker_sum_us", "additive", alias_of="native_worker_us"),
+    "raster_us": _m("worker_sum_us", "additive", alias_of="native_worker_us"),
+    "upload_us": _m("stage_wall_us", "distribution", alias_of="upload_wall_us"),
+    "input_bytes": _m("bytes", "additive"),
+    "fragment_bytes_uploaded": _m("bytes", "additive"),
+    "associated_palette_fragment_bytes_uploaded": _m("bytes", "additive"),
+    "step_scores_bytes_uploaded": _m("bytes", "additive"),
+    "roots_plotted": _m("count", "additive"),
+    "roots_clipped": _m("count", "additive"),
+    "roots_deduped": _m("count", "additive"),
+    "retries": _m("count", "additive"),
+    "fragment_files_uploaded": _m("count", "additive"),
+    "associated_palette_fragment_files_uploaded": _m("count", "additive"),
+    "step_score_channels": _m("count", "invariant"),
+    "threads": _m("count", "invariant"),
+    "section_count": _m("count", "invariant"),
+    # clip task
+    "dl_ms": _m("stage_wall_ms", "distribution"),
+    "compute_ms": _m("stage_wall_ms", "distribution"),
+    # finalize
+    "handler_wall_ms": _m("stage_wall_ms", "distribution"),
+    "presign_ms": _m("stage_wall_ms", "distribution"),
+    "assemble_ms": _m("stage_wall_ms", "distribution"),
+    "render_encode_ms": _m("stage_wall_ms", "distribution"),
+    "render_ms": _m("stage_wall_ms", "distribution", alias_of="render_encode_ms"),
+    "encode_ms": _m("stage_wall_ms", "distribution"),   # legacy pre-fix histories only
+    "upload_ms": _m("stage_wall_ms", "distribution"),
+    "raw_upload_ms": _m("stage_wall_ms", "distribution", parent="upload_ms"),
+    "assoc_palette_total_ms": _m("stage_wall_ms", "distribution", parent="upload_ms"),
+    "image_upload_ms": _m("stage_wall_ms", "distribution", parent="upload_ms"),
+    "preview_upload_ms": _m("stage_wall_ms", "distribution", parent="upload_ms"),
+    "meta_overlay_ms": _m("stage_wall_ms", "distribution", parent="upload_ms"),
+    "step_scores_fetch_concat_ms": _m("stage_wall_ms", "distribution"),
+    "step_scores_download_ms": _m("stage_wall_ms", "distribution", parent="step_scores_fetch_concat_ms"),
+    "step_scores_concat_ms": _m("stage_wall_ms", "distribution", parent="step_scores_fetch_concat_ms"),
+    "step_scores_upload_ms": _m("stage_wall_ms", "distribution"),
+    "lut_ms": _m("stage_wall_ms", "distribution"),
+    "file_size": _m("bytes", "additive"),
+    "step_scores_bytes": _m("bytes", "additive"),
+    "step_count": _m("count", "invariant"),
+    "step_scores_count": _m("count", "invariant"),
 }
 IDENTITY_FIELDS = (
     "git_sha", "build_id", "param_scheduler", "execution_method", "engine",
     "input_mode", "solver_mode", "function", "arch",
 )
 TIME_SUFFIX_RE = re.compile(r"_(us|ms)$")
+
+REQUIRED_IDENTITY = {
+    "compute": ("job_id", "run_id", "N", "n_chunks", "function", "fused_threads"),
+    "render": ("job_id", "run_id", "pix"),
+}
+IDENTITY_INPUT_KEYS = (
+    "job_id", "run_id", "N", "times", "n_chunks", "degree", "n_coeffs",
+    "function", "solver_mode", "execution_method", "fused_threads",
+    "coeffgen_threads", "pix", "format", "quality", "palette",
+    "raster_sections", "raster_workers", "raster_mt_threads",
+    "finalize_workers", "associated_palette", "mode",
+)
+FINGERPRINT_KEYS = (
+    "param_program_chain", "coeff_program_chain", "root_program_chain",
+    "solve_score_chain", "param_transforms", "coeff_transforms",
+    "param_program_source_text", "coeff_program_source_text",
+    "root_program_source_text", "solve_score_program_source_text",
+)
 
 
 def _ts(event):
@@ -134,17 +178,20 @@ def load_history(path):
     return data["events"] if isinstance(data, dict) else data
 
 
-def fetch_history_live(execution_arn, region):
-    import boto3
-    sfn = boto3.client("stepfunctions", region_name=region)
-    desc = sfn.describe_execution(executionArn=execution_arn)
+def fetch_history_live(execution_arn, region, sfn_client=None):
+    if sfn_client is None:
+        import boto3
+        sfn_client = boto3.client("stepfunctions", region_name=region)
+    desc = sfn_client.describe_execution(executionArn=execution_arn)
     events = []
-    kwargs = {"executionArn": execution_arn, "maxResults": 1000}
+    kwargs = {"executionArn": execution_arn, "maxResults": 1000,
+              "includeExecutionData": True}
     while True:
-        resp = sfn.get_execution_history(**kwargs)
+        resp = sfn_client.get_execution_history(**kwargs)
         for e in resp["events"]:
             e = dict(e)
-            e["timestamp"] = e["timestamp"].timestamp()
+            if hasattr(e["timestamp"], "timestamp"):
+                e["timestamp"] = e["timestamp"].timestamp()
             events.append(e)
         token = resp.get("nextToken")
         if not token:
@@ -154,12 +201,10 @@ def fetch_history_live(execution_arn, region):
 
 
 def parse_state_walls(events):
-    """§4.4: name-only FIFO pairing is unsafe when map iterations run the
-    same state concurrently — an exit can pair with another iteration's
-    enter, skewing max/p50 (sums survive by coincidence). Each StateExited
-    walks its previousEventId ancestry to the StateEntered event that
-    actually opened it; FIFO remains only as a last-resort fallback for
-    histories without usable event links."""
+    """§4.4: each StateExited walks its previousEventId ancestry to the
+    StateEntered that actually opened it; FIFO is a last-resort fallback for
+    histories without usable event links (name-FIFO mispairs concurrent map
+    iterations — sums survive by coincidence, max/p50 do not)."""
     by_id = {e["id"]: e for e in events if "id" in e}
     entered_ids = {}
     fifo = {}
@@ -204,12 +249,16 @@ def extract_request_id(output_obj):
     return headers.get("x-amzn-RequestId") or headers.get("x-amzn-requestid")
 
 
+def _role_from_function(function_name):
+    if not function_name:
+        return "unknown"
+    return str(function_name).rsplit(":", 1)[-1]
+
+
 def parse_task_results(events):
-    """§4.4: reconstruct each successful task through its previousEventId
-    causal chain (TaskSucceeded -> ... -> TaskScheduled), so the exact
-    FunctionName and chunk/section identity travel with the metrics instead
-    of being associated by array order or state name. Decode failures are
-    RETAINED (flagged), never silently dropped (§4.10)."""
+    """§4.4 causal reconstruction: TaskSucceeded -> TaskStarted ->
+    TaskScheduled, carrying exact FunctionName, chunk/section identity, and
+    the integration statusCode. Decode failures are retained and flagged."""
     by_id = {e["id"]: e for e in events if "id" in e}
     tasks = []
     for e in events:
@@ -218,6 +267,7 @@ def parse_task_results(events):
         raw = e.get("taskSucceededEventDetails", {}).get("output")
         out = None
         body = None
+        status_code = None
         decode_error = None
         if raw:
             try:
@@ -226,12 +276,13 @@ def parse_task_results(events):
                 decode_error = f"output: {exc}"
         if isinstance(out, dict):
             payload = out.get("Payload")
-            if isinstance(payload, dict) and payload.get("body"):
-                try:
-                    body = json.loads(payload["body"])
-                except Exception as exc:
-                    decode_error = f"Payload.body: {exc}"
-        # walk the causal chain to the scheduling event
+            if isinstance(payload, dict):
+                status_code = payload.get("statusCode")
+                if payload.get("body"):
+                    try:
+                        body = json.loads(payload["body"])
+                    except Exception as exc:
+                        decode_error = f"Payload.body: {exc}"
         function_name = None
         chunk_identity = {}
         cursor = e
@@ -265,25 +316,61 @@ def parse_task_results(events):
             "timestamp": _ts(e),
             "request_id": extract_request_id(out if isinstance(out, dict) else {}),
             "body": body,
+            "status_code": status_code,
             "function_name": function_name,
+            "role": _role_from_function(function_name),
             "chunk_identity": chunk_identity,
             "decode_error": decode_error,
         })
     return tasks
 
 
-def classify_and_aggregate(tasks):
-    """Aggregate numeric task-body fields BY TIMING CLASS (§2). Unknown
-    timing-suffixed fields are flagged, never silently summed."""
-    per_field = {}
-    identity = {}
+def quantile_nearest_rank(ordered, q):
+    """F8: nearest-rank quantile — ceil(q*n)-1 on a sorted sample.
+    Guarantees min <= p50 <= p95 <= max."""
+    n = len(ordered)
+    if n == 0:
+        return None
+    if n == 1:
+        return ordered[0]
+    idx = max(0, min(n - 1, math.ceil(q * n) - 1))
+    return ordered[idx]
+
+
+def _stats(values, agg):
+    ordered = sorted(values)
+    n = len(ordered)
+    out = {
+        "mean": round(sum(ordered) / n, 3),
+        "max": round(ordered[-1], 3),
+        "min": round(ordered[0], 3),
+        "p50": round(quantile_nearest_rank(ordered, 0.50), 3),
+        "p95": round(quantile_nearest_rank(ordered, 0.95), 3),
+        "n": n,
+    }
+    if agg == "additive":
+        out["sum"] = round(sum(ordered), 3)
+    return out
+
+
+def aggregate_by_role(tasks):
+    """F4/F6/F10: per-role aggregation with schema semantics. Aliases fold
+    into their canonical (skipped when the canonical is present in the same
+    body). Invariants require exactly one distinct value per role. Unknown
+    timing-suffixed fields are flagged, never aggregated. Identity fields
+    collect DISTINCT values — conflicts are validation problems."""
+    roles = {}
+    identity_values = {}
     unclassified = set()
-    task_count = 0
+    problems = []
+
     for t in tasks:
         body = t.get("body")
         if not isinstance(body, dict):
             continue
-        task_count += 1
+        role = t.get("role") or "unknown"
+        bucket = roles.setdefault(role, {"fields": {}, "invariants": {}, "task_count": 0})
+        bucket["task_count"] += 1
         flat = dict(body)
         for sub in ("stage_telemetry", "timings"):
             if isinstance(body.get(sub), dict):
@@ -291,49 +378,73 @@ def classify_and_aggregate(tasks):
                     flat.setdefault(k, v)
         for k, v in flat.items():
             if k in IDENTITY_FIELDS and isinstance(v, str) and v:
-                identity.setdefault(k, v)
+                identity_values.setdefault(k, {}).setdefault(v, set()).add(role)
                 continue
             if not isinstance(v, (int, float)) or isinstance(v, bool):
                 continue
-            cls = FIELD_CLASSES.get(k)
-            if cls is None:
+            spec = METRIC_SCHEMA.get(k)
+            if spec is None:
                 if TIME_SUFFIX_RE.search(k):
                     unclassified.add(k)
                 continue
-            per_field.setdefault(k, []).append(float(v))
+            if spec["alias_of"] and spec["alias_of"] in flat:
+                continue   # canonical present in the same body: alias folds away
+            canonical = spec["alias_of"] or k
+            target_spec = METRIC_SCHEMA.get(canonical, spec)
+            if target_spec["agg"] == "invariant":
+                bucket["invariants"].setdefault(canonical, set()).add(v)
+            else:
+                bucket["fields"].setdefault(canonical, []).append(float(v))
 
-    def stats(values):
-        ordered = sorted(values)
-        n = len(ordered)
-        return {
-            "sum": round(sum(ordered), 3),
-            "mean": round(sum(ordered) / n, 3),
-            "max": round(ordered[-1], 3),
-            "p50": round(statistics.median(ordered), 3),
-            "p95": round(ordered[min(n - 1, int(0.95 * (n - 1)))], 3),
-            "n": n,
+    role_reports = {}
+    for role, bucket in sorted(roles.items()):
+        fields = {}
+        for k, vals in sorted(bucket["fields"].items()):
+            spec = METRIC_SCHEMA[k]
+            entry = {"class": spec["cls"], "aggregation": spec["agg"],
+                     **_stats(vals, spec["agg"])}
+            if spec.get("parent"):
+                entry["parent"] = spec["parent"]
+            fields[k] = entry
+        invariants = {}
+        for k, vals in sorted(bucket["invariants"].items()):
+            spec = METRIC_SCHEMA[k]
+            if len(vals) != 1:
+                problems.append(
+                    f"invariant field {k!r} disagrees within role {role}: {sorted(vals)[:6]}")
+                invariants[k] = {"class": spec["cls"], "aggregation": "invariant",
+                                 "values": sorted(vals)[:16], "conflict": True}
+            else:
+                invariants[k] = {"class": spec["cls"], "aggregation": "invariant",
+                                 "value": next(iter(vals))}
+        role_reports[role] = {
+            "task_count": bucket["task_count"],
+            "fields": fields,
+            "invariants": invariants,
         }
 
-    fields = {
-        k: {"class": FIELD_CLASSES[k], **stats(v)}
-        for k, v in sorted(per_field.items())
-    }
+    identity = {}
+    for k, values in identity_values.items():
+        if len(values) == 1:
+            identity[k] = next(iter(values))
+        else:
+            problems.append(
+                f"identity field {k!r} has {len(values)} distinct values: "
+                + ", ".join(f"{v} (roles: {sorted(r)})"
+                            for v, r in sorted(values.items())[:4]))
+            identity[k] = {"conflict": sorted(values.keys())}
+
     return {
-        "task_count": task_count,
-        "fields": fields,
+        "roles": role_reports,
         "identity": identity,
         "unclassified_time_fields": sorted(unclassified),
+        "problems": problems,
     }
 
 
 def count_retries(events):
-    """§4.5: a general collector must report retry counts and must not count
-    multiple attempts as distinct successes. Failure-class task events are
-    counted per state name; TaskScheduled in excess of TaskSucceeded for the
-    same state is reported as attempts_in_excess."""
     failures = {}
-    scheduled = {}
-    succeeded = {}
+    scheduled = succeeded = 0
     for e in events:
         t = e["type"]
         if t in ("TaskFailed", "TaskTimedOut", "TaskStartFailed"):
@@ -347,31 +458,191 @@ def count_retries(events):
             else:
                 failures["unknown"] = failures.get("unknown", 0) + 1
         elif t == "TaskScheduled":
-            scheduled["all"] = scheduled.get("all", 0) + 1
+            scheduled += 1
         elif t == "TaskSucceeded":
-            succeeded["all"] = succeeded.get("all", 0) + 1
+            succeeded += 1
     return {
         "task_failure_events": sum(failures.values()),
         "failures_by_resource": failures,
-        "tasks_scheduled": scheduled.get("all", 0),
-        "tasks_succeeded": succeeded.get("all", 0),
-        "attempts_in_excess": max(0, scheduled.get("all", 0) - succeeded.get("all", 0)),
+        "tasks_scheduled": scheduled,
+        "tasks_succeeded": succeeded,
+        "attempts_in_excess": max(0, scheduled - succeeded),
     }
 
 
-def validate_reconstruction(events, tasks, state_walls, identity):
-    """§4.10 invariants. Violations are REPORTED, and the CLI exits nonzero
-    on them just as it does for unclassified timing fields."""
+def extract_workload_identity(events, tasks, kind):
+    """F2: identity from the OUTER input AND its nested params, plus program
+    fingerprints (sha256 of chain JSON when no compiled fingerprint exists).
+    Missing REQUIRED fields are validation problems."""
+    identity = {}
+    problems = []
+    start = next((e for e in events if e["type"] == "ExecutionStarted"), None)
+    exec_input = {}
+    if start:
+        try:
+            exec_input = json.loads(
+                start.get("executionStartedEventDetails", {}).get("input") or "{}")
+        except Exception as exc:
+            problems.append(f"execution input undecodable: {exc}")
+    nested = exec_input.get("params") if isinstance(exec_input.get("params"), dict) else {}
+    for source in (exec_input, nested):
+        for key in IDENTITY_INPUT_KEYS:
+            if key in source and key not in identity:
+                value = source[key]
+                if isinstance(value, (str, int, float, bool)):
+                    identity[key] = value
+                elif isinstance(value, dict) and key == "associated_palette":
+                    identity[key] = str(value.get("mode") or "")
+    for source in (exec_input, nested):
+        for key in FINGERPRINT_KEYS:
+            if key in source and source[key]:
+                blob = json.dumps(source[key], sort_keys=True, separators=(",", ":"))
+                identity[f"{key}_sha256"] = hashlib.sha256(blob.encode()).hexdigest()[:16]
+    required = REQUIRED_IDENTITY.get(kind, ())
+    missing = [k for k in required if k not in identity]
+    if missing:
+        problems.append(f"required workload identity missing for kind={kind}: {missing}")
+    return identity, problems
+
+
+def join_cloudwatch(tasks, region, window, logs_client=None):
+    """F3 fail-closed: log groups derive EXACTLY from task function names;
+    API errors are retained; the caller validates complete coverage."""
+    if logs_client is None:
+        import boto3
+        logs_client = boto3.client("logs", region_name=region)
+    expected = {t["request_id"]: t["role"] for t in tasks if t.get("request_id")}
+    groups = sorted({f"/aws/lambda/{t['role']}" for t in tasks
+                     if t.get("role") and t["role"] != "unknown"})
+    t0, t1 = window
+    joined = {}
+    errors = []
+    for group in groups:
+        kwargs = {
+            "logGroupName": group,
+            "startTime": int((t0 - 60) * 1000),
+            "endTime": int((t1 + 120) * 1000),
+            "filterPattern": '"REPORT RequestId"',
+        }
+        try:
+            while True:
+                resp = logs_client.filter_log_events(**kwargs)
+                for ev in resp.get("events", []):
+                    msg = ev["message"]
+                    m = re.search(r"REPORT RequestId: (\S+)", msg)
+                    if not m:
+                        continue
+                    rid = m.group(1)
+                    if rid not in expected:
+                        continue
+                    if rid in joined:
+                        errors.append(f"duplicate REPORT join for request {rid} in {group}")
+                        continue
+                    rec = {"log_group": group, "role": expected[rid]}
+                    for key, pat in (
+                        ("duration_ms", r"\bDuration: ([\d.]+) ms"),
+                        ("billed_ms", r"Billed Duration: ([\d.]+) ms"),
+                        ("memory_mb", r"Memory Size: (\d+) MB"),
+                        ("max_memory_mb", r"Max Memory Used: (\d+) MB"),
+                        ("init_ms", r"Init Duration: ([\d.]+) ms"),
+                    ):
+                        mm = re.search(pat, msg)
+                        if mm:
+                            rec[key] = float(mm.group(1))
+                    expected_group = f"/aws/lambda/{expected[rid]}"
+                    if group != expected_group:
+                        errors.append(
+                            f"request {rid} joined in {group} but its task ran {expected_group}")
+                    joined[rid] = rec
+                token = resp.get("nextToken")
+                if not token:
+                    break
+                kwargs["nextToken"] = token
+        except Exception as exc:
+            errors.append(f"log query failed for {group}: {exc}")
+    missing = sorted(set(expected) - set(joined))
+    if missing:
+        errors.append(
+            f"{len(missing)} task request IDs did not join a REPORT line: {missing[:5]}")
+    return joined, errors
+
+
+def capture_function_configs(tasks, region, lambda_client=None):
+    if lambda_client is None:
+        import boto3
+        lambda_client = boto3.client("lambda", region_name=region)
+    configs = {}
+    errors = []
+    for fn in sorted({t["function_name"] for t in tasks if t.get("function_name")}):
+        try:
+            cfg = lambda_client.get_function_configuration(FunctionName=fn)
+            configs[fn] = {
+                "code_sha256": cfg.get("CodeSha256"),
+                "last_modified": cfg.get("LastModified"),
+                "memory_mb": cfg.get("MemorySize"),
+                "architectures": cfg.get("Architectures"),
+                "ephemeral_mb": (cfg.get("EphemeralStorage") or {}).get("Size"),
+                "layers": [l.get("Arn") for l in cfg.get("Layers") or []],
+                "timeout_s": cfg.get("Timeout"),
+            }
+        except Exception as exc:
+            errors.append(f"get_function_configuration failed for {fn}: {exc}")
+    return configs, errors
+
+
+def handler_report_by_role(cw_joined, retries):
+    by_role = {}
+    for rec in cw_joined.values():
+        by_role.setdefault(rec.get("role", "unknown"), []).append(rec)
+    out = {}
+    for role, recs in sorted(by_role.items()):
+        durations = sorted(r["duration_ms"] for r in recs if "duration_ms" in r)
+        mem = [r.get("max_memory_mb") for r in recs if r.get("max_memory_mb")]
+        gbs = sum((r.get("billed_ms", 0) / 1000.0) * (r.get("memory_mb", 0) / 1024.0)
+                  for r in recs)
+        out[role] = {
+            "joined_invocations": len(recs),
+            "cold_start_count": sum(1 for r in recs if "init_ms" in r),
+            "task_handler_ms": {
+                "max": round(durations[-1], 1) if durations else None,
+                "p50": round(quantile_nearest_rank(durations, 0.5), 1) if durations else None,
+                "p95": round(quantile_nearest_rank(durations, 0.95), 1) if durations else None,
+            },
+            "billed_gb_seconds": round(gbs, 3),
+            "max_memory_mb_range": [min(mem), max(mem)] if mem else None,
+        }
+    if retries.get("task_failure_events"):
+        for role in out.values():
+            role["billed_totals_incomplete"] = (
+                "failed/retried attempts incurred billed duration not "
+                "reconstructed from successful-task request IDs")
+    return out
+
+
+def validate_reconstruction(events, tasks, identity, kind, *, live, cw_errors,
+                            cw_joined, fn_config_errors):
+    """F11 fail-closed validation."""
     problems = []
     decode_failures = [t for t in tasks if t.get("decode_error")]
     if decode_failures:
         problems.append(
             f"{len(decode_failures)} task result(s) failed to decode: "
             + "; ".join(sorted({t["decode_error"] for t in decode_failures}))[:400])
+    for label, predicate in (
+        ("request_id", lambda t: not t.get("request_id")),
+        ("function_name", lambda t: not t.get("function_name")),
+        ("body", lambda t: t.get("body") is None),
+    ):
+        bad = sum(1 for t in tasks if predicate(t))
+        if bad:
+            problems.append(f"{bad} successful task(s) missing {label}")
+    bad_status = [t for t in tasks
+                  if t.get("status_code") is not None and int(t["status_code"]) != 200]
+    if bad_status:
+        problems.append(f"{len(bad_status)} task(s) returned statusCode != 200")
     rids = [t["request_id"] for t in tasks if t.get("request_id")]
     if len(rids) != len(set(rids)):
         problems.append("duplicate Lambda request IDs across task results")
-    # enter/exit balance per state
     opened = {}
     for e in events:
         d = e.get("stateEnteredEventDetails")
@@ -383,108 +654,42 @@ def validate_reconstruction(events, tasks, state_walls, identity):
     unbalanced = {k: v for k, v in opened.items() if v != 0}
     if unbalanced:
         problems.append(f"unbalanced state enter/exit: {unbalanced}")
-    # expected map iterations vs observed (when the input declares them)
-    expected = identity.get("n_chunks")
-    if expected:
-        chunked = [t for t in tasks
-                   if isinstance(t.get("body"), dict) and "chunk_idx" in
-                   (t.get("chunk_identity") or {})]
-        if chunked and len(chunked) != int(expected):
+    # cardinality: runs even when reconstruction produced zero tasks (F11).
+    # Scoped to the OWNING role — chunk_idx also rides in lores/probe task
+    # inputs, and counting those was itself a cross-role contamination bug
+    # (caught by this check's first run against the real history).
+    if kind == "compute" and identity.get("n_chunks"):
+        expected = int(identity["n_chunks"])
+        chunk_tasks = [t for t in tasks
+                       if "chunk_idx" in (t.get("chunk_identity") or {})
+                       and "fused-chunk" in (t.get("role") or "")]
+        if len(chunk_tasks) != expected:
             problems.append(
-                f"expected {expected} chunk tasks, reconstructed {len(chunked)}")
+                f"expected {expected} fused chunk tasks, reconstructed {len(chunk_tasks)}")
+    if kind == "render" and identity.get("raster_sections"):
+        expected = int(identity["raster_sections"])
+        section_tasks = [t for t in tasks
+                         if "section_idx" in (t.get("chunk_identity") or {})
+                         and "raster" in (t.get("role") or "")]
+        if len(section_tasks) != expected:
+            problems.append(
+                f"expected {expected} raster sections, reconstructed {len(section_tasks)}")
+    if live:
+        problems.extend(cw_errors)
+        problems.extend(fn_config_errors)
+        expected_rids = {t["request_id"] for t in tasks if t.get("request_id")}
+        if expected_rids and set(cw_joined) != expected_rids:
+            missing = sorted(expected_rids - set(cw_joined))
+            if missing:
+                problems.append(
+                    f"live CloudWatch join incomplete: {len(missing)} of "
+                    f"{len(expected_rids)} request IDs unjoined")
     return problems
 
 
-def join_cloudwatch(tasks, region, window):
-    """Live only: join REPORT lines by request ID across the execution's
-    Lambda log groups (discovered from the report lines themselves is not
-    possible — the caller supplies function names or we scan by request ID
-    via filter pattern across groups named in task resources)."""
-    import boto3
-    logs = boto3.client("logs", region_name=region)
-    ids = {t["request_id"] for t in tasks if t.get("request_id")}
-    if not ids:
-        return {}
-    groups = []
-    paginator = logs.get_paginator("describe_log_groups")
-    for page in paginator.paginate(logGroupNamePrefix="/aws/lambda/polypaint"):
-        groups.extend(g["logGroupName"] for g in page.get("logGroups", []))
-    t0, t1 = window
-    joined = {}
-    pattern = "?" + " ?".join(f'"{rid}"' for rid in list(ids)[:20]) if len(ids) <= 20 else "REPORT"
-    for group in groups:
-        try:
-            kwargs = {
-                "logGroupName": group,
-                "startTime": int((t0 - 60) * 1000),
-                "endTime": int((t1 + 120) * 1000),
-                "filterPattern": '"REPORT RequestId"',
-            }
-            while True:
-                resp = logs.filter_log_events(**kwargs)
-                for ev in resp.get("events", []):
-                    msg = ev["message"]
-                    m = re.search(r"REPORT RequestId: (\S+)", msg)
-                    if not m or m.group(1) not in ids:
-                        continue
-                    rec = {"log_group": group}
-                    for key, pat, scale in (
-                        ("duration_ms", r"\bDuration: ([\d.]+) ms", 1.0),
-                        ("billed_ms", r"Billed Duration: ([\d.]+) ms", 1.0),
-                        ("memory_mb", r"Memory Size: (\d+) MB", 1.0),
-                        ("max_memory_mb", r"Max Memory Used: (\d+) MB", 1.0),
-                        ("init_ms", r"Init Duration: ([\d.]+) ms", 1.0),
-                    ):
-                        mm = re.search(pat, msg)
-                        if mm:
-                            rec[key] = float(mm.group(1)) * scale
-                    joined[m.group(1)] = rec
-                token = resp.get("nextToken")
-                if not token:
-                    break
-                kwargs["nextToken"] = token
-        except Exception:
-            continue
-    _ = pattern
-    return joined
-
-
-def capture_function_configs(events, region):
-    """Live only: snapshot CodeSha256/LastModified per invoked function ARN,
-    taken IMMEDIATELY so $LATEST drift is bounded (§7 option 3)."""
-    import boto3
-    lam = boto3.client("lambda", region_name=region)
-    arns = set()
-    for e in events:
-        params = e.get("taskScheduledEventDetails", {}).get("parameters")
-        if not params:
-            continue
-        try:
-            fn = json.loads(params).get("FunctionName")
-            if fn:
-                arns.add(fn)
-        except Exception:
-            continue
-    configs = {}
-    for arn in sorted(arns):
-        try:
-            cfg = lam.get_function_configuration(FunctionName=arn)
-            configs[arn] = {
-                "code_sha256": cfg.get("CodeSha256"),
-                "last_modified": cfg.get("LastModified"),
-                "memory_mb": cfg.get("MemorySize"),
-                "architectures": cfg.get("Architectures"),
-                "ephemeral_mb": (cfg.get("EphemeralStorage") or {}).get("Size"),
-                "layers": [l.get("Arn") for l in cfg.get("Layers") or []],
-                "timeout_s": cfg.get("Timeout"),
-            }
-        except Exception as exc:
-            configs[arn] = {"error": str(exc)}
-    return configs
-
-
 def build_report(events, *, kind, execution_arn="", cw_joined=None,
-                 fn_configs=None, source="offline"):
+                 cw_errors=None, fn_configs=None, fn_config_errors=None,
+                 source="offline"):
     start = next(e for e in events if e["type"] == "ExecutionStarted")
     terminal = [e for e in events if e["type"].startswith("Execution") and
                 ("Succeeded" in e["type"] or "Failed" in e["type"] or
@@ -492,7 +697,7 @@ def build_report(events, *, kind, execution_arn="", cw_joined=None,
     workflow_wall_ms = round((_ts(terminal[0]) - _ts(start)) * 1000.0, 3) if terminal else None
 
     tasks = parse_task_results(events)
-    aggregate = classify_and_aggregate(tasks)
+    aggregate = aggregate_by_role(tasks)
     retries = count_retries(events)
     walls = parse_state_walls(events)
     state_walls = {
@@ -500,65 +705,46 @@ def build_report(events, *, kind, execution_arn="", cw_joined=None,
             "n": len(vals),
             "sum_ms": round(sum(vals), 3),
             "max_ms": round(max(vals), 3),
-            "p50_ms": round(statistics.median(vals), 3),
+            "p50_ms": round(quantile_nearest_rank(sorted(vals), 0.5), 3),
         }
         for name, vals in sorted(walls.items())
     }
+    workload_identity, identity_problems = extract_workload_identity(events, tasks, kind)
+    for k, v in aggregate.pop("identity").items():
+        workload_identity.setdefault(k, v)
 
-    handler = {}
-    if cw_joined:
-        durations = [r["duration_ms"] for r in cw_joined.values() if "duration_ms" in r]
-        billed = [r.get("billed_ms", 0) for r in cw_joined.values()]
-        mem = [r.get("max_memory_mb") for r in cw_joined.values() if r.get("max_memory_mb")]
-        cold = sum(1 for r in cw_joined.values() if "init_ms" in r)
-        gbs = sum((r.get("billed_ms", 0) / 1000.0) * (r.get("memory_mb", 0) / 1024.0)
-                  for r in cw_joined.values())
-        handler = {
-            "joined_invocations": len(cw_joined),
-            "cold_start_count": cold,
-            "task_handler_ms": {
-                "max": round(max(durations), 1) if durations else None,
-                "p50": round(statistics.median(durations), 1) if durations else None,
-                "sum": round(sum(durations), 1) if durations else None,
-            },
-            "billed_gb_seconds": round(gbs, 3),
-            "max_memory_mb_range": [min(mem), max(mem)] if mem else None,
-            "billed_ms_sum": round(sum(billed), 1),
-        }
+    validation = list(identity_problems)
+    validation.extend(aggregate.pop("problems"))
+    validation.extend(validate_reconstruction(
+        events, tasks, workload_identity, kind,
+        live=(source == "live"), cw_errors=cw_errors or [],
+        cw_joined=cw_joined or {}, fn_config_errors=fn_config_errors or []))
 
-    # workload identity: first task body + execution input best-effort
-    identity = dict(aggregate.pop("identity"))
-    try:
-        exec_input = json.loads(start.get("executionStartedEventDetails", {}).get("input") or "{}")
-        for key in ("job_id", "run_id", "N", "times", "n_chunks", "degree",
-                    "n_coeffs", "function", "solver_mode", "fused_threads",
-                    "pix", "format", "quality"):
-            if key in exec_input and key not in identity:
-                identity[key] = exec_input[key]
-    except Exception:
-        pass
-
-    validation = validate_reconstruction(events, tasks, state_walls, identity)
     per_function = {}
     for t in tasks:
-        fn = t.get("function_name")
-        if fn:
-            per_function[fn] = per_function.get(fn, 0) + 1
+        if t.get("role"):
+            per_function[t["role"]] = per_function.get(t["role"], 0) + 1
+
     return {
-        "schema": "pp-production-telemetry-v2",
+        "schema": "pp-production-telemetry-v3",
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "source": source,
         "kind": kind,
         "execution_arn": execution_arn,
         "workflow_wall_ms": workflow_wall_ms,
         "state_walls_ms": state_walls,
-        "task_aggregate": aggregate,
+        "task_aggregate_by_role": aggregate["roles"],
+        "unclassified_time_fields": aggregate["unclassified_time_fields"],
         "tasks_by_function": per_function,
         "retries": retries,
         "validation_problems": validation,
-        "handler_report": handler or {"note": "no CloudWatch join (offline mode)"},
+        "handler_report_by_role": (handler_report_by_role(cw_joined, retries)
+                                   if cw_joined else
+                                   {"note": "no CloudWatch join (offline mode)"
+                                    if source == "offline" else
+                                    "LIVE RUN WITHOUT JOINS — see validation_problems"}),
         "function_configs": fn_configs or {},
-        "workload_identity": identity,
+        "workload_identity": workload_identity,
     }
 
 
@@ -566,9 +752,14 @@ def render_markdown(report):
     lines = [f"# Production telemetry — {report['kind']} ({report['source']})", ""]
     lines.append(f"Captured {report['captured_at']}; execution `{report['execution_arn'] or 'n/a'}`.")
     lines.append(f"\n**Workflow wall: {report['workflow_wall_ms']} ms**\n")
+    if report.get("validation_problems"):
+        lines.append("## VALIDATION PROBLEMS — report is NOT comparison-grade\n")
+        for pr in report["validation_problems"]:
+            lines.append(f"- {pr}")
+        lines.append("")
     ident = report.get("workload_identity") or {}
     if ident:
-        lines.append("## Identity\n")
+        lines.append("## Workload identity\n")
         for k, v in sorted(ident.items()):
             lines.append(f"- {k}: `{v}`")
         lines.append("")
@@ -577,32 +768,35 @@ def render_markdown(report):
     lines.append("|---|---:|---:|---:|---:|")
     for name, s in report["state_walls_ms"].items():
         lines.append(f"| {name} | {s['n']} | {s['sum_ms']} | {s['max_ms']} | {s['p50_ms']} |")
-    agg = report["task_aggregate"]
-    lines.append(f"\n## Task aggregate ({agg['task_count']} task results)\n")
-    lines.append("| Field | class | sum | mean | max | p50 | p95 |")
-    lines.append("|---|---|---:|---:|---:|---:|---:|")
-    for k, s in agg["fields"].items():
-        lines.append(f"| {k} | {s['class']} | {s['sum']} | {s['mean']} | {s['max']} | {s['p50']} | {s['p95']} |")
-    if agg["unclassified_time_fields"]:
+    for role, agg in report["task_aggregate_by_role"].items():
+        lines.append(f"\n## Role: `{role}` ({agg['task_count']} tasks)\n")
+        if agg["fields"]:
+            lines.append("| Field | class | agg | sum | mean | max | p50 | p95 |")
+            lines.append("|---|---|---|---:|---:|---:|---:|---:|")
+            for k, s in agg["fields"].items():
+                lines.append(f"| {k} | {s['class']} | {s['aggregation']} | "
+                             f"{s.get('sum', '-')} | {s['mean']} | {s['max']} | {s['p50']} | {s['p95']} |")
+        if agg["invariants"]:
+            lines.append("\n| Invariant | value |")
+            lines.append("|---|---|")
+            for k, s in agg["invariants"].items():
+                val = s.get("value", f"CONFLICT: {s.get('values')}")
+                lines.append(f"| {k} | {val} |")
+    if report["unclassified_time_fields"]:
         lines.append("\n**FLAGGED — timing fields with unknown class (not aggregated):** "
-                     + ", ".join(f"`{k}`" for k in agg["unclassified_time_fields"]))
-    if report.get("tasks_by_function"):
-        lines.append("\n## Invocations by function\n")
-        for fn, n in sorted(report["tasks_by_function"].items()):
-            lines.append(f"- `{fn}`: {n}")
+                     + ", ".join(f"`{k}`" for k in report["unclassified_time_fields"]))
     retr = report.get("retries") or {}
-    lines.append("\n## Retries (§4.5)\n")
+    lines.append("\n## Retries\n")
     lines.append(f"- task failure events: {retr.get('task_failure_events', 0)}")
     lines.append(f"- scheduled/succeeded: {retr.get('tasks_scheduled', 0)}/{retr.get('tasks_succeeded', 0)}"
                  f" (attempts in excess: {retr.get('attempts_in_excess', 0)})")
-    if report.get("validation_problems"):
-        lines.append("\n**VALIDATION PROBLEMS (§4.10):**\n")
-        for pr in report["validation_problems"]:
-            lines.append(f"- {pr}")
-    hr = report.get("handler_report") or {}
-    lines.append("\n## Lambda handler report\n")
-    for k, v in hr.items():
-        lines.append(f"- {k}: {v}")
+    hr = report.get("handler_report_by_role") or {}
+    lines.append("\n## Lambda handler report (by role)\n")
+    if isinstance(hr, dict) and "note" in hr:
+        lines.append(f"- {hr['note']}")
+    else:
+        for role, rec in hr.items():
+            lines.append(f"- `{role}`: {json.dumps(rec)}")
     if report.get("function_configs"):
         lines.append("\n## Function configs (build attribution snapshot)\n")
         for arn, cfg in report["function_configs"].items():
@@ -622,24 +816,27 @@ def main():
     ap.add_argument("--run-id", default="", help="labels the output files")
     ap.add_argument("--out-dir", default=str(ROOT / "reports" / "production"))
     ap.add_argument("--no-cloudwatch", action="store_true",
-                    help="live mode without the CloudWatch/Lambda joins")
+                    help="live mode without the CloudWatch/Lambda joins "
+                         "(the report will carry a validation problem)")
     args = ap.parse_args()
 
+    cw = fn_cfg = None
+    cw_errors = fn_cfg_errors = None
     if args.history_file:
         events = load_history(args.history_file)
         execution_arn = ""
-        cw = fn_cfg = None
         source = "offline"
     else:
         desc, events = fetch_history_live(args.execution_arn, args.region)
         execution_arn = args.execution_arn
         source = "live"
-        cw = fn_cfg = None
+        tasks = parse_task_results(events)
         if not args.no_cloudwatch:
-            tasks = parse_task_results(events)
             window = (_ts(events[0]), _ts(events[-1]))
-            cw = join_cloudwatch(tasks, args.region, window)
-            fn_cfg = capture_function_configs(events, args.region)
+            cw, cw_errors = join_cloudwatch(tasks, args.region, window)
+            fn_cfg, fn_cfg_errors = capture_function_configs(tasks, args.region)
+        else:
+            cw_errors = ["live run executed with --no-cloudwatch: attribution incomplete"]
 
     kind = args.kind
     if kind == "auto":
@@ -647,9 +844,10 @@ def main():
         kind = "compute" if any("FusedChunk" in n or "Compute" in n for n in names) else "render"
 
     report = build_report(events, kind=kind, execution_arn=execution_arn,
-                          cw_joined=cw, fn_configs=fn_cfg, source=source)
+                          cw_joined=cw, cw_errors=cw_errors, fn_configs=fn_cfg,
+                          fn_config_errors=fn_cfg_errors, source=source)
 
-    run_id = args.run_id or (report["workload_identity"].get("run_id") or "run")
+    run_id = args.run_id or str(report["workload_identity"].get("run_id") or "run")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     out_dir = pathlib.Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -659,9 +857,9 @@ def main():
     print(f"wrote {base}.json")
     print(f"wrote {base}.md")
     problems = list(report.get("validation_problems") or [])
-    if report["task_aggregate"]["unclassified_time_fields"]:
+    if report["unclassified_time_fields"]:
         problems.append("unclassified timing fields: "
-                        + ", ".join(report["task_aggregate"]["unclassified_time_fields"]))
+                        + ", ".join(report["unclassified_time_fields"]))
     if problems:
         for pr in problems:
             print(f"WARNING: {pr}")

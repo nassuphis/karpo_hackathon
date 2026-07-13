@@ -146,7 +146,14 @@ def validate(manifest):
 
 def _spec_args(fn):
     layers = " ".join(LAYER_VARS[layer] for layer in fn.get("layers", []))
-    args = [f'"${fn["memory_var"]}"', f'"{layers}"', f'"{fn["env"]}"']
+    # CR33 telemetry post-mortem F1: build identity is stamped CENTRALLY on
+    # EVERY function's environment (the earlier fix landed only on the
+    # book-pdf image path). deploy.sh defines PP_GIT_SHA_VAL/PP_BUILD_ID_VAL
+    # before sourcing the emitted specs.
+    base_env = fn["env"]
+    pp_env = "PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL"
+    env = f"{base_env},{pp_env}" if base_env else pp_env
+    args = [f'"${fn["memory_var"]}"', f'"{layers}"', f'"{env}"']
     tmp = fn.get("tmp")
     if tmp == "binary":
         args.append('"$BINARY_TMP"')

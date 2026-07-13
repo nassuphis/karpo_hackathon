@@ -415,7 +415,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("Warning: failed to delete removed integration", DEPLOY_TEXT)
         self.assertNotIn('"sweep": "%s/sweep"', DEPLOY_TEXT)
         joined = _joined_shell_lines(GEN_TEXT)
-        self.assertRegex(joined, r'deploy_lambda "\$SWEEP_MT_NAME" "handler_sweep_mt\.handler" "/tmp/polypaint-sweep-mt\.zip"\s+"\$SWEEP_MT_MEMORY" "" "BUCKET=\$BUCKET,JOBS_TABLE=\$JOBS_TABLE" "\$BINARY_TMP"')
+        self.assertRegex(joined, r'deploy_lambda "\$SWEEP_MT_NAME" "handler_sweep_mt\.handler" "/tmp/polypaint-sweep-mt\.zip"\s+"\$SWEEP_MT_MEMORY" "" "BUCKET=\$BUCKET,JOBS_TABLE=\$JOBS_TABLE,PP_GIT_SHA=\$PP_GIT_SHA_VAL,PP_BUILD_ID=\$PP_BUILD_ID_VAL" "\$BINARY_TMP"')
         self.assertIn("SWEEP_MT_FUNCTION", GEN_TEXT)
         self.assertIn('ensure_route "POST /sweep-mt" "$INT"', GEN_TEXT)
         self.assertIn('"sweep-mt": "%s/sweep-mt"', DEPLOY_TEXT)
@@ -447,7 +447,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('build_libcurl_binary solve_palette_chunk_mt multispan_reader.c', DEPLOY_TEXT)
         self.assertIn('cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PALETTE_CHUNK_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/solve_palette_chunk_mt_lib/* "$PALETTE_CHUNK_DIR/lib/"', DEPLOY_TEXT)
-        self.assertRegex(joined, r'deploy_lambda "\$PALETTE_CHUNK_NAME" "handler_palette_chunk\.handler" "/tmp/polypaint-palette-chunk\.zip"\s+"\$PALETTE_CHUNK_MEMORY" "" "BUCKET=\$BUCKET,JOBS_TABLE=\$JOBS_TABLE" "\$BINARY_TMP"')
+        self.assertRegex(joined, r'deploy_lambda "\$PALETTE_CHUNK_NAME" "handler_palette_chunk\.handler" "/tmp/polypaint-palette-chunk\.zip"\s+"\$PALETTE_CHUNK_MEMORY" "" "BUCKET=\$BUCKET,JOBS_TABLE=\$JOBS_TABLE,PP_GIT_SHA=\$PP_GIT_SHA_VAL,PP_BUILD_ID=\$PP_BUILD_ID_VAL" "\$BINARY_TMP"')
 
         self.assertIn("handler_autolevels.py", packaged)
         self.assertIn("autolevels_render", packaged["handler_autolevels.py"])
@@ -460,7 +460,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("solve_score_chain.py", packaged["handler_resize_artifact.py"])
         self.assertIn('deploy_lambda "$RESIZE_ARTIFACT_NAME" "handler_resize_artifact.handler" "/tmp/polypaint-resize-artifact.zip"', GEN_TEXT)
         self.assertIn('RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME', GEN_TEXT)
-        self.assertIn('"$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn('"$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL" "$BINARY_TMP"', GEN_TEXT)
 
         self.assertIn("handler_repalette.py", packaged)
         self.assertIn("palette_names.py", packaged["handler_repalette.py"])
@@ -503,9 +503,9 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('cp lambda/handler_extract_palette_from_step_scores.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py \\', DEPLOY_TEXT)
         self.assertIn('lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$EXTRACT_PALETTE_FUSED_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/score_raw_render lambda/step_scores_to_palette_raw "$EXTRACT_PALETTE_FUSED_DIR/"', DEPLOY_TEXT)
-        self.assertIn('"$COLOR_REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
-        self.assertIn('"$RECOLOR_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
-        self.assertIn('"$EXTRACT_PALETTE_FUSED_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn('"$COLOR_REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn('"$RECOLOR_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn('"$EXTRACT_PALETTE_FUSED_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL" "$BINARY_TMP"', GEN_TEXT)
         self.assertIn("EXTRACT_PALETTE_FUSED_FUNCTION", GEN_TEXT)
         self.assertIn('--finalize-mt-function-arn "$FINALIZE_MT_ARN"', DEPLOY_TEXT)
         self.assertIn("handler_palette_finalize.py", packaged)
@@ -529,7 +529,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("program_compile_helpers.py", packaged["handler_coeffgen.py"])
         self.assertIn('cp lambda/sweep_coeffgen "$COEFFGEN_DIR/"', DEPLOY_TEXT)
         self.assertIn('deploy_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip"', GEN_TEXT)
-        self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib"', GEN_TEXT)
+        self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL"', GEN_TEXT)
 
         self.assertIn("handler_compute_preview.py", packaged)
         self.assertIn("sweep_coeffgen", packaged["handler_compute_preview.py"])
@@ -549,7 +549,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('deploy_lambda "$COMPUTE_PREVIEW_NAME" "handler_compute_preview.handler" "/tmp/polypaint-compute-preview.zip"', GEN_TEXT)
         self.assertIn('ensure_route "POST /compute-preview" "$INT"', GEN_TEXT)
         self.assertIn('"compute-preview": "%s/compute-preview"', DEPLOY_TEXT)
-        self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib,PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL" "$BINARY_TMP"', GEN_TEXT)
 
         self.assertIn("handler_param_debug.py", packaged)
         self.assertIn("param_program_chain.py", packaged["handler_param_debug.py"])
@@ -592,7 +592,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("sweep_mt", packaged["handler_render_lores_preview.py"])
         self.assertIn("sweep_cm", packaged["handler_render_lores_preview.py"])
         self.assertIn('deploy_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip"', GEN_TEXT)
-        self.assertIn('"$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn('"$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib,PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL" "$BINARY_TMP"', GEN_TEXT)
         self.assertIn('ensure_route "POST /render-lores-preview" "$INT"', GEN_TEXT)
         self.assertIn('"render-lores-preview": "%s/render-lores-preview"', DEPLOY_TEXT)
         self.assertIn('cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"', DEPLOY_TEXT)
@@ -884,6 +884,36 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertNotIn("test_coeff_bilevel_stitch_handler", predeploy_text)
         self.assertIn("tests/test_frontend_js.sh", predeploy_text)
 
+    def test_native_manifest_is_verified_after_build_before_runtime(self):
+        predeploy_text = PREDEPLOY_SCRIPT_PATH.read_text()
+        self.assertNotIn(
+            "check_binary_freshness.py",
+            predeploy_text,
+            "predeploy must not require ARM binaries before deploy builds them",
+        )
+        self.assertIn("bash scripts/test-tsan-races.sh", predeploy_text)
+
+        build_pos = DEPLOY_TEXT.index("# --- Compile binaries ---")
+        write_pos = DEPLOY_TEXT.index(
+            'python3 "$SCRIPT_DIR/scripts/check_binary_freshness.py" --write-manifest'
+        )
+        check_pos = DEPLOY_TEXT.index(
+            'python3 "$SCRIPT_DIR/scripts/check_binary_freshness.py" --check',
+            write_pos,
+        )
+        verify_pos = DEPLOY_TEXT.index(
+            'python3 "$SCRIPT_DIR/scripts/check_binary_freshness.py" --verify-manifest',
+            check_pos,
+        )
+        runtime_pos = DEPLOY_TEXT.index(
+            'bash "$SCRIPT_DIR/scripts/test-docker-runtime.sh"',
+            verify_pos,
+        )
+        self.assertLess(build_pos, write_pos)
+        self.assertLess(write_pos, check_pos)
+        self.assertLess(check_pos, verify_pos)
+        self.assertLess(verify_pos, runtime_pos)
+
     def test_python_runner_prefers_uv_with_local_fallbacks(self):
         predeploy_text = PREDEPLOY_SCRIPT_PATH.read_text()
         self.assertIn("command -v uv", DEPLOY_TEXT)
@@ -940,3 +970,32 @@ class AsyncInvokePolicyTests(unittest.TestCase):
         self.assertEqual(len(storage_chunks), 1, "storage needs exactly one async-invoke config")
         self.assertIn("--maximum-retry-attempts 0", storage_chunks[0])
         self.assertIn("--maximum-event-age-in-seconds 3600", storage_chunks[0])
+
+
+def test_every_generated_function_env_carries_build_identity():
+    """Post-mortem F1: build identity must reach the ENTIRE measured fleet.
+    The earlier fix stamped only the book-pdf image path; this contract runs
+    the actual generator and asserts every zip-packaged function's emitted
+    environment references the build vars, and that deploy.sh defines them
+    before sourcing the specs."""
+    import re
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, str(ROOT / "deploy_manifest.py"), "--emit-bash"],
+        capture_output=True, text=True, timeout=60, cwd=str(ROOT),
+    )
+    assert out.returncode == 0, out.stderr
+    spec = out.stdout
+    # every deploy_lambda spec line carries an env argument with both vars
+    env_args = re.findall(r'deploy_lambda "[^"]+" "[^"]+" "[^"]+" \\\n\s+"[^"]*" "[^"]*" "([^"]*)"', spec)
+    assert env_args, "no deploy_lambda spec lines found"
+    missing = [e for e in env_args
+               if "PP_GIT_SHA=$PP_GIT_SHA_VAL" not in e or "PP_BUILD_ID=$PP_BUILD_ID_VAL" not in e]
+    assert not missing, f"function envs missing build identity: {missing[:3]}"
+
+    deploy_sh = (ROOT / "deploy.sh").read_text()
+    define_pos = deploy_sh.index("PP_GIT_SHA_VAL=$(git rev-parse")
+    source_pos = deploy_sh.index("--emit-bash >")
+    assert define_pos < source_pos, "build identity must be defined before the specs are generated/sourced"

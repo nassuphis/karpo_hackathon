@@ -100,6 +100,9 @@ typedef struct {
     long nativeUs;            /* accumulated per-thread native time (worker sum) */
     long long dlWallStartUs;  /* CR33 telemetry: absolute span for download WALL */
     long long dlWallEndUs;
+    long long ntWallStartUs;  /* post-mortem F5: TRUE native wall = earliest
+                                 native-worker start to latest end */
+    long long ntWallEndUs;
     int retries;
     int error;
     char error_msg[256];
@@ -396,6 +399,7 @@ static void *worker_main(void *arg_) {
     };
 
     nativeStartUs = monotonic_us();
+    arg->ntWallStartUs = nativeStartUs;
     nativeStarted = 1;
     for (long p = arg->start; p < arg->end; p++) {
         long localIdx = p - arg->start;
@@ -559,7 +563,10 @@ static void *worker_main(void *arg_) {
         }
     }
 cleanup:
-    if (nativeStarted) arg->nativeUs = (long)(monotonic_us() - nativeStartUs);
+    if (nativeStarted) {
+        arg->ntWallEndUs = monotonic_us();
+        arg->nativeUs = (long)(arg->ntWallEndUs - nativeStartUs);
+    }
     multispan_reader_thread_cleanup();
     free(paramSectionBuf);
     free(coeffSectionBuf);
@@ -974,6 +981,8 @@ int main(int argc, char **argv) {
     long rootsDeduped = 0;
     long totalDownloadUs = 0;
     long long dlWallMinStart = 0, dlWallMaxEnd = 0;   /* CR33: download WALL span */
+    long long ntWallMinStart = 0, ntWallMaxEnd = 0;   /* F5: native WALL span */
+    long long totalInputBytes = 0;                    /* F13: downloaded input bytes */
     long totalNativeUs = 0;
     char workerErrorMsg[256] = {0};
     uint64_t totalPixels = (uint64_t)(uint32_t)W * (uint64_t)(uint32_t)H;
@@ -1116,6 +1125,12 @@ int main(int argc, char **argv) {
             dlWallMinStart = args[i].dlWallStartUs;
         }
         if (args[i].dlWallEndUs > dlWallMaxEnd) dlWallMaxEnd = args[i].dlWallEndUs;
+        if (args[i].ntWallStartUs > 0 &&
+            (ntWallMinStart == 0 || args[i].ntWallStartUs < ntWallMinStart)) {
+            ntWallMinStart = args[i].ntWallStartUs;
+        }
+        if (args[i].ntWallEndUs > ntWallMaxEnd) ntWallMaxEnd = args[i].ntWallEndUs;
+        totalInputBytes += (long long)args[i].sectionBytes + (long long)args[i].scoreCoeffSectionBytes;
         if (args[i].error && !workerErrorMsg[0]) {
             strncpy(workerErrorMsg, args[i].error_msg, sizeof(workerErrorMsg) - 1);
             workerErrorMsg[sizeof(workerErrorMsg) - 1] = '\0';
@@ -1210,13 +1225,19 @@ int main(int argc, char **argv) {
            /* CR33 telemetry: names that encode the timing class. download_us
             * and native_us above are WORKER SUMS across overlapping threads
             * (legacy keys, retained one cycle); the explicit names follow. */
-           ",\"download_worker_us\":%ld,\"native_worker_us\":%ld,\"download_wall_us\":%lld",
+           ",\"download_worker_us\":%ld,\"native_worker_us\":%ld,\"download_wall_us\":%lld"
+           ",\"native_wall_us\":%lld,\"input_bytes\":%lld,\"roots_deduped\":%ld",
            rootsPlotted, rootsClipped, nPoints, degree, threads,
            fragmentsWithData, totalEntries,
            solveScoreProgram.outputCount, fragmentRecordSize,
            retries, totalDownloadUs, totalNativeUs,
            totalDownloadUs, totalNativeUs,
-           (dlWallMaxEnd > dlWallMinStart && dlWallMinStart > 0) ? (dlWallMaxEnd - dlWallMinStart) : 0LL);
+           (dlWallMaxEnd > dlWallMinStart && dlWallMinStart > 0) ? (dlWallMaxEnd - dlWallMinStart) : 0LL,
+           (ntWallMaxEnd > ntWallMinStart && ntWallMinStart > 0) ? (ntWallMaxEnd - ntWallMinStart) : 0LL,
+           totalInputBytes, rootsDeduped);
+    /* post-mortem F9: the selected solve plan travels with the worker result
+     * (causally attached), instead of an env-gated stderr line only */
+    solve_score_print_plan_fields(stdout, &solveScoreProgram);
     printf(",\"solve_score\":true");
     if (emitStepScores) {
         printf(",\"step_score_channels\":%d", solveScoreProgram.outputCount);

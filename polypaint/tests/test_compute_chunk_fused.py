@@ -65,7 +65,8 @@ class TestComputeChunkFused(unittest.TestCase):
                     "coeff_tok_typed_scalar", "coeff_tok_typed_vector",
                     "coeff_tok_selector", "coeff_tok_native",
                     "coeff_fused_regions", "coeff_fused_tokens",
-                    "roots_size", "lambda_memory_mb", "arch"):
+                    "roots_size", "solve_native_us", "handler_wall_us",
+                    "lambda_memory_mb", "arch"):
             self.assertIn(key, telemetry)
         self.assertEqual(telemetry["roots_size"], 560)
         self.assertEqual(mock_upload.call_count, 3)

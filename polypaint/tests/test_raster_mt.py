@@ -274,9 +274,18 @@ class TestRasterMT(unittest.TestCase):
                     "threads": 2,
                     "roots_plotted": 24,
                     "roots_clipped": 3,
+                    "roots_deduped": 6,
                     "input_mode": "multispan_sectioned",
                     "download_us": 1200,
                     "native_us": 3400,
+                    "download_worker_us": 1200,
+                    "native_worker_us": 3400,
+                    "download_wall_us": 700,
+                    "native_wall_us": 2100,
+                    "input_bytes": 4096,
+                    "plan_metric_count": 1,
+                    "plan_dup_slots": 0,
+                    "plan_uses_lag": 0,
                 }),
                 stderr="",
             )
@@ -292,6 +301,22 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(body["fragment_files_uploaded"], 1)
         self.assertEqual(body["fragment_bytes_uploaded"], 5)
         self.assertEqual(body["step_scores_bytes_uploaded"], 4)
+        # post-mortem F5/F9/F13 contract: the Step Functions result carries
+        # the full timing set with truthful names — the C-side native wall
+        # (not the subprocess span), the subprocess span under its own name,
+        # worker sums, download wall, bytes, dedup, and the solve plan.
+        self.assertEqual(body["native_wall_us"], 2100)
+        self.assertEqual(body["download_wall_us"], 700)
+        self.assertEqual(body["download_worker_us"], 1200)
+        self.assertEqual(body["native_worker_us"], 3400)
+        self.assertGreater(body["subprocess_wall_us"], 0)
+        self.assertGreaterEqual(body["handler_wall_us"], body["subprocess_wall_us"])
+        self.assertEqual(body["input_bytes"], 4096)
+        self.assertEqual(body["roots_deduped"], 6)
+        self.assertEqual(body["plan_metric_count"], 1)
+        self.assertEqual(body["plan_uses_lag"], 0)
+        self.assertGreaterEqual(body["prep_wall_us"], 0)
+        self.assertGreaterEqual(body["upload_wall_us"], 0)
         self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000.frag"], _encode_fragment_pairs([(2, 55)]))
         self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000_step_scores.raw"], bytes([5, 7, 11, 13]))
         statuses = [call.args[2] for call in mock_report.call_args_list]

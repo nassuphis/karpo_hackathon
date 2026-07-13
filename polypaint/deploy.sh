@@ -66,6 +66,11 @@ ACTION="${1:-create}"
 # grant_api_gateway_invoke_permissions, delete_removed_lambdas).
 DEPLOY_SPECS_SH=/tmp/polypaint-deploy-specs.sh
 "${TEST_PYTHON[@]}" "$SCRIPT_DIR/deploy_manifest.py" --check
+# CR33 post-mortem F1: build identity for EVERY deployed function — the
+# emitted specs reference these; compute them before sourcing.
+PP_GIT_SHA_VAL=$(git rev-parse --short=9 HEAD 2>/dev/null || echo unknown)
+PP_BUILD_ID_VAL="${PP_GIT_SHA_VAL}-$(date -u +%Y%m%dT%H%M%SZ)"
+export PP_GIT_SHA_VAL PP_BUILD_ID_VAL
 "${TEST_PYTHON[@]}" "$SCRIPT_DIR/deploy_manifest.py" --emit-bash > "$DEPLOY_SPECS_SH"
 # shellcheck source=/dev/null
 source "$DEPLOY_SPECS_SH"
@@ -446,11 +451,7 @@ deploy_book_pdf_image() {
     echo "--- book-pdf image: lambda ---"
     # GEMINI_API_KEY comes from the deployer's shell (never committed);
     # empty is fine — the describe op errors informatively until it is set
-    # CR33 telemetry (build attribution): every deployed function knows the
-    # source revision that produced it; task results and status rows carry it.
-    local PP_GIT_SHA_VAL PP_BUILD_ID_VAL
-    PP_GIT_SHA_VAL=$(git rev-parse --short=9 HEAD 2>/dev/null || echo unknown)
-    PP_BUILD_ID_VAL="${PP_GIT_SHA_VAL}-$(date -u +%Y%m%dT%H%M%SZ)"
+    # Build identity values are computed once at deploy start (post-mortem F1)
     local ENV_VARS="BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,GEMINI_API_KEY=${GEMINI_API_KEY:-},PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL"
     if aws lambda get-function --function-name "$BOOK_PDF_NAME" --region "$REGION" >/dev/null 2>&1; then
         aws lambda update-function-code --function-name "$BOOK_PDF_NAME" \

@@ -43,6 +43,7 @@ def _require_str(params, key):
 
 
 def handle_fused_chunk(params):
+    t_handler = time.time()   # post-mortem F13: complete handler wall
     job_id = _require_str(params, "job_id")
     chunk_idx = _require_int(params, "chunk_idx", minimum=0)
     step_start = _require_int(params, "step_start", minimum=0)
@@ -274,6 +275,10 @@ def handle_fused_chunk(params):
                 "coeff_fused_regions": int(coeff_meta.get("fused_regions", 0) or 0),
                 "coeff_fused_tokens": int(coeff_meta.get("fused_tokens", 0) or 0),
                 "roots_size": int(roots_size),
+                # post-mortem F13: native solve elapsed separately from the
+                # outer solve_us wall, plus a complete handler wall
+                "solve_native_us": int(solve_meta.get("elapsed_us", 0) or 0),
+                "handler_wall_us": int((time.time() - t_handler) * 1e6),
                 "lambda_memory_mb": int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", 0) or 0),
                 "arch": platform.machine(),
                 **build_identity(),

@@ -457,6 +457,7 @@ def _extract_handler_entry_params(event):
 
 
 def _handle_fused_raster_request(params):
+    t_handler = time.perf_counter()   # F5: complete handler wall, from entry
     contract_warnings = []
     job_id = str(params.get("job_id") or "").strip()
     task_id = _fused_task_id(params)
@@ -531,7 +532,6 @@ def _handle_fused_raster_request(params):
         if params["pix"] <= 0:
             raise RuntimeError(f"fused raster requires pix > 0, got {params['pix']}")
 
-        t_handler = time.perf_counter()
         perf = attach_contract_warnings({
             "engine": "mt",
             "threads": threads,
@@ -546,6 +546,9 @@ def _handle_fused_raster_request(params):
             "native_worker_us": 0,
             "download_wall_us": 0,
             "native_wall_us": 0,
+            "subprocess_wall_us": 0,
+            "input_bytes": 0,
+            "roots_deduped": 0,
             "prep_wall_us": 0,
             "upload_wall_us": 0,
             "handler_wall_us": 0,
@@ -625,7 +628,11 @@ def _handle_fused_raster_request(params):
         t_native = time.perf_counter()
         cmd = _build_cmd(section_params)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        native_wall_us = int((time.perf_counter() - t_native) * 1e6)
+        # post-mortem F5: this interval spans process startup + downloads +
+        # native compute + serialization — it is the SUBPROCESS wall, not a
+        # native-compute wall. The true native wall (earliest native-worker
+        # start to latest end) comes from the C meta below.
+        subprocess_wall_us = int((time.perf_counter() - t_native) * 1e6)
         if result.returncode != 0:
             raise RuntimeError(f"roots2pix_mt failed for section {section_idx}: {result.stderr.strip()}")
 
@@ -637,11 +644,15 @@ def _handle_fused_raster_request(params):
             perf["download_us"] += int(raster_meta.get("download_us", 0))
             perf["download_worker_us"] += int(raster_meta.get("download_worker_us", raster_meta.get("download_us", 0)) or 0)
             perf["download_wall_us"] += int(raster_meta.get("download_wall_us", 0) or 0)
-        perf["native_us"] += int(raster_meta.get("native_us", native_wall_us))
+        perf["native_us"] += int(raster_meta.get("native_us", subprocess_wall_us))
         perf["native_worker_us"] += int(raster_meta.get("native_worker_us", raster_meta.get("native_us", 0)) or 0)
-        # CR33 telemetry: the WALL span around the subprocess was measured and
-        # then discarded pre-CR33; it is the latency-relevant number.
-        perf["native_wall_us"] += int(native_wall_us)
+        perf["native_wall_us"] += int(raster_meta.get("native_wall_us", 0) or 0)
+        perf["subprocess_wall_us"] += int(subprocess_wall_us)
+        perf["input_bytes"] += int(raster_meta.get("input_bytes", 0) or 0)
+        perf["roots_deduped"] += int(raster_meta.get("roots_deduped", 0) or 0)
+        for plan_key in ("plan_metric_count", "plan_dup_slots", "plan_uses_lag"):
+            if plan_key in raster_meta:
+                perf[plan_key] = int(raster_meta[plan_key])
         perf["roots_plotted"] += int(raster_meta.get("roots_plotted", 0))
         perf["roots_clipped"] += int(raster_meta.get("roots_clipped", 0))
 
@@ -734,11 +745,16 @@ def _handle_fused_raster_request(params):
             # result so reports survive DynamoDB cleanup.
             "handler_wall_us": perf["handler_wall_us"],
             "prep_wall_us": perf["prep_wall_us"],
+            "subprocess_wall_us": perf["subprocess_wall_us"],
             "native_wall_us": perf["native_wall_us"],
             "native_worker_us": perf["native_worker_us"],
             "download_wall_us": perf["download_wall_us"],
             "download_worker_us": perf["download_worker_us"],
             "upload_wall_us": perf["upload_wall_us"],
+            "input_bytes": perf["input_bytes"],
+            "roots_deduped": perf["roots_deduped"],
+            **{k: perf[k] for k in ("plan_metric_count", "plan_dup_slots", "plan_uses_lag")
+               if k in perf},
             **build_identity(),
         })
     except Exception as e:

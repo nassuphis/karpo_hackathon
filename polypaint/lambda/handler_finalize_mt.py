@@ -218,21 +218,38 @@ def _assemble_greyscale_raw(*, pix, raw_path, hist_path, workers, fragment_urls,
     }
 
 
-def _concat_step_scores(*, finalize_s3, fragment_prefix, source_item_count, out_path):
+def _concat_step_scores(*, finalize_s3, fragment_prefix, source_item_count, out_path,
+                        timings=None):
+    """Download and concatenation are interleaved per fragment, so the two
+    phases are timed as accumulated sub-spans within the serial loop
+    (post-mortem F7: independently actionable phases get separate numbers)."""
     total_bytes = 0
+    download_s = 0.0
+    concat_s = 0.0
     with open(out_path, "wb") as out_fh:
         for section_idx in range(int(source_item_count)):
             key = _step_scores_fragment_key(fragment_prefix, section_idx)
+            t0 = time.time()
             obj = finalize_s3.get_object(Bucket=BUCKET, Key=key)
             body = obj["Body"]
             if hasattr(body, "iter_chunks"):
                 for chunk in body.iter_chunks(chunk_size=1024 * 1024):
+                    download_s += time.time() - t0
                     total_bytes += len(chunk)
+                    t1 = time.time()
                     out_fh.write(chunk)
+                    concat_s += time.time() - t1
+                    t0 = time.time()
             else:
                 chunk = body.read()
+                download_s += time.time() - t0
                 total_bytes += len(chunk)
+                t1 = time.time()
                 out_fh.write(chunk)
+                concat_s += time.time() - t1
+    if timings is not None:
+        timings["step_scores_download_ms"] = int(download_s * 1000)
+        timings["step_scores_concat_ms"] = int(concat_s * 1000)
     return total_bytes
 
 
@@ -554,8 +571,9 @@ def _finalize_associated_palette(
         "derived_from_color_artifact_id": str(associated_palette.get("source_color_artifact_id") or ""),
         "derivation_kind": "extract_palette",
         "assemble_ms": assemble_ms,
+        # render_ms spans the native render+encode process; a fake encode_ms=0
+        # is never emitted (post-mortem F7: unknown timing is omitted)
         "render_ms": render_ms,
-        "encode_ms": 0,
         "file_size_bytes": int(encode_meta["file_size"]),
         "nonzero_pixels": int(nonzero_pixels),
         "background_pixels": int(hist_meta["background_pixels"]),
@@ -584,11 +602,11 @@ def _finalize_associated_palette(
         "file_size": int(encode_meta["file_size"]),
         "assemble_ms": assemble_ms,
         "render_ms": render_ms,
-        "encode_ms": 0,
     }
 
 
 def handler(event, context):
+    t_handler = time.time()   # post-mortem F7: complete handler wall
     params = parse_body(event)
     phase = str(params.get("phase") or "").strip()
     if phase != "finalize_mt":
@@ -681,12 +699,14 @@ def handler(event, context):
     encode_out_path = f"/tmp/finalize_mt_out.{ext}"
     preview_out_path = "/tmp/finalize_mt_preview.png" if preview_key else ""
 
-    t_assemble = time.time()
+    t_presign = time.time()
     fragment_urls = _presign_fragment_urls(
         finalize_s3=finalize_s3,
         fragment_prefix=fragment_prefix,
         source_item_count=source_item_count,
     )
+    progress["presign_ms"] = int((time.time() - t_presign) * 1000)
+    t_assemble = time.time()
     hist_meta = _assemble_greyscale_raw(
         pix=width,
         raw_path=raw_path,
@@ -718,6 +738,7 @@ def handler(event, context):
             fragment_prefix=fragment_prefix,
             source_item_count=source_item_count,
             out_path=step_scores_path,
+            timings=progress,
         )
         progress["step_scores_fetch_concat_ms"] = int((time.time() - t_step_scores) * 1000)
         if actual_step_score_bytes != expected_step_score_bytes:
@@ -939,6 +960,7 @@ def handler(event, context):
     progress["meta_overlay_ms"] = int((time.time() - t_component) * 1000)
 
     progress["upload_ms"] = int((time.time() - t_upload) * 1000)
+    progress["handler_wall_ms"] = int((time.time() - t_handler) * 1000)
     progress.update(build_identity())
     progress["image_key"] = image_key
     progress["raw_key"] = raw_key
@@ -969,8 +991,12 @@ def handler(event, context):
             "preview_upload_ms": progress.get("preview_upload_ms", 0),
             "meta_overlay_ms": progress.get("meta_overlay_ms", 0),
             "step_scores_fetch_concat_ms": progress.get("step_scores_fetch_concat_ms", 0),
+            "step_scores_download_ms": progress.get("step_scores_download_ms", 0),
+            "step_scores_concat_ms": progress.get("step_scores_concat_ms", 0),
             "step_scores_upload_ms": progress.get("step_scores_upload_ms", 0),
             "lut_ms": progress.get("lut_ms", 0),
+            "presign_ms": progress.get("presign_ms", 0),
+            "handler_wall_ms": progress.get("handler_wall_ms", 0),
         },
         **build_identity(),
     }

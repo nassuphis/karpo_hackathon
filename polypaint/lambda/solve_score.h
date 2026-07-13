@@ -1108,10 +1108,14 @@ static void solve_score_prepare_lag_flags(SolveScoreProgram *program) {
                              program->planFamExtrema, program->planFamRadial);
     program->planPrepared = 1;
     /* CR33 telemetry: one structured line per PROGRAM PARSE (not per row),
-     * emitted only when the caller opts in via PP_PLAN_TELEMETRY=1 — Lambda
-     * stderr lands in CloudWatch, so this is the "which shapes does
-     * production actually run" signal the review asked for. */
-    if (getenv("PP_PLAN_TELEMETRY")) {
+     * emitted only when the caller opts in via PP_PLAN_TELEMETRY — a DEFINED
+     * TRUE value ("1"/"true"), not mere presence (post-mortem F9: "=0" used
+     * to enable it). Consumer binaries also attach the plan to their result
+     * meta via solve_score_print_plan_fields, which is the causal transport
+     * the collector reads. */
+    const char *planTelemetry = getenv("PP_PLAN_TELEMETRY");
+    if (planTelemetry && (strcmp(planTelemetry, "1") == 0 ||
+                          strcmp(planTelemetry, "true") == 0)) {
         int dupCount = 0;
         for (int i = 0; i < program->metricCount; i++) {
             for (int j = 0; j < i; j++) {
@@ -1136,6 +1140,26 @@ static void solve_score_prepare_lag_flags(SolveScoreProgram *program) {
                 program->planFamExtrema[0], program->planFamExtrema[1],
                 program->planFamRadial[0], program->planFamRadial[1]);
     }
+}
+
+/* post-mortem F9: plan summary as result-meta JSON fields (no leading
+ * brace; begins with a comma) so the plan is causally attached to the
+ * worker output the collector parses. */
+static void solve_score_print_plan_fields(FILE *out, const SolveScoreProgram *program) {
+    if (!program || !program->planPrepared) return;
+    int dupCount = 0;
+    for (int i = 0; i < program->metricCount; i++) {
+        for (int j = 0; j < i; j++) {
+            if (program->metrics[j] == program->metrics[i] &&
+                program->metricSources[j] == program->metricSources[i]) {
+                dupCount++;
+                break;
+            }
+        }
+    }
+    fprintf(out,
+            ",\"plan_metric_count\":%d,\"plan_dup_slots\":%d,\"plan_uses_lag\":%d",
+            program->metricCount, dupCount, (int)program->planUsesLag);
 }
 
 static double solve_score_clamp_unit(double v) {

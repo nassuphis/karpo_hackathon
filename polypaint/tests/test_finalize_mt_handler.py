@@ -231,6 +231,20 @@ class TestFinalizeMTHandler(unittest.TestCase):
             statuses,
             ["started", "assembled_score_tiles", "wrote_greyscale_raw", "rendered_rgb_tiles", "encoded", "done"],
         )
+        # post-mortem F7 contract: the fake encode_ms=0 is GONE everywhere;
+        # timings carry the split components, presign, and the handler wall.
+        timings = body["timings"]
+        self.assertNotIn("encode_ms", timings)
+        for key in ("presign_ms", "assemble_ms", "render_encode_ms",
+                    "raw_upload_ms", "image_upload_ms", "preview_upload_ms",
+                    "meta_overlay_ms", "handler_wall_ms", "upload_ms"):
+            self.assertIn(key, timings)
+        # nothing anywhere in the result may claim a measured encode of zero
+        self.assertNotIn('"encode_ms"', json.dumps(body))
+        # progress rows carry the same discipline
+        for call in mock_report.call_args_list:
+            rd = call.kwargs.get("result_data") or {}
+            self.assertNotIn("encode_ms", rd)
 
     @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
     @patch("handler_finalize_mt.report_status")

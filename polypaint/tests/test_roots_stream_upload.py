@@ -200,6 +200,31 @@ class TestRootsStreamUploader(unittest.TestCase):
         self.assertFalse(up.finish())
         self.assertTrue(fake.aborted)
 
+    def test_tail_parts_upload_concurrently(self):
+        """The tail is the only remaining serial critical-path cost
+        (production A/B: 3.96s of a 18.9s chunk) — finish() must ship the
+        remaining parts in parallel. The barrier only releases when ALL
+        three tail parts are in flight at once; a serial tail deadlocks it
+        (times out -> finish() False) and fails the test."""
+        class _BarrierS3(_FakeS3):
+            def __init__(self, parties):
+                super().__init__()
+                self.barrier = threading.Barrier(parties)
+
+            def upload_part(self, *, Bucket, Key, UploadId, PartNumber, Body):
+                self.barrier.wait(timeout=10)
+                return super().upload_part(
+                    Bucket=Bucket, Key=Key, UploadId=UploadId,
+                    PartNumber=PartNumber, Body=Body)
+
+        fake = _BarrierS3(3)   # payload spans exactly 3 parts
+        with open(self.data_path, "wb") as fh:
+            fh.write(self.payload)
+        up = self._uploader(fake)
+        up.start()
+        self.assertTrue(up.finish())
+        self.assertEqual(fake.completed, self.payload)
+
     def test_threaded_poller_smoke(self):
         # one real threaded pass: writer thread fills the file + sidecar
         fake = _FakeS3()

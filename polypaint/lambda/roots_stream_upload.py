@@ -17,6 +17,7 @@ import os
 import struct
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 PROGRESS_MAGIC = b"PPR1"
 PROGRESS_HEADER = 16
@@ -113,7 +114,19 @@ class RootsStreamUploader:
             return False
         try:
             # The file is complete and final now — every part is durable.
-            self._upload_ready_parts(set(range(self._n_parts)), final=True)
+            # The tail is the ONLY serial critical-path cost left (production
+            # A/B: each thread's last part lands here, ~4 of 9 parts), so the
+            # remaining parts ship CONCURRENTLY — independent byte ranges of
+            # a final file, and boto3 clients are thread-safe.
+            remaining = [p for p in range(self._n_parts)
+                         if p not in self._etags]
+            if remaining:
+                with ThreadPoolExecutor(
+                        max_workers=min(4, len(remaining))) as pool:
+                    futures = {p: pool.submit(self._upload_one_part, p)
+                               for p in remaining}
+                    for p, fut in futures.items():
+                        self._etags[p] = fut.result()   # re-raises failures
             parts = [{"ETag": etag, "PartNumber": idx + 1}
                      for idx, etag in sorted(self._etags.items())]
             if len(parts) != self._n_parts:
@@ -160,7 +173,11 @@ class RootsStreamUploader:
         regions = read_progress(self._progress_path, self._total)
         if regions is None:
             return
-        self._upload_ready_parts(self._durable_parts(regions), final=False)
+        for p in sorted(self._durable_parts(regions)):
+            if p in self._etags:
+                continue
+            self._etags[p] = self._upload_one_part(p)
+            self._parts_during_solve += 1
 
     def _durable_parts(self, regions):
         """Part p covers [p*P, min((p+1)*P, total)). It is durable when every
@@ -183,21 +200,18 @@ class RootsStreamUploader:
                 ready.add(p)
         return ready
 
-    def _upload_ready_parts(self, part_indices, *, final):
-        for p in sorted(part_indices):
-            if p in self._etags:
-                continue
-            a = p * self._part_bytes
-            b = min(a + self._part_bytes, self._total)
-            with open(self._data_path, "rb") as fh:
-                fh.seek(a)
-                data = fh.read(b - a)
-            if len(data) != b - a:
-                raise RuntimeError(
-                    f"short read for part {p}: {len(data)} != {b - a}")
-            resp = self._s3.upload_part(
-                Bucket=self._bucket, Key=self._key, UploadId=self._upload_id,
-                PartNumber=p + 1, Body=data)
-            self._etags[p] = resp["ETag"]
-            if not final:
-                self._parts_during_solve += 1
+    def _upload_one_part(self, p):
+        """Upload part p (0-based) and return its ETag. Reads via a private
+        file handle so concurrent tail uploads never share a seek position."""
+        a = p * self._part_bytes
+        b = min(a + self._part_bytes, self._total)
+        with open(self._data_path, "rb") as fh:
+            fh.seek(a)
+            data = fh.read(b - a)
+        if len(data) != b - a:
+            raise RuntimeError(
+                f"short read for part {p}: {len(data)} != {b - a}")
+        resp = self._s3.upload_part(
+            Bucket=self._bucket, Key=self._key, UploadId=self._upload_id,
+            PartNumber=p + 1, Body=data)
+        return resp["ETag"]

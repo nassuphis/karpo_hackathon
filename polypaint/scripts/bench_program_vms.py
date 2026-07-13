@@ -205,9 +205,9 @@ def build_cases(workdir, binary):
         "coeff4_baseline": coeff_payload(function="const", n=128),
         # CR33 F12 seams: direct-selector ops at high degree + repetition
         "coeff128_add": coeff_payload("fill(129, 1.5)\npoly = pop\npoly = add(poly, poly)", n=64),
-        "coeff256_add": coeff_payload("fill(257, 1.5)\npoly = pop\npoly = add(poly, poly)", n=64),
+        "coeff256_add": coeff_payload("fill(256, 1.5)\npoly = pop\npoly = add(poly, poly)", n=64),
         "coeff128_neg16": coeff_payload("fill(129, 1.5)\npoly = pop\n" + "\n".join(["poly = neg(poly)"] * 16), n=64),
-        "coeff256_neg16": coeff_payload("fill(257, 1.5)\npoly = pop\n" + "\n".join(["poly = neg(poly)"] * 16), n=64),
+        "coeff256_neg16": coeff_payload("fill(256, 1.5)\npoly = pop\n" + "\n".join(["poly = neg(poly)"] * 16), n=64),
         "chunked35_t1": chunked_payload(params_file, 1),
         "chunked35_t2": chunked_payload(params_file, 2),
         "chunked35_t4": chunked_payload(params_file, 4),

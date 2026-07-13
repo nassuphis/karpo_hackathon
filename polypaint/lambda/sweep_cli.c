@@ -4733,6 +4733,82 @@ static int coeffProgramApplyUnaryFn(int fnIndex,
     return 0;
 }
 
+/* CR33 F3: THE whole-vector elementwise kernels. One implementation owns the
+ * cheap-op hoists AND the non-finite policy (inline clamps identical to the
+ * Apply*Fn ladder; everything else goes through the ladder itself). Every
+ * consumer — typed stack ops, the legacy scratch path, and the direct
+ * poly->poly fast paths — calls these, so the semantics cannot fork again
+ * (the CR32 F1 lesson). Alias-safe: dst may equal a; each element is fully
+ * read before it is written. b is never written (cf stays immutable). */
+static int coeffUnaryKernelVec(int fnIndex, double *re, double *im, int n) {
+    if (fnIndex == COEFF_VEC_NEG) {
+        for (int i = 0; i < n; i++) {
+            double rr = -re[i], ri = -im[i];
+            if (!isfinite(rr)) rr = 0.0;
+            if (!isfinite(ri)) ri = 0.0;
+            re[i] = rr; im[i] = ri;
+        }
+    } else if (fnIndex == COEFF_VEC_CONJ) {
+        for (int i = 0; i < n; i++) {
+            double rr = re[i], ri = -im[i];
+            if (!isfinite(rr)) rr = 0.0;
+            if (!isfinite(ri)) ri = 0.0;
+            re[i] = rr; im[i] = ri;
+        }
+    } else if (fnIndex == COEFF_VEC_REAL) {
+        for (int i = 0; i < n; i++) {
+            double rr = re[i];
+            if (!isfinite(rr)) rr = 0.0;
+            re[i] = rr; im[i] = 0.0;
+        }
+    } else if (fnIndex == COEFF_VEC_IMAG) {
+        for (int i = 0; i < n; i++) {
+            double rr = im[i];
+            if (!isfinite(rr)) rr = 0.0;
+            re[i] = rr; im[i] = 0.0;
+        }
+    } else {
+        for (int i = 0; i < n; i++) {
+            if (coeffProgramApplyUnaryFn(fnIndex, re[i], im[i], &re[i], &im[i]) != 0) return 1;
+        }
+    }
+    return 0;
+}
+
+static int coeffBinaryKernelVec(int fnIndex, double *dre, double *dim,
+                                const double *are, const double *aim,
+                                const double *bre, const double *bim, int n) {
+    if (fnIndex == COEFF_VEC_ADD) {
+        for (int i = 0; i < n; i++) {
+            double rr = are[i] + bre[i], ri = aim[i] + bim[i];
+            if (!isfinite(rr)) rr = 0.0;
+            if (!isfinite(ri)) ri = 0.0;
+            dre[i] = rr; dim[i] = ri;
+        }
+    } else if (fnIndex == COEFF_VEC_SUBTRACT) {
+        for (int i = 0; i < n; i++) {
+            double rr = are[i] - bre[i], ri = aim[i] - bim[i];
+            if (!isfinite(rr)) rr = 0.0;
+            if (!isfinite(ri)) ri = 0.0;
+            dre[i] = rr; dim[i] = ri;
+        }
+    } else if (fnIndex == COEFF_VEC_MULTIPLY) {
+        for (int i = 0; i < n; i++) {
+            double rr = 0.0, ri = 0.0;
+            c_mul(are[i], aim[i], bre[i], bim[i], &rr, &ri);
+            if (!isfinite(rr)) rr = 0.0;
+            if (!isfinite(ri)) ri = 0.0;
+            dre[i] = rr; dim[i] = ri;
+        }
+    } else {
+        for (int i = 0; i < n; i++) {
+            if (coeffProgramApplyBinaryFn(fnIndex, are[i], aim[i], bre[i], bim[i],
+                                             &dre[i], &dim[i]) != 0) return 1;
+        }
+    }
+    return 0;
+}
+
 static int coeffProgramBinaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
     int n1 = ws->scratch_len;
     int n2 = ws->original_len;
@@ -4740,30 +4816,15 @@ static int coeffProgramBinaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProg
         fprintf(stderr, "coeff_program vector binary length mismatch: %d vs %d\n", n1, n2);
         return 1;
     }
-    for (int i = 0; i < n1; i++) {
-        double rr = 0.0, ri = 0.0;
-        if (coeffProgramApplyBinaryFn(tok->fn_index,
-                                         ws->scratch_re[i], ws->scratch_im[i],
-                                         ws->original_re[i], ws->original_im[i],
-                                         &rr, &ri) != 0) return 1;
-        ws->scratch_re[i] = rr;
-        ws->scratch_im[i] = ri;
-    }
+    if (coeffBinaryKernelVec(tok->fn_index, ws->scratch_re, ws->scratch_im,
+                             ws->scratch_re, ws->scratch_im,
+                             ws->original_re, ws->original_im, n1) != 0) return 1;
     ws->scratch_len = (uint16_t)n1;
     return 0;
 }
 
 static int coeffProgramUnaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
-    int n = ws->scratch_len;
-    for (int i = 0; i < n; i++) {
-        double rr = 0.0, ri = 0.0;
-        if (coeffProgramApplyUnaryFn(tok->fn_index,
-                                        ws->scratch_re[i], ws->scratch_im[i],
-                                        &rr, &ri) != 0) return 1;
-        ws->scratch_re[i] = rr;
-        ws->scratch_im[i] = ri;
-    }
-    return 0;
+    return coeffUnaryKernelVec(tok->fn_index, ws->scratch_re, ws->scratch_im, ws->scratch_len);
 }
 
 static int coeffProgramRollVectorOp(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
@@ -4871,34 +4932,12 @@ static int coeffProgramTypedBinaryOp(CoeffProgramWorkspace *ws, const CoeffProgr
      * generic path. CR32 F1: the final non-finite clamp is part of every
      * operation's semantics (see coeffProgramApplyBinaryFn) — each kernel
      * must apply it too, or overflow emits inf where the VM's contract says 0. */
-    if (leftType == COEFF_STACK_VECTOR && rightType == COEFF_STACK_VECTOR &&
-        (tok->fn_index == COEFF_VEC_ADD || tok->fn_index == COEFF_VEC_SUBTRACT ||
-         tok->fn_index == COEFF_VEC_MULTIPLY)) {
-        double *lre = ws->stack_re[left], *lim = ws->stack_im[left];
-        const double *rre = ws->stack_re[right], *rim = ws->stack_im[right];
-        if (tok->fn_index == COEFF_VEC_ADD) {
-            for (int i = 0; i < n; i++) {
-                double rr = lre[i] + rre[i], ri = lim[i] + rim[i];
-                if (!isfinite(rr)) rr = 0.0;
-                if (!isfinite(ri)) ri = 0.0;
-                lre[i] = rr; lim[i] = ri;
-            }
-        } else if (tok->fn_index == COEFF_VEC_SUBTRACT) {
-            for (int i = 0; i < n; i++) {
-                double rr = lre[i] - rre[i], ri = lim[i] - rim[i];
-                if (!isfinite(rr)) rr = 0.0;
-                if (!isfinite(ri)) ri = 0.0;
-                lre[i] = rr; lim[i] = ri;
-            }
-        } else {
-            for (int i = 0; i < n; i++) {
-                double rr = 0.0, ri = 0.0;
-                c_mul(lre[i], lim[i], rre[i], rim[i], &rr, &ri);
-                if (!isfinite(rr)) rr = 0.0;
-                if (!isfinite(ri)) ri = 0.0;
-                lre[i] = rr; lim[i] = ri;
-            }
-        }
+    if (leftType == COEFF_STACK_VECTOR && rightType == COEFF_STACK_VECTOR) {
+        /* CR33 F3: the shared kernel owns hoisting AND the clamp policy */
+        if (coeffBinaryKernelVec(tok->fn_index,
+                                 ws->stack_re[left], ws->stack_im[left],
+                                 ws->stack_re[left], ws->stack_im[left],
+                                 ws->stack_re[right], ws->stack_im[right], n) != 0) return 1;
     } else {
         for (int i = 0; i < n; i++) {
             double ar = leftType == COEFF_STACK_VECTOR ? ws->stack_re[left][i] : ws->stack_scalar_re[left];
@@ -4939,41 +4978,8 @@ static int coeffProgramTypedUnaryOp(CoeffProgramWorkspace *ws, const CoeffProgra
      * cheap kernels ONCE instead of walking the dispatch ladder per element.
      * CR32 F1: each kernel applies the ladder's final non-finite clamp too —
      * a non-finite stack input must leave as 0, exactly like the generic op. */
-    double *sre = ws->stack_re[slot];
-    double *sim = ws->stack_im[slot];
-    if (tok->fn_index == COEFF_VEC_NEG) {
-        for (int i = 0; i < n; i++) {
-            double rr = -sre[i], ri = -sim[i];
-            if (!isfinite(rr)) rr = 0.0;
-            if (!isfinite(ri)) ri = 0.0;
-            sre[i] = rr; sim[i] = ri;
-        }
-    } else if (tok->fn_index == COEFF_VEC_CONJ) {
-        for (int i = 0; i < n; i++) {
-            double rr = sre[i], ri = -sim[i];
-            if (!isfinite(rr)) rr = 0.0;
-            if (!isfinite(ri)) ri = 0.0;
-            sre[i] = rr; sim[i] = ri;
-        }
-    } else if (tok->fn_index == COEFF_VEC_REAL) {
-        for (int i = 0; i < n; i++) {
-            double rr = sre[i];
-            if (!isfinite(rr)) rr = 0.0;
-            sre[i] = rr; sim[i] = 0.0;
-        }
-    } else if (tok->fn_index == COEFF_VEC_IMAG) {
-        for (int i = 0; i < n; i++) {
-            double rr = sim[i];
-            if (!isfinite(rr)) rr = 0.0;
-            sre[i] = rr; sim[i] = 0.0;
-        }
-    } else {
-        for (int i = 0; i < n; i++) {
-            if (coeffProgramApplyUnaryFn(tok->fn_index,
-                                            sre[i], sim[i],
-                                            &sre[i], &sim[i]) != 0) return 1;
-        }
-    }
+    /* CR33 F3: the shared kernel owns hoisting AND the clamp policy */
+    if (coeffUnaryKernelVec(tok->fn_index, ws->stack_re[slot], ws->stack_im[slot], n) != 0) return 1;
     ws->stack_len[slot] = (uint16_t)n;
     ws->stack_type[slot] = COEFF_STACK_VECTOR;
     ws->stack_head = (uint16_t)((ws->stack_head + 1) % COEFF_PROGRAM_MAX_VECTOR_STACK);
@@ -5539,6 +5545,22 @@ static int coeffProgramVectorBinaryDispatch(const CoeffEvalContext *ctx, const C
     CoeffProgramWorkspace *ws = ctx->ws;
     int src2 = 0;
     if (coeffProgramVectorSrc2(tok, &src2) != 0) return 1;
+    /* CR33 F3: poly (op) poly|cf -> poly runs in place. dst aliases a (each
+     * element read before write); cf is only ever a b-side source. */
+    if (tok->src == COEFF_SEL_POLY && tok->tgt == COEFF_SEL_POLY &&
+        (src2 == COEFF_SEL_POLY || src2 == COEFF_SEL_CF)) {
+        const double *bre = (src2 == COEFF_SEL_CF) ? ctx->cfRe : ws->poly_re;
+        const double *bim = (src2 == COEFF_SEL_CF) ? ctx->cfIm : ws->poly_im;
+        int n2 = (src2 == COEFF_SEL_CF) ? ctx->cfLen : ws->poly_len;
+        if (ws->poly_len != n2) {
+            fprintf(stderr, "coeff_program vector binary length mismatch: %d vs %d\n",
+                    ws->poly_len, n2);
+            return 1;
+        }
+        if (coeff_program_check_len(ws->poly_len, "target") != 0) return 1;
+        return coeffBinaryKernelVec(tok->fn_index, ws->poly_re, ws->poly_im,
+                                    ws->poly_re, ws->poly_im, bre, bim, ws->poly_len);
+    }
     if (coeffProgramReadSourceToBuffer(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, tok->src,
                                        ws->scratch_re, ws->scratch_im, &ws->scratch_len) != 0) return 1;
     if (coeffProgramReadSourceToBuffer(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, src2,
@@ -5549,6 +5571,12 @@ static int coeffProgramVectorBinaryDispatch(const CoeffEvalContext *ctx, const C
 
 static int coeffProgramVectorUnaryDispatch(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
     CoeffProgramWorkspace *ws = ctx->ws;
+    /* CR33 F3: poly -> poly elementwise unary runs in place — the scratch
+     * round-trip copied the whole vector twice around the same kernel. */
+    if (tok->src == COEFF_SEL_POLY && tok->tgt == COEFF_SEL_POLY) {
+        if (coeff_program_check_len(ws->poly_len, "target") != 0) return 1;
+        return coeffUnaryKernelVec(tok->fn_index, ws->poly_re, ws->poly_im, ws->poly_len);
+    }
     if (coeffProgramSourceToScratch(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, tok) != 0) return 1;
     if (coeffProgramUnaryVectorOp(ws, tok) != 0) return 1;
     return coeffProgramTargetFromScratch(ws, tok);

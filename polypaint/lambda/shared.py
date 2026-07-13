@@ -105,6 +105,14 @@ def parse_body(event):
 
 
 def ok_response(body):
+    # CR34 post-mortem follow-up: EVERY task/API response self-describes the
+    # build that produced it, injected here at the single emission point so
+    # coverage cannot drift per handler (the F1 lesson). setdefault keeps
+    # handlers that already merge build_identity() authoritative, and the
+    # fields vanish entirely outside deployed environments (env unset).
+    if isinstance(body, dict):
+        for key, value in build_identity().items():
+            body.setdefault(key, value)
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},

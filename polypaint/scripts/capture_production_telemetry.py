@@ -640,6 +640,25 @@ def validate_reconstruction(events, tasks, identity, kind, *, live, cw_errors,
                   if t.get("status_code") is not None and int(t["status_code"]) != 200]
     if bad_status:
         problems.append(f"{len(bad_status)} task(s) returned statusCode != 200")
+    # Build-identity coverage (CR34 review F2 follow-up): "single build" may
+    # only be claimed when EVERY decoded task result carries build_id+git_sha.
+    # Conflict rejection alone fails open on absence — a role that never
+    # reports identity can silently run a different build. Reported per role
+    # so the gap names its owner. Histories captured before the ok_response
+    # injection deploy will fail this check — that is the correct
+    # classification (identity coverage is a deploy-gated property).
+    identity_gaps = {}
+    for t in tasks:
+        body = t.get("body")
+        if not isinstance(body, dict):
+            continue
+        if not body.get("build_id") or not body.get("git_sha"):
+            role = t.get("role") or "unknown"
+            identity_gaps[role] = identity_gaps.get(role, 0) + 1
+    for role in sorted(identity_gaps):
+        problems.append(
+            f"build identity missing on {identity_gaps[role]} task result(s) "
+            f"for role {role}")
     rids = [t["request_id"] for t in tasks if t.get("request_id")]
     if len(rids) != len(set(rids)):
         problems.append("duplicate Lambda request IDs across task results")

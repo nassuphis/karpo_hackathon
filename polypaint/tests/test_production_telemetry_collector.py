@@ -56,9 +56,11 @@ def _done(eid, prev, rid, body, ts=11.0):
             "taskSucceededEventDetails": {"output": _task_output(body, rid)}}
 
 
-def _mk_history(*, n_chunks=2, mixed_build=False):
+def _mk_history(*, n_chunks=2, mixed_build=False, lores_identity=True):
     """Current-format synthetic history: fused workers + one lores task with
-    same-named fields (the F4 contamination shape) + nested params input."""
+    same-named fields (the F4 contamination shape) + nested params input.
+    All bodies carry build identity (the ok_response injection contract);
+    lores_identity=False models a pre-injection deploy."""
     events = [
         {"type": "ExecutionStarted", "timestamp": 1000.0, "id": 1,
          "executionStartedEventDetails": {"input": json.dumps({
@@ -76,6 +78,7 @@ def _mk_history(*, n_chunks=2, mixed_build=False):
             "mystery_probe_us": 12345,
             "execution_method": "fused_chunk_pipeline",
             "git_sha": ("B" if (mixed_build and chunk == 1) else "A"),
+            "build_id": "A-build-1",
             "stage_telemetry": {"param_scheduler": "static_file",
                                 "param_native_us": 90, "lambda_memory_mb": 10240},
         }
@@ -87,11 +90,14 @@ def _mk_history(*, n_chunks=2, mixed_build=False):
         ]
         eid += 3
     # a lores task with SAME-NAMED fields (must not contaminate the fused role)
+    lores_body = {"coeffgen_us": 999999, "compute_us": 888888, "elapsed_us": 5}
+    if lores_identity:
+        lores_body["git_sha"] = "A"
+        lores_body["build_id"] = "A-build-1"
     events += [
         _sched(eid, "arn:aws:lambda:us-east-1:1:function:polypaint-coeffgen", {}),
         _started(eid + 1, eid),
-        _done(eid + 2, eid + 1, "req-lores",
-              {"coeffgen_us": 999999, "compute_us": 888888, "elapsed_us": 5}),
+        _done(eid + 2, eid + 1, "req-lores", lores_body),
     ]
     eid += 3
     events.append({"type": "ExecutionSucceeded", "timestamp": 1010.0, "id": eid})
@@ -359,6 +365,19 @@ def test_report_shape_v3():
     assert report["unclassified_time_fields"] == ["mystery_probe_us"]
 
 
+def test_missing_build_identity_per_role_is_a_validation_problem():
+    """CR34 review F2 follow-up: conflict rejection alone fails open on
+    ABSENCE — a role that never reports identity must be a named problem."""
+    report = build_report(_mk_history(lores_identity=False), kind="compute",
+                          source="offline")
+    assert any(p.startswith("build identity missing")
+               and "polypaint-coeffgen" in p
+               for p in report["validation_problems"])
+    # roles that do carry identity are not flagged
+    assert not any("fused-chunk" in p for p in report["validation_problems"]
+                   if p.startswith("build identity missing"))
+
+
 REAL_COMPUTE = "/private/tmp/cr33_compute_history.json"
 REAL_RENDER = "/private/tmp/cr34_render_history.json"
 
@@ -372,7 +391,10 @@ def test_offline_smoke_real_compute(tmp_path):
          "--run-id", "smoke", "--out-dir", str(tmp_path)],
         capture_output=True, text=True, timeout=120,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    # The June history predates ALL build-identity injection, so the strict
+    # per-role coverage check correctly classifies it as incomplete evidence:
+    # exit 2, with ONLY identity-gap problems (everything else still clean).
+    assert proc.returncode == 2, proc.stdout + proc.stderr
     report = json.loads(next(tmp_path.glob("*compute-smoke.json")).read_text())
     fused = report["task_aggregate_by_role"]["polypaint-compute-fused-chunk"]
     assert fused["task_count"] == 49
@@ -380,7 +402,9 @@ def test_offline_smoke_real_compute(tmp_path):
     assert fused["fields"]["param_gen_us"]["sum"] == pytest.approx(3672650.0)
     assert report["workload_identity"]["N"] == 10000
     assert report["workload_identity"]["n_chunks"] == 49
-    assert report["validation_problems"] == []
+    problems = report["validation_problems"]
+    assert problems and all(p.startswith("build identity missing") for p in problems)
+    assert any("polypaint-compute-fused-chunk" in p for p in problems)
 
 
 @pytest.mark.skipif(not os.path.exists(REAL_RENDER),
@@ -392,4 +416,8 @@ def test_offline_smoke_real_render(tmp_path):
          "--run-id", "smoke", "--out-dir", str(tmp_path)],
         capture_output=True, text=True, timeout=120,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    # pre-injection history: strict identity coverage correctly fails it
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    report = json.loads(next(tmp_path.glob("*render-smoke.json")).read_text())
+    problems = report["validation_problems"]
+    assert problems and all(p.startswith("build identity missing") for p in problems)

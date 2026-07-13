@@ -8,7 +8,12 @@ before this deploy stays classified exploratory.
 
 Captured with `scripts/capture_production_telemetry.py` (schema `pp-production-telemetry-v3`, live mode)
 — both runs exited 0 with **zero validation problems**: every task joined to exactly one CloudWatch
-REPORT, cardinality checks satisfied, single build across all tasks. Full reports (gitignored, contain
+REPORT, cardinality checks satisfied, and a single build across every **identity-bearing role**
+(fused chunks, raster, finalize — the roles that inject `build_identity()`). Coeffgen, sweep, plan,
+and status results carried no identity at capture time, so build consistency there rests on the
+deployment-config snapshot, not per-task proof. Closed since: `ok_response` now injects identity
+into every handler response and the collector requires it on every decoded task result, so the next
+post-deploy capture proves full coverage (and pre-injection histories correctly fail that check). Full reports (gitignored, contain
 job identity) in `reports/production/20260713-{compute,render}-*.{json,md}`.
 
 | run | execution | workflow wall |
@@ -46,14 +51,17 @@ coeff_native/coeffgen = 99.7%. `avg_iterations` 2.32 (warm-start chain healthy).
 ### 1.2 Data volumes and upload throughput
 
 **69.6 GB uploaded per run**: roots bin 33.6 GB + coeffs 34.4 GB + params 1.6 GB.
-Per task that is 550.8 MB bin in 5.63 s (**~98 MB/s**) and 563.9 MB coeffs in 4.54 s (**~124 MB/s**),
-serial, after solve completes.
+Per task: 563.9 MB coeffs in 4.54 s (**~124 MB/s**) and 26 MB params in 0.38 s, uploaded serially
+*before* solve starts; 550.8 MB roots bin in 5.63 s (**~98 MB/s**), serially *after* solve
+completes. That ordering is why §3.1 splits into two different problems.
 
 ### 1.3 Confirmations of deployed fixes
 
 - `param_scheduler=static_file` in every chunk meta — the CR33 F1 fused-scheduler fix is what
   actually ran in production (real output path, static scheduler; no ordered-ring).
-- `build_id`/`git_sha` present in all 61 results + coeffgen + sweep-mt (F1 post-mortem, fleet-wide env).
+- `build_id`/`git_sha` present in all 61 fused-chunk results (F1 post-mortem, fleet-wide env);
+  coeffgen/sweep/plan/status results did not yet inject identity — closed by the `ok_response`-level
+  injection noted above.
 - `solve_native_us` vs `solve_us` split present (F13); plan invariants travel in results (F9).
 - Cross-layer consistency: state wall p50 29.29 s > CW REPORT p50 28.23 s > handler wall p50 28.22 s
   > stage sum — each layer nests inside the previous with plausible gaps (~1.07 s SF dispatch per task;
@@ -91,9 +99,13 @@ Per-task means: handler 20.63 s = prep 0.09 + subprocess 19.96 + upload 0.58.
 
 - Each task reads its own 1.527 GB section slice; total input = **exactly** the 33.6 GB bin —
   sectioned range-GETs have zero read amplification.
-- Retrieval runs at **~82 MB/s per task** (aggregate ~1.8 GB/s across 22 concurrent tasks).
-  Download-thread utilization is 90% (67.3 s busy across 4 threads inside an 18.7 s span) —
-  the threads are genuinely bandwidth-bound, not idle.
+- **The 22 tasks were not concurrent.** The Map's `MaxConcurrencyPath` is `$.plan.raster.workers`
+  and this run had `raster_workers=10`, so tasks ran in waves of 10/10/2 (observed average
+  concurrency = 459.2 s of task walls / 61.6 s map = 7.45). Aggregate retrieval is therefore
+  ~0.82 GB/s during full waves and ~0.55 GB/s map-wide — not 22 × 82 MB/s.
+- Retrieval runs at **~82 MB/s per task**. Download-thread utilization is 90% (67.3 s busy across
+  4 threads inside an 18.7 s span) — threads are genuinely busy, and ~23 MB/s per thread points at
+  request latency on multispan range GETs rather than a NIC or S3 bandwidth limit.
 - Native work already hides inside the download span (native worker-sum 5.03 s over a 5.52 s span
   while downloads continue): compute is **not** the raster bottleneck; retrieval is.
 - Dedup scale: 190.2M roots deduped per task vs 0.66M plotted (roots_plotted 14.5M total,
@@ -105,14 +117,16 @@ Per-task means: handler 20.63 s = prep 0.09 + subprocess 19.96 + upload 0.58.
 | component | ms | share |
 |---|---:|---:|
 | associated-palette merge (download+decode+apply) | 7,274 | **58.9%** |
-| step scores (download 2,212 + concat 80 + upload 921) | 3,278 | 26.5% |
+| step scores (download 2,212 + concat 80 + fetch-loop overhead 65 + upload 921) | 3,278 | 26.5% |
 | assemble fragments | 790 | 6.4% |
 | render+encode (native, one process) | 407 | 3.3% |
 | artifact uploads (raw 304 + image 125 + preview 40) | 469 | 3.8% |
 | presign + meta overlay | 50 | 0.4% |
-| unaccounted | 44 | 0.4% |
+| unaccounted | 83 | 0.7% |
 
-No fabricated zeros remain (the old `encode_ms: 0` sites are gone); `lut_ms` 0 = LUT cache hit.
+No fabricated zeros remain (the old `encode_ms: 0` sites are gone). `lut_ms` 0 is a floor, not a
+cache: the 256-entry equalization LUT is rebuilt on every run and completes in under a millisecond,
+which integer-ms timing truncates to zero.
 Final image 11.19 MB; finalize billed 123.6 GB-s; raster fleet 4,544 GB-s.
 
 ## 3. Confirmed optimization order (§12, refined by these numbers)
@@ -124,10 +138,12 @@ Final image 11.19 MB; finalize billed 123.6 GB-s; raster fleet 4,544 GB-s.
    - **(b) roots bin (21.6%)**: solve *output*; hiding it requires streaming multipart upload as the
      solver fills sections (design needed: part sizing, memory at 10 GB, failure semantics).
      Cumulative ceiling: chunk → ~15.5 s (**~1.68×** throughput; warm map wall ~48 → ~30 s class).
-2. **Raster retrieval** — 18.7 of 20.6 s per raster task is section download at ~82 MB/s/task.
-   Levers to evaluate against this baseline: more download threads (utilization is already 90%, so
-   only helps if per-stream throughput is the limit), bin compression, or consuming step scores in
-   place of full root sections where the plan allows.
+2. **Raster retrieval** — 18.7 of 20.6 s per raster task is section download at ~82 MB/s/task,
+   *and* the map ran only 10-wide over 22 tasks (§2.1). The first experiment is free: raise
+   `raster_workers` toward the section count — if per-task throughput holds at 22-way concurrency,
+   the map wall drops from 61.6 s toward the slowest task (~22 s) with zero code changes. Per-task
+   levers (more download threads, range coalescing, compression) come after that test, informed by
+   the ~23 MB/s-per-thread latency-bound signature.
 3. **Associated-palette removal via step scores** — 7.3 s of 12.4 s finalize plus 500 MB of fragment
    traffic (raster upload → finalize re-download) exists only to rebuild what step scores already
    carry (this run's plan: 1 metric, no lag).
@@ -150,3 +166,9 @@ Same-program reruns can be matched on the identity block (N, n_chunks, function,
 program fingerprints) — the collector rejects mixed builds and missing identity, so a §12-1 A/B is:
 deploy candidate build → rerun same job spec → compare per-chunk `upload_*_us`/`solve_us`
 distributions and warm map walls; bytes (bin_size/coeffs_size, fragment sizes) must be identical.
+
+---
+*Corrected 2026-07-13 per review: raster wave concurrency (`raster_workers=10`, not 22-wide),
+build-identity claims scoped to identity-bearing roles (+ `ok_response` injection and collector
+requirement shipped), finalize residual 83 ms with step-score fetch-loop overhead itemized,
+`lut_ms=0` is sub-ms truncation not a cache, and pre-solve upload ordering in §1.2.*

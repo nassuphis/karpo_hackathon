@@ -778,7 +778,26 @@ class TestShared(unittest.TestCase):
         self.assertEqual(resp["statusCode"], 200)
         self.assertEqual(resp["headers"]["Content-Type"], "application/json")
         self.assertEqual(resp["headers"]["Access-Control-Allow-Origin"], "*")
+        # outside a deployed environment (no PP env) bodies are unchanged
         self.assertEqual(json.loads(resp["body"]), {"x": 1})
+
+    def test_ok_response_injects_build_identity_when_deployed(self):
+        import shared
+        old = (shared.PP_GIT_SHA, shared.PP_BUILD_ID)
+        shared.PP_GIT_SHA, shared.PP_BUILD_ID = "abc123def", "abc123def-20260713T000000Z"
+        try:
+            body = json.loads(shared.ok_response({"x": 1})["body"])
+            self.assertEqual(body["git_sha"], "abc123def")
+            self.assertEqual(body["build_id"], "abc123def-20260713T000000Z")
+            self.assertEqual(body["x"], 1)
+            # handlers that inject explicitly stay authoritative (setdefault)
+            body2 = json.loads(shared.ok_response({"git_sha": "handler-said"})["body"])
+            self.assertEqual(body2["git_sha"], "handler-said")
+            self.assertEqual(body2["build_id"], "abc123def-20260713T000000Z")
+            # non-dict bodies pass through untouched
+            self.assertEqual(json.loads(shared.ok_response([1, 2])["body"]), [1, 2])
+        finally:
+            shared.PP_GIT_SHA, shared.PP_BUILD_ID = old
 
     def test_compute_viewport_empty(self):
         from shared import compute_viewport_from_bin

@@ -1,8 +1,10 @@
+import glob
 import json
 import os
 import platform
 import subprocess
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import boto3
@@ -74,9 +76,18 @@ def handle_fused_chunk(params):
     coeffs_expected = step_count * n_coeffs * 8
     roots_expected = step_count * degree * 8
 
-    params_path = f"/tmp/fused_params_{chunk_idx}.bin"
-    coeffs_path = f"/tmp/fused_coeffs_{chunk_idx}.bin"
-    roots_path = f"/tmp/fused_roots_{chunk_idx}.bin"
+    # CR34-streaming review F1: an abnormally killed invocation (timeout/OOM)
+    # skips the finally cleanup and Lambda keeps /tmp across warm reuses —
+    # chunk_idx-keyed paths then let the streaming poller read a STALE
+    # same-sized roots file/sidecar before sweep_mt truncates them, silently
+    # uploading wrong bytes. Paths are therefore invocation-unique, and any
+    # fused_* leftovers are swept at entry (one invocation per sandbox, so
+    # nothing live can match).
+    _sweep_stale_tmp()
+    invocation_token = uuid.uuid4().hex[:12]
+    params_path = f"/tmp/fused_params_{chunk_idx}_{invocation_token}.bin"
+    coeffs_path = f"/tmp/fused_coeffs_{chunk_idx}_{invocation_token}.bin"
+    roots_path = f"/tmp/fused_roots_{chunk_idx}_{invocation_token}.bin"
     progress_path = roots_path + ".progress"
 
     # CR34 §12-1a: params/coeffs uploads run on background threads so solve
@@ -277,11 +288,14 @@ def handle_fused_chunk(params):
             # SPANS that overlap the solve, not serial critical-path stages;
             # the serial remainder is the join wait + the roots tail.
             # upload_roots_us keeps its original serial-PUT meaning and is
-            # emitted only on the fallback path (added below).
+            # emitted only on the fallback path; upload_roots_span_us keeps
+            # its create-to-complete meaning and is emitted only on success
+            # (review F5: one field must never carry two meanings).
             "pre_solve_upload_wait_us": int(pre_solve_upload_wait_us),
             "upload_roots_tail_us": int(upload_roots_tail_us),
-            "upload_roots_span_us": int(streamer.span_us) if stream_ok else int(upload_roots_tail_us),
             "roots_parts_during_solve": int(streamer.parts_during_solve),
+            "roots_parts_reverified": int(streamer.parts_reverified),
+            "roots_parts_repaired": int(streamer.parts_repaired),
             "roots_upload_fallback": 0 if stream_ok else 1,
             "param_gen_threads": int(fused_threads),
             "coeffgen_threads": int(coeff_meta.get("threads", fused_threads) or fused_threads),
@@ -318,6 +332,11 @@ def handle_fused_chunk(params):
                 **build_identity(),
             },
         }
+        if stream_ok:
+            result_data["upload_roots_span_us"] = int(streamer.span_us)
+        else:
+            result_data["roots_stream_fail_reason"] = str(
+                streamer.fail_reason or "unknown")[:200]
         if upload_roots_us is not None:
             result_data["upload_roots_us"] = int(upload_roots_us)
         if "skipped_overflow" in solve_meta:
@@ -411,6 +430,16 @@ def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, p
     meta["native_elapsed_us"] = int(meta.get("elapsed_us", 0) or 0)
     meta["wall_elapsed_us"] = int((time.time() - t0) * 1e6)
     return meta
+
+
+def _sweep_stale_tmp():
+    """Remove fused_* scratch left by an abnormally terminated invocation.
+    Safe because a Lambda sandbox runs exactly one invocation at a time."""
+    for stale in glob.glob("/tmp/fused_*"):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
 
 
 def _timed_upload(local_path, key, metadata=None):

@@ -999,3 +999,30 @@ def test_every_generated_function_env_carries_build_identity():
     define_pos = deploy_sh.index("PP_GIT_SHA_VAL=$(git rev-parse")
     source_pos = deploy_sh.index("--emit-bash >")
     assert define_pos < source_pos, "build identity must be defined before the specs are generated/sourced"
+
+
+def test_s3_role_policy_applied_on_both_create_and_update():
+    """Streaming review F3: the S3 role policy lived only in the create
+    branch, so `./deploy.sh update` never delivered new actions (the
+    AbortMultipartUpload grant) to an existing deployment. The policy is
+    now a single shared function called from BOTH branches."""
+    import re
+
+    deploy_sh = (ROOT / "deploy.sh").read_text()
+    # exactly one definition...
+    assert deploy_sh.count("apply_s3_role_policy() {") == 1
+    # ...containing the multipart actions the streaming uploader needs
+    fn_start = deploy_sh.index("apply_s3_role_policy() {")
+    fn_body = deploy_sh[fn_start:deploy_sh.index("\n}", fn_start)]
+    for action in ("s3:AbortMultipartUpload", "s3:PutObject", "s3:GetObject"):
+        assert action in fn_body, f"{action} missing from shared S3 policy"
+    assert "polypaint-s3-access" in fn_body
+    # ...and exactly two bare call sites (create + update branches)
+    calls = re.findall(r"^\s*apply_s3_role_policy\s*$", deploy_sh, re.M)
+    assert len(calls) == 2, f"expected create+update call sites, found {len(calls)}"
+    create_pos = deploy_sh.index('if [ "$ACTION" = "create" ]; then')
+    update_pos = deploy_sh.index('elif [ "$ACTION" = "update" ]; then')
+    first_call = deploy_sh.index("\n    apply_s3_role_policy\n")
+    second_call = deploy_sh.index("\n    apply_s3_role_policy\n", first_call + 1)
+    assert create_pos < first_call < update_pos < second_call, \
+        "one call must sit in each ACTION branch"

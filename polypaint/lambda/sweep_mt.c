@@ -204,10 +204,12 @@ static unsigned long long detectMemoryLimitBytes(void) {
  *   16 + i*24     per-thread u64 LE {regionStartByte, regionEndByte,
  *                                    flushedEndByte}
  * flushedEndByte advances only AFTER the corresponding data pwrite returned,
- * so every byte the sidecar claims is durable in the output file. The reader
- * clamps values, so a torn 8-byte read can only under-report progress.
- * Sidecar failures never fail the solve — it is an upload accelerator, not
- * part of the data path. */
+ * so every byte the sidecar claims is durable in the output file. NOTE: a
+ * torn 8-byte read can mix two valid watermarks into a value larger than
+ * either, so the reader REJECTS out-of-range values and re-polls; torn
+ * values landing in range are caught by the uploader's part-hash check
+ * before multipart completion. Sidecar failures never fail the solve —
+ * it is an upload accelerator, not part of the data path. */
 #define PP_PROGRESS_HEADER 16
 #define PP_PROGRESS_RECORD 24
 #define PP_FLUSH_BYTES_DEFAULT (8L * 1024L * 1024L)

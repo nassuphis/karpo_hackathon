@@ -1,3 +1,4 @@
+import hashlib
 import os
 import struct
 import sys
@@ -45,7 +46,9 @@ class _FakeS3:
         if PartNumber in self.fail_part_numbers:
             raise RuntimeError(f"part {PartNumber} denied")
         self.parts[PartNumber] = bytes(Body)
-        return {"ETag": f"etag-{PartNumber}"}
+        # real S3 semantics: a standard part's ETag is its MD5 — the hash
+        # verification path depends on this
+        return {"ETag": '"%s"' % hashlib.md5(bytes(Body)).hexdigest()}
 
     def complete_multipart_upload(self, *, Bucket, Key, UploadId, MultipartUpload):
         assert UploadId == "upload-1"
@@ -84,11 +87,28 @@ class TestReadProgress(unittest.TestCase):
         _write_sidecar(self.path, 999, [(0, 999, 0)])
         self.assertIsNone(read_progress(self.path, 100))
 
-    def test_clamps_torn_watermarks(self):
-        # a torn/garbage flushed_end can only UNDER-report, never invent
-        _write_sidecar(self.path, 100, [(0, 60, 2 ** 63), (60, 100, 3)])
-        self.assertEqual(read_progress(self.path, 100),
-                         [(0, 60, 60), (60, 100, 60)])
+    def test_rejects_torn_out_of_range_watermarks(self):
+        """Review F2: a torn 8-byte read can mix two valid watermarks into a
+        value LARGER than either — clamping it to region_end would declare
+        undurable bytes durable. Out-of-range rejects the whole read."""
+        _write_sidecar(self.path, 100, [(0, 60, 2 ** 63), (60, 100, 60)])
+        self.assertIsNone(read_progress(self.path, 100))
+        # below region_start is equally invalid
+        _write_sidecar(self.path, 100, [(0, 60, 40), (60, 100, 3)])
+        self.assertIsNone(read_progress(self.path, 100))
+
+    def test_rejects_regions_that_do_not_partition_the_file(self):
+        """Review F2: stale/corrupt sidecars with gaps, overlaps, or offset
+        starts must reject — overlapping regions could otherwise satisfy
+        coverage arithmetic while hiding a hole."""
+        _write_sidecar(self.path, 100, [(0, 50, 50), (60, 100, 100)])   # gap
+        self.assertIsNone(read_progress(self.path, 100))
+        _write_sidecar(self.path, 100, [(0, 60, 60), (50, 100, 100)])  # overlap
+        self.assertIsNone(read_progress(self.path, 100))
+        _write_sidecar(self.path, 100, [(10, 100, 100)])               # offset start
+        self.assertIsNone(read_progress(self.path, 100))
+        _write_sidecar(self.path, 100, [(0, 90, 90)])                  # short
+        self.assertIsNone(read_progress(self.path, 100))
 
     def test_layout_constants_match_writer(self):
         _write_sidecar(self.path, 100, [(0, 100, 50)])
@@ -150,6 +170,44 @@ class TestRootsStreamUploader(unittest.TestCase):
         self.assertEqual(fake.completed, self.payload)
         self.assertGreaterEqual(up.span_us, 0)
         self.assertFalse(fake.aborted)
+        # every streamed part was hash-verified against the final file and
+        # none needed repair (they were uploaded from the same bytes)
+        self.assertEqual(up.parts_reverified, up.parts_during_solve)
+        self.assertEqual(up.parts_repaired, 0)
+
+    def test_stale_streamed_part_is_detected_and_repaired(self):
+        """Review F1/F2 end-to-end regression: a part streamed from WRONG
+        bytes (stale /tmp file, torn in-range watermark, or a read racing
+        the writer) must be caught by the pre-completion hash check and
+        re-uploaded from the final file — no size check can see this."""
+        fake = _FakeS3()
+        up = self._uploader(fake)
+        up.start()
+        # a stale file from a previous invocation claims part 1 is durable
+        stale = bytes(reversed(self.payload))
+        with open(self.data_path, "wb") as fh:
+            fh.write(stale)
+        _write_sidecar(self.progress_path, self.total,
+                       [(0, self.total, MIN_PART_BYTES)])
+        up._scan_once()
+        self.assertEqual(up.parts_during_solve, 1)   # stale bytes went up
+        # ...then the real solve overwrites the file with the true output
+        with open(self.data_path, "wb") as fh:
+            fh.write(self.payload)
+        _write_sidecar(self.progress_path, self.total,
+                       [(0, self.total, self.total)])
+        self.assertTrue(up.finish())
+        self.assertEqual(up.parts_repaired, 1)
+        self.assertEqual(fake.completed, self.payload)   # NOT the stale bytes
+
+    def test_create_failure_carries_a_reason(self):
+        fake = _FakeS3(fail_create=True)
+        with open(self.data_path, "wb") as fh:
+            fh.write(self.payload)
+        up = self._uploader(fake)
+        up.start()
+        self.assertFalse(up.finish())
+        self.assertIn("create denied", up.fail_reason)
 
     def test_no_sidecar_still_completes_after_solve(self):
         # companion-matrix path: no progress file ever appears

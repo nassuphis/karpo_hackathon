@@ -23,7 +23,10 @@ class _FakeStreamer:
         self.finished = False
         self.aborted = False
         self.parts_during_solve = 3
+        self.parts_reverified = 3
+        self.parts_repaired = 0
         self.span_us = 4200
+        self.fail_reason = None
         _FakeStreamer.instances.append(self)
 
     def start(self):
@@ -31,6 +34,8 @@ class _FakeStreamer:
 
     def finish(self):
         self.finished = True
+        if not _FakeStreamer.finish_ok:
+            self.fail_reason = "FakeError: injected stream failure"
         return _FakeStreamer.finish_ok
 
     def abort(self):
@@ -120,8 +125,16 @@ class TestComputeChunkFused(unittest.TestCase):
         self.assertEqual(streamer.total_bytes, 10 * 7 * 8)
         self.assertEqual(body["roots_upload_fallback"], 0)
         self.assertEqual(body["roots_parts_during_solve"], 3)
+        self.assertEqual(body["roots_parts_reverified"], 3)
+        self.assertEqual(body["roots_parts_repaired"], 0)
         self.assertEqual(body["upload_roots_span_us"], 4200)
         self.assertNotIn("upload_roots_us", body)
+        self.assertNotIn("roots_stream_fail_reason", body)
+        # review F1: scratch paths are invocation-unique (stale /tmp from an
+        # abnormally killed invocation can never alias a retry's files)
+        self.assertTrue(streamer.data_path.startswith("/tmp/fused_roots_2_"),
+                        streamer.data_path)
+        self.assertEqual(streamer.progress_path, streamer.data_path + ".progress")
         self.assertGreaterEqual(body["upload_roots_tail_us"], 0)
         self.assertGreaterEqual(body["pre_solve_upload_wait_us"], 0)
         self.assertGreaterEqual(body["upload_params_us"], 0)
@@ -265,6 +278,44 @@ class TestComputeChunkFused(unittest.TestCase):
     @patch("handler_compute_chunk_fused._run_solve_local")
     @patch("handler_compute_chunk_fused._run_coeffgen_local")
     @patch("handler_compute_chunk_fused._run_param_gen_local")
+    def test_fused_chunk_paths_unique_per_invocation_and_stale_tmp_swept(self, mock_param, mock_coeff, mock_solve, mock_match, mock_upload, mock_report, mock_getsize):
+        """Review F1 regression: two invocations of the SAME chunk must use
+        different scratch paths, and fused_* leftovers from an abnormally
+        killed invocation are swept at entry — a stale same-sized roots
+        file/sidecar could otherwise feed the streaming poller wrong bytes
+        before the solver truncates them."""
+        import handler_compute_chunk_fused as mod
+
+        stale = "/tmp/fused_roots_9_deadbeef.bin.progress"
+        with open(stale, "wb") as fh:
+            fh.write(b"PPR1stale")
+        try:
+            mock_match.return_value = False
+            mock_param.return_value = {"elapsed_us": 111, "threads": 4}
+            mock_coeff.return_value = {"threads": 4}
+            mock_solve.return_value = {"n_t": 10, "degree": 7, "avg_iterations": 3.5}
+            mock_getsize.side_effect = [160, 560, 560, 160, 560, 560]
+
+            mod.handle_fused_chunk(self._base_params(chunk_idx=3))
+            self.assertFalse(os.path.exists(stale), "stale sidecar not swept")
+            mod.handle_fused_chunk(self._base_params(chunk_idx=3))
+            first, second = _FakeStreamer.instances[-2:]
+            self.assertNotEqual(first.data_path, second.data_path)
+            self.assertTrue(first.data_path.startswith("/tmp/fused_roots_3_"))
+        finally:
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
+
+    @patch("handler_compute_chunk_fused.RootsStreamUploader", _FakeStreamer)
+    @patch("handler_compute_chunk_fused.os.path.getsize")
+    @patch("handler_compute_chunk_fused.report_status")
+    @patch("handler_compute_chunk_fused._upload_file")
+    @patch("handler_compute_chunk_fused._s3_size_matches")
+    @patch("handler_compute_chunk_fused._run_solve_local")
+    @patch("handler_compute_chunk_fused._run_coeffgen_local")
+    @patch("handler_compute_chunk_fused._run_param_gen_local")
     def test_fused_chunk_stream_failure_falls_back_to_serial_put(self, mock_param, mock_coeff, mock_solve, mock_match, mock_upload, mock_report, mock_getsize):
         import handler_compute_chunk_fused as mod
 
@@ -279,6 +330,11 @@ class TestComputeChunkFused(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(body["roots_upload_fallback"], 1)
         self.assertIn("upload_roots_us", body)
+        # review F5: one field never carries two meanings — the multipart
+        # span is omitted on fallback, and the failure reason is surfaced
+        self.assertNotIn("upload_roots_span_us", body)
+        self.assertEqual(body["roots_stream_fail_reason"],
+                         "FakeError: injected stream failure")
         # params + coeffs backgrounded + the serial roots fallback PUT
         # (background calls record from worker threads, so order is not
         # deterministic — assert presence, not position)

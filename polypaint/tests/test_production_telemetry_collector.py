@@ -76,6 +76,7 @@ def _mk_history(*, n_chunks=2, mixed_build=False, lores_identity=True):
             "upload_params_us": 300, "upload_coeffs_us": 4000,
             "pre_solve_upload_wait_us": 10, "upload_roots_tail_us": 700,
             "upload_roots_span_us": 6000, "roots_parts_during_solve": 8,
+            "roots_parts_reverified": 8, "roots_parts_repaired": 0,
             "roots_upload_fallback": 0,
             "params_size": 160, "compute_us": 9000 + chunk * 2000,   # alias of solve_us
             "mystery_probe_us": 12345,

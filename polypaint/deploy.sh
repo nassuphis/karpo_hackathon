@@ -1923,6 +1923,27 @@ setup_api_gateway() {
     echo "  Build ID: $BUILD_ID"
 }
 
+# Review F3: the S3 role policy must be applied by BOTH create and update —
+# a policy edit living only in the create branch never reaches an existing
+# deployment (same failure class as the build-identity env that only landed
+# on the book path: fix at ONE emission point, call it from every path).
+apply_s3_role_policy() {
+    local S3_POLICY="{
+        \"Version\": \"2012-10-17\",
+        \"Statement\": [{
+            \"Effect\": \"Allow\",
+            \"Action\": [\"s3:PutObject\", \"s3:GetObject\", \"s3:ListBucket\", \"s3:DeleteObject\", \"s3:AbortMultipartUpload\", \"s3:ListBucketMultipartUploads\", \"s3:ListMultipartUploadParts\"],
+            \"Resource\": [
+                \"arn:aws:s3:::${BUCKET}\",
+                \"arn:aws:s3:::${BUCKET}/*\"
+            ]
+        }]
+    }"
+    aws iam put-role-policy --role-name "$ROLE_NAME" \
+        --policy-name polypaint-s3-access \
+        --policy-document "$S3_POLICY"
+}
+
 if [ "$ACTION" = "create" ]; then
     # --- Create IAM role ---
     echo "Creating IAM role..."
@@ -1947,21 +1968,8 @@ if [ "$ACTION" = "create" ]; then
     aws iam attach-role-policy --role-name "$ROLE_NAME" \
         --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole 2>/dev/null || true
 
-    # S3 access
-    S3_POLICY="{
-        \"Version\": \"2012-10-17\",
-        \"Statement\": [{
-            \"Effect\": \"Allow\",
-            \"Action\": [\"s3:PutObject\", \"s3:GetObject\", \"s3:ListBucket\", \"s3:DeleteObject\", \"s3:AbortMultipartUpload\", \"s3:ListBucketMultipartUploads\", \"s3:ListMultipartUploadParts\"],
-            \"Resource\": [
-                \"arn:aws:s3:::${BUCKET}\",
-                \"arn:aws:s3:::${BUCKET}/*\"
-            ]
-        }]
-    }"
-    aws iam put-role-policy --role-name "$ROLE_NAME" \
-        --policy-name polypaint-s3-access \
-        --policy-document "$S3_POLICY"
+    # S3 access (shared with the update path)
+    apply_s3_role_policy
 
     # Lambda invoke access (for dispatch Lambda to invoke render Lambdas)
     ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
@@ -2091,6 +2099,11 @@ elif [ "$ACTION" = "update" ]; then
     grant_sfn_start_policy 2>/dev/null || true
 
     configure_async_invoke_policies
+
+    # Refresh the S3 role policy so action additions reach EXISTING
+    # deployments (review F3: this previously happened only on create,
+    # so `update` never delivered s3:AbortMultipartUpload).
+    apply_s3_role_policy
 
     # Add Lambda invoke + DynamoDB permissions if missing
     ACCT=$(aws sts get-caller-identity --query 'Account' --output text)

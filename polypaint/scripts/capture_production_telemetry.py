@@ -67,6 +67,8 @@ METRIC_SCHEMA = {
     "upload_roots_tail_us": _m("stage_wall_us", "additive"),
     "upload_roots_span_us": _m("stage_wall_us", "distribution"),
     "roots_parts_during_solve": _m("count", "additive"),
+    "roots_parts_reverified": _m("count", "additive"),
+    "roots_parts_repaired": _m("count", "additive"),
     "roots_upload_fallback": _m("count", "additive"),
     "params_size": _m("bytes", "additive"),
     "coeffs_size": _m("bytes", "additive"),

@@ -27,6 +27,33 @@ N1 = N2 = 16
 DITHER = [["sdith", "1"]]
 
 
+def _run_param_gen_stream(n_threads, step_start=None, step_count=None):
+    """Invoke exactly like the pre-CR33 fused handler: argv "-", stdout to a
+    regular file. Selects the ordered-ring scheduler."""
+    payload = translate_legacy_transforms_for_native(
+        {"mode": "param_gen", "n1": N1, "n2": N2, "times": 1,
+         "n_threads": n_threads, "param_transforms": DITHER})
+    if step_start is not None:
+        payload["step_start"] = step_start
+        payload["step_count"] = step_count
+    with tempfile.NamedTemporaryFile(prefix="pp_seed_stream_", suffix=".bin", delete=False) as fh:
+        out_path = fh.name
+    try:
+        with open(out_path, "wb") as out:
+            proc = subprocess.run(
+                [SWEEP, "-"], input=json.dumps(payload).encode(),
+                stdout=out, stderr=subprocess.PIPE, timeout=60,
+            )
+        assert proc.returncode == 0, proc.stderr.decode()
+        with open(out_path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    finally:
+        try:
+            os.remove(out_path)
+        except FileNotFoundError:
+            pass
+
+
 def _run_param_gen(n_threads, step_start=None, step_count=None, env_cpus=None):
     payload = translate_legacy_transforms_for_native(
         {"mode": "param_gen", "n1": N1, "n2": N2, "times": 1,
@@ -108,3 +135,18 @@ def test_partial_range_bytes_stable_across_threads():
     r4 = _run_param_gen(4, step_start=24, step_count=100)
     r8 = _run_param_gen(8, step_start=24, step_count=100)
     assert r1 == r4 == r8
+
+
+def test_stream_and_file_modes_are_byte_identical():
+    """CR33 F1: the fused handler switched from "-" (ordered ring) to the
+    real output path (static pwrite scheduler). Both threaded modes seed per
+    row, so the swap must be byte-neutral — pinned here at every worker
+    count, full and non-row-aligned range requests."""
+    for threads in (2, 4, 8):
+        assert _run_param_gen(threads) == _run_param_gen_stream(threads), threads
+    total = N1 * N2
+    for threads in (2, 4):
+        assert (_run_param_gen(threads, step_start=24, step_count=100)
+                == _run_param_gen_stream(threads, step_start=24, step_count=100)), threads
+        assert (_run_param_gen(threads, step_start=0, step_count=total)
+                == _run_param_gen_stream(threads, step_start=0, step_count=total)), threads

@@ -285,20 +285,23 @@ def _run_param_gen_local(*, output_path, n, times, step_start, step_count, param
     if param_program:
         spec["param_program"] = param_program
     t0 = time.time()
-    with open(output_path, "wb") as out:
-        proc = subprocess.Popen(
-            [SWEEP_COEFFGEN, "-"],
-            stdin=subprocess.PIPE,
-            stdout=out,
-            stderr=subprocess.PIPE,
-        )
-        proc.stdin.write(json.dumps(spec).encode("utf-8"))
-        proc.stdin.close()
-        stderr_data = proc.stderr.read().decode("utf-8")
-        proc.wait(timeout=840)
-    if proc.returncode != 0:
-        raise RuntimeError(f"fused param_gen failed: {stderr_data.strip()}")
-    meta = json.loads(stderr_data.strip())
+    # CR33 F1: pass the REAL output path (like _run_coeffgen_local). The "-"
+    # argument forced the native binary onto the ordered-ring stdout scheduler
+    # (its only cue is the literal argument), silently bypassing the static
+    # pwrite scheduler for every multithreaded fused chunk: measured +14-39%
+    # at 2-4 workers and pathological at 8, byte-identical output. In file
+    # mode the run metadata JSON arrives on stdout; stderr carries errors.
+    result = subprocess.run(
+        [SWEEP_COEFFGEN, output_path],
+        input=json.dumps(spec),
+        capture_output=True,
+        text=True,
+        timeout=840,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"fused param_gen failed: {result.stderr.strip()}")
+    meta = json.loads(result.stdout.strip())
+    meta["param_scheduler"] = "static_file" if fused_threads > 1 else "serial"
     meta["elapsed_us"] = int((time.time() - t0) * 1e6)
     return meta
 

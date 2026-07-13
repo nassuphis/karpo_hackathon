@@ -180,15 +180,15 @@ class TestComputeChunkFused(unittest.TestCase):
         self.assertEqual(mock_download.call_args.args[0], "renders/compute_j/coeffs_0001.bin")
 
     @patch("handler_compute_chunk_fused.time.time", side_effect=[100.0, 100.25])
-    @patch("handler_compute_chunk_fused.subprocess.Popen")
-    def test_run_param_gen_local_forwards_fused_threads(self, mock_popen, mock_time):
+    @patch("handler_compute_chunk_fused.subprocess.run")
+    def test_run_param_gen_local_forwards_fused_threads(self, mock_run, mock_time):
         import handler_compute_chunk_fused as mod
 
         proc = MagicMock()
         proc.returncode = 0
-        proc.stderr.read.return_value = b'{"n_threads":6}'
-        proc.wait.return_value = 0
-        mock_popen.return_value = proc
+        proc.stdout = '{"n_threads":6}'
+        proc.stderr = ""
+        mock_run.return_value = proc
 
         result = mod._run_param_gen_local(
             output_path="/tmp/fused_params_test.bin",
@@ -200,11 +200,38 @@ class TestComputeChunkFused(unittest.TestCase):
             fused_threads=6,
         )
 
-        spec = json.loads(proc.stdin.write.call_args.args[0].decode("utf-8"))
+        # CR33 F1 invocation contract: the REAL output path is argv[1] — the
+        # "-" stream argument selected the ordered-ring scheduler and bypassed
+        # the static pwrite scheduler for every multithreaded fused chunk.
+        argv = mock_run.call_args.args[0]
+        self.assertEqual(argv[1], "/tmp/fused_params_test.bin")
+        self.assertNotIn("-", argv)
+        spec = json.loads(mock_run.call_args.kwargs["input"])
         self.assertEqual(spec["n_threads"], 6)
         self.assertEqual(spec["step_start"], 10)
         self.assertEqual(spec["step_count"], 20)
+        # file mode: metadata decoded from stdout
+        self.assertEqual(result["n_threads"], 6)
+        self.assertEqual(result["param_scheduler"], "static_file")
         self.assertEqual(result["elapsed_us"], 250000)
+
+    @patch("handler_compute_chunk_fused.subprocess.run")
+    def test_run_param_gen_local_failure_uses_stderr(self, mock_run):
+        import handler_compute_chunk_fused as mod
+
+        proc = MagicMock()
+        proc.returncode = 1
+        proc.stdout = ""
+        proc.stderr = "param_gen static write failed"
+        mock_run.return_value = proc
+
+        with self.assertRaises(RuntimeError) as ctx:
+            mod._run_param_gen_local(
+                output_path="/tmp/fused_params_test.bin",
+                n=8, times=1, step_start=0, step_count=64,
+                param_transforms=[], fused_threads=4,
+            )
+        self.assertIn("param_gen static write failed", str(ctx.exception))
 
     @patch("handler_compute_chunk_fused.s3")
     def test_s3_size_matches_checks_metadata(self, mock_s3):

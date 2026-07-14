@@ -47,14 +47,17 @@ def _number(value: float) -> str:
 
 
 def _complex(value: complex) -> str:
+    # 'i' is the app's house-style imaginary suffix (pi2i, decompiled '1.0i',
+    # every Help snippet) and the only one the scrub pad originally targeted;
+    # the parser accepts [ijIJ] but generated source should scrub cleanly.
     real = 0.0 if value.real == 0.0 else value.real
     imag = 0.0 if value.imag == 0.0 else value.imag
     if imag == 0.0:
         return _number(real)
     if real == 0.0:
-        return f"{_number(imag)}j"
+        return f"{_number(imag)}i"
     sign = "+" if imag >= 0.0 else ""
-    return f"{_number(real)}{sign}{_number(imag)}j"
+    return f"{_number(real)}{sign}{_number(imag)}i"
 
 
 def _roots_source(values: list[complex]) -> str:

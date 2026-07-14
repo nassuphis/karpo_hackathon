@@ -2155,7 +2155,7 @@ async function main() {
       "const _scrubPadPreviewByKey = { pp: { label: 'live compute preview', run: () => runComputePreview() }, cp: { label: 'live compute preview', run: () => runComputePreview() }, rt: { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true }, 'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true } };",
       "const _scrubPadLoresViews = [['plot', 'Plot'], ['palette', 'Palette'], ['e1', 'E1'], ['e2', 'E2'], ['e3', 'E3']];",
       "const _SCRUB_NUM = String.raw`(\\d+\\.?\\d*|\\.\\d+)`;",
-      'const _SCRUB_IMAG_RE = new RegExp(`^-?${_SCRUB_NUM}i$`);',
+      'const _SCRUB_IMAG_RE = new RegExp(`^-?${_SCRUB_NUM}[ijIJ]$`);',
       extractFunction('_programTokenSpanAtCursor'),
       extractFunction('_programNumberSpanAtCursor'),
       extractFunction('_programComplexSpanAtCursor'),
@@ -2267,6 +2267,12 @@ async function main() {
         ['poly[0] = 1.5 - 0.3i', 12, '1.5 - 0.3i', 1.5, -0.3], // spaces + minus
         ['poly[0] = 2i', 12, '2i', 0, 2],                    // pure imaginary
         ['multiply(x, -1.5+2i)', 15, '-1.5+2i', -1.5, 2],    // leading minus after delimiter
+        // the backend tokenizer accepts [ijIJ]: j-suffixed literals (e.g.
+        // generated giga_2902 roots before the i-normalization, or pasted
+        // Python) must scrub too — writes normalize to 'i'
+        ['poly[0] = 1.5+0.3j', 12, '1.5+0.3j', 1.5, 0.3],
+        ['poly[0] = 2J', 12, '2J', 0, 2],
+        ['roots_literal(-7.5+2j)', 18, '-7.5+2j', -7.5, 2],
       ];
       for (const [text, pos, raw, re, im] of cases) {
         scrubCtx._ta = mk(text, pos);

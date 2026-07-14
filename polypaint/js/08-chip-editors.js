@@ -1396,7 +1396,10 @@ function _programNumberSpanAtCursor(textarea) {
 }
 
 const _SCRUB_NUM = String.raw`(\d+\.?\d*|\.\d+)`;
-const _SCRUB_IMAG_RE = new RegExp(`^-?${_SCRUB_NUM}i$`);
+// The backend expression tokenizer accepts [ijIJ] imaginary suffixes; the
+// pad must recognize all of them (generated/pasted source may carry j).
+// Writes always normalize to the house-style 'i'.
+const _SCRUB_IMAG_RE = new RegExp(`^-?${_SCRUB_NUM}[ijIJ]$`);
 
 function _programComplexSpanAtCursor(textarea) {
     // Complex literals scrub in 2D. Shapes: A+Bi / A-Bi (cursor on either
@@ -1463,7 +1466,7 @@ function _programComplexSpanAtCursor(textarea) {
         while (q < value.length && value[q] === ' ') q++;
         let p = q;
         while (p < value.length && /[0-9.]/.test(value[p])) p++;
-        if (p < value.length && value[p] === 'i' && !/[A-Za-z0-9_]/.test(value[p + 1] || '')) {
+        if (p < value.length && /[ijIJ]/.test(value[p]) && !/[A-Za-z0-9_]/.test(value[p + 1] || '')) {
             const s2 = leadMinus(start);
             const wide = value.slice(s2, p + 1);
             const parsed = _parseComplexLiteral(wide);
@@ -1475,9 +1478,9 @@ function _programComplexSpanAtCursor(textarea) {
 
 function _parseComplexLiteral(text) {
     const m = String(text || '').replace(/ /g, '').match(
-        new RegExp(`^(-?${_SCRUB_NUM})([+-]${_SCRUB_NUM})?i?$`));
+        new RegExp(`^(-?${_SCRUB_NUM})([+-]${_SCRUB_NUM})?[ijIJ]?$`));
     if (!m) return null;
-    if (String(text).slice(-1) !== 'i') return null;
+    if (!/[ijIJ]/.test(String(text).slice(-1))) return null;
     if (m[3] !== undefined) {
         const re = Number(m[1]);
         const im = Number(m[3].replace(/^([+-])/, '$1'));

@@ -207,7 +207,7 @@ const _ssCatalog = (() => {
     return catalog;
 })();
 
-const _coeffProgramScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';
+const _coeffProgramScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, bimodal(u,a), and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';
 // kind: 'andy' is the semantic marker (filtering/serialization/validation
 // key off it); ph is display-only placeholder text. Generated coeff vocab now
 // carries this param; the constant remains only as a fallback shape.

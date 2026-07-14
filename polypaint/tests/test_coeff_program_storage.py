@@ -57,6 +57,56 @@ class TestCoeffProgramStorage(unittest.TestCase):
         mock_s3.delete_object.side_effect = fake_s3.delete_object
 
     @patch("handler_storage.s3")
+    def test_vector_constants_use_ordinary_saved_coeff_program_contract(self, mock_s3):
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        self._patch_s3(mock_s3, fake_s3)
+        upload = {
+            "version": 1,
+            "program_kind": "coeff_program",
+            "name": "Vector Translation",
+            "chain": [],
+            "source_text": (
+                "poly = translate_roots(vector_literal(1, -3, 2), 0.5)\n"
+                "emit"
+            ),
+        }
+
+        save_resp = handler_storage.handler(
+            self._event("/save-coeff-program", upload), None
+        )
+        self.assertEqual(save_resp["statusCode"], 200, save_resp["body"])
+        saved = json.loads(save_resp["body"])["program"]
+        self.assertEqual(saved["id"], "vector-translation")
+        self.assertEqual(saved["name"], "Vector Translation")
+        self.assertEqual(saved["source_text"], upload["source_text"])
+        self.assertEqual(saved["statement_count"], 2)
+
+        key = "polypaint/coeff-programs/vector-translation.json"
+        self.assertIn(key, fake_s3.objects)
+        self.assertEqual(
+            fake_s3.metadata[key],
+            {
+                "coeff_program_name": "Vector Translation",
+                "coeff_program_statement_count": "2",
+                "coeff_program_saved_at": saved["saved_at"],
+            },
+        )
+
+        listed = json.loads(handler_storage.handler(
+            self._event("/list-coeff-programs", {}), None
+        )["body"])
+        self.assertEqual(listed["count"], 1)
+        self.assertEqual(listed["programs"][0]["id"], "vector-translation")
+
+        fetched = json.loads(handler_storage.handler(
+            self._event("/fetch-coeff-program", {"id": "vector-translation"}), None
+        )["body"])["program"]
+        self.assertEqual(fetched["fingerprint"], saved["fingerprint"])
+        self.assertEqual(fetched["source_text"], upload["source_text"])
+
+    @patch("handler_storage.s3")
     def test_storage_routes_round_trip_coeff_program(self, mock_s3):
         import handler_storage
 

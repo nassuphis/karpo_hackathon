@@ -204,7 +204,7 @@ def _coeff_tokens_v2(tokens):
     return out
 
 
-def _execution_spec_v2(kind, tokens, scalar_exprs=None):
+def _execution_spec_v2(kind, tokens, scalar_exprs=None, vector_constants=None):
     payload = {
         "version": V2_PROGRAM_VERSION,
         "kind": str(kind),
@@ -212,6 +212,8 @@ def _execution_spec_v2(kind, tokens, scalar_exprs=None):
     }
     if scalar_exprs:
         payload["scalar_exprs"] = scalar_exprs
+    if vector_constants:
+        payload["vector_constants"] = vector_constants
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
@@ -374,7 +376,10 @@ def translate_coeff_from_old(program, *, macro_resolver=None):
     compiled = compile_coeff_program_chain(parsed_chain, macro_resolver=macro_resolver)
     v2_tokens = _coeff_tokens_v2(compiled["tokens"])
     v2_scalar_exprs = compiled.get("scalar_exprs") or []
-    v2_spec = _execution_spec_v2("coeff", v2_tokens, v2_scalar_exprs)
+    v2_vector_constants = compiled.get("vector_constants") or []
+    v2_spec = _execution_spec_v2(
+        "coeff", v2_tokens, v2_scalar_exprs, v2_vector_constants
+    )
     fingerprint = _v2_fingerprint(
         "coeff",
         {
@@ -392,6 +397,7 @@ def translate_coeff_from_old(program, *, macro_resolver=None):
         "chain": compiled["source_chain"],
         "tokens": v2_tokens,
         "scalar_exprs": v2_scalar_exprs,
+        "vector_constants": v2_vector_constants,
         "display": compiled["display"],
         "expanded_display": compiled["expanded_display"],
         "fingerprint": fingerprint,
@@ -399,6 +405,8 @@ def translate_coeff_from_old(program, *, macro_resolver=None):
         "statement_count": len(compiled["source_chain"]),
         "token_count": compiled["token_count"],
         "scalar_expr_count": compiled["scalar_expr_count"],
+        "vector_constant_count": compiled.get("vector_constant_count", 0),
+        "vector_constant_elements": compiled.get("vector_constant_elements", 0),
         "stack_max": compiled["stack_max"],
         "macro_expansions": compiled["macro_expansions"],
         "macro_ids": _macro_ids(compiled["source_chain"]),
@@ -466,4 +474,3 @@ def translate_solve_score_from_old(program):
     if program.get("recommended_interpretation") not in ("", None):
         migrated["recommended_interpretation"] = program["recommended_interpretation"]
     return migrated
-

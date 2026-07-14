@@ -24,13 +24,16 @@ def _coeff_program_payload(chain):
 
 
 def _compiled_coeff_program_payload(compiled):
-    return {
+    payload = {
         "version": 1,
         "fingerprint": compiled["fingerprint"],
         "tokens": compiled["tokens"],
         "stack_max": compiled["stack_max"],
         "scalar_exprs": compiled["scalar_exprs"],
     }
+    if compiled.get("vector_constants"):
+        payload["vector_constants"] = compiled["vector_constants"]
+    return payload
 
 
 def _run_coeffgen(spec):
@@ -1059,3 +1062,206 @@ def test_coeff_program_floor_scalar_and_vector():
     assert values[1].real == -3.0
     assert abs(values[2].real - 1.5) < 1e-12   # 7.5 % 2
     assert values[3].real == 1.0 and values[3].imag == 2.0
+
+
+def test_coeff_program_vector_constant_and_root_translation_run_natively():
+    compiled = compile_coeff_program_source(
+        "poly = translate_roots(vector_literal(1, -3, 2), 0.5)\nemit"
+    )
+    _meta, data = _run_coeffgen({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [3, 0, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+        "coeff_program": _compiled_coeff_program_payload(compiled),
+    })
+    assert _complex_f32_values(data) == [1 + 0j, -4 + 0j, 3.75 + 0j]
+
+
+def test_coeff_program_bimodal_dynamic_expression_runs_natively():
+    compiled = compile_coeff_program_source(
+        "vector_literal(0)\n"
+        "vector_literal(10)\n"
+        "poly = blend(bimodal(t2, 0.7))\n"
+        "emit"
+    )
+    _meta, data = _run_coeffgen({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [1, 0, 0],
+        "n1": 1,
+        "n2": 3,
+        "coeff_transforms": [],
+        "coeff_program": _compiled_coeff_program_payload(compiled),
+    })
+    got = [value.real for value in _complex_f32_values(data)]
+    exponent = 1.0 / (1.0 - 0.7)
+    expected = [
+        0.0,
+        10.0 * (0.5 * (2.0 / 3.0) ** exponent),
+        10.0 * (1.0 - 0.5 * (2.0 / 3.0) ** exponent),
+    ]
+    for actual, wanted in zip(got, expected):
+        assert abs(actual - wanted) <= 2e-6
+
+
+def test_giga_2902_saved_program_matches_reference_for_one_row():
+    program_path = os.path.join(
+        os.path.dirname(__file__), "..", "giga_2902.coeff-program.json"
+    )
+    with open(program_path, "r", encoding="utf-8") as fh:
+        program = json.load(fh)
+    compiled = compile_coeff_program_source(program["source_text"])
+    _meta, data = _run_coeffgen({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [1, 0, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+        "coeff_program": _compiled_coeff_program_payload(compiled),
+    })
+
+    packed = compiled["vector_constants"][0]["values"]
+    base = [complex(packed[i], packed[i + 1]) for i in range(0, len(packed), 2)]
+    degree = len(base) - 1
+    delta = 0.1 + 0.1j
+    translated = [0.0j] * len(base)
+    for source_index, coefficient in enumerate(base):
+        source_power = degree - source_index
+        for shift_power in range(source_power + 1):
+            translated[source_index + shift_power] += (
+                coefficient
+                * math.comb(source_power, shift_power)
+                * ((-delta) ** shift_power)
+            )
+    wanted = [
+        coefficient + 0.01 * sorted(translated, key=abs)[index]
+        for index, coefficient in enumerate(translated)
+    ]
+    got = _complex_f32_values(data)
+    assert len(got) == len(wanted) == 34
+    for actual, expected in zip(got, wanted):
+        scale = max(1.0, abs(expected))
+        assert abs(actual - expected) <= 2e-6 * scale
+
+
+def test_giga_2902_vm_row_matches_shifted_root_oracle():
+    """Keep the oracle independent of coefficient translation and the pool.
+
+    The expected row rebuilds both shifted polynomials directly from their
+    roots with NumPy, exactly as historical poly_chess5 did. The native VM
+    result comes from compute_debug's binary64 JSON, before the compatibility
+    float32 coefficient sidecar is written.
+    """
+    import importlib.util
+    import numpy as np
+
+    generator_path = os.path.join(
+        os.path.dirname(__file__), "..", "scripts", "gen_giga_2902_coeff_program.py"
+    )
+    module_spec = importlib.util.spec_from_file_location(
+        "giga_2902_native_oracle", generator_path
+    )
+    generator = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(generator)
+    program = generator.build_payload()
+    compiled = compile_coeff_program_source(program["source_text"])
+
+    u = 0.137
+    v = 0.823
+    meta, _data = _run_coeffgen({
+        "mode": "compute_debug",
+        "function": "const",
+        "cfpv": [1, 0, 0],
+        "u": u,
+        "v": v,
+        "grid_n": 1000,
+        "coeff_transforms": [],
+        "coeff_program": _compiled_coeff_program_payload(compiled),
+    })
+    actual = np.array(
+        [complex(real, imag) for real, imag in meta["coeff"]["poly"]],
+        dtype=np.complex128,
+    )
+
+    source_roots, target_roots = generator._layout_roots(generator.RJAIL3)
+    delta = (1.0 + 1.0j) * 0.1 * np.exp(2.0j * np.pi * u)
+    source_coeffs = np.poly(np.asarray(source_roots, dtype=np.complex128) + delta)
+    target_coeffs = np.poly(np.asarray(target_roots, dtype=np.complex128) + delta)
+    exponent = 1.0 / (1.0 - 0.7)
+    blend = (
+        0.5 * (2.0 * v) ** exponent
+        if v < 0.5
+        else 1.0 - 0.5 * (2.0 * (1.0 - v)) ** exponent
+    )
+    base = source_coeffs * (1.0 - blend) + target_coeffs * blend
+    expected = base + 0.01 * base[np.argsort(np.abs(base))]
+
+    relative = np.abs(actual - expected) / np.maximum(1.0, np.abs(expected))
+    # NumPy's root-product expansion and the VM's triangular translation use
+    # different summation orders; degree 33 accumulates sub-picounit rounding.
+    assert float(np.max(relative)) < 1e-12
+
+
+def test_native_rejects_bad_vector_constant_pool_index():
+    proc = _run_coeffgen_process({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [1, 0, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+        "coeff_program": {
+            "version": 1,
+            "stack_max": 1,
+            "vector_constants": [{"length": 1, "values": [1, 0]}],
+            "tokens": [{"op": 48, "n_args": 1, "args": [1]}],
+        },
+    })
+    assert proc.returncode != 0
+    assert "invalid pool index" in proc.stderr
+
+
+def test_native_rejects_malformed_and_oversized_vector_constant_pools():
+    base = {
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [1, 0, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+    }
+
+    def run(constants):
+        return _run_coeffgen_process({
+            **base,
+            "coeff_program": {
+                "version": 1,
+                "stack_max": 1,
+                "vector_constants": constants,
+                "tokens": [{"op": 48, "n_args": 1, "args": [0]}],
+            },
+        })
+
+    wrong_length = run([{"length": 2, "values": [1, 0]}])
+    assert wrong_length.returncode != 0
+    assert "requires 4 packed values" in wrong_length.stderr
+
+    non_finite = run([{"length": 1, "values": [float("nan"), 0]}])
+    assert non_finite.returncode != 0
+    assert "non-finite" in non_finite.stderr
+
+    too_many = run([
+        {"length": 1, "values": [index, 0]}
+        for index in range(9)
+    ])
+    assert too_many.returncode != 0
+    assert "too many vector constants" in too_many.stderr
+
+    full = {"length": 256, "values": [0, 0] * 256}
+    too_large = run([dict(full) for _ in range(5)])
+    assert too_large.returncode != 0
+    assert "exceed element limit" in too_large.stderr

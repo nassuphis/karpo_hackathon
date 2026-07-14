@@ -362,10 +362,21 @@ MERGED_OPCODE_REGISTRY = {'opcodes': [{'id': 1,
               'name': 'store_reg',
               'profile': 'param',
               'source_symbol': 'PARAM_OP_STORE_REG',
-              'symbol': 'MERGED_OP_PARAM_STORE_REG'}],
- 'ranges': {'coeff_reference': [1, 30],
+              'symbol': 'MERGED_OP_PARAM_STORE_REG'},
+             {'id': 48,
+              'name': 'push_vector_const',
+              'profile': 'coeff',
+              'source_symbol': 'COEFF_OP_PUSH_VECTOR_CONST',
+              'symbol': 'MERGED_OP_COEFF_PUSH_VECTOR_CONST'},
+             {'id': 49,
+              'name': 'translate_roots',
+              'profile': 'coeff',
+              'source_symbol': 'COEFF_OP_TRANSLATE_ROOTS',
+              'symbol': 'MERGED_OP_COEFF_TRANSLATE_ROOTS'}],
+ 'ranges': {'coeff_extensions': [48, 49],
+            'coeff_reference': [1, 30],
             'param_specific': [31, 47],
-            'reserved': [48, 63],
+            'reserved': [50, 63],
             'solve_score': [64, 95]},
  'registries': {'coeff': 1, 'param': 2, 'root': 3, 'solve_score': 4},
  'version': 1}
@@ -418,6 +429,8 @@ MERGED_OP_PARAM_SQUARE = 41
 MERGED_OP_PARAM_CUBE = 42
 MERGED_OP_PARAM_PUSH_REG = 43
 MERGED_OP_PARAM_STORE_REG = 44
+MERGED_OP_COEFF_PUSH_VECTOR_CONST = 48
+MERGED_OP_COEFF_TRANSLATE_ROOTS = 49
 MERGED_OP_SCORE_REDUCE_METRIC = 64
 MERGED_OP_SCORE_PUSH_METRIC = 65
 MERGED_OP_SCORE_AVG = 66

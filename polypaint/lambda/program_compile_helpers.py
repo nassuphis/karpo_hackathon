@@ -16,7 +16,7 @@ COEFF_PROGRAMS_PREFIX = "polypaint/coeff-programs/"
 
 
 def compiled_coeff_program_payload(compiled):
-    return {
+    payload = {
         "version": compiled["version"],
         "fingerprint": compiled["fingerprint"],
         "display": compiled["display"],
@@ -27,6 +27,14 @@ def compiled_coeff_program_payload(compiled):
         "tokens": compiled["tokens"],
         "scalar_exprs": compiled["scalar_exprs"],
     }
+    vector_constants = compiled.get("vector_constants") or []
+    if vector_constants:
+        payload["vector_constants"] = vector_constants
+        payload["vector_constant_count"] = len(vector_constants)
+        payload["vector_constant_elements"] = sum(
+            int(item.get("length") or 0) for item in vector_constants
+        )
+    return payload
 
 
 def compiled_param_program_payload(compiled):

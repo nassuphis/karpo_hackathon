@@ -33,6 +33,8 @@ MAX_MACRO_DEPTH = 8
 MAX_ARGS = 8
 MAX_SCALAR_EXPR_TOKENS = 64  # mirrors COEFF_PROGRAM_MAX_EXPR_NUMS/STRIDE in sweep_cli.c
 MAX_SCALAR_EXPRS = 64  # mirrors COEFF_PROGRAM_MAX_SCALAR_EXPRS in sweep_cli.c
+MAX_VECTOR_CONSTANTS = 8  # mirrors COEFF_PROGRAM_MAX_VECTOR_CONSTANTS in sweep_cli.c
+MAX_VECTOR_CONSTANT_ELEMENTS = 1024  # mirrors COEFF_PROGRAM_MAX_VECTOR_CONSTANT_ELEMENTS
 MAX_LEGACY_INT_ARG = 4096  # mirrors COEFF_LEGACY_MAX_INT_ARG (coeffLegacyIntArg) in sweep_cli.c
 _COMPAT_SIGNATURE_WIRE_LAYOUTS = {"complex_lanes", "flat_complex_components", "real_lanes"}
 _COMPAT_SIGNATURE_ARG_TYPES = {"real", "complex"}
@@ -82,6 +84,10 @@ COEFF_OP_SCAN = 31
 COEFF_OP_SLICE_READ = 32
 COEFF_OP_SLICE_WRITE = 33
 COEFF_OP_REDUCE = 34
+# Coeff v2 uses the merged opcode namespace. Keep extension opcodes in its
+# reserved range so v1 and v2 payloads use the same numeric wire values.
+COEFF_OP_PUSH_VECTOR_CONST = 48
+COEFF_OP_TRANSLATE_ROOTS = 49
 
 COEFF_SEL_CF = 1
 COEFF_SEL_POLY = 2
@@ -130,6 +136,7 @@ EXPR_PREV = 32
 EXPR_K = 33
 EXPR_PREV2 = 34
 EXPR_FLOOR = 35
+EXPR_BIMODAL = 36
 
 _OP_NAMES = {
     COEFF_OP_CONST: "push_const",
@@ -166,6 +173,8 @@ _OP_NAMES = {
     COEFF_OP_SLICE_READ: "slice",
     COEFF_OP_SLICE_WRITE: "poke_slice",
     COEFF_OP_REDUCE: "reduce",
+    COEFF_OP_PUSH_VECTOR_CONST: "push_vector_const",
+    COEFF_OP_TRANSLATE_ROOTS: "translate_roots",
 }
 
 _SOURCE_SELECTORS = {
@@ -767,7 +776,7 @@ def _slugify_macro_id(value):
 
 
 _EXPR_TOKEN_RE = re.compile(
-    r"\s*(?:(?P<number>(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?)(?P<imag>[ijIJ])?|(?P<ident>[A-Za-z_][A-Za-z0-9_]*)|(?P<op>\*\*|[()[\]+\-*/]))"
+    r"\s*(?:(?P<number>(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?)(?P<imag>[ijIJ])?|(?P<ident>[A-Za-z_][A-Za-z0-9_]*)|(?P<op>\*\*|[(),\[\]+\-*/]))"
 )
 
 _EXPR_CONSTANTS = {
@@ -884,6 +893,21 @@ class ExpressionParser:
                 else "complex"
             )
             return _Expr(expr.tokens + [{"op": op}], kind=kind, dynamic=expr.dynamic)
+        if token_type == "ident" and token_value == "bimodal":
+            self._take()
+            if self._take()[0] != "(":
+                raise RuntimeError("bimodal requires parentheses")
+            uniform = self._expr()
+            if self._take()[0] != ",":
+                raise RuntimeError("bimodal requires bimodal(u, a)")
+            shape = self._expr()
+            if self._take()[0] != ")":
+                raise RuntimeError("bimodal missing closing parenthesis")
+            return _Expr(
+                uniform.tokens + shape.tokens + [{"op": EXPR_BIMODAL}],
+                kind="real",
+                dynamic=uniform.dynamic or shape.dynamic,
+            )
         return self._primary()
 
     def _power(self):
@@ -1039,6 +1063,23 @@ def _static_cmath(fn, value):
         raise RuntimeError(f"scalar expression overflow: {exc}") from exc
 
 
+def _bimodal_value(uniform, shape):
+    if abs(uniform.imag) > 1e-12 or abs(shape.imag) > 1e-12:
+        raise RuntimeError("bimodal(u, a) requires real-valued arguments")
+    u = float(uniform.real)
+    a = float(shape.real)
+    if not math.isfinite(u) or u < 0.0 or u > 1.0:
+        raise RuntimeError("bimodal u must be finite and in [0,1]")
+    if not math.isfinite(a) or a < 0.0 or a >= 1.0:
+        raise RuntimeError("bimodal a must be finite and in [0,1)")
+    exponent = 1.0 / (1.0 - a)
+    if u < 0.5:
+        value = math.pow(2.0 * u, exponent) / 2.0
+    else:
+        value = 1.0 - math.pow(2.0 * (1.0 - u), exponent) / 2.0
+    return complex(min(1.0, max(0.0, value)), 0.0)
+
+
 def expr_value_if_static(expr):
     if expr.dynamic:
         return None
@@ -1099,6 +1140,10 @@ def expr_value_if_static(expr):
         elif op == EXPR_FLOOR:
             value = stack.pop()
             stack.append(complex(math.floor(value.real), math.floor(value.imag)))
+        elif op == EXPR_BIMODAL:
+            shape = stack.pop()
+            uniform = stack.pop()
+            stack.append(_bimodal_value(uniform, shape))
         else:
             raise RuntimeError(f"non-static scalar expression opcode: {op}")
     if len(stack) != 1:
@@ -1878,6 +1923,50 @@ def _compile_reduce_chip(args, scalar_exprs):
     return _token(COEFF_OP_REDUCE, fn_index=REDUCE_OPS[str(args[0]).strip().lower()])
 
 
+def _compile_vector_literal(args, vector_constants):
+    if not args:
+        raise RuntimeError("vector_literal requires at least one coefficient")
+    if len(args) > MAX_VECTOR_LEN:
+        raise RuntimeError(
+            f"vector_literal has {len(args)} coefficients; max is {MAX_VECTOR_LEN}"
+        )
+    values = []
+    for idx, raw in enumerate(args):
+        expr = _compile_expr(raw, label=f"vector_literal coefficient {idx}", expected="complex")
+        value = expr_value_if_static(expr)
+        if value is None:
+            raise RuntimeError(
+                f"vector_literal coefficient {idx} must be a static expression"
+            )
+        values.extend(
+            [
+                _canonical_zero(
+                    _finite_number(value.real, f"vector_literal coefficient {idx} real")
+                ),
+                _canonical_zero(
+                    _finite_number(value.imag, f"vector_literal coefficient {idx} imag")
+                ),
+            ]
+        )
+    constant = {"length": len(args), "values": values}
+    try:
+        pool_index = vector_constants.index(constant)
+    except ValueError:
+        if len(vector_constants) >= MAX_VECTOR_CONSTANTS:
+            raise RuntimeError(
+                f"coeff program has more than {MAX_VECTOR_CONSTANTS} vector constants"
+            )
+        total = sum(int(item["length"]) for item in vector_constants) + len(args)
+        if total > MAX_VECTOR_CONSTANT_ELEMENTS:
+            raise RuntimeError(
+                "coeff program vector constants contain "
+                f"{total} elements; max is {MAX_VECTOR_CONSTANT_ELEMENTS}"
+            )
+        pool_index = len(vector_constants)
+        vector_constants.append(constant)
+    return _token(COEFF_OP_PUSH_VECTOR_CONST, n_args=1, args=[pool_index])
+
+
 def _compile_legacy_chip(args, scalar_exprs):
     if len(args) < 3:
         raise RuntimeError("legacy chip requires name, src, tgt, and optional args")
@@ -1903,6 +1992,7 @@ _ZERO_ARG_CHIP_OPS = {
     "_typed_poke_poly": COEFF_OP_TYPED_POKE_POLY,
     "_typed_fill": COEFF_OP_TYPED_FILL,
     "_typed_blend": COEFF_OP_TYPED_BLEND,
+    "translate_roots": COEFF_OP_TRANSLATE_ROOTS,
 }
 
 # Uniform-signature chip compilers: (args, scalar_exprs) -> token.
@@ -1937,8 +2027,10 @@ _CHIP_COMPILERS = {
 }
 
 
-def _compile_chip(chip, scalar_exprs):
+def _compile_chip(chip, scalar_exprs, vector_constants):
     name, args = _chip_args(chip)
+    if name == "vector_literal":
+        return [_compile_vector_literal(args, vector_constants)]
     if name in _ZERO_ARG_CHIP_OPS:
         if args:
             raise RuntimeError(f"{name} chip takes no arguments")
@@ -1969,13 +2061,14 @@ def _compile_chip(chip, scalar_exprs):
 def _compile_chain(chain):
     tokens = []
     scalar_exprs = []
+    vector_constants = []
     for chip in chain:
-        tokens.extend(_compile_chip(chip, scalar_exprs))
+        tokens.extend(_compile_chip(chip, scalar_exprs, vector_constants))
     if len(tokens) > MAX_PROGRAM_TOKENS:
         raise RuntimeError(
             f"coeff program has {len(tokens)} tokens after expansion; max is {MAX_PROGRAM_TOKENS}"
         )
-    return tokens, scalar_exprs
+    return tokens, scalar_exprs, vector_constants
 
 
 def _validate_stack(tokens):
@@ -2015,7 +2108,13 @@ def _validate_stack(tokens):
     for idx, token in enumerate(tokens):
         op = int(token.get("op") or 0)
         before = depth()
-        if op in {COEFF_OP_CONST, COEFF_OP_PUSH, COEFF_OP_LINSPACE, COEFF_OP_RANGE}:
+        if op in {
+            COEFF_OP_CONST,
+            COEFF_OP_PUSH,
+            COEFF_OP_LINSPACE,
+            COEFF_OP_RANGE,
+            COEFF_OP_PUSH_VECTOR_CONST,
+        }:
             types.append("vector")
         elif op == COEFF_OP_SET:
             vector_source(int(token.get("src") or 0), idx, "set src")
@@ -2160,6 +2259,22 @@ def _validate_stack(tokens):
             if top_type != "vector" or below_type != "vector":
                 raise RuntimeError(f"typed_blend at token {idx}: inputs must be vectors")
             types.append("vector")
+        elif op == COEFF_OP_TRANSLATE_ROOTS:
+            if depth() < 2:
+                raise RuntimeError(
+                    f"translate_roots at token {idx}: stack depth is {before} (need >=2)"
+                )
+            delta_type = types.pop()
+            vector_type = types.pop()
+            if delta_type != "scalar":
+                raise RuntimeError(
+                    f"translate_roots at token {idx}: delta is {delta_type} (need scalar)"
+                )
+            if vector_type != "vector":
+                raise RuntimeError(
+                    f"translate_roots at token {idx}: coefficients are {vector_type} (need vector)"
+                )
+            types.append("vector")
         else:
             raise RuntimeError(f"unknown coeff program opcode at token {idx}: {op}")
         if depth() > MAX_VECTOR_STACK:
@@ -2170,7 +2285,7 @@ def _validate_stack(tokens):
     return {"stack_max": max_depth, "diagnostics": diagnostics}
 
 
-def _execution_spec(tokens, scalar_exprs):
+def _execution_spec(tokens, scalar_exprs, vector_constants):
     """Render the canonical text form of a compiled program.
 
     The fingerprint hashes this string, so its exact byte layout is wire
@@ -2246,6 +2361,10 @@ def _execution_spec(tokens, scalar_exprs):
             fields.extend([_format_number(args[0]), _format_number(args[1])])
         elif op == COEFF_OP_REDUCE:
             fields.append(_REDUCE_NAMES.get(int(token.get("fn_index") or 0), str(token.get("fn_index") or 0)))
+        elif op == COEFF_OP_PUSH_VECTOR_CONST:
+            fields.append(_format_number((token.get("args") or [0])[0]))
+        elif op == COEFF_OP_TRANSLATE_ROOTS:
+            pass
         elif op == COEFF_OP_PUSH:
             fields.append(sel("src"))
         elif op == COEFF_OP_BLEND:
@@ -2320,6 +2439,11 @@ def _execution_spec(tokens, scalar_exprs):
         parts.append(":".join(fields))
     if scalar_exprs:
         parts.append("exprs=" + json.dumps(scalar_exprs, sort_keys=True, separators=(",", ":")))
+    if vector_constants:
+        parts.append(
+            "vectors="
+            + json.dumps(vector_constants, sort_keys=True, separators=(",", ":"))
+        )
     return ";".join(parts)
 
 
@@ -2442,6 +2566,7 @@ def _result_payload(diagnostics, **overrides):
         "expanded_chain": [],
         "tokens": [],
         "scalar_exprs": [],
+        "vector_constants": [],
         "execution_spec": "",
         "fingerprint": "",
         "display": "",
@@ -2449,6 +2574,8 @@ def _result_payload(diagnostics, **overrides):
         "statement_count": 0,
         "token_count": 0,
         "scalar_expr_count": 0,
+        "vector_constant_count": 0,
+        "vector_constant_elements": 0,
         "stack_max": 0,
         "macro_expansions": 0,
         "uses_legacy_chain_equivalent": False,
@@ -2498,16 +2625,17 @@ def compile_coeff_program_chain(chain, *, macro_resolver=None, strict=True):
     try:
         source_chain = _canonical_source_chain(chain)
         expanded_chain, macro_count = _expand_macros(source_chain, macro_resolver)
-        tokens, scalar_exprs = _compile_chain(expanded_chain)
+        tokens, scalar_exprs, vector_constants = _compile_chain(expanded_chain)
         stack_info = _validate_stack(tokens)
         diagnostics.extend(stack_info["diagnostics"])
-        spec = _execution_spec(tokens, scalar_exprs)
+        spec = _execution_spec(tokens, scalar_exprs, vector_constants)
         return _result_payload(
             diagnostics,
             source_chain=source_chain,
             expanded_chain=expanded_chain,
             tokens=tokens,
             scalar_exprs=scalar_exprs,
+            vector_constants=vector_constants,
             execution_spec=spec,
             fingerprint=_fingerprint(spec),
             display=display_coeff_program_chain(source_chain),
@@ -2515,6 +2643,8 @@ def compile_coeff_program_chain(chain, *, macro_resolver=None, strict=True):
             statement_count=len(source_chain),
             token_count=len(tokens),
             scalar_expr_count=len(scalar_exprs),
+            vector_constant_count=len(vector_constants),
+            vector_constant_elements=sum(int(item["length"]) for item in vector_constants),
             stack_max=stack_info["stack_max"],
             macro_expansions=macro_count,
             uses_legacy_chain_equivalent=_legacy_fast_path(tokens),

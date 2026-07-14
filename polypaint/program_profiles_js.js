@@ -125,6 +125,8 @@ window._programProfiles = {
         "scalar_exprs": 64,
         "total_stack": 64,
         "vector_capable_stack": 64,
+        "vector_constant_elements": 1024,
+        "vector_constants": 8,
         "vector_len": 256
       }
     },

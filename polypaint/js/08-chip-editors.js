@@ -447,6 +447,9 @@ const _coeffProgramCheatSections = [
             { label: 'push_vec(value)', snippet: 'push_vec(0)\nemit', title: 'Push a constant vector of length poly_len.' },
             { label: 'push_vec(n,value)', snippet: 'push_vec(poly_len, p1)\nemit', title: 'Push a constant vector with explicit length.' },
             { label: 'fill', snippet: 'fill(poly_len, 0)\nemit', title: 'Alias for push_vec/fill vector construction.' },
+            { label: 'vector_literal', snippet: 'poly = vector_literal(1, -3, 2)\nemit', title: 'Compile a static leading-first coefficient vector once and load it from the program constant pool.' },
+            { label: 'translate_roots', snippet: 'poly = translate_roots(poly, 0.1*exp(pi2i*t1))\nemit', title: 'Shift every root by delta without solving for roots: Q(z) = P(z-delta).' },
+            { label: 'bimodal', snippet: 'push_scalar(bimodal(t2, 0.7))', title: 'Symmetric bimodal remapping of u in [0,1], shaped by a in [0,1).' },
             { label: 'push_scalar', snippet: 'push_scalar(p1+p2)', title: 'Push one scalar onto the typed stack.' },
             { label: 'arange', snippet: 'poly = arange(1, poly_len+1)\nemit', title: 'Range vector, stop-exclusive.' },
             { label: 'linspace', snippet: 'poly = linspace(0, 1, poly_len)\nemit', title: 'Linearly spaced vector.' },
@@ -900,6 +903,26 @@ function _programHelpBuildCoeffRegistry() {
         }),
     ]);
     _programHelpAddSection(registry, 'Vectors + Windows', [
+        _programHelpItem('vector_literal', 'vector_literal(c0, c1, ...)', 'Create a leading-first coefficient vector from static expressions. Values are compiled once into a deduplicated immutable pool; they are not rebuilt per row.', {
+            forms: ['poly = vector_literal(1, -3, 2)'],
+            params: [{ name: 'c0..cn', title: 'One or more finite static complex expressions, leading coefficient first.' }],
+            effect: '(-- vector)',
+        }),
+        _programHelpItem('translate_roots', 'translate_roots(coefficients, delta)', 'Shift every root by delta using coefficient translation Q(z) = P(z-delta). This does not solve for roots and preserves the coefficient-vector length.', {
+            forms: ['poly = translate_roots(poly, 0.1*exp(pi2i*t1))'],
+            params: [
+                { name: 'coefficients', title: 'Coefficient vector in leading-first order.' },
+                { name: 'delta', title: 'Finite complex scalar expression added to every root.' },
+            ],
+            effect: '(vector scalar -- vector)',
+        }),
+        _programHelpItem('bimodal', 'bimodal(u, a)', 'Map u in [0,1] symmetrically toward the endpoints. a=0 is uniform; increasing a toward 1 makes the two endpoint modes sharper.', {
+            forms: ['poly = blend(bimodal(t2, 0.7))'],
+            params: [
+                { name: 'u', title: 'Finite real scalar in [0,1].' },
+                { name: 'a', title: 'Finite real shape in [0,1).' },
+            ],
+        }),
         _programHelpItem('slice', 'poly[a:b] / cf[a:b]', 'Slice read (a vector of length b-a; b exclusive) and slice write. The written value must be a VECTOR of exactly b-a elements — use fill(b-a, value) to broadcast a scalar.', {
             forms: ['poly[2:7] = multiply(poly[2:7], 5)', 'sum(poly[0:70])'],
         }),

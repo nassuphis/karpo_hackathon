@@ -1219,6 +1219,32 @@ window._coeffRegistryVocab = {
         ]
       },
       {
+        "name": "vector_literal",
+        "op_symbol": "COEFF_OP_PUSH_VECTOR_CONST",
+        "op": 48,
+        "args": [
+          {
+            "name": "coefficients",
+            "type": "complex_expr_list"
+          }
+        ]
+      },
+      {
+        "name": "translate_roots",
+        "op_symbol": "COEFF_OP_TRANSLATE_ROOTS",
+        "op": 49,
+        "args": [
+          {
+            "name": "coefficients",
+            "type": "vector_expr"
+          },
+          {
+            "name": "delta",
+            "type": "complex_expr"
+          }
+        ]
+      },
+      {
         "name": "macro",
         "op_symbol": null,
         "op": null,
@@ -1497,6 +1523,8 @@ window._coeffRegistryVocab = {
           "max_args": 8,
           "scalar_exprs": 64,
           "expr_tokens": 64,
+          "vector_constants": 8,
+          "vector_constant_elements": 1024,
           "legacy_int_arg": 4096
         },
         "symbols": {

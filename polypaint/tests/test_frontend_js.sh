@@ -290,7 +290,7 @@ assertIncludes("poke_poly: {", 'Coeff Program picker should expose poke_poly');
 assertIncludes("poke_tos: {", 'Coeff Program picker should expose poke_tos');
 assertIncludes("write value into poly[index] without touching the stack", 'Coeff Program poke_poly should describe direct poly mutation');
 assertIncludes("write value into the top stack vector without popping it", 'Coeff Program poke_tos should describe top-of-stack mutation');
-assertIncludes("Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.", 'Coeff Program scalar expression tooltip should name the allowed registers, constants, functions, and vector element reads');
+assertIncludes("Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, bimodal(u,a), and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.", 'Coeff Program scalar expression tooltip should name the allowed registers, constants, functions, and vector element reads');
 assertIncludes("commit poly; pops stack top into poly when present", 'Coeff Program picker should describe emit commit semantics');
 assertIncludes("blend below*(1-t) + top*t for same-length vectors", 'Coeff Program picker should expose vector blend chip');
 assertIncludes("const _coeffProgramVectorBinaryNames = _coeffStructuralSubOpNames('vector_binary'", 'Coeff Program picker should expose registry-backed vector binary ops');
@@ -386,7 +386,7 @@ assertIncludes("Legacy coefficient transform function. Compiled to a stable nume
 assertIncludes("Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.", 'Coeff Program legacy src selector should have a tooltip');
 assertIncludes("Output target: write poly or push the result onto the stack.", 'Coeff Program legacy tgt selector should have a tooltip');
 assertIncludes("Blend amount in [0,1]. ${_coeffProgramScalarExprHelp}", 'Coeff Program andy fields should advertise expression support');
-assertIncludes("const _coeffProgramScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';", 'Coeff Program expression help should advertise pi, pi2, pi2i, and elementary scalar functions');
+assertIncludes("const _coeffProgramScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, bimodal(u,a), and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';", 'Coeff Program expression help should advertise pi, pi2, pi2i, bimodal, and elementary scalar functions');
 assertIncludes("function _parseCtComplexConstant(value) {", 'frontend should parse complex constants consistently for coefficient inputs');
 assertIncludes("function _formatCfpvForDisplay(funcName, cfpv) {", 'coefficient function parameters should have a logical display formatter');
 assertIncludes("return `degree=${degree}, value=${_formatCfpvComplexValue(re, im)}`;", 'const coefficient function should display degree plus one complex value');
@@ -836,6 +836,7 @@ function makeContext({withCoeffVocab = true, coeffVocabOverride} = {}) {
   ctx._renderParamCoeffProgramCheatsheets();
   assert(els['pp-cheatsheet'].innerHTML.includes('identity'), 'Param Starter should render existing snippets');
   assert(els['cp-cheatsheet'].innerHTML.includes('emit cf'), 'Coeff Starter should render existing snippets');
+  assert(!els['cp-cheatsheet'].innerHTML.includes('giga_2902'), 'ordinary saved programs must not be hard-wired into Coeff Starter');
   assert(els['rt-cheatsheet'].innerHTML.includes('rotate_roots(0.25)'), 'Root Starter should render starter snippets');
   assert(els['rt-cheatsheet'].innerHTML.includes('pull_towards_center'), 'Root Starter should render one button per registry transform');
   assert(els['prt-cheatsheet'].innerHTML.includes('_insertPaletteRootSourceSnippet'), 'Palette root Starter buttons should insert into the palette textarea');

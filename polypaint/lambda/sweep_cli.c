@@ -3462,6 +3462,8 @@ static void pp_perf_report(const char *mode) {
 #define COEFF_PROGRAM_MAX_VECTOR_LEN 256
 #define COEFF_PROGRAM_MAX_ARGS 8
 #define COEFF_PROGRAM_MAX_SCALAR_EXPRS 64
+#define COEFF_PROGRAM_MAX_VECTOR_CONSTANTS 8
+#define COEFF_PROGRAM_MAX_VECTOR_CONSTANT_ELEMENTS 1024
 #define COEFF_PROGRAM_MAX_EXPR_NUMS 192
 #define COEFF_PROGRAM_EXPR_STRIDE 3
 #define COEFF_PROGRAM_MAX_EXPR_TOKENS (COEFF_PROGRAM_MAX_EXPR_NUMS / COEFF_PROGRAM_EXPR_STRIDE)
@@ -3504,7 +3506,9 @@ enum CoeffProgramOp {
     COEFF_OP_SCAN = 31,
     COEFF_OP_SLICE_READ = 32,
     COEFF_OP_SLICE_WRITE = 33,
-    COEFF_OP_REDUCE = 34
+    COEFF_OP_REDUCE = 34,
+    COEFF_OP_PUSH_VECTOR_CONST = 48,
+    COEFF_OP_TRANSLATE_ROOTS = 49
 };
 
 enum CoeffStackValueType {
@@ -3603,7 +3607,8 @@ enum CoeffExprOp {
     COEFF_EXPR_PREV = 32,
     COEFF_EXPR_K = 33,
     COEFF_EXPR_PREV2 = 34,
-    COEFF_EXPR_FLOOR = 35
+    COEFF_EXPR_FLOOR = 35,
+    COEFF_EXPR_BIMODAL = 36
 };
 
 typedef struct {
@@ -3650,6 +3655,12 @@ typedef struct {
     int has_andy;
 } CoeffResolvedArgs;
 
+typedef struct {
+    uint16_t length;
+    double re[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    double im[COEFF_PROGRAM_MAX_VECTOR_LEN];
+} CoeffVectorConstant;
+
 /* Load-time argument plan (code-review-31 F1). Most tokens have no arguments
  * and no dynamic blend, yet evaluation cleared and re-resolved a ~160-byte
  * frame for every token on every row. The plan classifies each token ONCE at
@@ -3667,9 +3678,12 @@ typedef struct {
     int token_count;
     int stack_max;
     int scalar_expr_count;
+    int vector_constant_count;
+    int vector_constant_elements;
     CoeffProgramToken tokens[COEFF_PROGRAM_MAX_TOKENS];
     CoeffScalarExpr scalar_exprs[COEFF_PROGRAM_MAX_SCALAR_EXPRS];
     CoeffLoweredExprPlan expr_plans[COEFF_PROGRAM_MAX_SCALAR_EXPRS];
+    CoeffVectorConstant vector_constants[COEFF_PROGRAM_MAX_VECTOR_CONSTANTS];
     uint8_t arg_mode[COEFF_PROGRAM_MAX_TOKENS];
     CoeffResolvedArgs prepared_args[COEFF_PROGRAM_MAX_TOKENS];
     /* CR33 F7: straight-line typed-scalar fusion. For a region-start token k,
@@ -3900,7 +3914,10 @@ static const char *parseCoeffProgramTokenObject(const char *objStart, const char
         fprintf(stderr, "coeff_program v2 native_transform token requires registry=\"coeff\"\n");
         return NULL;
     }
-    if (programVersion == 2 && tok->op > MERGED_OP_COEFF_TYPED_BLEND) {
+    if (programVersion == 2 &&
+        tok->op > MERGED_OP_COEFF_TYPED_BLEND &&
+        tok->op != MERGED_OP_COEFF_PUSH_VECTOR_CONST &&
+        tok->op != MERGED_OP_COEFF_TRANSLATE_ROOTS) {
         fprintf(stderr, "coeff_program v2 token opcode %u is not executable by the coeff VM\n",
                 (unsigned)tok->op);
         return NULL;
@@ -4027,7 +4044,9 @@ static void coeffPrintTelemetryFields(FILE *out, const CoeffProgram *program) {
                 op == COEFF_OP_TYPED_UNARY || op == COEFF_OP_TYPED_POKE_POLY ||
                 op == COEFF_OP_TYPED_GET_SCALAR) tokTypedScalar++;
             else if (op == COEFF_OP_TYPED_PUSH_VECTOR || op == COEFF_OP_TYPED_SET_POLY ||
-                     op == COEFF_OP_TYPED_FILL || op == COEFF_OP_TYPED_BLEND) tokTypedVector++;
+                     op == COEFF_OP_TYPED_FILL || op == COEFF_OP_TYPED_BLEND ||
+                     op == COEFF_OP_PUSH_VECTOR_CONST ||
+                     op == COEFF_OP_TRANSLATE_ROOTS) tokTypedVector++;
             else if (op == COEFF_OP_VECTOR_BINARY || op == COEFF_OP_VECTOR_UNARY ||
                      op == COEFF_OP_VECTOR_ROLL || op == COEFF_OP_VECTOR_ARGSORT) tokSelector++;
             else if (op == COEFF_OP_LEGACY || op == COEFF_OP_NATIVE_TRANSFORM) tokNative++;
@@ -4197,6 +4216,80 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
         program->scalar_expr_count = count;
     }
 
+    const char *constants = findKeyIn(objStart, objEnd, "vector_constants");
+    if (constants) {
+        constants = skip(constants);
+        if (*constants != '[') {
+            fprintf(stderr, "coeff_program vector_constants must be an array\n");
+            return -1;
+        }
+        constants++;
+        int count = 0;
+        int totalElements = 0;
+        while (*constants && constants < objEnd) {
+            constants = skip(constants);
+            if (*constants == ']') break;
+            if (*constants == ',') {
+                constants++;
+                continue;
+            }
+            if (*constants != '{') {
+                fprintf(stderr, "coeff_program vector constant must be an object\n");
+                return -1;
+            }
+            if (count >= COEFF_PROGRAM_MAX_VECTOR_CONSTANTS) {
+                fprintf(stderr, "coeff_program has too many vector constants\n");
+                return -1;
+            }
+            const char *constantEnd = findClosing(constants, '{', '}');
+            if (!constantEnd || constantEnd > objEnd) {
+                fprintf(stderr, "coeff_program vector constant object is malformed\n");
+                return -1;
+            }
+            const char *lengthValue = findKeyIn(constants, constantEnd, "length");
+            const char *valuesValue = findKeyIn(constants, constantEnd, "values");
+            if (!lengthValue || !valuesValue) {
+                fprintf(stderr, "coeff_program vector constant requires length and values\n");
+                return -1;
+            }
+            double lengthRaw = parseNum(&lengthValue);
+            if (!isfinite(lengthRaw) || floor(lengthRaw) != lengthRaw ||
+                lengthRaw < 1.0 || lengthRaw > COEFF_PROGRAM_MAX_VECTOR_LEN) {
+                fprintf(stderr, "coeff_program vector constant length is invalid\n");
+                return -1;
+            }
+            int length = (int)lengthRaw;
+            double packed[COEFF_PROGRAM_MAX_VECTOR_LEN * 2];
+            int packedCount = parseNumArray(
+                valuesValue, packed, COEFF_PROGRAM_MAX_VECTOR_LEN * 2);
+            if (packedCount != length * 2) {
+                fprintf(stderr,
+                        "coeff_program vector constant length=%d requires %d packed values, got %d\n",
+                        length, length * 2, packedCount);
+                return -1;
+            }
+            if (totalElements + length > COEFF_PROGRAM_MAX_VECTOR_CONSTANT_ELEMENTS) {
+                fprintf(stderr, "coeff_program vector constants exceed element limit\n");
+                return -1;
+            }
+            CoeffVectorConstant *dst = &program->vector_constants[count];
+            dst->length = (uint16_t)length;
+            for (int i = 0; i < length; i++) {
+                dst->re[i] = packed[i * 2];
+                dst->im[i] = packed[i * 2 + 1];
+                if (!isfinite(dst->re[i]) || !isfinite(dst->im[i])) {
+                    fprintf(stderr, "coeff_program vector constant contains non-finite value\n");
+                    return -1;
+                }
+            }
+            totalElements += length;
+            count++;
+            constants = constantEnd;
+        }
+        program->vector_constant_count = count;
+        program->vector_constant_elements = totalElements;
+    }
+
     const char *tokens = findKeyIn(objStart, objEnd, "tokens");
     if (!tokens) {
         fprintf(stderr, "coeff_program requires tokens array\n");
@@ -4237,6 +4330,20 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
         tokens = tokEnd;
     }
     program->token_count = count;
+    for (int i = 0; i < program->token_count; i++) {
+        const CoeffProgramToken *tok = &program->tokens[i];
+        if (tok->op == COEFF_OP_PUSH_VECTOR_CONST) {
+            if (tok->n_args != 1 || !isfinite(tok->args[0]) ||
+                floor(tok->args[0]) != tok->args[0] || tok->args[0] < 0.0 ||
+                tok->args[0] >= (double)program->vector_constant_count) {
+                fprintf(stderr, "coeff_program push_vector_const has invalid pool index\n");
+                return -1;
+            }
+        } else if (tok->op == COEFF_OP_TRANSLATE_ROOTS && tok->n_args != 0) {
+            fprintf(stderr, "coeff_program translate_roots takes no token arguments\n");
+            return -1;
+        }
+    }
     coeffPrepareArgPlan(program);
     coeffPrepareScalarFusion(program);
     return 1;
@@ -4440,7 +4547,22 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
         }
         double br = stackR[--sp], bi = stackI[sp];
         double ar = stackR[sp - 1], ai = stackI[sp - 1];
-        if (op == COEFF_EXPR_ADD) {
+        if (op == COEFF_EXPR_BIMODAL) {
+            if (fabs(ai) > COEFF_PROGRAM_IMAG_TOL ||
+                fabs(bi) > COEFF_PROGRAM_IMAG_TOL ||
+                !isfinite(ar) || !isfinite(br) ||
+                ar < 0.0 || ar > 1.0 || br < 0.0 || br >= 1.0) {
+                fprintf(stderr,
+                        "coeff_program bimodal(u, a) requires real u in [0,1] and a in [0,1)\n");
+                return 1;
+            }
+            double exponent = 1.0 / (1.0 - br);
+            double value = ar < 0.5
+                ? 0.5 * pow(2.0 * ar, exponent)
+                : 1.0 - 0.5 * pow(2.0 * (1.0 - ar), exponent);
+            stackR[sp - 1] = fmin(1.0, fmax(0.0, value));
+            stackI[sp - 1] = 0.0;
+        } else if (op == COEFF_EXPR_ADD) {
             stackR[sp - 1] = ar + br; stackI[sp - 1] = ai + bi;
         } else if (op == COEFF_EXPR_SUB) {
             stackR[sp - 1] = ar - br; stackI[sp - 1] = ai - bi;
@@ -5966,6 +6088,89 @@ static int coeffProgramReduceOp(const CoeffEvalContext *ctx, const CoeffProgramT
     return coeff_stack_push_scalar(ws, rr, ri);
 }
 
+static int coeffProgramPushVectorConstOp(const CoeffEvalContext *ctx,
+                                         const CoeffProgramToken *tok) {
+    int index = (int)tok->args[0];
+    if (index < 0 || index >= ctx->program->vector_constant_count) {
+        fprintf(stderr, "coeff_program vector constant index %d is out of range\n", index);
+        return 1;
+    }
+    const CoeffVectorConstant *constant = &ctx->program->vector_constants[index];
+    return coeff_stack_push(
+        ctx->ws, constant->re, constant->im, (int)constant->length);
+}
+
+static double coeffTranslationBinomial[COEFF_PROGRAM_MAX_VECTOR_LEN]
+                                      [COEFF_PROGRAM_MAX_VECTOR_LEN];
+static pthread_once_t coeffTranslationBinomialOnce = PTHREAD_ONCE_INIT;
+
+static void coeffInitTranslationBinomial(void) {
+    coeffTranslationBinomial[0][0] = 1.0;
+    for (int n = 1; n < COEFF_PROGRAM_MAX_VECTOR_LEN; n++) {
+        coeffTranslationBinomial[n][0] = 1.0;
+        coeffTranslationBinomial[n][n] = 1.0;
+        for (int k = 1; k < n; k++) {
+            coeffTranslationBinomial[n][k] =
+                coeffTranslationBinomial[n - 1][k - 1] +
+                coeffTranslationBinomial[n - 1][k];
+        }
+    }
+}
+
+/* For leading-first coefficients of P, shifting every root by delta is
+ * Q(z)=P(z-delta). The immutable source vectors stay in the program pool;
+ * only this translated result is built per row. */
+static int coeffProgramTranslateRootsOp(CoeffProgramWorkspace *ws) {
+    uint16_t deltaSlot = 0, coefficientSlot = 0;
+    if (coeff_stack_pop(ws, &deltaSlot) != 0) return 1;
+    if (coeff_stack_require_scalar(ws, deltaSlot, "translate_roots delta") != 0) return 1;
+    if (coeff_stack_pop(ws, &coefficientSlot) != 0) return 1;
+    if (coeff_stack_require_vector(ws, coefficientSlot, "translate_roots coefficients") != 0) {
+        return 1;
+    }
+    double deltaRe = ws->stack_scalar_re[deltaSlot];
+    double deltaIm = ws->stack_scalar_im[deltaSlot];
+    if (!isfinite(deltaRe) || !isfinite(deltaIm)) {
+        fprintf(stderr, "coeff_program translate_roots delta must be finite\n");
+        return 1;
+    }
+    int length = ws->stack_len[coefficientSlot];
+    int degree = length - 1;
+    pthread_once(&coeffTranslationBinomialOnce, coeffInitTranslationBinomial);
+
+    ws->aux_re[0] = 1.0;
+    ws->aux_im[0] = 0.0;
+    for (int power = 1; power <= degree; power++) {
+        c_mul(ws->aux_re[power - 1], ws->aux_im[power - 1],
+              -deltaRe, -deltaIm, &ws->aux_re[power], &ws->aux_im[power]);
+    }
+    memset(ws->scratch_re, 0, (size_t)length * sizeof(double));
+    memset(ws->scratch_im, 0, (size_t)length * sizeof(double));
+    for (int sourceIndex = 0; sourceIndex <= degree; sourceIndex++) {
+        int sourcePower = degree - sourceIndex;
+        double coefficientRe = ws->stack_re[coefficientSlot][sourceIndex];
+        double coefficientIm = ws->stack_im[coefficientSlot][sourceIndex];
+        for (int shiftPower = 0; shiftPower <= sourcePower; shiftPower++) {
+            double termRe = 0.0, termIm = 0.0;
+            c_mul(coefficientRe, coefficientIm,
+                  ws->aux_re[shiftPower], ws->aux_im[shiftPower],
+                  &termRe, &termIm);
+            double choose = coeffTranslationBinomial[sourcePower][shiftPower];
+            int targetIndex = sourceIndex + shiftPower;
+            ws->scratch_re[targetIndex] += choose * termRe;
+            ws->scratch_im[targetIndex] += choose * termIm;
+        }
+    }
+    for (int i = 0; i < length; i++) {
+        if (!isfinite(ws->scratch_re[i]) || !isfinite(ws->scratch_im[i])) {
+            fprintf(stderr, "coeff_program translate_roots produced non-finite coefficient\n");
+            return 1;
+        }
+    }
+    ws->scratch_len = (uint16_t)length;
+    return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, length);
+}
+
 static int evalCoeffProgram(const CoeffProgram *program,
                             double p1r, double p1i, double p2r, double p2i,
                             double t1r, double t1i, double t2r, double t2i,
@@ -6062,6 +6267,8 @@ static int evalCoeffProgram(const CoeffProgram *program,
             case COEFF_OP_SLICE_READ:        rc = coeffProgramSliceReadOp(ctx, tok); break;
             case COEFF_OP_SLICE_WRITE:       rc = coeffProgramSliceWriteOp(ctx, tok); break;
             case COEFF_OP_REDUCE:            rc = coeffProgramReduceOp(ctx, tok); break;
+            case COEFF_OP_PUSH_VECTOR_CONST: rc = coeffProgramPushVectorConstOp(ctx, tok); break;
+            case COEFF_OP_TRANSLATE_ROOTS:   rc = coeffProgramTranslateRootsOp(ws); break;
             default:
                 fprintf(stderr, "unknown coeff_program opcode: %d\n", tok->op);
                 return 1;

@@ -249,6 +249,11 @@ def test_limits_match_c_defines():
     assert defines["COEFF_PROGRAM_MAX_VECTOR_LEN"] == chain.MAX_VECTOR_LEN
     assert defines["COEFF_PROGRAM_MAX_ARGS"] == chain.MAX_ARGS
     assert defines["COEFF_PROGRAM_MAX_SCALAR_EXPRS"] == chain.MAX_SCALAR_EXPRS
+    assert defines["COEFF_PROGRAM_MAX_VECTOR_CONSTANTS"] == chain.MAX_VECTOR_CONSTANTS
+    assert (
+        defines["COEFF_PROGRAM_MAX_VECTOR_CONSTANT_ELEMENTS"]
+        == chain.MAX_VECTOR_CONSTANT_ELEMENTS
+    )
     assert defines["COEFF_PROGRAM_MAX_EXPR_NUMS"] == (
         chain.MAX_SCALAR_EXPR_TOKENS * defines["COEFF_PROGRAM_EXPR_STRIDE"]
     )
@@ -265,6 +270,16 @@ def test_coeff_profile_caps_and_selectors_match_python_and_c():
     assert caps["max_args"] == chain.MAX_ARGS == defines["COEFF_PROGRAM_MAX_ARGS"]
     assert caps["scalar_exprs"] == chain.MAX_SCALAR_EXPRS == defines["COEFF_PROGRAM_MAX_SCALAR_EXPRS"]
     assert caps["expr_tokens"] == chain.MAX_SCALAR_EXPR_TOKENS
+    assert (
+        caps["vector_constants"]
+        == chain.MAX_VECTOR_CONSTANTS
+        == defines["COEFF_PROGRAM_MAX_VECTOR_CONSTANTS"]
+    )
+    assert (
+        caps["vector_constant_elements"]
+        == chain.MAX_VECTOR_CONSTANT_ELEMENTS
+        == defines["COEFF_PROGRAM_MAX_VECTOR_CONSTANT_ELEMENTS"]
+    )
     assert caps["legacy_int_arg"] == chain.MAX_LEGACY_INT_ARG
 
     selectors = profile["selectors"]

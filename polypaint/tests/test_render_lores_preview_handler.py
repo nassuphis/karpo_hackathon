@@ -48,6 +48,75 @@ class _ChunkBody:
 
 
 class TestRenderLoresPreviewHandler(unittest.TestCase):
+    @patch("handler_render_lores_preview._run_json_binary")
+    def test_recompute_vector_constants_use_normal_coeffgen_and_cm(self, mock_binary):
+        import handler_render_lores_preview as mod
+
+        modes = []
+
+        def run_binary(_binary, out_path, spec, **_kwargs):
+            modes.append(spec["mode"])
+            if spec["mode"] == "param_gen":
+                with open(out_path, "wb") as fh:
+                    fh.write(b"\0" * (2 * 2 * 16))
+                return {"mode": "param_gen", "data_bytes": 2 * 2 * 16}
+            if spec["mode"] == "coeffgen_chunked":
+                self.assertTrue(spec["coeff_program"]["vector_constants"])
+                with open(out_path, "wb") as fh:
+                    fh.write(b"\0" * (2 * 2 * 3 * 8))
+                return {
+                    "mode": spec["mode"],
+                    "data_bytes": 2 * 2 * 3 * 8,
+                    "n_coeffs": 3,
+                    "degree": 2,
+                }
+            if spec["mode"] == "solve_cm":
+                with open(out_path, "wb") as fh:
+                    fh.write(b"\0" * (2 * 2 * 2 * 8))
+                return {
+                    "mode": spec["mode"],
+                    "n_t": 2 * 2,
+                    "degree": 2,
+                }
+            raise AssertionError(f"unexpected native mode: {spec['mode']}")
+
+        mock_binary.side_effect = run_binary
+        calc = {
+            "N": 2,
+            "times": 1,
+            "degree": 2,
+            "n_coeffs": 3,
+            "solver": "companion_matrix",
+            "pipeline": {
+                "function": "const",
+                "param_transforms": [],
+                "coeff_transforms": [],
+                "cfpv": [3, 0, 0],
+                "coeff_program": {
+                    "version": 1,
+                    "tokens": [{"op": 48, "n_args": 1, "args": [0]}],
+                    "vector_constants": [
+                        {"length": 3, "values": [1, 0, -3, 0, 2, 0]}
+                    ],
+                },
+            },
+        }
+        try:
+            result = mod._materialize_recomputed_preview(
+                params={}, calc=calc, job_id="j", degree=2, n_coeffs=3, view_n=2
+            )
+        finally:
+            for path in (mod.TMP_PARAMS, mod.TMP_COEFFS, mod.TMP_ROOTS):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+        self.assertEqual(modes, ["param_gen", "coeffgen_chunked", "solve_cm"])
+        self.assertEqual(result["solver_mode"], "companion_matrix")
+        self.assertNotIn("direct_coeff_solve", result)
+        self.assertNotIn("coeff_precision", result)
+
     def test_preview_palette_grid_requires_complete_pass_grid(self):
         from handler_render_lores_preview import _preview_palette_grid_n
 

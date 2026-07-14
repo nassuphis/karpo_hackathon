@@ -510,9 +510,27 @@ window._mergedOpcodeRegistry = {
       "profile": "param",
       "source_symbol": "PARAM_OP_STORE_REG",
       "symbol": "MERGED_OP_PARAM_STORE_REG"
+    },
+    {
+      "id": 48,
+      "name": "push_vector_const",
+      "profile": "coeff",
+      "source_symbol": "COEFF_OP_PUSH_VECTOR_CONST",
+      "symbol": "MERGED_OP_COEFF_PUSH_VECTOR_CONST"
+    },
+    {
+      "id": 49,
+      "name": "translate_roots",
+      "profile": "coeff",
+      "source_symbol": "COEFF_OP_TRANSLATE_ROOTS",
+      "symbol": "MERGED_OP_COEFF_TRANSLATE_ROOTS"
     }
   ],
   "ranges": {
+    "coeff_extensions": [
+      48,
+      49
+    ],
     "coeff_reference": [
       1,
       30
@@ -522,7 +540,7 @@ window._mergedOpcodeRegistry = {
       47
     ],
     "reserved": [
-      48,
+      50,
       63
     ],
     "solve_score": [

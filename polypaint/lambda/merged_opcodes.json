@@ -9,7 +9,8 @@
   "ranges": {
     "coeff_reference": [1, 30],
     "param_specific": [31, 47],
-    "reserved": [48, 63],
+    "coeff_extensions": [48, 49],
+    "reserved": [50, 63],
     "solve_score": [64, 95]
   },
   "opcodes": [
@@ -85,6 +86,8 @@
     {"id": 91, "symbol": "MERGED_OP_SCORE_EMIT_NONE", "name": "emit_none", "profile": "solve_score", "source_symbol": "SOLVE_SCORE_OP_EMIT_NONE"},
     {"id": 92, "symbol": "MERGED_OP_SCORE_FLUSH", "name": "flush", "profile": "solve_score", "source_symbol": "SOLVE_SCORE_OP_FLUSH"},
     {"id": 43, "symbol": "MERGED_OP_PARAM_PUSH_REG", "name": "push_reg", "profile": "param", "source_symbol": "PARAM_OP_PUSH_REG"},
-    {"id": 44, "symbol": "MERGED_OP_PARAM_STORE_REG", "name": "store_reg", "profile": "param", "source_symbol": "PARAM_OP_STORE_REG"}
+    {"id": 44, "symbol": "MERGED_OP_PARAM_STORE_REG", "name": "store_reg", "profile": "param", "source_symbol": "PARAM_OP_STORE_REG"},
+    {"id": 48, "symbol": "MERGED_OP_COEFF_PUSH_VECTOR_CONST", "name": "push_vector_const", "profile": "coeff", "source_symbol": "COEFF_OP_PUSH_VECTOR_CONST"},
+    {"id": 49, "symbol": "MERGED_OP_COEFF_TRANSLATE_ROOTS", "name": "translate_roots", "profile": "coeff", "source_symbol": "COEFF_OP_TRANSLATE_ROOTS"}
   ]
 }

@@ -221,6 +221,8 @@ def handle_build_plan(params):
             "stack_max": compiled_coeff_program["stack_max"],
             "token_count": compiled_coeff_program["token_count"],
             "scalar_expr_count": compiled_coeff_program["scalar_expr_count"],
+            "vector_constant_count": compiled_coeff_program["vector_constant_count"],
+            "vector_constant_elements": compiled_coeff_program["vector_constant_elements"],
             "uses_legacy_chain_equivalent": compiled_coeff_program["uses_legacy_chain_equivalent"],
         }
         coeff_transforms = []

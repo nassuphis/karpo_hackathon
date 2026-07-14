@@ -174,6 +174,43 @@ class TestComputeChunkFused(unittest.TestCase):
     @patch("handler_compute_chunk_fused.RootsStreamUploader", _FakeStreamer)
     @patch("handler_compute_chunk_fused.os.path.getsize")
     @patch("handler_compute_chunk_fused.report_status")
+    @patch("handler_compute_chunk_fused._upload_file")
+    @patch("handler_compute_chunk_fused._s3_size_matches")
+    @patch("handler_compute_chunk_fused._run_solve_local")
+    @patch("handler_compute_chunk_fused._run_coeffgen_local")
+    @patch("handler_compute_chunk_fused._run_param_gen_local")
+    def test_vector_constants_use_normal_coeffgen_and_solver(
+            self, mock_param, mock_coeff, mock_solve, mock_match,
+            mock_upload, mock_report, mock_getsize):
+        import handler_compute_chunk_fused as mod
+
+        mock_match.return_value = False
+        mock_param.return_value = {"elapsed_us": 111, "threads": 4}
+        mock_coeff.return_value = {"threads": 4, "elapsed_us": 222}
+        mock_solve.return_value = {"n_t": 10, "degree": 7, "avg_iterations": 0}
+        mock_getsize.side_effect = [160, 560, 560]
+        coeff_program = {
+            "vector_constants": [{"length": 1, "values": [1, 0]}]
+        }
+        params = self._base_params(chunk_idx=8)
+        params.update({
+            "solver_mode": "companion_matrix",
+            "coeff_program": coeff_program,
+        })
+
+        body = json.loads(mod.handle_fused_chunk(params)["body"])
+
+        self.assertEqual(mock_coeff.call_args.kwargs["coeff_program"], coeff_program)
+        self.assertEqual(mock_solve.call_args.kwargs["solver_mode"], "companion_matrix")
+        self.assertEqual(mock_match.call_count, 2)
+        self.assertEqual(body["reused_coeffs"], 0)
+        self.assertNotIn("direct_coeff_solve", body)
+        self.assertNotIn("coeff_precision", body)
+        self.assertTrue(_FakeStreamer.instances[-1].finished)
+
+    @patch("handler_compute_chunk_fused.RootsStreamUploader", _FakeStreamer)
+    @patch("handler_compute_chunk_fused.os.path.getsize")
+    @patch("handler_compute_chunk_fused.report_status")
     @patch("handler_compute_chunk_fused._download_file")
     @patch("handler_compute_chunk_fused._upload_file")
     @patch("handler_compute_chunk_fused._s3_size_matches")

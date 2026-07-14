@@ -43,9 +43,11 @@ def test_merged_opcode_registry_ranges_and_symbols_are_unique():
     assert len(symbols) == len(set(symbols))
     assert payload["ranges"]["coeff_reference"] == [1, 30]
     assert payload["ranges"]["param_specific"] == [31, 47]
-    assert payload["ranges"]["reserved"] == [48, 63]
+    assert payload["ranges"]["coeff_extensions"] == [48, 49]
+    assert payload["ranges"]["reserved"] == [50, 63]
     assert payload["ranges"]["solve_score"] == [64, 95]
-    assert set(range(45, 64)).isdisjoint(ids)  # 43/44 = param registers
+    assert set(range(45, 48)).isdisjoint(ids)  # 43/44 = param registers
+    assert set(range(50, 64)).isdisjoint(ids)  # 48/49 = coeff extensions
     assert set(range(93, 96)).isdisjoint(ids)
 
 

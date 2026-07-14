@@ -18,6 +18,7 @@ from coeff_program_chain import (
     canonical_unary_op_name,
     expr_value_if_static,
     EXPR_ADD,
+    EXPR_BIMODAL,
     EXPR_CF_AT,
     EXPR_CF_AT_DYN,
     EXPR_DIV,
@@ -338,6 +339,10 @@ def _typed_lower_scalar(text):
         # constants cost one token and fingerprint identically to chip-
         # authored ones.
         return [["_typed_push_scalar", _format_scalar_literal(static_value)]]
+    if any(int(token.get("op") or 0) == EXPR_BIMODAL for token in expr.tokens):
+        # bimodal is a scalar-expression VM primitive, not a vector binary
+        # operation. Keep the expression intact in the scalar-expression pool.
+        return [["_typed_push_scalar", _canonical_expr(text)]]
     chain = []
     for token in expr.tokens:
         op = int(token.get("op") or 0)
@@ -556,6 +561,45 @@ def _typed_lower_reduce(name, args):
     return chain, "scalar"
 
 
+def _typed_lower_vector_literal(args):
+    if not args:
+        raise CoeffProgramSourceError("vector_literal requires at least one coefficient")
+    if len(args) > MAX_VECTOR_LEN:
+        raise CoeffProgramSourceError(
+            f"vector_literal has {len(args)} coefficients; max is {MAX_VECTOR_LEN}"
+        )
+    canonical = []
+    for idx, arg in enumerate(args):
+        text = _canonical_expr(arg)
+        try:
+            value = expr_value_if_static(ExpressionParser(text).parse())
+        except Exception as exc:
+            raise CoeffProgramSourceError(
+                f"vector_literal coefficient {idx}: {exc}"
+            ) from None
+        if value is None:
+            raise CoeffProgramSourceError(
+                f"vector_literal coefficient {idx} must be a static expression"
+            )
+        canonical.append(_format_scalar_literal(value))
+    return [["vector_literal", *canonical]], "vector"
+
+
+def _typed_lower_translate_roots(args):
+    if len(args) != 2:
+        raise CoeffProgramSourceError(
+            "translate_roots requires coefficients and a complex delta"
+        )
+    chain, value_type = _typed_lower_value(args[0])
+    if value_type != "vector":
+        raise CoeffProgramSourceError(
+            "translate_roots first argument must be a coefficient vector"
+        )
+    chain.extend(_typed_lower_scalar(args[1]))
+    chain.append(["translate_roots"])
+    return chain, "vector"
+
+
 def _typed_lower_value(text):
     raw = str(text or "").strip()
     if not raw:
@@ -569,6 +613,10 @@ def _typed_lower_value(text):
     call = _parse_call(raw)
     if call:
         name, args = call
+        if name == "vector_literal":
+            return _typed_lower_vector_literal(args)
+        if name == "translate_roots":
+            return _typed_lower_translate_roots(args)
         if name in _VECTOR_FILL_NAMES:
             return _typed_lower_fill(args)
         if name == "push_scalar":
@@ -755,6 +803,12 @@ def _lower_call(name, args, *, target="push"):
         # Not for hand-authoring, but emitted by chain->source serializers; pass
         # the row through verbatim and let the chain compiler validate operands.
         return [[name, *[str(arg) for arg in args]]]
+    if name == "vector_literal":
+        chain, value_type = _typed_lower_vector_literal(args)
+        return _append_typed_target(chain, value_type, target=target)
+    if name == "translate_roots":
+        chain, value_type = _typed_lower_translate_roots(args)
+        return _append_typed_target(chain, value_type, target=target)
     if name in _STACK_ALIASES:
         # Accept the call forms emit()/dup()/swap()/drop()/flush() alongside
         # the bare statements; every other zero-arg construct allows both.
@@ -998,6 +1052,7 @@ _LOCALS_RESERVED_EXTRA = frozenset({
     "range", "arange", "linspace",
     "roll", "rolr", "argsort", "littlewood", "blend", "andy",
     "scan", "slice", "poke_slice", "reduce", "sum", "prod",
+    "vector_literal", "translate_roots", "bimodal",
     "window", "step", "prev", "prev2", "k", "select", "i", "j",
     "pi", "pi2", "pi2i", "tau", "tau_i",
     "p1", "p2", "t1", "t2", "poly_len",
@@ -1433,6 +1488,19 @@ def coeff_source_text_from_chain(chain):
             # following _typed_set_poly can render `poly = blend(t)`.
             flush_pending()
             push_pending("vector", _source_call("blend", [t[1]]))
+        elif lname == "vector_literal" and args:
+            push_pending("vector", _source_call("vector_literal", args))
+        elif lname == "translate_roots" and not args:
+            delta = pop_pending("scalar")
+            coefficients = pop_pending("vector")
+            if not delta or not coefficients:
+                flush_pending()
+                lines.append("translate_roots()")
+                continue
+            push_pending(
+                "vector",
+                _source_call("translate_roots", [coefficients[1], delta[1]]),
+            )
         elif lname == "swap" and not args and len(pending) >= 2:
             pending[-1], pending[-2] = pending[-2], pending[-1]
         elif lname in {"cf", "poly"} and not args:

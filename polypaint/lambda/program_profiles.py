@@ -54,6 +54,8 @@ PROGRAM_PROFILES = {'profiles': {'coeff': {'output_contract': {'fixed_output_len
                                        'scalar_exprs': 64,
                                        'total_stack': 64,
                                        'vector_capable_stack': 64,
+                                       'vector_constant_elements': 1024,
+                                       'vector_constants': 8,
                                        'vector_len': 256}},
               'param': {'output_contract': {'default_initialization': True,
                                             'kind': 'scalar_registers'},

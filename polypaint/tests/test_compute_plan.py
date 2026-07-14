@@ -12,6 +12,41 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 class TestComputePlan(unittest.TestCase):
 
+    def test_vector_constants_use_normal_solver_contract(self):
+        import handler_compute_plan as mod
+
+        base = {
+            "job_id": "compute_j",
+            "run_id": "run_vector_constants",
+            "task_id": "compute_run_companion_matrix_run_vector_constants",
+            "params": {
+                "pipeline_mode": "program",
+                "N": 20,
+                "times": 1,
+                "n_chunks": 2,
+                "function": "const",
+                "param_transforms": [],
+                "coeff_transforms": [],
+                "coeff_program_source_text": (
+                    "poly = translate_roots(vector_literal(1, -3, 2), 0.5)\n"
+                    "emit"
+                ),
+                "cfpv": [3, 0, 0],
+            },
+        }
+        for solver_mode in ("aberth_mt", "companion_matrix"):
+            with self.subTest(solver_mode=solver_mode):
+                request = json.loads(json.dumps(base))
+                request["params"]["solver_mode"] = solver_mode
+                plan = json.loads(mod.handle_build_plan(request)["body"])
+                self.assertEqual(plan["solve"]["mode"], solver_mode)
+                self.assertEqual(
+                    plan["pipeline"]["coeff_program"]["vector_constant_count"],
+                    1,
+                )
+                self.assertNotIn("direct_coeff_solve", plan["pipeline"])
+                self.assertNotIn("direct_coeff_solve", plan["compute"])
+
     def test_build_plan_chunk_items_include_solve_fields(self):
         import handler_compute_plan as mod
 

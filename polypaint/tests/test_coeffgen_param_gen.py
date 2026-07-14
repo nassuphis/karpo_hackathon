@@ -253,6 +253,9 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
 
         mock_open.side_effect = _open_side_effect
 
+        coeff_program = {
+            "vector_constants": [{"length": 3, "values": [1, 0, -3, 0, 2, 0]}]
+        }
         result = mod.handle_coeffgen_chunked({
             "job_id": "compute_j",
             "chunk_idx": 2,
@@ -265,6 +268,7 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
             "function": "g1",
             "N": 100,
             "coeff_transforms": [],
+            "coeff_program": coeff_program,
             "n_threads": 5,
             "s3_key": "renders/compute_j/coeffs_0002.bin",
         })
@@ -278,6 +282,8 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
         self.assertEqual(spec["source_step_start"], 0)
         self.assertEqual(spec["source_n1"], 100)
         self.assertEqual(spec["source_n2"], 100)
+        self.assertEqual(spec["mode"], "coeffgen_chunked")
+        self.assertEqual(spec["coeff_program"], coeff_program)
         started_call = mock_report.call_args_list[0]
         self.assertEqual(started_call.kwargs["result_data"]["threads"], 5)
         done_call = mock_report.call_args_list[-1]

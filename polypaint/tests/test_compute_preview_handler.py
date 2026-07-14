@@ -35,6 +35,70 @@ def _roots_bytes(n_steps, degree):
 class TestComputePreviewHandler(unittest.TestCase):
 
     @patch("handler_compute_preview.tmp_space_stats")
+    @patch("handler_compute_preview._run_json_binary")
+    @patch("handler_compute_preview.compute_viewport_from_bin")
+    def test_vector_constants_use_normal_coeffgen_and_selected_solver(
+            self, mock_viewport, mock_binary, mock_tmp_stats):
+        import handler_compute_preview as mod
+
+        mock_tmp_stats.return_value = {
+            "path": "/tmp",
+            "free_bytes": 8 * 1024 * 1024 * 1024,
+            "total_bytes": 10 * 1024 * 1024 * 1024,
+        }
+        mock_viewport.return_value = {
+            "center_re": 0.0,
+            "center_im": 0.0,
+            "scale": 4096.0,
+            "n_roots": 32,
+            "q_re": [-1.0, 1.0],
+            "q_im": [-1.0, 1.0],
+        }
+        for solver_mode, solve_mode in (
+            ("aberth_mt", "solve_mt"),
+            ("companion_matrix", "solve_cm"),
+        ):
+            with self.subTest(solver_mode=solver_mode):
+                modes = []
+
+                def run_binary(_binary, out_path, spec, **_kwargs):
+                    modes.append(spec["mode"])
+                    if spec["mode"] == "coeffgen":
+                        self.assertTrue(spec["coeff_program"]["vector_constants"])
+                        with open(out_path, "wb") as fh:
+                            fh.write(b"\0" * (8 * 8 * 3 * 8))
+                        return {
+                            "mode": "coeffgen",
+                            "data_bytes": 8 * 8 * 3 * 8,
+                            "n_coeffs": 3,
+                            "degree": 2,
+                        }
+                    if spec["mode"] == solve_mode:
+                        with open(out_path, "wb") as fh:
+                            fh.write(_roots_bytes(8 * 8, 2))
+                        return {"mode": solve_mode, "n_t": 8 * 8, "degree": 2}
+                    raise AssertionError(f"unexpected native mode: {spec['mode']}")
+
+                mock_binary.side_effect = run_binary
+                result = mod.handler({"body": json.dumps(_event(
+                    solver_mode=solver_mode,
+                    N_preview=8,
+                    preview_size=64,
+                    function="const",
+                    cfpv=[3, 0, 0],
+                    coeff_program_source_text=(
+                        "poly = translate_roots(vector_literal(1, -3, 2), 0.5)\n"
+                        "emit"
+                    ),
+                ))}, None)
+                body = json.loads(result["body"])
+
+                self.assertEqual(result["statusCode"], 200, body)
+                self.assertEqual(modes, ["coeffgen", solve_mode])
+                self.assertNotIn("direct_coeff_solve", body)
+                self.assertNotIn("coeff_precision", body)
+
+    @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")
     @patch("handler_compute_preview.compute_viewport_from_bin")
     def test_compute_preview_success_cm_returns_inline_png(self, mock_viewport, mock_run, mock_tmp_stats):

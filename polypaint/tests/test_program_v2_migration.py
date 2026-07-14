@@ -363,6 +363,32 @@ class TestProgramV2Migration(unittest.TestCase):
         for name in ("translate_root_from_old", "_root_transform_items", "_root_token_from_item"):
             self.assertFalse(hasattr(translate, name), name)
 
+    def test_translate_coeff_program_preserves_vector_constants(self):
+        from merged_opcodes import (
+            MERGED_OP_COEFF_PUSH_VECTOR_CONST,
+            MERGED_OP_COEFF_TRANSLATE_ROOTS,
+        )
+        from program_v2_translate import translate_coeff_from_old
+
+        migrated = translate_coeff_from_old({
+            "source_text": (
+                "poly = translate_roots(vector_literal(1, -3, 2), 0.5)\n"
+                "emit"
+            )
+        })
+        self.assertEqual(migrated["vector_constant_count"], 1)
+        self.assertEqual(migrated["vector_constant_elements"], 3)
+        self.assertEqual(migrated["vector_constants"][0]["length"], 3)
+        self.assertIn(
+            MERGED_OP_COEFF_PUSH_VECTOR_CONST,
+            [token["op"] for token in migrated["tokens"]],
+        )
+        self.assertIn(
+            MERGED_OP_COEFF_TRANSLATE_ROOTS,
+            [token["op"] for token in migrated["tokens"]],
+        )
+        self.assertIn('"vector_constants"', migrated["execution_spec"])
+
 
 if __name__ == "__main__":
     unittest.main()

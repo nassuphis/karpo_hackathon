@@ -164,7 +164,10 @@ class TestCoeffSourceEquivalence(unittest.TestCase):
             ["emit"],
         ]
         source = current.coeff_source_text_from_chain(chain)
-        self.assertIn("exp_affine(poly, 0.0+1.0j, p2, 0.25)", source)
+        # imaginary-only statics render as the single-token '1.0i' spelling:
+        # '0.0+1.0j' re-lowers as an addition and changes the token stream
+        # (giga_2902 review finding 1)
+        self.assertIn("exp_affine(poly, 1.0i, p2, 0.25)", source)
         compiled = current.compile_coeff_program_source(source, strict=True)
         direct = current.compile_coeff_program_source(
             "poly = exp_affine(poly, 0.0+1.0j, p2, 0.25)\nemit",

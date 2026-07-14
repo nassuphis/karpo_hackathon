@@ -575,6 +575,122 @@ def test_ae_cm_solvers():
     print("=== AE/AE-MT/CM solver tests PASSED ===")
 
 
+# ── Coeff Program vector-constant / translate_roots / bimodal opcodes ────
+
+def test_coeff_vector_constant_opcodes_runtime():
+    """giga_2902 review finding 4: opcodes 48/49 and the bimodal scalar were
+    only exercised by the mac-clang sweep_test build; this runs them on the
+    DEPLOYED musl/ARM64 sweep_coeffgen (the CR31 stdint.h seam). Payloads are
+    exact compiled captures; sources are noted beside each."""
+    import struct
+
+    print("\n--- Coeff Program vector-constant opcode regression ---")
+
+    # poly = translate_roots(vector_literal(1, -3, 2), 0.5)\nemit
+    translate_payload = {
+        "version": 1,
+        "fingerprint": "228f40e9296c68f2d37be0066346e2b97f33cc04",
+        "tokens": [
+            {"op": 48, "n_args": 1, "args": [0.0]},
+            {"op": 21, "n_args": 1, "args": [0.5], "args_im": [0.0], "expr_refs": [-1]},
+            {"op": 49},
+            {"op": 26},
+            {"op": 3},
+        ],
+        "stack_max": 2,
+        "scalar_exprs": [],
+        "vector_constants": [{"length": 3, "values": [1.0, 0.0, -3.0, 0.0, 2.0, 0.0]}],
+    }
+    out_path = "/tmp/coeff_vector_const_out.bin"
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", out_path],
+        input=json.dumps({
+            "mode": "coeffgen",
+            "function": "const",
+            "cfpv": [3, 0, 0],
+            "n1": 1, "n2": 1,
+            "coeff_transforms": [],
+            "coeff_program": translate_payload,
+        }),
+        capture_output=True, text=True, timeout=30,
+    )
+    assert r.returncode == 0, "translate_roots coeffgen FAILED: " + r.stderr[:300]
+    with open(out_path, "rb") as fh:
+        values = struct.unpack("<6f", fh.read())
+    # Q(z) = P(z-0.5) for P = z^2 - 3z + 2 (roots 1,2 -> 1.5,2.5): [1, -4, 3.75]
+    assert values == (1.0, 0.0, -4.0, 0.0, 3.75, 0.0), values
+    print("  translate_roots(vector_literal(1,-3,2), 0.5) -> [1,-4,3.75]: OK")
+
+    # vector_literal(0)\nvector_literal(10)\npoly = blend(bimodal(t2, 0.7))\nemit
+    bimodal_payload = {
+        "version": 1,
+        "fingerprint": "882032cd1ed7f4f2e926043fa2c23945b5826325",
+        "tokens": [
+            {"op": 48, "n_args": 1, "args": [0.0]},
+            {"op": 48, "n_args": 1, "args": [1.0]},
+            {"op": 21, "n_args": 1, "args": [0.0], "args_im": [0.0], "expr_refs": [0]},
+            {"op": 30},
+            {"op": 26},
+            {"op": 3},
+        ],
+        "stack_max": 3,
+        "scalar_exprs": [[17.0, 0.0, 0.0, 1.0, 0.7, 0.0, 36.0, 0.0, 0.0]],
+        "vector_constants": [
+            {"length": 1, "values": [0.0, 0.0]},
+            {"length": 1, "values": [10.0, 0.0]},
+        ],
+    }
+    bimodal_path = "/tmp/coeff_bimodal_out.bin"
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", bimodal_path],
+        input=json.dumps({
+            "mode": "coeffgen",
+            "function": "const",
+            "cfpv": [1, 0, 0],
+            "n1": 1, "n2": 3,
+            "coeff_transforms": [],
+            "coeff_program": bimodal_payload,
+        }),
+        capture_output=True, text=True, timeout=30,
+    )
+    assert r.returncode == 0, "bimodal coeffgen FAILED: " + r.stderr[:300]
+    with open(bimodal_path, "rb") as fh:
+        rows = struct.unpack("<6f", fh.read())
+    exponent = 1.0 / (1.0 - 0.7)
+    expected = [
+        0.0,
+        10.0 * (0.5 * (2.0 / 3.0) ** exponent),
+        10.0 * (1.0 - 0.5 * (2.0 / 3.0) ** exponent),
+    ]
+    got = [rows[0], rows[2], rows[4]]
+    for actual, wanted in zip(got, expected):
+        assert abs(actual - wanted) <= 2e-6, (got, expected)
+    print("  blend(bimodal(t2, 0.7)) over two pool vectors: OK")
+
+    # fail-closed native validation: out-of-range pool index must reject
+    bad = dict(translate_payload)
+    bad["tokens"] = [{"op": 48, "n_args": 1, "args": [7.0]}]
+    bad["stack_max"] = 1
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", "/tmp/coeff_bad_pool.bin"],
+        input=json.dumps({
+            "mode": "coeffgen",
+            "function": "const",
+            "cfpv": [1, 0, 0],
+            "n1": 1, "n2": 1,
+            "coeff_transforms": [],
+            "coeff_program": bad,
+        }),
+        capture_output=True, text=True, timeout=30,
+    )
+    assert r.returncode != 0, "out-of-range pool index was accepted"
+    assert "invalid pool index" in r.stderr, r.stderr[:300]
+    print("  out-of-range pool index rejected: OK")
+
+    cleanup(out_path, bimodal_path, "/tmp/coeff_bad_pool.bin")
+    print("=== Coeff Program vector-constant opcode tests PASSED ===")
+
+
 # ── CFPV Coeffgen Tests ──────────────────────────────────────────────────
 
 def test_cfpv_coeffgen():
@@ -3595,6 +3711,7 @@ if __name__ == "__main__":
     print("--- Generating test fixtures ---")
     test_sweep_mt_stream_flush_byte_identity()
     test_ae_cm_solvers()
+    test_coeff_vector_constant_opcodes_runtime()
     test_cfpv_coeffgen()
     test_param_gen_threaded_runtime()
     test_coeffgen_chunked_threaded_runtime()

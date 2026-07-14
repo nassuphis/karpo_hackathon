@@ -222,21 +222,37 @@ class TestCoeffProgramChain(unittest.TestCase):
         from coeff_program_chain import compile_coeff_program_chain
         from coeff_program_source import coeff_source_text_from_chain, compile_coeff_program_source
 
+        # A MIXED complex static has no single-token source spelling: the
+        # pretty '1.0+2.0j' re-lowers as an addition (push, push, add), so
+        # the serializer must detect the token-stream change and fall back.
         chain = [
             ["_typed_push_scalar", "29.0+0.0j"],
             ["_typed_push_scalar", "1.0+0.0j"],
             ["_typed_push_scalar", "p2"],
             ["_typed_unary", "abs"],
             ["_typed_binary", "multiply"],
-            ["_typed_push_scalar", "0.0+1.0j"],
+            ["_typed_push_scalar", "1.0+2.0j"],
             ["_typed_binary", "multiply"],
             ["_typed_poke_poly"],
         ]
         source = coeff_source_text_from_chain(chain)
-        self.assertIn("_typed_push_scalar(0.0+1.0j)", source)
+        self.assertIn("_typed_push_scalar(1.0+2.0j)", source)
         self.assertEqual(
             compile_coeff_program_source(source)["fingerprint"],
             compile_coeff_program_chain(chain)["fingerprint"],
+        )
+
+        # An imaginary-only static DOES have a single-token spelling ('2.0i'),
+        # so the same shape stays on the pretty path with no fallback
+        # (giga_2902 review finding 1).
+        imag_chain = [row[:] for row in chain]
+        imag_chain[5] = ["_typed_push_scalar", "0.0+2.0j"]
+        imag_source = coeff_source_text_from_chain(imag_chain)
+        self.assertNotIn("_typed_push_scalar(", imag_source)
+        self.assertIn("2.0i", imag_source)
+        self.assertEqual(
+            compile_coeff_program_source(imag_source)["fingerprint"],
+            compile_coeff_program_chain(imag_chain)["fingerprint"],
         )
 
     def test_typed_op_passthrough_covers_chain_compiler(self):

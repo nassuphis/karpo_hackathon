@@ -165,6 +165,48 @@ class TestGiga2902CoeffProgram(unittest.TestCase):
         self.assertNotIn("vectors=", compiled["execution_spec"])
         self.assertEqual(compiled["vector_constants"], [])
 
+    def test_canonical_program_round_trips_chain_to_source(self):
+        """Review finding 1: the CANONICAL saved program (not a reduced
+        spelling) must decompile to fingerprint-preserving source with no
+        readable-candidate fallback. It originally failed twice: imaginary
+        statics rendered as '0.0+1.0j' (re-lowers as an addition) and
+        pop-first-arg vectors were collapsed into nested calls (drops the
+        _typed_push_vector('pop') token)."""
+        import warnings
+
+        from coeff_program_source import (
+            coeff_source_text_from_chain,
+            compile_coeff_program_source,
+        )
+
+        generator = _load_generator()
+        cases = {
+            "canonical": generator.build_source_text(),
+            "pop-first-arg general form": (
+                "vector_literal(1, -3, 2)\n"
+                "poly = translate_roots(pop, 0.1*exp(pi2i*t1))\n"
+                "poly\n"
+                "vector_literal(1, 2, 0)\n"
+                "poly = translate_roots(pop, 0.2*exp(pi2i*(t1+0.25)))\n"
+                "poly\n"
+                "poly = blend(bimodal(t2, 0.7))\n"
+                "emit"
+            ),
+        }
+        for label, source in cases.items():
+            compiled = compile_coeff_program_source(source)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                regenerated = coeff_source_text_from_chain(compiled["source_chain"])
+            self.assertEqual(
+                [str(w.message) for w in caught], [], f"{label}: fallback warned"
+            )
+            self.assertEqual(
+                compile_coeff_program_source(regenerated)["fingerprint"],
+                compiled["fingerprint"],
+                f"{label}: chain->source round trip changed the fingerprint",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

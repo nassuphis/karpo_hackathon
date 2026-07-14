@@ -1317,6 +1317,13 @@ def _source_scalar_text(text):
     if static_value.imag == 0:
         real_value = 0.0 if static_value.real == 0 else float(static_value.real)
         return f"{real_value!r}"
+    if static_value.real == 0:
+        # Emit the single-token imaginary spelling: '1.0i' re-lowers to ONE
+        # typed push, while the general '0.0+1.0j' form re-lowers as an
+        # ADDITION (push, push, add) and silently changes the compiled token
+        # stream — the giga_2902 canonical program failed its chain->source
+        # fingerprint round trip exactly here.
+        return f"{float(static_value.imag)!r}i"
     return _format_scalar_literal(static_value)
 
 
@@ -1400,7 +1407,14 @@ def coeff_source_text_from_chain(chain):
         if src == "tos":
             src = "peek"
         if src == "pop" and pending:
-            return pop_pending("vector")
+            # Preserve the explicit pop chip: collapsing the pending vector
+            # into a nested argument drops the _typed_push_vector('pop')
+            # token on recompile and changes the compiled stream/fingerprint
+            # (the giga_2902 review's pop-first-arg finding — same lesson as
+            # peek below). Materialize the pending value as its own
+            # statement instead.
+            flush_pending()
+            return ("vector", "pop")
         if src == "peek":
             # Preserve the VM source selector. Replacing peek with the known
             # pending vector (e.g. cf) is semantically equivalent in many

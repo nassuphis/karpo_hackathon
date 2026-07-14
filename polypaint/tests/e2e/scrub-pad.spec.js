@@ -462,3 +462,77 @@ test.describe('Scrub pad 2D (complex literals)', () => {
     expect(parseInt(reopened, 10)).toBeGreaterThan(150);
   });
 });
+
+test.describe('Root pad (roots_literal geometry)', () => {
+  const CALL = 'roots_literal(\n    1,\n    2i,\n    -7.5+2j\n)';
+  const SRC = CALL + '\npoly = blend(0.5)\nemit';
+
+  test('dblclick the identifier opens the canvas pad and lists the roots', async ({ page }) => {
+    const opened = await openPadOnCoeffLiteral(page, SRC, 'roots_literal');
+    expect(opened.padVisible).toBe(true);
+    await expect(page.locator('#program-scrub-canvas')).toBeVisible();
+    await expect(page.locator('#program-scrub-value')).toHaveText('3 roots');
+    await expect(page.locator('#program-scrub-snap')).toBeChecked();
+  });
+
+  test('dragging a point snaps to the 0.5 grid and rewrites the whole call in place', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, SRC, 'roots_literal');
+    const after = await page.evaluate(() => {
+      const st = _scrubPadState;
+      const canvas = document.getElementById('program-scrub-canvas');
+      const rect = canvas.getBoundingClientRect();
+      const hit = {
+        clientX: rect.left + st.plane.toX(st.roots[0].re),
+        clientY: rect.top + st.plane.toY(st.roots[0].im),
+        preventDefault() {},
+      };
+      _rootPadDragStart(hit);
+      _rootPadDragMove({
+        clientX: rect.left + st.plane.toX(2.1),
+        clientY: rect.top + st.plane.toY(0.43),
+      });
+      document.dispatchEvent(new PointerEvent('pointerup'));
+      return {
+        text: document.getElementById('cp-source-text').value,
+        readout: document.getElementById('program-scrub-value').textContent,
+        active: st.activeRoot,
+        root0: { ...st.roots[0] },
+      };
+    });
+    expect(after.active).toBe(0);
+    expect(after.root0).toEqual({ re: 2, im: 0.5 });
+    expect(after.text.startsWith('roots_literal(\n    2+0.5i,\n    2i,\n    -7.5+2i\n)')).toBe(true);
+    expect(after.text.endsWith('poly = blend(0.5)\nemit')).toBe(true);
+    expect(after.readout).toBe('3 roots · 2+0.5i');
+  });
+
+  test('expression args refuse the pad; help opens instead', async ({ page }) => {
+    const opened = await openPadOnCoeffLiteral(page, 'roots_literal(1, exp(1))\nemit', 'roots_literal');
+    expect(opened.padVisible).toBe(false);
+    const helpVisible = await page.evaluate(() =>
+      document.getElementById('program-help-inspector').style.display === 'block');
+    expect(helpVisible).toBe(true);
+  });
+
+  test('Escape reverts the entire call after a drag', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, SRC, 'roots_literal');
+    await page.evaluate(() => {
+      const st = _scrubPadState;
+      const canvas = document.getElementById('program-scrub-canvas');
+      const rect = canvas.getBoundingClientRect();
+      _rootPadDragStart({
+        clientX: rect.left + st.plane.toX(st.roots[1].re),
+        clientY: rect.top + st.plane.toY(st.roots[1].im),
+        preventDefault() {},
+      });
+      _rootPadDragMove({
+        clientX: rect.left + st.plane.toX(-3),
+        clientY: rect.top + st.plane.toY(-1),
+      });
+      document.dispatchEvent(new PointerEvent('pointerup'));
+    });
+    await page.keyboard.press('Escape');
+    const text = await page.evaluate(() => document.getElementById('cp-source-text').value);
+    expect(text).toBe(SRC);
+  });
+});

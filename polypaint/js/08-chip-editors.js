@@ -448,7 +448,7 @@ const _coeffProgramCheatSections = [
             { label: 'push_vec(n,value)', snippet: 'push_vec(poly_len, p1)\nemit', title: 'Push a constant vector with explicit length.' },
             { label: 'fill', snippet: 'fill(poly_len, 0)\nemit', title: 'Alias for push_vec/fill vector construction.' },
             { label: 'vector_literal', snippet: 'poly = vector_literal(1, -3, 2)\nemit', title: 'Compile a static leading-first coefficient vector once and load it from the program constant pool.' },
-            { label: 'roots_literal', snippet: 'poly = roots_literal(1, 2)\nemit', title: 'Expand the monic polynomial with these static roots once at compile time; the pool stores the resulting coefficients.' },
+            { label: 'roots_literal', snippet: 'poly = roots_literal(1, 2)\nemit', title: 'Expand the monic polynomial with these static roots once at compile time; the pool stores the resulting coefficients. Double-click the name to drag the roots on the root pad.' },
             { label: 'translate_roots', snippet: 'poly = translate_roots(poly, 0.1*exp(pi2i*t1))\nemit', title: 'Shift every root by delta without solving for roots: Q(z) = P(z-delta).' },
             { label: 'bimodal', snippet: 'push_scalar(bimodal(t2, 0.7))', title: 'Symmetric bimodal remapping of u in [0,1], shaped by a in [0,1).' },
             { label: 'push_scalar', snippet: 'push_scalar(p1+p2)', title: 'Push one scalar onto the typed stack.' },
@@ -909,7 +909,7 @@ function _programHelpBuildCoeffRegistry() {
             params: [{ name: 'c0..cn', title: 'One or more finite static complex expressions, leading coefficient first.' }],
             effect: '(-- vector)',
         }),
-        _programHelpItem('roots_literal', 'roots_literal(r0, r1, ...)', 'Expand the monic polynomial whose roots are these static expressions ONCE at compile time (exact rational arithmetic) into the same constant pool as vector_literal — the program source shows the root layout instead of expanded coefficients.', {
+        _programHelpItem('roots_literal', 'roots_literal(r0, r1, ...)', 'Expand the monic polynomial whose roots are these static expressions ONCE at compile time (exact rational arithmetic) into the same constant pool as vector_literal — the program source shows the root layout instead of expanded coefficients. Double-click the roots_literal name to arrange the roots geometrically on the root pad (plain literals only).', {
             forms: ['poly = roots_literal(1, 2)', 'poly = roots_literal(-8.5+3i, -7.5+3i, 8.5+0i)'],
             params: [{ name: 'r0..rk', title: 'One or more finite static complex roots (up to 255). The pushed vector has k+1 leading-first coefficients with leading coefficient 1.' }],
             effect: '(-- vector)',
@@ -1497,6 +1497,96 @@ function _scrubFormatComplex(re, im) {
     return `${rePart}${im < 0 ? '-' : '+'}${imMag}i`;
 }
 
+/* ---- Root pad: geometric editing of roots_literal(...) ----
+   dblclick the roots_literal identifier and every root plots as a
+   draggable point on a complex-plane canvas; each drag rewrites the whole
+   call (one root per line, house-style i). roots_literal ONLY — plotting
+   coefficients as points would be geometric nonsense. The pad opens only
+   when EVERY argument is a plain literal: an expression like exp(pi2i/3)
+   has no faithful reverse mapping, so refuse rather than corrupt (same
+   policy as the 2D pad's e-notation refusal). */
+
+function _rootPadParseArg(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return null;
+    if (new RegExp(`^-?${_SCRUB_NUM}$`).test(raw)) {
+        const v = Number(raw);
+        return Number.isFinite(v) ? { re: v, im: 0 } : null;
+    }
+    return _parseComplexLiteral(raw);
+}
+
+function _programRootsLiteralSpanAtCursor(textarea) {
+    const span = _programTokenSpanAtCursor(textarea);
+    if (!span || span.raw !== 'roots_literal') return null;
+    const value = String(textarea.value || '');
+    let open = span.end;
+    while (open < value.length && /\s/.test(value[open])) open++;
+    if (value[open] !== '(') return null;
+    let depth = 0;
+    let close = open;
+    for (; close < value.length; close++) {
+        if (value[close] === '(') depth++;
+        else if (value[close] === ')') { depth--; if (depth === 0) break; }
+    }
+    if (depth !== 0) return null;
+    const inner = value.slice(open + 1, close);
+    if (!inner.trim()) return null;
+    // literal-only args can never contain parens or commas, so every
+    // top-level comma is a separator and any unparseable part refuses
+    const roots = [];
+    for (const part of inner.split(',')) {
+        const parsed = _rootPadParseArg(part);
+        if (!parsed) return null;
+        roots.push(parsed);
+    }
+    if (roots.length > 255) return null;
+    return { raw: value.slice(span.start, close + 1), start: span.start, end: close + 1, roots };
+}
+
+function _scrubFormatRoot(re, im) {
+    // minimal house-style spelling: 1.5 / 2i / -7.5+2i — the single-token
+    // imaginary form keeps recompiles token-identical
+    if (im === 0) return _scrubFormatNumber(re);
+    if (re === 0) return `${im < 0 ? '-' : ''}${_scrubFormatNumber(Math.abs(im))}i`;
+    return _scrubFormatComplex(re, im);
+}
+
+function _rootPadFormatCall(roots) {
+    // one root per line, matching the generator layout (diff-friendly)
+    const lines = roots.map((r, i) =>
+        `    ${_scrubFormatRoot(r.re, r.im)}${i < roots.length - 1 ? ',' : ''}`);
+    return `roots_literal(\n${lines.join('\n')}\n)`;
+}
+
+function _rootPadSnapValue(v, step) {
+    if (!(step > 0)) return v;
+    const snapped = Math.round(v / step) * step;
+    return Number(snapped.toFixed(9));
+}
+
+function _rootPadPlane(roots, size) {
+    // one square complex-plane window over all roots plus margin, FIXED at
+    // open time so dragging one point never re-frames the others
+    let minRe = Infinity, maxRe = -Infinity, minIm = Infinity, maxIm = -Infinity;
+    for (const r of roots) {
+        minRe = Math.min(minRe, r.re); maxRe = Math.max(maxRe, r.re);
+        minIm = Math.min(minIm, r.im); maxIm = Math.max(maxIm, r.im);
+    }
+    if (!Number.isFinite(minRe)) { minRe = -1; maxRe = 1; minIm = -1; maxIm = 1; }
+    const cRe = (minRe + maxRe) / 2;
+    const cIm = (minIm + maxIm) / 2;
+    const half = Math.max(1, (maxRe - minRe) / 2, (maxIm - minIm) / 2) * 1.25;
+    const scale = size / (2 * half);
+    return {
+        cRe, cIm, half, size, scale,
+        toX(re) { return (re - this.cRe) * this.scale + this.size / 2; },
+        toY(im) { return this.size / 2 - (im - this.cIm) * this.scale; },
+        toRe(x) { return (x - this.size / 2) / this.scale + this.cRe; },
+        toIm(y) { return this.cIm - (y - this.size / 2) / this.scale; },
+    };
+}
+
 function _programMetricSpanAtCursor(which, textarea) {
     // Discrete scrub targets: solve-score metric names in the ss editors.
     if (which !== 'render-ss' && which !== 'palette-ss') return null;
@@ -1540,6 +1630,17 @@ function _scrubPadOnExternalInput() {
 function _scrubPadNudge(direction, big) {
     const st = _scrubPadState;
     if (!st) return;
+    if (st.mode === 'roots') {
+        if (st.activeRoot < 0) return;
+        const step = (st.snapOn ? st.snapStep : 0.05) * (big ? 5 : 1);
+        const dx = (direction && direction.dx) || 0;
+        const dy = (direction && direction.dy) || 0;
+        const root = st.roots[st.activeRoot];
+        root.re = Number((root.re + dx * step).toFixed(9));
+        root.im = Number((root.im + dy * step).toFixed(9));
+        _rootPadWrite();
+        return;
+    }
     if (st.mode === 'choice') {
         const step = big ? 5 : 1;
         const next = Math.min(st.choices.length - 1, Math.max(0, st.index + direction * step));
@@ -1576,9 +1677,10 @@ function _ensureProgramScrubPadHandlers() {
             if (targetId === 'program-scrub-min' || targetId === 'program-scrub-max' || targetId === 'program-scrub-span') return;
             if (target && target.tagName === 'SELECT') return;
             const [dx, dy] = arrows[event.key];
-            if (_scrubPadState.mode !== 'complex' && dx === 0) return;
+            const mode = _scrubPadState.mode;
+            if (mode !== 'complex' && mode !== 'roots' && dx === 0) return;
             if (typeof event.preventDefault === 'function') event.preventDefault();
-            if (_scrubPadState.mode === 'complex') _scrubPadNudge({ dx, dy }, !!event.shiftKey);
+            if (mode === 'complex' || mode === 'roots') _scrubPadNudge({ dx, dy }, !!event.shiftKey);
             else _scrubPadNudge(dx, !!event.shiftKey);
         }
     });
@@ -1626,7 +1728,13 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
         dragging: false,
     };
     const st = _scrubPadState;
-    if (mode === 'choice') {
+    if (mode === 'roots') {
+        st.roots = span.roots.map(r => ({ re: r.re, im: r.im }));
+        st.plane = _rootPadPlane(st.roots, 260);
+        st.snapStep = 0.5;
+        st.snapOn = true;
+        st.activeRoot = -1;
+    } else if (mode === 'choice') {
         st.choices = _solveScoreMetricNames.slice();
         st.index = st.choices.indexOf(span.raw);
     } else if (mode === 'complex') {
@@ -1661,7 +1769,10 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
     }
     let modeRows;
     let hint;
-    if (mode === 'choice') {
+    if (mode === 'roots') {
+        modeRows = `<label class="program-scrub-row"><input type="checkbox" id="program-scrub-snap" checked onchange="_rootPadSetSnap(this.checked)"> snap 0.5</label>`;
+        hint = 'drag a point &middot; arrows nudge it (Shift &times;5) &middot; Esc reverts &middot; any other edit closes';
+    } else if (mode === 'choice') {
         modeRows = `<div class="program-scrub-row"><span id="program-scrub-pos"></span></div>
         <div id="program-scrub-desc" class="program-scrub-desc"></div>`;
         hint = 'drag or &larr;/&rarr; to step metrics (Shift &times;5) &middot; Esc reverts &middot; any other edit closes';
@@ -1677,17 +1788,20 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
         </div>`;
         hint = 'drag to scrub &middot; &larr;/&rarr; nudge (Shift bigger) &middot; Esc reverts &middot; any other edit closes';
     }
-    const title = mode === 'choice' ? 'Metric' : (mode === 'complex' ? 'Scrub 2D' : 'Scrub');
+    const title = mode === 'roots' ? 'Roots' : (mode === 'choice' ? 'Metric' : (mode === 'complex' ? 'Scrub 2D' : 'Scrub'));
     const surfaceClass = mode === 'complex' ? 'program-scrub-surface program-scrub-surface-2d' : 'program-scrub-surface';
+    const surface = mode === 'roots'
+        ? `<canvas id="program-scrub-canvas" class="program-scrub-canvas" width="260" height="260" onpointerdown="_rootPadDragStart(event)"></canvas>`
+        : `<div id="program-scrub-surface" class="${surfaceClass}" onpointerdown="_scrubPadDragStart(event)">
+            <div id="program-scrub-handle" class="program-scrub-handle"></div>
+        </div>`;
     el.innerHTML = `
         <div class="program-scrub-head" onpointerdown="_scrubPadHeadDragStart(event)" title="Drag to move">
             <span class="program-scrub-title">${title}</span>
             <span id="program-scrub-value" class="program-scrub-value"></span>
             <button type="button" class="btn-secondary program-scrub-close" onclick="_closeProgramScrubPad()" aria-label="Close">x</button>
         </div>
-        <div id="program-scrub-surface" class="${surfaceClass}" onpointerdown="_scrubPadDragStart(event)">
-            <div id="program-scrub-handle" class="program-scrub-handle"></div>
-        </div>
+        ${surface}
         ${modeRows}
         ${viewRow}
         ${liveRow}
@@ -1726,6 +1840,16 @@ function _renderProgramScrubPad() {
     const st = _scrubPadState;
     if (!st) return;
     const valueEl = document.getElementById('program-scrub-value');
+    if (st.mode === 'roots') {
+        if (valueEl) {
+            const active = st.activeRoot >= 0 ? st.roots[st.activeRoot] : null;
+            valueEl.textContent = active
+                ? `${st.roots.length} roots · ${_scrubFormatRoot(active.re, active.im)}`
+                : `${st.roots.length} roots`;
+        }
+        _rootPadDraw();
+        return;
+    }
     if (valueEl) valueEl.textContent = st.current;
     const handle = document.getElementById('program-scrub-handle');
     if (handle) {
@@ -1898,6 +2022,125 @@ function _scrubPadDragMove(event) {
     _scrubPadWrite(st.min + frac * (st.max - st.min));
 }
 
+function _rootPadDraw() {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'roots') return;
+    const canvas = document.getElementById('program-scrub-canvas');
+    // headless harnesses have no 2D context: all pad logic still runs
+    const ctx = canvas && typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
+    if (!ctx) return;
+    const plane = st.plane;
+    const size = plane.size;
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = '#101418';
+    ctx.fillRect(0, 0, size, size);
+    if (st.snapOn && st.snapStep > 0 && st.snapStep * plane.scale >= 7) {
+        ctx.strokeStyle = '#1d242c';
+        ctx.lineWidth = 1;
+        const lo = plane.toRe(0), hi = plane.toRe(size);
+        for (let g = Math.ceil(lo / st.snapStep) * st.snapStep; g <= hi; g += st.snapStep) {
+            const x = plane.toX(g);
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size); ctx.stroke();
+        }
+        const imHi = plane.toIm(0), imLo = plane.toIm(size);
+        for (let g = Math.ceil(imLo / st.snapStep) * st.snapStep; g <= imHi; g += st.snapStep) {
+            const y = plane.toY(g);
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size, y); ctx.stroke();
+        }
+    }
+    ctx.strokeStyle = '#39434e';
+    ctx.lineWidth = 1;
+    const axisX = plane.toX(0), axisY = plane.toY(0);
+    if (axisX >= 0 && axisX <= size) { ctx.beginPath(); ctx.moveTo(axisX, 0); ctx.lineTo(axisX, size); ctx.stroke(); }
+    if (axisY >= 0 && axisY <= size) { ctx.beginPath(); ctx.moveTo(0, axisY); ctx.lineTo(size, axisY); ctx.stroke(); }
+    st.roots.forEach((r, i) => {
+        const x = plane.toX(r.re), y = plane.toY(r.im);
+        ctx.beginPath();
+        ctx.arc(x, y, i === st.activeRoot ? 5.5 : 4, 0, 2 * Math.PI);
+        ctx.fillStyle = i === st.activeRoot ? '#ff9d66' : '#6fc3ff';
+        ctx.fill();
+    });
+}
+
+function _rootPadSetSnap(checked) {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'roots') return;
+    st.snapOn = !!checked;
+    _rootPadDraw();
+}
+
+function _rootPadWrite() {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'roots') return;
+    _scrubPadWriteText(_rootPadFormatCall(st.roots));
+}
+
+function _rootPadCanvasPoint(event) {
+    const canvas = document.getElementById('program-scrub-canvas');
+    if (!canvas || typeof canvas.getBoundingClientRect !== 'function') return null;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect || !(rect.width > 0)) return null;
+    const st = _scrubPadState;
+    const scale = st.plane.size / rect.width;   // css px -> canvas px
+    return {
+        x: ((Number(event && event.clientX) || 0) - rect.left) * scale,
+        y: ((Number(event && event.clientY) || 0) - rect.top) * scale,
+    };
+}
+
+function _rootPadDragStart(event) {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'roots') return;
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    const pt = _rootPadCanvasPoint(event);
+    if (!pt) return;
+    // pick the nearest point within a 14px halo; empty space does nothing
+    let best = -1;
+    let bestD = 14 * 14;
+    st.roots.forEach((r, i) => {
+        const dx = st.plane.toX(r.re) - pt.x;
+        const dy = st.plane.toY(r.im) - pt.y;
+        const d = dx * dx + dy * dy;
+        if (d <= bestD) { bestD = d; best = i; }
+    });
+    if (best < 0) return;
+    st.activeRoot = best;
+    st.dragging = true;
+    const canvas = document.getElementById('program-scrub-canvas');
+    if (canvas && typeof canvas.setPointerCapture === 'function' && event && event.pointerId != null) {
+        try { canvas.setPointerCapture(event.pointerId); } catch (e) {}
+    }
+    _rootPadDragMove(event);
+    const move = e => _rootPadDragMove(e);
+    const up = () => {
+        if (_scrubPadState) _scrubPadState.dragging = false;
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        document.removeEventListener('pointercancel', up);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+}
+
+function _rootPadDragMove(event) {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'roots' || st.activeRoot < 0) return;
+    const pt = _rootPadCanvasPoint(event);
+    if (!pt) return;
+    let re = st.plane.toRe(pt.x);
+    let im = st.plane.toIm(pt.y);
+    if (st.snapOn) {
+        re = _rootPadSnapValue(re, st.snapStep);
+        im = _rootPadSnapValue(im, st.snapStep);
+    }
+    const root = st.roots[st.activeRoot];
+    if (root.re === re && root.im === im) return;
+    root.re = re;
+    root.im = im;
+    _rootPadWrite();
+}
+
 function _scrubPadSetRange() {
     const st = _scrubPadState;
     if (!st || st.mode === 'choice') return;
@@ -1990,6 +2233,14 @@ function _closeProgramScrubPad() {
 function _onProgramSourceDblClick(which, event) {
     const key = _programSourceWhichKey(which);
     const textarea = _programSourceTextarea(key);
+    if (key === 'cp') {
+        // roots_literal is coeff-program vocabulary only
+        const rootsSpan = _programRootsLiteralSpanAtCursor(textarea);
+        if (rootsSpan) {
+            _openProgramScrubPad(key, rootsSpan, textarea, event || {}, 'roots');
+            return;
+        }
+    }
     const complexSpan = _programComplexSpanAtCursor(textarea);
     if (complexSpan) {
         _openProgramScrubPad(key, complexSpan, textarea, event || {}, 'complex');

@@ -2110,9 +2110,17 @@ async function main() {
   // Scrub pad: span detection, splice writes, invariant guard, revert.
   {
     const padEls = {};
-    for (const id of ['program-scrub-pad', 'program-scrub-value', 'program-scrub-handle', 'program-scrub-surface', 'program-scrub-min', 'program-scrub-max', 'program-scrub-live', 'program-scrub-pos', 'program-scrub-desc']) {
+    for (const id of ['program-scrub-pad', 'program-scrub-value', 'program-scrub-handle', 'program-scrub-surface', 'program-scrub-min', 'program-scrub-max', 'program-scrub-live', 'program-scrub-pos', 'program-scrub-desc', 'program-scrub-snap']) {
       padEls[id] = { innerHTML: '', textContent: '', value: '', style: {}, setAttribute() {}, contains() { return false; } };
     }
+    // canvas fake: geometry for drag math, NO getContext — drawing must be
+    // guarded so headless harnesses exercise all pad logic
+    padEls['program-scrub-canvas'] = {
+      innerHTML: '', textContent: '', value: '', style: {}, setAttribute() {},
+      contains() { return false; },
+      getBoundingClientRect() { return { left: 0, top: 0, width: 260, height: 260 }; },
+      setPointerCapture() {},
+    };
     const scrubTextarea = {
       value: 'poly = linear(poly, 2, 3)\nemit',
       selectionStart: 21, selectionEnd: 21,
@@ -2161,6 +2169,18 @@ async function main() {
       extractFunction('_programComplexSpanAtCursor'),
       extractFunction('_parseComplexLiteral'),
       extractFunction('_scrubFormatComplex'),
+      extractFunction('_rootPadParseArg'),
+      extractFunction('_programRootsLiteralSpanAtCursor'),
+      extractFunction('_scrubFormatRoot'),
+      extractFunction('_rootPadFormatCall'),
+      extractFunction('_rootPadSnapValue'),
+      extractFunction('_rootPadPlane'),
+      extractFunction('_rootPadDraw'),
+      extractFunction('_rootPadSetSnap'),
+      extractFunction('_rootPadWrite'),
+      extractFunction('_rootPadCanvasPoint'),
+      extractFunction('_rootPadDragStart'),
+      extractFunction('_rootPadDragMove'),
       extractFunction('_scrubPadWriteComplex'),
       extractFunction('_scrubPadSetSpan'),
       extractFunction('_programMetricSpanAtCursor'),
@@ -2308,6 +2328,74 @@ async function main() {
       assert(st.re === 2.25 && st.im === -0.125, '2D write should update state re/im');
       vm.runInContext('_revert()', scrubCtx);
       assert(scrubCtx._ta.value === 'poly[0] = 1.5+0.3i', 'Escape must revert the complex literal');
+    }
+    // ── Root pad (roots_literal geometric editing) ──
+    {
+      const mk = (text, pos) => ({ value: text, selectionStart: pos, selectionEnd: pos,
+        setSelectionRange() {}, addEventListener() {}, removeEventListener() {} });
+      const call = 'roots_literal(\n    1,\n    2i,\n    -7.5+2j\n)';
+      const src = call + '\npoly = blend(0.5)\nemit';
+      // cursor on the identifier: full multi-line call becomes the span
+      scrubCtx._ta = mk(src, 4);
+      let span = vm.runInContext('_programRootsLiteralSpanAtCursor(globalThis._ta)', scrubCtx);
+      assert(span && span.raw === call && span.start === 0 && span.roots.length === 3,
+        'roots_literal span should cover the whole call, got ' + JSON.stringify(span && span.raw));
+      assert(span.roots[0].re === 1 && span.roots[0].im === 0 &&
+             span.roots[1].re === 0 && span.roots[1].im === 2 &&
+             span.roots[2].re === -7.5 && span.roots[2].im === 2,
+        'roots_literal args should parse real, imaginary, and j-suffixed literals');
+      // refusals: expression args, cursor off the identifier, unbalanced call
+      scrubCtx._ta = mk('roots_literal(1, exp(1))\nemit', 4);
+      assert(vm.runInContext('_programRootsLiteralSpanAtCursor(globalThis._ta)', scrubCtx) === null,
+        'expression args have no faithful reverse mapping: the root pad must refuse');
+      scrubCtx._ta = mk(src, 20);
+      assert(vm.runInContext('_programRootsLiteralSpanAtCursor(globalThis._ta)', scrubCtx) === null,
+        'the root pad opens from the identifier, not from inside the args');
+      scrubCtx._ta = mk('roots_literal(1, 2\nemit', 4);
+      assert(vm.runInContext('_programRootsLiteralSpanAtCursor(globalThis._ta)', scrubCtx) === null,
+        'an unbalanced call must not open the root pad');
+      // formatting: minimal house-style spellings, one root per line
+      assert(vm.runInContext("_scrubFormatRoot(0, -2)", scrubCtx) === '-2i', 'imag-only roots format as -2i');
+      assert(vm.runInContext("_scrubFormatRoot(1.5, 0)", scrubCtx) === '1.5', 'real-only roots stay real');
+      const formatted = vm.runInContext("_rootPadFormatCall([{re:1,im:0},{re:0,im:2},{re:-7.5,im:2}])", scrubCtx);
+      assert(formatted === 'roots_literal(\n    1,\n    2i,\n    -7.5+2i\n)',
+        'root pad writes one root per line in house style, got ' + JSON.stringify(formatted));
+      assert(vm.runInContext('_rootPadSnapValue(1.26, 0.5)', scrubCtx) === 1.5, 'snap rounds to the step');
+      // open, drag root 0 to a snapped cell, verify splice + notify
+      scrubCtx._ta = mk(src, 4);
+      scrubCtx._notifyCalls.length = 0;
+      vm.runInContext("_openProgramScrubPad('cp', _programRootsLiteralSpanAtCursor(globalThis._ta), globalThis._ta, { clientX: 40, clientY: 40 }, 'roots')", scrubCtx);
+      let rst = vm.runInContext('_state()', scrubCtx);
+      assert(rst && rst.mode === 'roots' && rst.roots.length === 3 && rst.snapOn === true && rst.snapStep === 0.5,
+        'root pad state should carry parsed roots and default snap 0.5');
+      assert(padEls['program-scrub-pad'].innerHTML.includes('program-scrub-canvas'),
+        'root pad should render the complex-plane canvas');
+      assert(padEls['program-scrub-pad'].innerHTML.includes('snap 0.5'),
+        'root pad should offer the snap toggle');
+      // press on root 0 (screen coords from the pad's own plane transform)
+      const hit = vm.runInContext('(function(){ const s=_state(); return { x: s.plane.toX(s.roots[0].re), y: s.plane.toY(s.roots[0].im) }; })()', scrubCtx);
+      vm.runInContext(`_rootPadDragStart({ clientX: ${hit.x}, clientY: ${hit.y}, preventDefault() {} })`, scrubCtx);
+      rst = vm.runInContext('_state()', scrubCtx);
+      assert(rst.activeRoot === 0, 'pressing on a point should select it, got ' + rst.activeRoot);
+      // drag to the plane position of 2+0.5i: snap keeps it exact
+      const dest = vm.runInContext('(function(){ const s=_state(); return { x: s.plane.toX(2.1), y: s.plane.toY(0.43) }; })()', scrubCtx);
+      vm.runInContext(`_rootPadDragMove({ clientX: ${dest.x}, clientY: ${dest.y} })`, scrubCtx);
+      rst = vm.runInContext('_state()', scrubCtx);
+      assert(rst.roots[0].re === 2 && rst.roots[0].im === 0.5, 'snapped drag should land on the 0.5 grid');
+      assert(scrubCtx._ta.value.startsWith('roots_literal(\n    2+0.5i,\n    2i,\n    -7.5+2i\n)'),
+        'drag should rewrite the whole call in place, got ' + JSON.stringify(scrubCtx._ta.value.split('\\n')[0]));
+      assert(scrubCtx._ta.value.endsWith('poly = blend(0.5)\nemit'), 'text after the call must be untouched');
+      assert(scrubCtx._notifyCalls.includes('cp'), 'root drag should run the coeff editor input handler');
+      // snap off: free positions come through (quantized only by formatting)
+      vm.runInContext('_rootPadSetSnap(false)', scrubCtx);
+      vm.runInContext(`_rootPadDragMove({ clientX: ${dest.x}, clientY: ${dest.y} })`, scrubCtx);
+      rst = vm.runInContext('_state()', scrubCtx);
+      assert(Math.abs(rst.roots[0].re - 2.1) < 0.05 && Math.abs(rst.roots[0].im - 0.43) < 0.05,
+        'with snap off the drag should keep free coordinates');
+      // Escape reverts the entire call
+      vm.runInContext('_revert()', scrubCtx);
+      assert(scrubCtx._ta.value === src, 'Escape must restore the original roots_literal call');
+      console.log('Frontend root pad checks: OK');
     }
     console.log('Frontend scrub pad runtime checks: OK');
   }

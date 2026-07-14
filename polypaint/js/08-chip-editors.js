@@ -448,6 +448,7 @@ const _coeffProgramCheatSections = [
             { label: 'push_vec(n,value)', snippet: 'push_vec(poly_len, p1)\nemit', title: 'Push a constant vector with explicit length.' },
             { label: 'fill', snippet: 'fill(poly_len, 0)\nemit', title: 'Alias for push_vec/fill vector construction.' },
             { label: 'vector_literal', snippet: 'poly = vector_literal(1, -3, 2)\nemit', title: 'Compile a static leading-first coefficient vector once and load it from the program constant pool.' },
+            { label: 'roots_literal', snippet: 'poly = roots_literal(1, 2)\nemit', title: 'Expand the monic polynomial with these static roots once at compile time; the pool stores the resulting coefficients.' },
             { label: 'translate_roots', snippet: 'poly = translate_roots(poly, 0.1*exp(pi2i*t1))\nemit', title: 'Shift every root by delta without solving for roots: Q(z) = P(z-delta).' },
             { label: 'bimodal', snippet: 'push_scalar(bimodal(t2, 0.7))', title: 'Symmetric bimodal remapping of u in [0,1], shaped by a in [0,1).' },
             { label: 'push_scalar', snippet: 'push_scalar(p1+p2)', title: 'Push one scalar onto the typed stack.' },
@@ -906,6 +907,11 @@ function _programHelpBuildCoeffRegistry() {
         _programHelpItem('vector_literal', 'vector_literal(c0, c1, ...)', 'Create a leading-first coefficient vector from static expressions. Values are compiled once into a deduplicated immutable pool; they are not rebuilt per row.', {
             forms: ['poly = vector_literal(1, -3, 2)'],
             params: [{ name: 'c0..cn', title: 'One or more finite static complex expressions, leading coefficient first.' }],
+            effect: '(-- vector)',
+        }),
+        _programHelpItem('roots_literal', 'roots_literal(r0, r1, ...)', 'Expand the monic polynomial whose roots are these static expressions ONCE at compile time (exact rational arithmetic) into the same constant pool as vector_literal — the program source shows the root layout instead of expanded coefficients.', {
+            forms: ['poly = roots_literal(1, 2)', 'poly = roots_literal(-8.5+3i, -7.5+3i, 8.5+0i)'],
+            params: [{ name: 'r0..rk', title: 'One or more finite static complex roots (up to 255). The pushed vector has k+1 leading-first coefficients with leading coefficient 1.' }],
             effect: '(-- vector)',
         }),
         _programHelpItem('translate_roots', 'translate_roots(coefficients, delta)', 'Shift every root by delta using coefficient translation Q(z) = P(z-delta). This does not solve for roots and preserves the coefficient-vector length.', {

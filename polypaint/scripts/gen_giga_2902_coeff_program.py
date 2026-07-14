@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from fractions import Fraction
 import hashlib
 import json
 from pathlib import Path
@@ -42,34 +41,6 @@ def _layout_roots(layout: str) -> tuple[list[complex], list[complex]]:
     return source, target
 
 
-def _coefficients_from_roots(roots: list[complex]) -> list[complex]:
-    # This is a development-time expansion. Production loads the resulting
-    # immutable coefficient vectors from the Coeff Program constant pool.
-    coefficients = [(Fraction(1), Fraction(0))]
-    for root in roots:
-        root_re = Fraction(root.real)
-        root_im = Fraction(root.imag)
-        expanded = [
-            (Fraction(0), Fraction(0))
-            for _ in range(len(coefficients) + 1)
-        ]
-        for index, (coefficient_re, coefficient_im) in enumerate(coefficients):
-            current_re, current_im = expanded[index]
-            expanded[index] = (
-                current_re + coefficient_re,
-                current_im + coefficient_im,
-            )
-            product_re = coefficient_re * root_re - coefficient_im * root_im
-            product_im = coefficient_re * root_im + coefficient_im * root_re
-            next_re, next_im = expanded[index + 1]
-            expanded[index + 1] = (
-                next_re - product_re,
-                next_im - product_im,
-            )
-        coefficients = expanded
-    return [complex(float(real), float(imag)) for real, imag in coefficients]
-
-
 def _number(value: float) -> str:
     normalized = 0.0 if value == 0.0 else float(value)
     return format(normalized, ".17g")
@@ -86,8 +57,8 @@ def _complex(value: complex) -> str:
     return f"{_number(real)}{sign}{_number(imag)}j"
 
 
-def _vector_source(values: list[complex]) -> str:
-    rows = ["vector_literal("]
+def _roots_source(values: list[complex]) -> str:
+    rows = ["roots_literal("]
     rows.extend(f"    {_complex(value)}," for value in values[:-1])
     rows.append(f"    {_complex(values[-1])}")
     rows.append(")")
@@ -95,15 +66,18 @@ def _vector_source(values: list[complex]) -> str:
 
 
 def build_source_text() -> str:
+    # The program carries the rjail3 ROOT LAYOUT itself; the Coeff Program
+    # compiler expands each monic product exactly once (Fraction arithmetic,
+    # coeff_program_chain.expand_monic_roots) into the constant pool. The
+    # compiled pool — and therefore the fingerprint — is bit-identical to the
+    # earlier vector_literal spelling that shipped expanded coefficients.
     source_roots, target_roots = _layout_roots(RJAIL3)
     if len(source_roots) != 33 or len(target_roots) != 33:
         raise RuntimeError("rjail3 must contain exactly 33 source and 33 target roots")
-    source_coefficients = _coefficients_from_roots(source_roots)
-    target_coefficients = _coefficients_from_roots(target_roots)
     return "\n".join(
         [
-            _vector_source(source_coefficients),
-            _vector_source(target_coefficients),
+            _roots_source(source_roots),
+            _roots_source(target_roots),
             "poly = blend(bimodal(t2, 0.7))",
             "poly = translate_roots(poly, (1+i)*0.1*exp(pi2i*t1))",
             "poly",

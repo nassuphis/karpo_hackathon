@@ -141,6 +141,7 @@ class TestGiga2902CoeffProgram(unittest.TestCase):
         self.assertEqual(ops.count(COEFF_OP_TRANSLATE_ROOTS), 1)
 
     def test_constant_pool_holds_unshifted_root_polynomials(self):
+        from coeff_program_chain import expand_monic_roots
         from coeff_program_source import compile_coeff_program_source
 
         generator = _load_generator()
@@ -148,15 +149,104 @@ class TestGiga2902CoeffProgram(unittest.TestCase):
         compiled = compile_coeff_program_source(payload["source_text"])
         source_roots, target_roots = generator._layout_roots(generator.RJAIL3)
         expected = [
-            generator._coefficients_from_roots(source_roots),
-            generator._coefficients_from_roots(target_roots),
+            expand_monic_roots(source_roots),
+            expand_monic_roots(target_roots),
         ]
-        for constant, wanted in zip(compiled["vector_constants"], expected):
+        for constant, wanted, roots in zip(
+            compiled["vector_constants"], expected, (source_roots, target_roots)
+        ):
             got = [
                 complex(constant["values"][i], constant["values"][i + 1])
                 for i in range(0, len(constant["values"]), 2)
             ]
             self.assertEqual(got, wanted)
+            # The layout is recoverable FROM the pool: solving the base
+            # polynomial returns the 33 grid coordinates. Degree-33 recovery
+            # of this family is ill-conditioned (max|c| ~ 1e22; measured
+            # worst nearest-neighbor error 6.3e-2), so match UNORDERED with
+            # a tolerance that still identifies each unit-spaced grid cell
+            # unambiguously. Lexicographic sort mispairs nearly-tied reals.
+            import numpy as np
+
+            recovered = np.roots(np.array(got))
+            layout = np.array(roots, dtype=np.complex128)
+            distances = np.abs(recovered[:, None] - layout[None, :])
+            self.assertLess(float(distances.min(axis=1).max()), 0.1)
+            # ...and every grid cell is hit
+            self.assertLess(float(distances.min(axis=0).max()), 0.1)
+
+    def test_roots_literal_matches_vector_literal_spelling_and_fingerprint(self):
+        """The regenerated roots_literal document must compile to the SAME
+        pool and fingerprint as the earlier vector_literal spelling — the
+        source form changed, the program identity must not."""
+        from coeff_program_chain import expand_monic_roots
+        from coeff_program_source import compile_coeff_program_source
+
+        generator = _load_generator()
+        roots_doc = generator.build_payload()
+        compiled_roots = compile_coeff_program_source(roots_doc["source_text"])
+        self.assertIn("roots_literal(", roots_doc["source_text"])
+
+        source_roots, target_roots = generator._layout_roots(generator.RJAIL3)
+        lines = roots_doc["source_text"].splitlines()
+        tail = "\n".join(line for line in lines if not line.startswith((" ", ")", "roots_literal(")))
+        vector_spelling = "\n".join(
+            [
+                "vector_literal(%s)" % ", ".join(
+                    generator._complex(value)
+                    for value in expand_monic_roots(source_roots)
+                ),
+                "vector_literal(%s)" % ", ".join(
+                    generator._complex(value)
+                    for value in expand_monic_roots(target_roots)
+                ),
+                tail,
+            ]
+        )
+        compiled_vectors = compile_coeff_program_source(vector_spelling)
+        self.assertEqual(
+            compiled_roots["fingerprint"], compiled_vectors["fingerprint"]
+        )
+        self.assertEqual(
+            compiled_roots["vector_constants"], compiled_vectors["vector_constants"]
+        )
+
+    def test_roots_literal_contract(self):
+        from coeff_program_chain import MAX_VECTOR_LEN
+        from coeff_program_source import compile_coeff_program_source
+
+        # expansion: roots 1,2 -> z^2 - 3z + 2
+        compiled = compile_coeff_program_source("poly = roots_literal(1, 2)\nemit")
+        self.assertEqual(
+            compiled["vector_constants"],
+            [{"length": 3, "values": [1.0, 0.0, -3.0, 0.0, 2.0, 0.0]}],
+        )
+
+        # byte-identical results share ONE pool entry across BOTH forms
+        merged = compile_coeff_program_source(
+            "roots_literal(1, 2)\n"
+            "vector_literal(1, -3, 2)\n"
+            "poly = blend(0.5)\n"
+            "emit"
+        )
+        self.assertEqual(merged["vector_constant_count"], 1)
+
+        # static-only roots; root-count cap leaves room for the +1 coefficient
+        with self.assertRaisesRegex(Exception, "must be a static expression"):
+            compile_coeff_program_source("poly = roots_literal(1, t1)")
+        too_many = ",".join("1" for _ in range(MAX_VECTOR_LEN))
+        with self.assertRaisesRegex(Exception, f"max is {MAX_VECTOR_LEN - 1}"):
+            compile_coeff_program_source(f"poly = roots_literal({too_many})")
+
+        # chain->source round trip keeps the roots spelling
+        from coeff_program_source import coeff_source_text_from_chain
+
+        regenerated = coeff_source_text_from_chain(compiled["source_chain"])
+        self.assertIn("roots_literal(", regenerated)
+        self.assertEqual(
+            compile_coeff_program_source(regenerated)["fingerprint"],
+            compiled["fingerprint"],
+        )
 
     def test_old_program_spec_does_not_gain_an_empty_constant_pool(self):
         from coeff_program_chain import compile_coeff_program_chain

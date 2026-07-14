@@ -1923,32 +1923,32 @@ def _compile_reduce_chip(args, scalar_exprs):
     return _token(COEFF_OP_REDUCE, fn_index=REDUCE_OPS[str(args[0]).strip().lower()])
 
 
-def _compile_vector_literal(args, vector_constants):
-    if not args:
-        raise RuntimeError("vector_literal requires at least one coefficient")
-    if len(args) > MAX_VECTOR_LEN:
-        raise RuntimeError(
-            f"vector_literal has {len(args)} coefficients; max is {MAX_VECTOR_LEN}"
-        )
+def _static_call_values(name, unit, args):
+    """Fold a static-only call's arguments to finite complex values."""
     values = []
     for idx, raw in enumerate(args):
-        expr = _compile_expr(raw, label=f"vector_literal coefficient {idx}", expected="complex")
+        expr = _compile_expr(raw, label=f"{name} {unit} {idx}", expected="complex")
         value = expr_value_if_static(expr)
         if value is None:
-            raise RuntimeError(
-                f"vector_literal coefficient {idx} must be a static expression"
+            raise RuntimeError(f"{name} {unit} {idx} must be a static expression")
+        values.append(
+            complex(
+                _finite_number(value.real, f"{name} {unit} {idx} real"),
+                _finite_number(value.imag, f"{name} {unit} {idx} imag"),
             )
-        values.extend(
-            [
-                _canonical_zero(
-                    _finite_number(value.real, f"vector_literal coefficient {idx} real")
-                ),
-                _canonical_zero(
-                    _finite_number(value.imag, f"vector_literal coefficient {idx} imag")
-                ),
-            ]
         )
-    constant = {"length": len(args), "values": values}
+    return values
+
+
+def _intern_vector_constant(name, complex_values, vector_constants):
+    """Canonicalize + deduplicate one constant vector into the program pool
+    and return its push token. The pool does not care how the values were
+    computed — vector_literal stores them verbatim, roots_literal stores an
+    expanded root product — so byte-identical results share one entry."""
+    values = []
+    for value in complex_values:
+        values.extend([_canonical_zero(float(value.real)), _canonical_zero(float(value.imag))])
+    constant = {"length": len(complex_values), "values": values}
     try:
         pool_index = vector_constants.index(constant)
     except ValueError:
@@ -1956,7 +1956,7 @@ def _compile_vector_literal(args, vector_constants):
             raise RuntimeError(
                 f"coeff program has more than {MAX_VECTOR_CONSTANTS} vector constants"
             )
-        total = sum(int(item["length"]) for item in vector_constants) + len(args)
+        total = sum(int(item["length"]) for item in vector_constants) + len(complex_values)
         if total > MAX_VECTOR_CONSTANT_ELEMENTS:
             raise RuntimeError(
                 "coeff program vector constants contain "
@@ -1965,6 +1965,59 @@ def _compile_vector_literal(args, vector_constants):
         pool_index = len(vector_constants)
         vector_constants.append(constant)
     return _token(COEFF_OP_PUSH_VECTOR_CONST, n_args=1, args=[pool_index])
+
+
+def _compile_vector_literal(args, vector_constants):
+    if not args:
+        raise RuntimeError("vector_literal requires at least one coefficient")
+    if len(args) > MAX_VECTOR_LEN:
+        raise RuntimeError(
+            f"vector_literal has {len(args)} coefficients; max is {MAX_VECTOR_LEN}"
+        )
+    values = _static_call_values("vector_literal", "coefficient", args)
+    return _intern_vector_constant("vector_literal", values, vector_constants)
+
+
+def expand_monic_roots(roots):
+    """Expand the monic polynomial with the given roots into leading-first
+    coefficients, exactly.
+
+    Every binary64 component is a rational number, so the product is expanded
+    with Fraction arithmetic and each final coefficient rounds to binary64
+    exactly once — the same development-time algorithm the giga_2902
+    generator used, now owned by the compiler so roots_literal(...) programs
+    carry the layout instead of 17-digit expanded coefficients."""
+    from fractions import Fraction
+
+    coefficients = [(Fraction(1), Fraction(0))]
+    for root in roots:
+        root_re = Fraction(float(root.real))
+        root_im = Fraction(float(root.imag))
+        expanded = [(Fraction(0), Fraction(0)) for _ in range(len(coefficients) + 1)]
+        for index, (coefficient_re, coefficient_im) in enumerate(coefficients):
+            current_re, current_im = expanded[index]
+            expanded[index] = (current_re + coefficient_re, current_im + coefficient_im)
+            product_re = coefficient_re * root_re - coefficient_im * root_im
+            product_im = coefficient_re * root_im + coefficient_im * root_re
+            next_re, next_im = expanded[index + 1]
+            expanded[index + 1] = (next_re - product_re, next_im - product_im)
+        coefficients = expanded
+    return [complex(float(real), float(imag)) for real, imag in coefficients]
+
+
+def _compile_roots_literal(args, vector_constants):
+    if not args:
+        raise RuntimeError("roots_literal requires at least one root")
+    if len(args) > MAX_VECTOR_LEN - 1:
+        raise RuntimeError(
+            f"roots_literal has {len(args)} roots; max is {MAX_VECTOR_LEN - 1}"
+        )
+    roots = _static_call_values("roots_literal", "root", args)
+    coefficients = expand_monic_roots(roots)
+    for idx, value in enumerate(coefficients):
+        _finite_number(value.real, f"roots_literal expanded coefficient {idx} real")
+        _finite_number(value.imag, f"roots_literal expanded coefficient {idx} imag")
+    return _intern_vector_constant("roots_literal", coefficients, vector_constants)
 
 
 def _compile_legacy_chip(args, scalar_exprs):
@@ -2031,6 +2084,8 @@ def _compile_chip(chip, scalar_exprs, vector_constants):
     name, args = _chip_args(chip)
     if name == "vector_literal":
         return [_compile_vector_literal(args, vector_constants)]
+    if name == "roots_literal":
+        return [_compile_roots_literal(args, vector_constants)]
     if name in _ZERO_ARG_CHIP_OPS:
         if args:
             raise RuntimeError(f"{name} chip takes no arguments")

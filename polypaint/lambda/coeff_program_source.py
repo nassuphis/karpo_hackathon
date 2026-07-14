@@ -561,12 +561,12 @@ def _typed_lower_reduce(name, args):
     return chain, "scalar"
 
 
-def _typed_lower_vector_literal(args):
+def _typed_lower_static_pool_call(name, unit, max_args, args):
     if not args:
-        raise CoeffProgramSourceError("vector_literal requires at least one coefficient")
-    if len(args) > MAX_VECTOR_LEN:
+        raise CoeffProgramSourceError(f"{name} requires at least one {unit}")
+    if len(args) > max_args:
         raise CoeffProgramSourceError(
-            f"vector_literal has {len(args)} coefficients; max is {MAX_VECTOR_LEN}"
+            f"{name} has {len(args)} {unit}s; max is {max_args}"
         )
     canonical = []
     for idx, arg in enumerate(args):
@@ -574,15 +574,28 @@ def _typed_lower_vector_literal(args):
         try:
             value = expr_value_if_static(ExpressionParser(text).parse())
         except Exception as exc:
-            raise CoeffProgramSourceError(
-                f"vector_literal coefficient {idx}: {exc}"
-            ) from None
+            raise CoeffProgramSourceError(f"{name} {unit} {idx}: {exc}") from None
         if value is None:
             raise CoeffProgramSourceError(
-                f"vector_literal coefficient {idx} must be a static expression"
+                f"{name} {unit} {idx} must be a static expression"
             )
         canonical.append(_format_scalar_literal(value))
-    return [["vector_literal", *canonical]], "vector"
+    return [[name, *canonical]], "vector"
+
+
+def _typed_lower_vector_literal(args):
+    return _typed_lower_static_pool_call(
+        "vector_literal", "coefficient", MAX_VECTOR_LEN, args
+    )
+
+
+def _typed_lower_roots_literal(args):
+    # The chip keeps the ROOTS; the chain compiler expands the monic product
+    # into the constant pool exactly once, so decompiled source shows the
+    # layout instead of the expanded coefficients.
+    return _typed_lower_static_pool_call(
+        "roots_literal", "root", MAX_VECTOR_LEN - 1, args
+    )
 
 
 def _typed_lower_translate_roots(args):
@@ -615,6 +628,8 @@ def _typed_lower_value(text):
         name, args = call
         if name == "vector_literal":
             return _typed_lower_vector_literal(args)
+        if name == "roots_literal":
+            return _typed_lower_roots_literal(args)
         if name == "translate_roots":
             return _typed_lower_translate_roots(args)
         if name in _VECTOR_FILL_NAMES:
@@ -805,6 +820,9 @@ def _lower_call(name, args, *, target="push"):
         return [[name, *[str(arg) for arg in args]]]
     if name == "vector_literal":
         chain, value_type = _typed_lower_vector_literal(args)
+        return _append_typed_target(chain, value_type, target=target)
+    if name == "roots_literal":
+        chain, value_type = _typed_lower_roots_literal(args)
         return _append_typed_target(chain, value_type, target=target)
     if name == "translate_roots":
         chain, value_type = _typed_lower_translate_roots(args)
@@ -1052,7 +1070,7 @@ _LOCALS_RESERVED_EXTRA = frozenset({
     "range", "arange", "linspace",
     "roll", "rolr", "argsort", "littlewood", "blend", "andy",
     "scan", "slice", "poke_slice", "reduce", "sum", "prod",
-    "vector_literal", "translate_roots", "bimodal",
+    "vector_literal", "roots_literal", "translate_roots", "bimodal",
     "window", "step", "prev", "prev2", "k", "select", "i", "j",
     "pi", "pi2", "pi2i", "tau", "tau_i",
     "p1", "p2", "t1", "t2", "poly_len",
@@ -1502,8 +1520,8 @@ def coeff_source_text_from_chain(chain):
             # following _typed_set_poly can render `poly = blend(t)`.
             flush_pending()
             push_pending("vector", _source_call("blend", [t[1]]))
-        elif lname == "vector_literal" and args:
-            push_pending("vector", _source_call("vector_literal", args))
+        elif lname in {"vector_literal", "roots_literal"} and args:
+            push_pending("vector", _source_call(lname, args))
         elif lname == "translate_roots" and not args:
             delta = pop_pending("scalar")
             coefficients = pop_pending("vector")

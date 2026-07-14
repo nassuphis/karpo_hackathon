@@ -2110,7 +2110,7 @@ async function main() {
   // Scrub pad: span detection, splice writes, invariant guard, revert.
   {
     const padEls = {};
-    for (const id of ['program-scrub-pad', 'program-scrub-value', 'program-scrub-handle', 'program-scrub-surface', 'program-scrub-min', 'program-scrub-max', 'program-scrub-live', 'program-scrub-pos', 'program-scrub-desc', 'program-scrub-snap']) {
+    for (const id of ['program-scrub-pad', 'program-scrub-value', 'program-scrub-handle', 'program-scrub-surface', 'program-scrub-min', 'program-scrub-max', 'program-scrub-live', 'program-scrub-pos', 'program-scrub-desc', 'program-scrub-snap', 'program-scrub-window']) {
       padEls[id] = { innerHTML: '', textContent: '', value: '', style: {}, setAttribute() {}, contains() { return false; } };
     }
     // canvas fake: geometry for drag math, NO getContext — drawing must be
@@ -2174,7 +2174,9 @@ async function main() {
       extractFunction('_scrubFormatRoot'),
       extractFunction('_rootPadFormatCall'),
       extractFunction('_rootPadSnapValue'),
+      extractFunction('_rootPadPlaneAt'),
       extractFunction('_rootPadPlane'),
+      extractFunction('_rootPadSetWindow'),
       extractFunction('_rootPadDraw'),
       extractFunction('_rootPadSetSnap'),
       extractFunction('_rootPadWrite'),
@@ -2386,11 +2388,36 @@ async function main() {
         'drag should rewrite the whole call in place, got ' + JSON.stringify(scrubCtx._ta.value.split('\\n')[0]));
       assert(scrubCtx._ta.value.endsWith('poly = blend(0.5)\nemit'), 'text after the call must be untouched');
       assert(scrubCtx._notifyCalls.includes('cp'), 'root drag should run the coeff editor input handler');
-      // snap off: free positions come through (quantized only by formatting)
-      vm.runInContext('_rootPadSetSnap(false)', scrubCtx);
-      vm.runInContext(`_rootPadDragMove({ clientX: ${dest.x}, clientY: ${dest.y} })`, scrubCtx);
+      // window control: a single number d frames a square of side d
+      // centered on 0 (open-time framing auto-fits the layout instead)
+      assert(padEls['program-scrub-pad'].innerHTML.includes('program-scrub-window'),
+        'root pad should offer the window range input');
+      assert(Number(padEls['program-scrub-window'].value) > 0,
+        'window input should show the effective auto-fit side on open');
+      padEls['program-scrub-window'].value = '4';
+      vm.runInContext('_rootPadSetWindow()', scrubCtx);
       rst = vm.runInContext('_state()', scrubCtx);
-      assert(Math.abs(rst.roots[0].re - 2.1) < 0.05 && Math.abs(rst.roots[0].im - 0.43) < 0.05,
+      assert(rst.plane.cRe === 0 && rst.plane.cIm === 0 && rst.plane.half === 2,
+        'window d=4 should frame a side-4 square centered on 0');
+      assert(padEls['program-scrub-window'].value === '4', 'window input should re-display the side');
+      padEls['program-scrub-window'].value = 'garbage';
+      vm.runInContext('_rootPadSetWindow()', scrubCtx);
+      rst = vm.runInContext('_state()', scrubCtx);
+      assert(rst.plane.half === 2 && padEls['program-scrub-window'].value === '4',
+        'invalid window input must keep the previous frame and re-display it');
+      // drag under the zero-centered window lands where the new plane says
+      const wdest = vm.runInContext('(function(){ const s=_state(); return { x: s.plane.toX(-1.5), y: s.plane.toY(1) }; })()', scrubCtx);
+      vm.runInContext(`_rootPadDragMove({ clientX: ${wdest.x}, clientY: ${wdest.y} })`, scrubCtx);
+      rst = vm.runInContext('_state()', scrubCtx);
+      assert(rst.roots[0].re === -1.5 && rst.roots[0].im === 1,
+        'drag math must follow the reframed window');
+      // snap off: free positions come through (coords computed under the
+      // CURRENT plane — the window assert above reframed it)
+      vm.runInContext('_rootPadSetSnap(false)', scrubCtx);
+      const fdest = vm.runInContext('(function(){ const s=_state(); return { x: s.plane.toX(1.37), y: s.plane.toY(-0.61) }; })()', scrubCtx);
+      vm.runInContext(`_rootPadDragMove({ clientX: ${fdest.x}, clientY: ${fdest.y} })`, scrubCtx);
+      rst = vm.runInContext('_state()', scrubCtx);
+      assert(Math.abs(rst.roots[0].re - 1.37) < 0.05 && Math.abs(rst.roots[0].im + 0.61) < 0.05,
         'with snap off the drag should keep free coordinates');
       // Escape reverts the entire call
       vm.runInContext('_revert()', scrubCtx);

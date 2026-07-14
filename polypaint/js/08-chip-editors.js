@@ -1565,9 +1565,21 @@ function _rootPadSnapValue(v, step) {
     return Number(snapped.toFixed(9));
 }
 
+function _rootPadPlaneAt(cRe, cIm, half, size) {
+    const scale = size / (2 * half);
+    return {
+        cRe, cIm, half, size, scale,
+        toX(re) { return (re - this.cRe) * this.scale + this.size / 2; },
+        toY(im) { return this.size / 2 - (im - this.cIm) * this.scale; },
+        toRe(x) { return (x - this.size / 2) / this.scale + this.cRe; },
+        toIm(y) { return this.cIm - (y - this.size / 2) / this.scale; },
+    };
+}
+
 function _rootPadPlane(roots, size) {
     // one square complex-plane window over all roots plus margin, FIXED at
-    // open time so dragging one point never re-frames the others
+    // open time so dragging one point never re-frames the others; the
+    // window input replaces it with a zero-centered square of side d
     let minRe = Infinity, maxRe = -Infinity, minIm = Infinity, maxIm = -Infinity;
     for (const r of roots) {
         minRe = Math.min(minRe, r.re); maxRe = Math.max(maxRe, r.re);
@@ -1577,14 +1589,7 @@ function _rootPadPlane(roots, size) {
     const cRe = (minRe + maxRe) / 2;
     const cIm = (minIm + maxIm) / 2;
     const half = Math.max(1, (maxRe - minRe) / 2, (maxIm - minIm) / 2) * 1.25;
-    const scale = size / (2 * half);
-    return {
-        cRe, cIm, half, size, scale,
-        toX(re) { return (re - this.cRe) * this.scale + this.size / 2; },
-        toY(im) { return this.size / 2 - (im - this.cIm) * this.scale; },
-        toRe(x) { return (x - this.size / 2) / this.scale + this.cRe; },
-        toIm(y) { return this.cIm - (y - this.size / 2) / this.scale; },
-    };
+    return _rootPadPlaneAt(cRe, cIm, half, size);
 }
 
 function _programMetricSpanAtCursor(which, textarea) {
@@ -1770,7 +1775,10 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
     let modeRows;
     let hint;
     if (mode === 'roots') {
-        modeRows = `<label class="program-scrub-row"><input type="checkbox" id="program-scrub-snap" checked onchange="_rootPadSetSnap(this.checked)"> snap 0.5</label>`;
+        modeRows = `<div class="program-scrub-row">
+            window <input type="text" id="program-scrub-window" onchange="_rootPadSetWindow()" title="View range: a square of side d centered on 0">
+            <label><input type="checkbox" id="program-scrub-snap" checked onchange="_rootPadSetSnap(this.checked)"> snap 0.5</label>
+        </div>`;
         hint = 'drag a point &middot; arrows nudge it (Shift &times;5) &middot; Esc reverts &middot; any other edit closes';
     } else if (mode === 'choice') {
         modeRows = `<div class="program-scrub-row"><span id="program-scrub-pos"></span></div>
@@ -1807,7 +1815,10 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
         ${liveRow}
         <div class="program-scrub-hint">${hint}</div>
     `;
-    if (mode === 'complex') {
+    if (mode === 'roots') {
+        const windowEl = document.getElementById('program-scrub-window');
+        if (windowEl) windowEl.value = _scrubFormatNumber(2 * st.plane.half);
+    } else if (mode === 'complex') {
         const spanEl = document.getElementById('program-scrub-span');
         if (spanEl) spanEl.value = _scrubFormatNumber(st.span);
     } else if (mode !== 'choice') {
@@ -2066,6 +2077,22 @@ function _rootPadSetSnap(checked) {
     const st = _scrubPadState;
     if (!st || st.mode !== 'roots') return;
     st.snapOn = !!checked;
+    _rootPadDraw();
+}
+
+function _rootPadSetWindow() {
+    // View-range control: a single number d frames a square of side d
+    // CENTERED ON 0 (the open-time frame auto-fits the layout instead).
+    // Points outside the window stay live in the text; enlarge d to see
+    // them again. Invalid input re-displays the effective side.
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'roots') return;
+    const el = document.getElementById('program-scrub-window');
+    const side = Number(el && el.value);
+    if (Number.isFinite(side) && side > 0) {
+        st.plane = _rootPadPlaneAt(0, 0, side / 2, st.plane.size);
+    }
+    if (el) el.value = _scrubFormatNumber(2 * st.plane.half);
     _rootPadDraw();
 }
 

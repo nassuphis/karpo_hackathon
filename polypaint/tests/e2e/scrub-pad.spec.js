@@ -514,6 +514,43 @@ test.describe('Root pad (roots_literal geometry)', () => {
     expect(helpVisible).toBe(true);
   });
 
+  test('the window input reframes to a zero-centered square of side d', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, SRC, 'roots_literal');
+    const initial = await page.evaluate(() => ({
+      shown: document.getElementById('program-scrub-window').value,
+      half: _scrubPadState.plane.half,
+    }));
+    expect(Number(initial.shown)).toBeCloseTo(2 * initial.half, 6);
+    const after = await page.evaluate(() => {
+      document.getElementById('program-scrub-window').value = '30';
+      _rootPadSetWindow();
+      const st = _scrubPadState;
+      // drag root 1 (2i) under the new frame to 5-5i, snapped
+      const canvas = document.getElementById('program-scrub-canvas');
+      const rect = canvas.getBoundingClientRect();
+      _rootPadDragStart({
+        clientX: rect.left + st.plane.toX(st.roots[1].re),
+        clientY: rect.top + st.plane.toY(st.roots[1].im),
+        preventDefault() {},
+      });
+      _rootPadDragMove({
+        clientX: rect.left + st.plane.toX(5.1),
+        clientY: rect.top + st.plane.toY(-4.9),
+      });
+      document.dispatchEvent(new PointerEvent('pointerup'));
+      return {
+        cRe: st.plane.cRe, cIm: st.plane.cIm, half: st.plane.half,
+        root1: { ...st.roots[1] },
+        text: document.getElementById('cp-source-text').value,
+      };
+    });
+    expect(after.cRe).toBe(0);
+    expect(after.cIm).toBe(0);
+    expect(after.half).toBe(15);
+    expect(after.root1).toEqual({ re: 5, im: -5 });
+    expect(after.text).toContain('5-5i,');
+  });
+
   test('Escape reverts the entire call after a drag', async ({ page }) => {
     await openPadOnCoeffLiteral(page, SRC, 'roots_literal');
     await page.evaluate(() => {

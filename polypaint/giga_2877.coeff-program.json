@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2877",
+  "chain": [],
+  "source_text": "poly = vector_literal(-3.5+3.5i, -1.5+3.5i, 0.5+3.5i, 2.5+3.5i, -2.5+2.5i, -0.5+2.5i, 1.5+2.5i, 3.5+2.5i, -3.5+1.5i, -1.5+1.5i, 0.5+1.5i, 2.5+1.5i, -2.5+0.5i, -0.5+0.5i, 1.5+0.5i, 3.5+0.5i, -3.5-0.5i, -1.5-0.5i, 0.5-0.5i, 2.5-0.5i, -2.5-1.5i, -0.5-1.5i, 1.5-1.5i, 3.5-1.5i, -3.5-2.5i, -1.5-2.5i, 0.5-2.5i, 2.5-2.5i, -2.5-3.5i, -0.5-3.5i, 1.5-3.5i, 3.5-3.5i)\npoly = add(poly, ((0.05+0.9*t1)+(0-0.5)) + 1i*((0.05+0.9*t2)+(0-0.5)))\npoly = sort_abs(poly)\npoly\npoly = scan(32, 0, tos[31], tos[31-k])\ndrop\npoly\npoly = translate_roots(roots_ascii_literal(178), ((0.05+0.9*t1)+(0-0.5)) + 1i*((0.05+0.9*t2)+(0-0.5)))\npoly = scan(poly_len, 0, poly[0] + 100*tos[0], poly[k] + 100*(tos[k-32*floor(k/32)]*(1-floor(k/32)) + floor(k/32)))\ndrop\nemit"
+}

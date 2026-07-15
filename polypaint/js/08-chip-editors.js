@@ -449,6 +449,9 @@ const _coeffProgramCheatSections = [
             { label: 'fill', snippet: 'fill(poly_len, 0)\nemit', title: 'Alias for push_vec/fill vector construction.' },
             { label: 'vector_literal', snippet: 'poly = vector_literal(1, -3, 2)\nemit', title: 'Compile a static leading-first coefficient vector once and load it from the program constant pool.' },
             { label: 'roots_literal', snippet: 'poly = roots_literal(1, 2)\nemit', title: 'Expand the monic polynomial with these static roots once at compile time; the pool stores the resulting coefficients. Double-click the name to drag the roots on the root pad.' },
+            { label: 'roots_chess_literal', snippet: 'poly = roots_chess_literal(5, 1, 0)\nemit', title: 'Dark cells of a d x d board (corners dark), full side w, centered on o. Scrub w on the 1D pad and o on the 2D pad.' },
+            { label: 'roots_grid_literal', snippet: 'poly = roots_grid_literal(4, 1, 0)\nemit', title: 'The full d x d root lattice, side w, centered on o.' },
+            { label: 'roots_ring_literal', snippet: 'poly = roots_ring_literal(7, 1, 0)\nemit', title: 'n roots on a circle: o + r*exp(2*pi*i*k/n). A complex r rotates the ring.' },
             { label: 'translate_roots', snippet: 'poly = translate_roots(poly, 0.1*exp(pi2i*t1))\nemit', title: 'Shift every root by delta without solving for roots: Q(z) = P(z-delta).' },
             { label: 'bimodal', snippet: 'push_scalar(bimodal(t2, 0.7))', title: 'Symmetric bimodal remapping of u in [0,1], shaped by a in [0,1).' },
             { label: 'push_scalar', snippet: 'push_scalar(p1+p2)', title: 'Push one scalar onto the typed stack.' },
@@ -912,6 +915,33 @@ function _programHelpBuildCoeffRegistry() {
         _programHelpItem('roots_literal', 'roots_literal(r0, r1, ...)', 'Expand the monic polynomial whose roots are these static expressions ONCE at compile time (exact rational arithmetic) into the same constant pool as vector_literal — the program source shows the root layout instead of expanded coefficients. Double-click the roots_literal name to arrange the roots geometrically on the root pad (plain literals only).', {
             forms: ['poly = roots_literal(1, 2)', 'poly = roots_literal(-8.5+3i, -7.5+3i, 8.5+0i)'],
             params: [{ name: 'r0..rk', title: 'One or more finite static complex roots (up to 255). The pushed vector has k+1 leading-first coefficients with leading coefficient 1.' }],
+            effect: '(-- vector)',
+        }),
+        _programHelpItem('roots_chess_literal', 'roots_chess_literal(d, w, o)', 'The dark cells of a d x d chessboard (corners dark), expanded once at compile time into the constant pool. w is the FULL side of the board; o is its complex center. The parameters are plain literals: scrub w on the 1D pad and o on the 2D pad.', {
+            forms: ['poly = roots_chess_literal(5, 1, 0)', 'poly = roots_chess_literal(5, 1, 1+1i)'],
+            params: [
+                { name: 'd', title: 'Board dimension, integer 1..22 (dark-cell count stays within the 255-root cap).' },
+                { name: 'w', title: 'Full side length of the board, positive real.' },
+                { name: 'o', title: 'Complex center of the board.' },
+            ],
+            effect: '(-- vector)',
+        }),
+        _programHelpItem('roots_grid_literal', 'roots_grid_literal(d, w, o)', 'The full d x d root lattice: every cell of the board, side w, centered on o. Expanded once at compile time into the constant pool.', {
+            forms: ['poly = roots_grid_literal(4, 1, 0)'],
+            params: [
+                { name: 'd', title: 'Lattice dimension, integer 1..15 (d*d roots within the 255-root cap).' },
+                { name: 'w', title: 'Full side length, positive real.' },
+                { name: 'o', title: 'Complex center.' },
+            ],
+            effect: '(-- vector)',
+        }),
+        _programHelpItem('roots_ring_literal', 'roots_ring_literal(n, r, o)', 'n roots evenly spaced on a circle: o + r*exp(2*pi*i*k/n), expanded once at compile time. A COMPLEX r rotates the ring; cardinal angles are exact (ring(4, 1, 0) is exactly z^4 - 1).', {
+            forms: ['poly = roots_ring_literal(7, 1, 0)', 'poly = roots_ring_literal(6, 0.5i, -1)'],
+            params: [
+                { name: 'n', title: 'Point count, integer 1..255.' },
+                { name: 'r', title: 'Nonzero complex radius; the argument of r rotates the ring.' },
+                { name: 'o', title: 'Complex center.' },
+            ],
             effect: '(-- vector)',
         }),
         _programHelpItem('translate_roots', 'translate_roots(coefficients, delta)', 'Shift every root by delta using coefficient translation Q(z) = P(z-delta). This does not solve for roots and preserves the coefficient-vector length.', {

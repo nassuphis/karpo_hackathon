@@ -337,6 +337,36 @@
       ]
     },
     {
+      "name": "roots_chess_literal",
+      "op_symbol": "COEFF_OP_PUSH_VECTOR_CONST",
+      "op": 48,
+      "args": [
+        {"name": "d", "type": "complex_expr"},
+        {"name": "w", "type": "complex_expr"},
+        {"name": "o", "type": "complex_expr"}
+      ]
+    },
+    {
+      "name": "roots_grid_literal",
+      "op_symbol": "COEFF_OP_PUSH_VECTOR_CONST",
+      "op": 48,
+      "args": [
+        {"name": "d", "type": "complex_expr"},
+        {"name": "w", "type": "complex_expr"},
+        {"name": "o", "type": "complex_expr"}
+      ]
+    },
+    {
+      "name": "roots_ring_literal",
+      "op_symbol": "COEFF_OP_PUSH_VECTOR_CONST",
+      "op": 48,
+      "args": [
+        {"name": "n", "type": "complex_expr"},
+        {"name": "r", "type": "complex_expr"},
+        {"name": "o", "type": "complex_expr"}
+      ]
+    },
+    {
       "name": "translate_roots",
       "op_symbol": "COEFF_OP_TRANSLATE_ROOTS",
       "op": 49,

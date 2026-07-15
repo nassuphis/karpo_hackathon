@@ -598,6 +598,22 @@ def _typed_lower_roots_literal(args):
     )
 
 
+_ROOT_PATTERN_NAMES = frozenset({
+    "roots_chess_literal", "roots_grid_literal", "roots_ring_literal",
+})
+
+
+def _typed_lower_roots_pattern(name, args):
+    # Standard patterns are parametric sugar over roots_literal: the chip
+    # keeps (d, w, o) and the chain compiler expands the pattern's root set
+    # into the pool. Pattern parameters stay plain literals, so the existing
+    # 1D/2D scrub pads edit them directly.
+    if len(args) != 3:
+        raise CoeffProgramSourceError(f"{name} requires exactly (d, w, o) arguments")
+    chain, _kind = _typed_lower_static_pool_call(name, "argument", 3, args)
+    return chain, "vector"
+
+
 def _typed_lower_translate_roots(args):
     if len(args) != 2:
         raise CoeffProgramSourceError(
@@ -630,6 +646,8 @@ def _typed_lower_value(text):
             return _typed_lower_vector_literal(args)
         if name == "roots_literal":
             return _typed_lower_roots_literal(args)
+        if name in _ROOT_PATTERN_NAMES:
+            return _typed_lower_roots_pattern(name, args)
         if name == "translate_roots":
             return _typed_lower_translate_roots(args)
         if name in _VECTOR_FILL_NAMES:
@@ -823,6 +841,9 @@ def _lower_call(name, args, *, target="push"):
         return _append_typed_target(chain, value_type, target=target)
     if name == "roots_literal":
         chain, value_type = _typed_lower_roots_literal(args)
+        return _append_typed_target(chain, value_type, target=target)
+    if name in _ROOT_PATTERN_NAMES:
+        chain, value_type = _typed_lower_roots_pattern(name, args)
         return _append_typed_target(chain, value_type, target=target)
     if name == "translate_roots":
         chain, value_type = _typed_lower_translate_roots(args)
@@ -1071,6 +1092,7 @@ _LOCALS_RESERVED_EXTRA = frozenset({
     "roll", "rolr", "argsort", "littlewood", "blend", "andy",
     "scan", "slice", "poke_slice", "reduce", "sum", "prod",
     "vector_literal", "roots_literal", "translate_roots", "bimodal",
+    "roots_chess_literal", "roots_grid_literal", "roots_ring_literal",
     "window", "step", "prev", "prev2", "k", "select", "i", "j",
     "pi", "pi2", "pi2i", "tau", "tau_i",
     "p1", "p2", "t1", "t2", "poly_len",
@@ -1342,7 +1364,11 @@ def _source_scalar_text(text):
         # stream — the giga_2902 canonical program failed its chain->source
         # fingerprint round trip exactly here.
         return f"{float(static_value.imag)!r}i"
-    return _format_scalar_literal(static_value)
+    # mixed literals have no single-token spelling either way; use the
+    # house-style i suffix (re-lowers to the same push/push/add stream)
+    imag = float(static_value.imag)
+    sign = "+" if imag >= 0 else "-"
+    return f"{float(static_value.real)!r}{sign}{abs(imag)!r}i"
 
 
 def _typed_pending_line(kind, text):
@@ -1520,8 +1546,14 @@ def coeff_source_text_from_chain(chain):
             # following _typed_set_poly can render `poly = blend(t)`.
             flush_pending()
             push_pending("vector", _source_call("blend", [t[1]]))
-        elif lname in {"vector_literal", "roots_literal"} and args:
-            push_pending("vector", _source_call(lname, args))
+        elif lname in {"vector_literal", "roots_literal",
+                       "roots_chess_literal", "roots_grid_literal",
+                       "roots_ring_literal"} and args:
+            # chips store canonical re+imj strings; regenerate house-style
+            # minimal spellings (5, 0.5i, 1.0+1.0i) — values fold
+            # identically, so the fingerprint is untouched
+            push_pending("vector", _source_call(
+                lname, [_source_scalar_text(arg) for arg in args]))
         elif lname == "translate_roots" and not args:
             delta = pop_pending("scalar")
             coefficients = pop_pending("vector")

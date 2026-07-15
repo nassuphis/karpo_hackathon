@@ -255,6 +255,82 @@ class TestGiga2902CoeffProgram(unittest.TestCase):
         self.assertNotIn("vectors=", compiled["execution_spec"])
         self.assertEqual(compiled["vector_constants"], [])
 
+    def test_root_pattern_literals_expand_into_the_pool(self):
+        """Standard patterns are compile-time sugar over roots_literal:
+        same pool, same opcode, byte-identical results deduplicate."""
+        import numpy as np
+        from coeff_program_source import compile_coeff_program_source
+
+        # ring(4, 1, 0) is EXACTLY z^4 - 1 (cardinal angles are exact-cased
+        # by integer index arithmetic, never value proximity)
+        ring = compile_coeff_program_source("poly = roots_ring_literal(4, 1, 0)\nemit")
+        self.assertEqual(
+            ring["vector_constants"],
+            [{"length": 5, "values": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0]}],
+        )
+
+        # chess(3, 2, 0): dark cells of a 3x3 board, step 1 — corners plus
+        # center — deduplicates against the equivalent handwritten literal
+        merged = compile_coeff_program_source(
+            "roots_chess_literal(3, 2, 0)\n"
+            "vector_literal(1, 0, 0)\n"  # keep two stack entries for blend
+            "poly = blend(0.5)\nemit"
+        )
+        handwritten = compile_coeff_program_source(
+            "poly = roots_literal(-1+1i, 1+1i, 0, -1-1i, 1-1i)\nemit"
+        )
+        self.assertEqual(
+            merged["vector_constants"][0], handwritten["vector_constants"][0]
+        )
+
+        # grid(2, 1, 1+1i): four corners around the offset center
+        grid = compile_coeff_program_source("poly = roots_grid_literal(2, 1, 1+1i)\nemit")
+        got = grid["vector_constants"][0]
+        base = [complex(got["values"][i], got["values"][i + 1])
+                for i in range(0, len(got["values"]), 2)]
+        recovered = np.roots(np.array(base))
+        expected = np.array([0.5 + 1.5j, 1.5 + 1.5j, 0.5 + 0.5j, 1.5 + 0.5j])
+        distances = np.abs(recovered[:, None] - expected[None, :])
+        self.assertLess(float(distances.min(axis=1).max()), 1e-9)
+
+        # validation: caps, positivity, integrality, staticness
+        for bad, message in (
+            ("poly = roots_chess_literal(23, 1, 0)", "must be in \\[1, 22\\]"),
+            ("poly = roots_grid_literal(16, 1, 0)", "must be in \\[1, 15\\]"),
+            ("poly = roots_chess_literal(5, 0, 0)", "positive real"),
+            ("poly = roots_ring_literal(4, 0, 0)", "must be nonzero"),
+            ("poly = roots_grid_literal(2.5, 1, 0)", "must be an integer"),
+            ("poly = roots_chess_literal(5, 1, t1)", "must be a static expression"),
+            ("poly = roots_ring_literal(7, 1)", "exactly \\(d, w, o\\)"),
+        ):
+            with self.assertRaisesRegex(Exception, message):
+                compile_coeff_program_source(bad + "\nemit")
+
+    def test_root_pattern_literals_round_trip_with_house_style_args(self):
+        import warnings
+
+        from coeff_program_source import (
+            coeff_source_text_from_chain,
+            compile_coeff_program_source,
+        )
+
+        for src, expected_line in (
+            ("poly = roots_chess_literal(5, 1, 1+1i)\nemit",
+             "poly = roots_chess_literal(5.0, 1.0, 1.0+1.0i)"),
+            ("poly = roots_ring_literal(7, 0.5i, -1)\nemit",
+             "poly = roots_ring_literal(7.0, 0.5i, -1.0)"),
+        ):
+            compiled = compile_coeff_program_source(src)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                regenerated = coeff_source_text_from_chain(compiled["source_chain"])
+            self.assertEqual([str(w.message) for w in caught], [])
+            self.assertEqual(regenerated.splitlines()[0], expected_line)
+            self.assertEqual(
+                compile_coeff_program_source(regenerated)["fingerprint"],
+                compiled["fingerprint"],
+            )
+
     def test_canonical_program_round_trips_chain_to_source(self):
         """Review finding 1: the CANONICAL saved program (not a reduced
         spelling) must decompile to fingerprint-preserving source with no

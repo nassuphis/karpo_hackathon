@@ -2013,11 +2013,109 @@ def _compile_roots_literal(args, vector_constants):
             f"roots_literal has {len(args)} roots; max is {MAX_VECTOR_LEN - 1}"
         )
     roots = _static_call_values("roots_literal", "root", args)
+    return _compile_expanded_roots("roots_literal", roots, vector_constants)
+
+
+def _compile_expanded_roots(name, roots, vector_constants):
+    if len(roots) > MAX_VECTOR_LEN - 1:
+        raise RuntimeError(
+            f"{name} produces {len(roots)} roots; max is {MAX_VECTOR_LEN - 1}"
+        )
     coefficients = expand_monic_roots(roots)
     for idx, value in enumerate(coefficients):
-        _finite_number(value.real, f"roots_literal expanded coefficient {idx} real")
-        _finite_number(value.imag, f"roots_literal expanded coefficient {idx} imag")
-    return _intern_vector_constant("roots_literal", coefficients, vector_constants)
+        _finite_number(value.real, f"{name} expanded coefficient {idx} real")
+        _finite_number(value.imag, f"{name} expanded coefficient {idx} imag")
+    return _intern_vector_constant(name, coefficients, vector_constants)
+
+
+def _pattern_int(name, label, value, lo, hi):
+    if abs(value.imag) > 0 or value.real != int(value.real):
+        raise RuntimeError(f"{name} {label} must be an integer")
+    n = int(value.real)
+    if n < lo or n > hi:
+        raise RuntimeError(f"{name} {label} must be in [{lo}, {hi}], got {n}")
+    return n
+
+
+def _pattern_positive_real(name, label, value):
+    if abs(value.imag) > 0 or not value.real > 0:
+        raise RuntimeError(f"{name} {label} must be a positive real number")
+    return float(value.real)
+
+
+# Standard root patterns (compile-time only, same op-48 pool as
+# roots_literal — the pattern is source sugar over an expanded root set):
+#   roots_chess_literal(d, w, o)  dark cells of a d x d board (corners
+#                                 dark: (row+col)%2==0), FULL side w,
+#                                 centered on complex o
+#   roots_grid_literal(d, w, o)   the full d x d lattice, side w, center o
+#   roots_ring_literal(n, r, o)   n points o + r*exp(2*pi*i*k/n); a complex
+#                                 r rotates the ring
+# The caps come from the 255-root vector limit: chess ceil(d^2/2) <= 255
+# -> d <= 22, grid d^2 <= 255 -> d <= 15.
+
+def _roots_chess_points(d, w, o):
+    if d == 1:
+        return [o]
+    step = w / (d - 1)
+    points = []
+    for row in range(d):
+        for col in range(d):
+            if (row + col) % 2 != 0:
+                continue
+            x = (col - (d - 1) / 2.0) * step
+            y = ((d - 1) / 2.0 - row) * step
+            points.append(complex(o.real + x, o.imag + y))
+    return points
+
+
+def _roots_grid_points(d, w, o):
+    if d == 1:
+        return [o]
+    step = w / (d - 1)
+    points = []
+    for row in range(d):
+        for col in range(d):
+            x = (col - (d - 1) / 2.0) * step
+            y = ((d - 1) / 2.0 - row) * step
+            points.append(complex(o.real + x, o.imag + y))
+    return points
+
+
+def _roots_ring_points(n, r, o):
+    points = []
+    for k in range(n):
+        # exact unit values at the cardinal angles, detected by INTEGER
+        # index arithmetic (never value proximity): ring(4,1,0) expands to
+        # exactly z^4-1 instead of carrying 1e-16 sin/cos dust
+        if (4 * k) % n == 0:
+            turn = (1 + 0j, 1j, -1 + 0j, -1j)[(4 * k) // n % 4]
+        else:
+            turn = cmath.exp(2j * math.pi * k / n)
+        points.append(o + r * turn)
+    return points
+
+
+def _compile_roots_pattern(name, args, vector_constants):
+    if len(args) != 3:
+        raise RuntimeError(f"{name} requires exactly (d, w, o) arguments")
+    values = _static_call_values(name, "argument", args)
+    if name == "roots_chess_literal":
+        d = _pattern_int(name, "dimension d", values[0], 1, 22)
+        w = _pattern_positive_real(name, "width w", values[1])
+        roots = _roots_chess_points(d, w, values[2])
+    elif name == "roots_grid_literal":
+        d = _pattern_int(name, "dimension d", values[0], 1, 15)
+        w = _pattern_positive_real(name, "width w", values[1])
+        roots = _roots_grid_points(d, w, values[2])
+    elif name == "roots_ring_literal":
+        n = _pattern_int(name, "count n", values[0], 1, MAX_VECTOR_LEN - 1)
+        if values[1] == 0:
+            raise RuntimeError(f"{name} radius r must be nonzero")
+        roots = _roots_ring_points(n, values[1], values[2])
+    else:
+        raise RuntimeError(f"unknown root pattern {name}")
+    return _compile_expanded_roots(name, roots, vector_constants)
 
 
 def _compile_legacy_chip(args, scalar_exprs):
@@ -2086,6 +2184,8 @@ def _compile_chip(chip, scalar_exprs, vector_constants):
         return [_compile_vector_literal(args, vector_constants)]
     if name == "roots_literal":
         return [_compile_roots_literal(args, vector_constants)]
+    if name in ("roots_chess_literal", "roots_grid_literal", "roots_ring_literal"):
+        return [_compile_roots_pattern(name, args, vector_constants)]
     if name in _ZERO_ARG_CHIP_OPS:
         if args:
             raise RuntimeError(f"{name} chip takes no arguments")

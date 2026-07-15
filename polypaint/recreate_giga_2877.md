@@ -149,3 +149,39 @@ N =  790  ->     19,971,200 roots (5K-class validation)
 ```
 
 Saved through `/save-coeff-program` as id `giga-2877`, predeploy-gated.
+
+## 5. Variants: three artworks from one formula
+
+Because the pairing is the artistic variable, two sibling programs swap
+ONLY the pairing stage (generator `scripts/gen_giga_2877_variants.py`,
+suite `tests/test_giga_2877_variants.py`, both parity-proven at 1.1e-9):
+
+- **`giga_2877_v2` — pool order** (id `giga-2877-v2`, 55 tokens,
+  fingerprint `c6a6bf20...`): the sort stage is simply removed, so every
+  row pairs identically and the ring collapses into smooth coherent
+  petals. Cloud corr vs the LAPACK ensemble: 0.655.
+- **`giga_2877_v3` — chaotic key** (id `giga-2877-v3`, 59 tokens,
+  fingerprint `7d18f94a...`): the descending-|.| stage is replaced by
+  `argsort` of the hash-like key `frac(100000*|r|)` — deterministic, but
+  it re-dices the permutation from row to row, washing the shards into a
+  diffuse fuzz halo. Measured 0.956 cloud corr against a true
+  random-per-row ensemble (the noise floor), i.e. visually
+  indistinguishable from actual per-row dice.
+
+The three programs differ only in the lines between the delta add and
+the push before `translate_roots`:
+
+```text
+main:  poly = sort_abs(poly)                 v2:  (nothing)
+       poly
+       poly = scan(32, 0, tos[31], tos[31-k])
+       drop
+
+v3:    poly
+       poly = scan(32, 0, 100000*abs(tos[0]) - floor(100000*abs(tos[0])),
+                   100000*abs(tos[k]) - floor(100000*abs(tos[k])))
+       poly = argsort(pop, poly)
+```
+
+Same checkerboard center in all three; the ring is feather shards
+(main, 0.934 vs the reference's ensemble), petals (v2), or fuzz (v3).

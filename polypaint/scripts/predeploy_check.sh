@@ -94,6 +94,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_giga_2902_coeff_program.py \
     tests/test_giga_263_coeff_program.py \
     tests/test_giga_265_coeff_program.py \
+    tests/test_giga_2870_coeff_program.py \
     tests/test_giga_2871_coeff_program.py \
     tests/test_giga_2872_coeff_program.py \
     tests/test_giga_2873_coeff_program.py \

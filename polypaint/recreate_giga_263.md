@@ -344,7 +344,7 @@ poly = multiply(pop, poly)
 emit
 ```
 
-122 tokens, stack depth 4, no constant pool, no scalar-expression pool.
+122 tokens, stack depth 7, no constant pool, no scalar-expression pool.
 Locals are scalar-only substitutions (a vector cannot be named), which is why
 the `k` vector is re-issued by `arange` at each use — four extra tokens,
 nothing at run time. The `u1/u2/v1/v2` locals keep the source readable; the

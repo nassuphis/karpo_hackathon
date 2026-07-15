@@ -1410,6 +1410,26 @@ function _programTokenSpanAtCursor(textarea) {
     return { raw: value.slice(lo, hi), start: lo, end: hi };
 }
 
+// Callers whose direct numeric argument is integer-valued by contract:
+// the pad scrubs such literals in whole-number steps. floor(...) is the
+// generic wrapper; roots_ascii_literal's code is inherently discrete.
+const _SCRUB_INTEGER_CALLERS = ['floor', 'roots_ascii_literal'];
+
+function _scrubIntegerContext(value, start) {
+    // Is the literal starting at `start` the direct argument of an
+    // integer-context call? Scan back over whitespace to an open paren,
+    // then over the identifier that owns it.
+    let p = start;
+    while (p > 0 && value[p - 1] === ' ') p--;
+    if (p === 0 || value[p - 1] !== '(') return false;
+    let q = p - 1;
+    while (q > 0 && /[A-Za-z0-9_]/.test(value[q - 1])) q--;
+    const callee = value.slice(q, p - 1);
+    // identifier boundary: myfloor( must not count as floor(
+    if (q > 0 && /[A-Za-z0-9_.\]]/.test(value[q - 1])) return false;
+    return _SCRUB_INTEGER_CALLERS.includes(callee);
+}
+
 function _programNumberSpanAtCursor(textarea) {
     const span = _programTokenSpanAtCursor(textarea);
     if (!span) return null;
@@ -1428,7 +1448,7 @@ function _programNumberSpanAtCursor(textarea) {
     if (!/^-?(\d+\.?\d*|\.\d+)$/.test(raw)) return null;
     const num = Number(raw);
     if (!Number.isFinite(num)) return null;
-    return { raw, start, end, value: num };
+    return { raw, start, end, value: num, integer: _scrubIntegerContext(value, start) };
 }
 
 const _SCRUB_NUM = String.raw`(\d+\.?\d*|\.\d+)`;
@@ -1699,7 +1719,9 @@ function _scrubPadNudge(direction, big) {
         _scrubPadWriteComplex(st.re + dx * step, st.im + dy * step);
         return;
     }
-    const step = (st.max - st.min) * (big ? 0.10 : 0.01);
+    const step = st.integerStep
+        ? (big ? 5 : 1)
+        : (st.max - st.min) * (big ? 0.10 : 0.01);
     const next = Math.min(st.max, Math.max(st.min, st.value + direction * step));
     _scrubPadWrite(next);
 }
@@ -1792,6 +1814,10 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
         st.value = span.value;
         st.min = span.value - spread;
         st.max = span.value + spread;
+        // literal inside floor(...) or roots_ascii_literal(...): the value
+        // is integer-valued by contract, so drags and nudges snap to whole
+        // numbers instead of continuous fractions
+        st.integerStep = !!span.integer;
     }
     const el = _scrubPadEl();
     if (!el) return;
@@ -1830,7 +1856,9 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
             min <input type="text" id="program-scrub-min" onchange="_scrubPadSetRange()">
             max <input type="text" id="program-scrub-max" onchange="_scrubPadSetRange()">
         </div>`;
-        hint = 'drag to scrub &middot; &larr;/&rarr; nudge (Shift bigger) &middot; Esc reverts &middot; any other edit closes';
+        hint = st.integerStep
+            ? 'integer steps &middot; drag to scrub &middot; &larr;/&rarr; &plusmn;1 (Shift &plusmn;5) &middot; Esc reverts'
+            : 'drag to scrub &middot; &larr;/&rarr; nudge (Shift bigger) &middot; Esc reverts &middot; any other edit closes';
     }
     const title = mode === 'roots' ? 'Roots' : (mode === 'choice' ? 'Metric' : (mode === 'complex' ? 'Scrub 2D' : 'Scrub'));
     const surfaceClass = mode === 'complex' ? 'program-scrub-surface program-scrub-surface-2d' : 'program-scrub-surface';
@@ -1974,7 +2002,8 @@ function _scrubPadSetSpan() {
 function _scrubPadWrite(nextValue) {
     const st = _scrubPadState;
     if (!st || st.mode === 'choice') return;
-    const text = _scrubFormatNumber(nextValue);
+    const next = st.integerStep ? Math.round(nextValue) : nextValue;
+    const text = _scrubFormatNumber(next);
     st.value = Number(text);
     _scrubPadWriteText(text);
 }

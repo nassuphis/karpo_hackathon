@@ -573,3 +573,18 @@ test.describe('Root pad (roots_literal geometry)', () => {
     expect(text).toBe(SRC);
   });
 });
+
+test.describe('Integer-context scrubbing', () => {
+  test('the roots_ascii_literal code (and floor args) scrub in whole-number steps', async ({ page }) => {
+    const opened = await openPadOnCoeffLiteral(
+      page, 'poly = roots_ascii_literal(floor(11.2506))\nemit', '11.2506');
+    expect(opened.padVisible).toBe(true);
+    await expect(page.locator('.program-scrub-hint')).toContainText('integer steps');
+    const after = await page.evaluate(() => {
+      _scrubPadWrite(13.37);
+      _scrubPadNudge(1, false);
+      return document.getElementById('cp-source-text').value;
+    });
+    expect(after).toBe('poly = roots_ascii_literal(floor(14))\nemit');
+  });
+});

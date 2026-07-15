@@ -2165,6 +2165,8 @@ async function main() {
       "const _SCRUB_NUM = String.raw`(\\d+\\.?\\d*|\\.\\d+)`;",
       'const _SCRUB_IMAG_RE = new RegExp(`^-?${_SCRUB_NUM}[ijIJ]$`);',
       extractFunction('_programTokenSpanAtCursor'),
+      "const _SCRUB_INTEGER_CALLERS = ['floor', 'roots_ascii_literal'];",
+      extractFunction('_scrubIntegerContext'),
       extractFunction('_programNumberSpanAtCursor'),
       extractFunction('_programComplexSpanAtCursor'),
       extractFunction('_parseComplexLiteral'),
@@ -2244,6 +2246,41 @@ async function main() {
     assert(scrubTextarea.value === 'poly = linear(poly, 2.04, 3)\nemit', 'arrow nudge should step by 1% of the range');
     vm.runInContext('for (let i = 0; i < 200; i++) _scrubPadNudge(1, true);', scrubCtx);
     assert(scrubTextarea.value === 'poly = linear(poly, 4, 3)\nemit', 'nudge must clamp at the range maximum');
+    // ── integer context: literals inside floor(...) / roots_ascii_literal(...)
+    // scrub in whole-number steps ──
+    {
+      const ic = (text, pos) => {
+        scrubTextarea.value = text;
+        scrubTextarea.selectionStart = scrubTextarea.selectionEnd = pos;
+        const s = vm.runInContext('_span()', scrubCtx);
+        return s && s.integer;
+      };
+      assert(ic('poly = roots_ascii_literal(floor(11.2506))\nemit', 34) === true,
+        'a literal inside floor( must be integer-context');
+      assert(ic('poly = roots_ascii_literal(178)\nemit', 28) === true,
+        'the roots_ascii_literal code itself must be integer-context');
+      assert(ic('poly = roots_ascii_literal(floor( 11.2506 ))\nemit', 35) === true,
+        'spaces between the paren and the literal must not defeat detection');
+      assert(ic('poly = linear(poly, 2, 3)\nemit', 21) === false,
+        'ordinary call arguments stay continuous');
+      assert(ic('poly = myfloor(7)\nemit', 16) === false,
+        'identifier boundaries must hold: myfloor( is not floor(');
+      scrubTextarea.value = 'poly = roots_ascii_literal(floor(11.2506))\nemit';
+      scrubTextarea.selectionStart = scrubTextarea.selectionEnd = 34;
+      vm.runInContext("_open('cp', _span())", scrubCtx);
+      assert(padEls['program-scrub-pad'].innerHTML.includes('integer steps'),
+        'the pad should advertise integer stepping');
+      vm.runInContext('_write(13.37)', scrubCtx);
+      assert(scrubTextarea.value === 'poly = roots_ascii_literal(floor(13))\nemit',
+        'integer-context writes must round to whole numbers, got ' + scrubTextarea.value);
+      vm.runInContext('_scrubPadNudge(1, false)', scrubCtx);
+      assert(scrubTextarea.value === 'poly = roots_ascii_literal(floor(14))\nemit',
+        'integer-context arrow nudge must step by exactly 1');
+      vm.runInContext('_scrubPadNudge(-1, true)', scrubCtx);
+      assert(scrubTextarea.value === 'poly = roots_ascii_literal(floor(9))\nemit',
+        'integer-context Shift nudge must step by exactly 5');
+      vm.runInContext('_revert()', scrubCtx);
+    }
     scrubTextarea.value = 'poly = linear(poly, 2, 3)\nemit';
     scrubTextarea.selectionStart = scrubTextarea.selectionEnd = 21;
     vm.runInContext("_open('rt', _span())", scrubCtx);

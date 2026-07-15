@@ -2096,6 +2096,33 @@ def _roots_ring_points(n, r, o):
     return points
 
 
+def _compile_roots_ascii(args, vector_constants):
+    """roots_ascii_literal(code): the lit pixels of glyph b<code> from the
+    checked-in CP437 sheet transcription (lambda/cp437_font.py) as roots,
+    expanded once into the pool. The table replicates the historical
+    pngfont2pydict.py exactly — including its LSB-leftmost packing (glyphs
+    are mirrored relative to the sheet) and its b<N> = sheet cell N-1 key
+    offset — so roots_ascii_literal(178) is bit-for-bit the constellation
+    the giga_2872 poly_letter run used."""
+    if len(args) != 1:
+        raise RuntimeError("roots_ascii_literal requires exactly (code)")
+    values = _static_call_values("roots_ascii_literal", "argument", args)
+    code = _pattern_int("roots_ascii_literal", "code", values[0], 1, 256)
+    from cp437_font import FONT_ROWS
+
+    rows = FONT_ROWS[code]
+    roots = []
+    for y, row in enumerate(rows):
+        for x in range(8):
+            if row & (1 << (7 - x)):
+                roots.append(complex(x - 3.5, (7 - y) - 3.5))
+    if not roots:
+        raise RuntimeError(
+            f"roots_ascii_literal code {code} has no lit pixels"
+        )
+    return _compile_expanded_roots("roots_ascii_literal", roots, vector_constants)
+
+
 def _compile_roots_pattern(name, args, vector_constants):
     if len(args) != 3:
         raise RuntimeError(f"{name} requires exactly (d, w, o) arguments")
@@ -2186,6 +2213,8 @@ def _compile_chip(chip, scalar_exprs, vector_constants):
         return [_compile_roots_literal(args, vector_constants)]
     if name in ("roots_chess_literal", "roots_grid_literal", "roots_ring_literal"):
         return [_compile_roots_pattern(name, args, vector_constants)]
+    if name == "roots_ascii_literal":
+        return [_compile_roots_ascii(args, vector_constants)]
     if name in _ZERO_ARG_CHIP_OPS:
         if args:
             raise RuntimeError(f"{name} chip takes no arguments")

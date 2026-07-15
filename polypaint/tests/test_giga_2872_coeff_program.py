@@ -66,6 +66,74 @@ class TestGiga2872CoeffProgram(unittest.TestCase):
         self.assertEqual(constant["values"][1], 0.0)
         self.assertEqual(compiled["scalar_expr_count"], 3)
 
+    def test_roots_ascii_literal_contract(self):
+        """The generic glyph pattern behind the saved program: the checked-in
+        table replicates the era's pngfont2pydict.py transcription (verified
+        against all 255 letters.py b-entries at generation time), including
+        its LSB-mirror and b<N> = sheet cell N-1 quirks."""
+        from coeff_program_source import (
+            coeff_source_text_from_chain,
+            compile_coeff_program_source,
+        )
+        from cp437_font import FONT_ROWS, SHEET_SHA256
+
+        # provenance + structure pins (the reference PNG is not available in
+        # CI, so the sheet hash and table shape are pinned here instead of a
+        # generator --check gate; hash independently verified against
+        # /Users/nicknassuphis/pyroots/fonts/3dfx8x8.png at transcription)
+        self.assertEqual(
+            SHEET_SHA256,
+            "9411cdef9736aae93a12029d0f164cb06203d1710e3603ae790794dd51eeede6",
+        )
+        self.assertEqual(len(FONT_ROWS), 256)
+        self.assertTrue(all(len(rows) == 8 for rows in FONT_ROWS.values()))
+        self.assertEqual(
+            FONT_ROWS[178],
+            (0b10101010, 0b01010101, 0b10101010, 0b01010101,
+             0b10101010, 0b01010101, 0b10101010, 0b01010101),
+        )
+        blanks = sorted(code for code, rows in FONT_ROWS.items() if not any(rows))
+        self.assertEqual(blanks, [1, 33, 256])
+
+        # identity: roots_ascii_literal(178) deduplicates to the SAME pool
+        # constant as the saved program's constellation
+        generator = _load_generator()
+        ascii_prog = compile_coeff_program_source(
+            "poly = roots_ascii_literal(178)\nemit"
+        )
+        saved = compile_coeff_program_source(generator.build_source_text())
+        self.assertEqual(
+            ascii_prog["vector_constants"], saved["vector_constants"]
+        )
+
+        # validation matrix
+        for bad, message in (
+            ("poly = roots_ascii_literal(33)", "no lit pixels"),
+            ("poly = roots_ascii_literal(0)", "must be in \\[1, 256\\]"),
+            ("poly = roots_ascii_literal(257)", "must be in \\[1, 256\\]"),
+            ("poly = roots_ascii_literal(178.5)", "must be an integer"),
+            ("poly = roots_ascii_literal(t1)", "must be a static expression"),
+            ("poly = roots_ascii_literal(178, 1)", "exactly \\(code\\)"),
+        ):
+            with self.assertRaisesRegex(Exception, message):
+                compile_coeff_program_source(bad + "\nemit")
+
+        # round trip keeps the code spelling
+        import warnings
+
+        compiled = compile_coeff_program_source(
+            "poly = translate_roots(roots_ascii_literal(66), 0.5)\nemit"
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            regenerated = coeff_source_text_from_chain(compiled["source_chain"])
+        self.assertEqual([str(w.message) for w in caught], [])
+        self.assertIn("roots_ascii_literal(66.0)", regenerated)
+        self.assertEqual(
+            compile_coeff_program_source(regenerated)["fingerprint"],
+            compiled["fingerprint"],
+        )
+
     def test_round_trips_chain_to_source(self):
         import warnings
 

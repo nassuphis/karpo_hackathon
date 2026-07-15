@@ -373,7 +373,7 @@ package_render_plan_zip() {
        lambda/solve_score_program_source.py \
        lambda/program_profiles.py lambda/program_profiles.json lambda/merged_opcodes.py lambda/merged_opcodes.json \
        lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
-       lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
+       lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
        lambda/root_legacy_registry.json \
        lambda/color_render_contract.py \
        lambda/solve_score_chain.py \
@@ -1146,7 +1146,7 @@ rm -rf "$COEFFGEN_DIR"
 mkdir -p "$COEFFGEN_DIR"
 cp lambda/handler_coeffgen.py lambda/shared.py lambda/compute_fused.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
+   lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
    lambda/program_source_core.py lambda/registry_common.py lambda/program_profiles.py lambda/program_profiles.json \
    lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/program_compile_helpers.py \
    lambda/root_program_source.py lambda/root_legacy_registry.json lambda/merged_opcodes.py \
@@ -1171,7 +1171,7 @@ mkdir -p "$STORAGE_DIR"
 cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/book_describe.py \
    lambda/solve_score_program_source.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
+   lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
    lambda/root_program_source.py \
    lambda/program_source_core.py lambda/registry_common.py lambda/program_profiles.py lambda/program_v2_translate.py \
    lambda/program_profiles.json lambda/merged_opcodes.py lambda/merged_opcodes.json \
@@ -1227,7 +1227,7 @@ rm -rf "$COMPUTE_PREVIEW_DIR"
 mkdir -p "$COMPUTE_PREVIEW_DIR"
 cp lambda/handler_compute_preview.py lambda/shared.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
+   lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
    lambda/program_source_core.py lambda/registry_common.py lambda/program_profiles.py lambda/program_profiles.json \
    lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/program_compile_helpers.py \
    lambda/root_program_source.py lambda/root_legacy_registry.json lambda/merged_opcodes.py \
@@ -1256,7 +1256,7 @@ rm -rf "$PARAM_DEBUG_DIR"
 mkdir -p "$PARAM_DEBUG_DIR"
 cp lambda/handler_param_debug.py lambda/shared.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
+   lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
    lambda/program_source_core.py lambda/registry_common.py lambda/program_profiles.py lambda/program_profiles.json \
    lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/program_compile_helpers.py \
    lambda/root_program_source.py lambda/root_legacy_registry.json lambda/merged_opcodes.py \
@@ -1306,7 +1306,7 @@ cp lambda/handler_render_lores_preview.py lambda/shared.py \
    lambda/solve_score_program_source.py lambda/program_source_core.py lambda/registry_common.py lambda/program_profiles.py lambda/program_profiles.json \
    lambda/pipeline_programs.py lambda/program_compile_helpers.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
+   lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
    lambda/root_legacy_registry.json lambda/merged_opcodes.py "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt lambda/solve_proximity_stats lambda/score_raw_render \
    lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$RENDER_LORES_PREVIEW_DIR/"
@@ -1387,7 +1387,7 @@ mkdir -p "$PDF_ARTIFACT_DIR"
 cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/solve_score_program_source.py lambda/coeff_program_source.py lambda/structural_chips.json lambda/param_program_source.py lambda/root_program_source.py \
    lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py \
-   lambda/coeff_program_chain.py lambda/param_program_chain.py lambda/merged_opcodes.py \
+   lambda/coeff_program_chain.py lambda/cp437_font.py lambda/param_program_chain.py lambda/merged_opcodes.py \
    lambda/program_source_core.py lambda/registry_common.py lambda/program_profiles.py lambda/program_profiles.json \
    lambda/coeff_legacy_registry.json lambda/param_legacy_registry.json lambda/root_legacy_registry.json \
    lambda/spread_pdf.py "$PDF_ARTIFACT_DIR/"
@@ -1480,7 +1480,7 @@ cp lambda/handler_palette_render_plan.py lambda/shared.py \
    lambda/solve_score_program_source.py \
    lambda/program_profiles.py lambda/program_profiles.json lambda/merged_opcodes.py lambda/merged_opcodes.json \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
+   lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
    lambda/root_legacy_registry.json \
    lambda/color_artifact_meta.py \
    lambda/color_render_contract.py \
@@ -1558,7 +1558,7 @@ rm -rf "$COMPUTE_PLAN_DIR"
 mkdir -p "$COMPUTE_PLAN_DIR"
 cp lambda/handler_compute_plan.py lambda/shared.py lambda/compute_fused.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
+   lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
    lambda/program_source_core.py lambda/registry_common.py lambda/program_profiles.py lambda/program_profiles.json \
    lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/program_compile_helpers.py \
    lambda/root_program_source.py lambda/root_legacy_registry.json lambda/merged_opcodes.py \

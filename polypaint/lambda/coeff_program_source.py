@@ -603,6 +603,17 @@ _ROOT_PATTERN_NAMES = frozenset({
 })
 
 
+def _typed_lower_roots_ascii(args):
+    # One static code; the chain compiler expands the glyph's lit pixels
+    # into the pool. The code stays a plain literal — the 1D pad scrubs it.
+    if len(args) != 1:
+        raise CoeffProgramSourceError("roots_ascii_literal requires exactly (code)")
+    chain, _kind = _typed_lower_static_pool_call(
+        "roots_ascii_literal", "argument", 1, args
+    )
+    return chain, "vector"
+
+
 def _typed_lower_roots_pattern(name, args):
     # Standard patterns are parametric sugar over roots_literal: the chip
     # keeps (d, w, o) and the chain compiler expands the pattern's root set
@@ -648,6 +659,8 @@ def _typed_lower_value(text):
             return _typed_lower_roots_literal(args)
         if name in _ROOT_PATTERN_NAMES:
             return _typed_lower_roots_pattern(name, args)
+        if name == "roots_ascii_literal":
+            return _typed_lower_roots_ascii(args)
         if name == "translate_roots":
             return _typed_lower_translate_roots(args)
         if name in _VECTOR_FILL_NAMES:
@@ -844,6 +857,9 @@ def _lower_call(name, args, *, target="push"):
         return _append_typed_target(chain, value_type, target=target)
     if name in _ROOT_PATTERN_NAMES:
         chain, value_type = _typed_lower_roots_pattern(name, args)
+        return _append_typed_target(chain, value_type, target=target)
+    if name == "roots_ascii_literal":
+        chain, value_type = _typed_lower_roots_ascii(args)
         return _append_typed_target(chain, value_type, target=target)
     if name == "translate_roots":
         chain, value_type = _typed_lower_translate_roots(args)
@@ -1093,6 +1109,7 @@ _LOCALS_RESERVED_EXTRA = frozenset({
     "scan", "slice", "poke_slice", "reduce", "sum", "prod",
     "vector_literal", "roots_literal", "translate_roots", "bimodal",
     "roots_chess_literal", "roots_grid_literal", "roots_ring_literal",
+    "roots_ascii_literal",
     "window", "step", "prev", "prev2", "k", "select", "i", "j",
     "pi", "pi2", "pi2i", "tau", "tau_i",
     "p1", "p2", "t1", "t2", "poly_len",
@@ -1548,7 +1565,7 @@ def coeff_source_text_from_chain(chain):
             push_pending("vector", _source_call("blend", [t[1]]))
         elif lname in {"vector_literal", "roots_literal",
                        "roots_chess_literal", "roots_grid_literal",
-                       "roots_ring_literal"} and args:
+                       "roots_ring_literal", "roots_ascii_literal"} and args:
             # chips store canonical re+imj strings; regenerate house-style
             # minimal spellings (5, 0.5i, 1.0+1.0i) — values fold
             # identically, so the fingerprint is untouched

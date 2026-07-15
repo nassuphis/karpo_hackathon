@@ -1298,6 +1298,17 @@ window._coeffRegistryVocab = {
         ]
       },
       {
+        "name": "roots_ascii_literal",
+        "op_symbol": "COEFF_OP_PUSH_VECTOR_CONST",
+        "op": 48,
+        "args": [
+          {
+            "name": "code",
+            "type": "complex_expr"
+          }
+        ]
+      },
+      {
         "name": "translate_roots",
         "op_symbol": "COEFF_OP_TRANSLATE_ROOTS",
         "op": 49,

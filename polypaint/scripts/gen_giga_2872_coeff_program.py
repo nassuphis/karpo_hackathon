@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Generate the portable giga_2872 Coeff Program document.
 
-The roots are the 32 lit pixels of CP437 character 178 (the medium-shade
-block) from the era's letters.py FONT dictionary — itself transcribed from
-fonts/3dfx8x8.png by pngfont2pydict.py. The program translates that pooled
-constellation per row and applies zfrm.andy1 in its always-observed collapsed
-form (see recreate_giga_2872.md sections 1.4-1.5 and 8). Parity against the
-verbatim historical formula is pinned by tests/test_giga_2872_coeff_program.py.
+The roots are the 32 lit pixels of font glyph b178 (CP437 sheet cell 177,
+the medium shade) via roots_ascii_literal, whose checked-in table
+(lambda/cp437_font.py) replicates the era's pngfont2pydict.py transcription
+bit for bit. The program translates that pooled constellation per row and
+applies zfrm.andy1 in its always-observed collapsed form (see
+recreate_giga_2872.md sections 1.4-1.5 and 8). The roots_ascii_literal(178)
+spelling compiles to the IDENTICAL pool constant and fingerprint as the
+explicit 32-root listing it replaced. Parity against the verbatim historical
+formula is pinned by tests/test_giga_2872_coeff_program.py.
 """
 from __future__ import annotations
 
@@ -17,58 +20,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "giga_2872.coeff-program.json"
 
-# letters.py at 500685f, key 'b178' — a perfect checkerboard.
-B178 = [
-    0b10101010,
-    0b01010101,
-    0b10101010,
-    0b01010101,
-    0b10101010,
-    0b01010101,
-    0b10101010,
-    0b01010101,
-]
+LAMBDA_DIR = ROOT / "lambda"
+import sys
+
+sys.path.insert(0, str(LAMBDA_DIR))
 
 
 def letter_roots() -> list[complex]:
-    """get_letter_coordinates at 500685f: bit (x, y) -> (x-3.5, (7-y)-3.5),
-    factor = 1, row-major scan with bit 7 leftmost."""
+    """Glyph b178's lit pixels via the checked-in table, read exactly as
+    letters.get_letter_coordinates did: bit (x, y) -> (x-3.5, (7-y)-3.5)."""
+    from cp437_font import FONT_ROWS
+
     coords = []
-    for y, row in enumerate(B178):
+    for y, row in enumerate(FONT_ROWS[178]):
         for x in range(8):
             if row & (1 << (7 - x)):
                 coords.append(complex(x - 3.5, (7 - y) - 3.5))
     return coords
 
 
-def _number(value: float) -> str:
-    normalized = 0.0 if value == 0.0 else float(value)
-    return format(normalized, ".17g")
-
-
-def _complex(value: complex) -> str:
-    real = 0.0 if value.real == 0.0 else value.real
-    imag = 0.0 if value.imag == 0.0 else value.imag
-    if imag == 0.0:
-        return _number(real)
-    if real == 0.0:
-        return f"{_number(imag)}i"
-    sign = "+" if imag >= 0.0 else ""
-    return f"{_number(real)}{sign}{_number(imag)}i"
-
-
 def build_source_text() -> str:
-    roots = letter_roots()
-    if len(roots) != 32:
+    if len(letter_roots()) != 32:
         raise RuntimeError("b178 must contain exactly 32 lit pixels")
-    rows = ["roots_literal("]
-    rows.extend(f"    {_complex(value)}," for value in roots[:-1])
-    rows.append(f"    {_complex(roots[-1])}")
-    rows.append(")")
-    roots_call = "\n".join(rows)
     return "\n".join(
         [
-            f"poly = translate_roots({roots_call}, (0.05+0.9*t1) + 1i*(0.05+0.9*t2))",
+            "poly = translate_roots(roots_ascii_literal(178), (0.05+0.9*t1) + 1i*(0.05+0.9*t2))",
             "poly",
             "poly = arange(0, 33)",
             "poly = argsort(poly, peek)",

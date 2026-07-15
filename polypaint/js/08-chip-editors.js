@@ -452,6 +452,7 @@ const _coeffProgramCheatSections = [
             { label: 'roots_chess_literal', snippet: 'poly = roots_chess_literal(5, 1, 0)\nemit', title: 'Dark cells of a d x d board (corners dark), full side w, centered on o. Scrub w on the 1D pad and o on the 2D pad.' },
             { label: 'roots_grid_literal', snippet: 'poly = roots_grid_literal(4, 1, 0)\nemit', title: 'The full d x d root lattice, side w, centered on o.' },
             { label: 'roots_ring_literal', snippet: 'poly = roots_ring_literal(7, 1, 0)\nemit', title: 'n roots on a circle: o + r*exp(2*pi*i*k/n). A complex r rotates the ring.' },
+            { label: 'roots_ascii_literal', snippet: 'poly = roots_ascii_literal(178)\nemit', title: 'The lit pixels of IBM PC font glyph b<code> as roots (historical giga_2872 conventions). Scrub the code on the 1D pad to flip through the charset.' },
             { label: 'translate_roots', snippet: 'poly = translate_roots(poly, 0.1*exp(pi2i*t1))\nemit', title: 'Shift every root by delta without solving for roots: Q(z) = P(z-delta).' },
             { label: 'bimodal', snippet: 'push_scalar(bimodal(t2, 0.7))', title: 'Symmetric bimodal remapping of u in [0,1], shaped by a in [0,1).' },
             { label: 'push_scalar', snippet: 'push_scalar(p1+p2)', title: 'Push one scalar onto the typed stack.' },
@@ -942,6 +943,11 @@ function _programHelpBuildCoeffRegistry() {
                 { name: 'r', title: 'Nonzero complex radius; the argument of r rotates the ring.' },
                 { name: 'o', title: 'Complex center.' },
             ],
+            effect: '(-- vector)',
+        }),
+        _programHelpItem('roots_ascii_literal', 'roots_ascii_literal(code)', 'The lit pixels of IBM PC (CP437 sheet) glyph b<code> as roots, expanded once at compile time into the constant pool. Faithful to the historical giga_2872 conventions: glyphs are horizontally mirrored relative to the sheet and code N selects sheet cell N-1. Blank glyphs (1, 33, 256) are rejected.', {
+            forms: ['poly = roots_ascii_literal(178)', 'poly = translate_roots(roots_ascii_literal(66), 0.1*exp(pi2i*t1))'],
+            params: [{ name: 'code', title: 'Static integer 1..256. Root count = lit pixels of the glyph (up to 64 -> degree up to 63).' }],
             effect: '(-- vector)',
         }),
         _programHelpItem('translate_roots', 'translate_roots(coefficients, delta)', 'Shift every root by delta using coefficient translation Q(z) = P(z-delta). This does not solve for roots and preserves the coefficient-vector length.', {

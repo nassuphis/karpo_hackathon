@@ -11,13 +11,20 @@ use the `giga_2872` (or `giga_2869`) stem.
 ## 1. Main conclusions
 
 1. **The roots are the lit pixels of an IBM PC (CP437) character.** The saved
-   `poly_letter` with `ascii = 178` selects `b178` — the medium-shade block
-   `▓` — whose 8x8 bitmap is a perfect 32-pixel checkerboard. Provenance
-   chain: `fonts/3dfx8x8.png` (144x288, 1-bit; added 25 Jan 2025) was
-   transcribed by `pngfont2pydict.py` into the `FONT` bit-row dictionary in
-   `letters.py` (added 26-27 Jan); `get_letter_coordinates` maps each set bit
-   to `complex(x - 3.5, (7 - y) - 3.5)` with `factor = 1`. The runtime reads
-   the dictionary, not the PNG.
+   `poly_letter` with `ascii = 178` selects dictionary key `b178`, whose 8x8
+   bitmap is a perfect 32-pixel checkerboard. Provenance chain:
+   `fonts/3dfx8x8.png` (144x288, 1-bit; added 25 Jan 2025) was transcribed by
+   `pngfont2pydict.py` into the `FONT` bit-row dictionary in `letters.py`
+   (added 26-27 Jan); `get_letter_coordinates` maps each set bit to
+   `complex(x - 3.5, (7 - y) - 3.5)` with `factor = 1`. The runtime reads the
+   dictionary, not the PNG. Two transcriber quirks are part of the record:
+   the packer writes bits LSB-leftmost while the consumer reads MSB-leftmost
+   (every glyph is horizontally MIRRORED relative to the sheet), and keys are
+   off by one (`b<N>` holds sheet cell `N-1`) — so `b178` is CP437 glyph 177,
+   the medium shade `▒`, whose mirror is indistinguishable from itself.
+   Polypaint's checked-in `lambda/cp437_font.py` replicates the transcriber
+   bit for bit (verified: all 255 era dictionary entries match exactly), so
+   these quirks are preserved, never "fixed".
 2. The producing snapshot is `500685f` (27 Jan 2025) — `letters.py` was
    created the day before and modified that day, the sidecar files are dated
    27 Jan, and the runner tree already has the split modules
@@ -157,7 +164,7 @@ constant, three scan expressions; native parity worst `3.8e-12` over four
 probe rows; fingerprint-preserving round trip):
 
 ```text
-poly = translate_roots(roots_literal(<32 b178 roots>), (0.05+0.9*t1) + 1i*(0.05+0.9*t2))
+poly = translate_roots(roots_ascii_literal(178), (0.05+0.9*t1) + 1i*(0.05+0.9*t2))
 poly
 poly = arange(0, 33)
 poly = argsort(poly, peek)
@@ -218,9 +225,12 @@ N =  803  ->     19,989,679 roots (5K-class validation)
 
 ### 8.4 Implementation
 
-Mirrors the siblings: `scripts/gen_giga_2872_coeff_program.py` derives the
-32 roots from the checked-in `b178` bit rows (the same transcription the
-era's `letters.py` holds) and emits the section-8.1 source with `--check`;
+Mirrors the siblings: `scripts/gen_giga_2872_coeff_program.py` emits the
+section-8.1 source with `--check`. The constellation comes from
+`roots_ascii_literal(178)` — the generic glyph pattern backed by
+`lambda/cp437_font.py` — which compiles to the identical pool constant and
+fingerprint as an explicit 32-root listing (pinned by test). Varying the
+code flips the artwork through the whole character set;
 `tests/test_giga_2872_coeff_program.py` pins freshness, shape, the round
 trip, and four-point native parity against the verbatim `andy1` oracle
 (including its `argsort[0] == 0` regime assertion); saved through

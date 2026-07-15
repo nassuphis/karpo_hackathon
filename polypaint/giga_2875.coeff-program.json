@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2875",
+  "chain": [],
+  "source_text": "fill(9, t1)\npoly = vector_literal(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)\npoly = gt(poly, pop)\npoly = scan(9, 0, poly[0], prev + poly[k])\npoly\nfill(9, t2)\npoly = vector_literal(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)\npoly = gt(poly, pop)\npoly = scan(9, 0, poly[0], prev + poly[k])\npoly[0] = tos[8]\ndrop\npoly = translate_roots(roots_ascii_literal(2), (0.05+0.9*(t1+(0-0.1)*poly[0])) + 1i*(0.05+0.9*(t2+(0-0.1)*poly[8])))\npoly = sort_abs(poly)\nemit"
+}

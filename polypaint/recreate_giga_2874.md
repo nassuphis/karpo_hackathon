@@ -181,3 +181,61 @@ N =  756  ->     20,003,760 roots (5K-class validation)
 ```
 
 Saved through `/save-coeff-program` as id `giga-2874`, predeploy-gated.
+
+## 4. Findings (what this recreation surfaced)
+
+Things learned here that were not visible in any earlier wave, in the
+order they were hit:
+
+1. **Random regime checks have a shelf life.** The giga_2872/2873
+   monic-collapse shortcut was *proven* there (5000/5000 rows). The same
+   check on this chain failed at 15/5000 on the first run — the jump was
+   the first transform that produces negative deltas, and no amount of
+   confidence from sibling programs transfers across a regime boundary.
+   The check is cheap; rerun it per program, never inherit it.
+
+2. **The reference image contains integer overflow.** On collapse-
+   violating rows, `np.cumprod` of int64 argsort indices wraps 2^63
+   around element 13 of 37. That wrapped garbage is deterministic, feeds
+   the gather, and is *in the pixels* of `giga_2874.png`. Recreating the
+   image means recreating the overflow. "Approximately right" (double
+   cumprod, which does NOT wrap) was measurably wrong on those rows in a
+   structured, band-clustered way — precisely the rows the jump makes
+   visually distinctive.
+
+3. **Exact int64 in a double-only VM is a scan idiom.** Two 32-bit limbs
+   packed into the complex scan state (`prev = lo + 1i*hi`) keep every
+   intermediate below 2^38, where doubles are exact integers. The sign
+   bit of the wrapped value is just `floor(hi/2^31)`, and the signed
+   residue needs only `2^32 mod n` and `2^64 mod n`, both expressible as
+   `poly_len` arithmetic. Nothing about this is 2874-specific; it is a
+   general recipe for integer-semantics replication in the VM.
+
+4. **`tos[...]` inside a `translate_roots` delta reads the wrong vector.**
+   The lowering pushes the coefficient operand FIRST, so by the time the
+   delta expression evaluates, top-of-stack is the just-pushed glyph
+   constellation — not your data. Reads from the **poly register**
+   (`poly[0]`, `poly[8]`) are the only ordering-safe bridge for computed
+   values into a delta. Hence the sparse poke `poly[0] = tos[8]`, which
+   parks both jump counts in one register before the translate.
+
+5. **A scan may read `poly[k]` while assigning `poly`.** The scan writes
+   to scratch and pushes, so `poly = scan(n, 0, poly[0], prev + poly[k])`
+   is alias-free — the in-place-looking cumsum is legal. This removed
+   every push/drop pair the 2872/2873 blocks used around their cumsums.
+
+6. **The 256-char wire cap shapes programs.** The one-expression spelling
+   of the limb decode was rejected at compile (`chip arg is too long`).
+   The working form splits it into three cheap elementwise maps (lo mod
+   n, hi mod n, sign flag) combined with vector multiply/add whose scalar
+   arguments each fit — the `-(2^64 mod n)` expression is 236 chars,
+   deliberately close to the cap. Long derivations want to be pipelines
+   of short maps, not one giant formula.
+
+7. **Cancellation is not error.** On violated rows the parity residual
+   jumps from 5.8e-9 to 1.9e-4 — alarming until the gather indices were
+   dumped and proven integer-exact. The residual is the shared coefficient
+   dust amplified by subtracting nearly-equal huge values in
+   `cf[csi] - cf[cpi]`; the reference's own float64 arithmetic amplifies
+   identically. Diagnose parity blowups by checking the *discrete*
+   structure first; only float dust should remain.

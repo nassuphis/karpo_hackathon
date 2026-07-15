@@ -478,6 +478,15 @@ window._coeffRegistryVocab = {
           ]
         },
         {
+          "ph": "rel|exact",
+          "def": "rel",
+          "title": "Leading-strip mode: rel treats leading coefficients below max|cf|*3e-8 as zero (protective); exact strips only exactly-zero leads, like np.roots, keeping the giant roots of tiny leading structure.",
+          "choices": [
+            "rel",
+            "exact"
+          ]
+        },
+        {
           "kind": "andy",
           "ph": "andy",
           "label": "andy",

@@ -884,6 +884,15 @@
             "hi",
             "lo"
           ]
+        },
+        {
+          "name": "strip",
+          "type": "enum",
+          "default": "rel",
+          "choices": [
+            "rel",
+            "exact"
+          ]
         }
       ],
       "length_policy": "may_change",
@@ -897,6 +906,15 @@
             "choices": [
               "hi",
               "lo"
+            ]
+          },
+          {
+            "ph": "rel|exact",
+            "def": "rel",
+            "title": "Leading-strip mode: rel treats leading coefficients below max|cf|*3e-8 as zero (protective); exact strips only exactly-zero leads, like np.roots, keeping the giant roots of tiny leading structure.",
+            "choices": [
+              "rel",
+              "exact"
             ]
           }
         ]

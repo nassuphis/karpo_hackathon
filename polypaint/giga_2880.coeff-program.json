@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2880",
+  "chain": [],
+  "source_text": "poly = fill(2, 0)\npoly[0] = floor(71*t1) - 71*floor(floor(71*t1)/71)\npoly[1] = floor(101*t2) - 101*floor(floor(101*t2)/101)\npoly = translate_roots(roots_ascii_literal(2), (0.05+0.09*(71*t1-floor(71*t1))) + 1i*(0.05+0.09*(101*t2-floor(101*t2))) + (poly[0]/5)*exp(1i*6.283185307179586*(poly[1]/3)))\npoly\npoly = sort_mod_keep_angle(poly)\npoly = multiply(poly, 0.1)\npoly = add(pop, poly)\npoly\npoly = sort_abs(poly)\npoly = divide(peek, abs(poly[32]))\npoly = multiply(poly, 6.283185307179586i)\npoly = exp(poly)\npoly = divide(pop, poly)\npoly\npoly = sort_abs(poly)\npoly = divide(pop, abs(poly[32]))\npoly\npoly = roots_cm(poly, lo, exact)\npoly[32] = 1\npoly = multiply(poly, 0.1)\npoly = add(pop, poly)\nemit"
+}

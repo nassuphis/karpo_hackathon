@@ -222,6 +222,10 @@ _STACK_OPS = {
 _ENUM_ARG_VALUES = {
     "hi": 0.0,
     "lo": 1.0,
+    # roots_cm leading-strip mode (rel = legacy threshold, exact = np.roots
+    # semantics: only exactly-zero leading coefficients are stripped).
+    "rel": 0.0,
+    "exact": 1.0,
 }
 
 

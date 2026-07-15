@@ -484,6 +484,17 @@ static int ct_arg_pad_lo(const CtEntry *e, int idx, int fallbackLo) {
     return -1;
 }
 
+/* strip mode for roots_cm: "rel" = legacy relative threshold, "exact" =
+ * np.roots semantics (strip exactly-zero leading coefficients only). */
+static int ct_arg_strip_exact(const CtEntry *e, int idx, int fallbackExact) {
+    if (!e || idx < 0 || idx >= e->nArgs) return fallbackExact;
+    const char *arg = e->args[idx];
+    if (strcmp(arg, "exact") == 0) return 1;
+    if (strcmp(arg, "rel") == 0) return 0;
+    fprintf(stderr, "Invalid roots_cm strip mode: %s (expected rel or exact)\n", arg);
+    return -1;
+}
+
 static int ct_base_arg_count(const char *name) {
     if (strcmp(name, "linear") == 0) return 2;
     if (strcmp(name, "scale100") == 0) return 4;
@@ -3268,7 +3279,7 @@ static void ct_write_roots_padded(double *cRe, double *cIm, int totalCoeffs,
 /* roots_cm(mode): compute roots via companion matrix and treat those roots as
  * the next coefficient vector. Output length stays constant by padding one zero
  * either at the highest-order side ("hi") or constant side ("lo"). */
-static int ct_roots_cm(double *cRe, double *cIm, int *nCoeffs, int padLo) {
+static int ct_roots_cm(double *cRe, double *cIm, int *nCoeffs, int padLo, int stripExact) {
     int n = *nCoeffs;
     int degree = n - 1;
     if (n <= 0) return 0;
@@ -3283,7 +3294,7 @@ static int ct_roots_cm(double *cRe, double *cIm, int *nCoeffs, int padLo) {
     }
 
     float rootRe[MAX_DEGREE], rootIm[MAX_DEGREE];
-    int rc = solve_companion_coeffs(cRe, cIm, n, rootRe, rootIm);
+    int rc = solve_companion_coeffs(cRe, cIm, n, rootRe, rootIm, stripExact);
     if (rc == 0) {
         fprintf(stderr, "roots_cm companion solve failed\n");
         return 1;
@@ -3381,7 +3392,9 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
     if (strcmp(e->name, "roots_cm") == 0) {
         int padLo = ct_arg_pad_lo(e, 0, 0);
         if (padLo < 0) return 1;
-        rc = ct_roots_cm(cRe, cIm, nCoeffs, padLo);
+        int stripExact = ct_arg_strip_exact(e, 1, 0);
+        if (stripExact < 0) return 1;
+        rc = ct_roots_cm(cRe, cIm, nCoeffs, padLo, stripExact);
         goto done;
     }
     if (strcmp(e->name, "power") == 0) {
@@ -4758,7 +4771,8 @@ static int coeffLegacyApply(int fnIndex, double *re, double *im, int *n,
                                nArgs > 3 ? args[3] : 0.0); return 0;
         case 25: ct_power(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 8) : 8); return 0;
         case 26: ct_invpower(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 4) : 4); return 0;
-        case 27: return ct_roots_cm(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 0) : 0);
+        case 27: return ct_roots_cm(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 0) : 0,
+                                    nArgs > 1 ? coeffLegacyIntArg(args[1], 0) : 0);
         case 28: ct_roots(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 8) : 8, nArgs > 1 ? coeffLegacyIntArg(args[1], 0) : 0); return 0;
         default:
             fprintf(stderr, "coeff_program unknown legacy fn_index: %d\n", fnIndex);

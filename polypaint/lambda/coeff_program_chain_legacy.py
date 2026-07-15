@@ -192,6 +192,12 @@ _STACK_OPS = {
 _ENUM_ARG_VALUES = {
     "hi": 0.0,
     "lo": 1.0,
+    # Registry-loading vocabulary, kept in lockstep with the live compiler:
+    # roots_cm strip mode (rel = legacy threshold, exact = np.roots
+    # semantics). No frozen-corpus entry uses these; parsing semantics for
+    # the pinned corpus are unchanged.
+    "rel": 0.0,
+    "exact": 1.0,
 }
 
 # GLOSSARY — one registry (coeff_legacy_registry.json), three historical

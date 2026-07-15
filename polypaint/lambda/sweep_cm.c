@@ -75,7 +75,7 @@ static void parse_string(const char *p, char *out, int max) {
 /* Shared companion solver implementation lives in companion_solver.h. */
 static int solve_companion(const double *cfRe, const double *cfIm, int nCoeffs,
                            float *out_re, float *out_im) {
-    return solve_companion_coeffs(cfRe, cfIm, nCoeffs, out_re, out_im);
+    return solve_companion_coeffs(cfRe, cfIm, nCoeffs, out_re, out_im, 0);
 }
 
 int main(int argc, char **argv) {

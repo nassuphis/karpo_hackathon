@@ -7,7 +7,21 @@
 #ifdef HAVE_LAPACK_COMPANION
 #include <complex.h>
 
-/* LAPACK zgeev: complex double general matrix eigenvalues */
+/* LAPACK zgeev: complex double general matrix eigenvalues.
+ * POLYPAINT_ACCELERATE_NEWLAPACK (local macOS test builds only): bind to
+ * Accelerate's modern $NEWLAPACK symbol instead of the legacy CLAPACK-3.2
+ * one — numpy links the modern interface, and the two vintages emit
+ * eigenvalues in different QR deflation orders. Lambda builds link netlib
+ * LAPACK 3.10 (same modern lineage) and never define this. */
+#if defined(__APPLE__) && defined(POLYPAINT_ACCELERATE_NEWLAPACK)
+extern void zgeev_(char *jobvl, char *jobvr, int *n,
+                   double _Complex *a, int *lda,
+                   double _Complex *w,
+                   double _Complex *vl, int *ldvl,
+                   double _Complex *vr, int *ldvr,
+                   double _Complex *work, int *lwork,
+                   double *rwork, int *info) __asm__("_zgeev$NEWLAPACK");
+#else
 extern void zgeev_(char *jobvl, char *jobvr, int *n,
                    double _Complex *a, int *lda,
                    double _Complex *w,
@@ -15,6 +29,7 @@ extern void zgeev_(char *jobvl, char *jobvr, int *n,
                    double _Complex *vr, int *ldvr,
                    double _Complex *work, int *lwork,
                    double *rwork, int *info);
+#endif
 
 static inline int companion_solver_available(void) {
     return 1;
@@ -23,9 +38,14 @@ static inline int companion_solver_available(void) {
 /* cf[0..n-1] are complex coefficients: cf[0]*z^(n-1) + ... + cf[n-1].
  * Returns roots in out_re/out_im. Positive return means success and indicates
  * format degree slots written (always nCoeffs-1). Negative return means the
- * polynomial was skipped due to overflow and zeros were written instead. */
+ * polynomial was skipped due to overflow and zeros were written instead.
+ * strip_exact = 0: legacy behavior, leading coefficients below a relative
+ * threshold (|cf|^2 < max^2 * 1e-15) are treated as zero — protective for
+ * garbage rows but it deletes deliberately tiny leading structure.
+ * strip_exact = 1: np.roots semantics — only EXACTLY zero leading
+ * coefficients are stripped; tiny leads keep their (giant) roots. */
 static inline int solve_companion_coeffs(const double *cfRe, const double *cfIm, int nCoeffs,
-                                         float *out_re, float *out_im) {
+                                         float *out_re, float *out_im, int strip_exact) {
     int first = 0;
     double maxMag = 0.0;
     for (int k = 0; k < nCoeffs; k++) {
@@ -37,9 +57,11 @@ static inline int solve_companion_coeffs(const double *cfRe, const double *cfIm,
         return nCoeffs - 1;
     }
 
-    double thr = maxMag * 1e-15;
+    double thr = strip_exact ? 0.0 : maxMag * 1e-15;
     while (first < nCoeffs - 1 &&
-           (cfRe[first] * cfRe[first] + cfIm[first] * cfIm[first]) < thr) {
+           (strip_exact
+                ? (cfRe[first] == 0.0 && cfIm[first] == 0.0)
+                : (cfRe[first] * cfRe[first] + cfIm[first] * cfIm[first]) < thr)) {
         first++;
     }
 
@@ -159,9 +181,10 @@ static inline int companion_solver_available(void) {
 }
 
 static inline int solve_companion_coeffs(const double *cfRe, const double *cfIm, int nCoeffs,
-                                         float *out_re, float *out_im) {
+                                         float *out_re, float *out_im, int strip_exact) {
     (void)cfRe;
     (void)cfIm;
+    (void)strip_exact;
     for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0.0f; out_im[k] = 0.0f; }
     return 0;
 }

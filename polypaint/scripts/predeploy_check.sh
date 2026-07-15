@@ -103,6 +103,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_giga_2877_coeff_program.py \
     tests/test_giga_2877_variants.py \
     tests/test_giga_2878_coeff_program.py \
+    tests/test_giga_2880_coeff_program.py \
     tests/test_coeff_source_equivalence.py \
     tests/test_solve_score_native_parity.py \
     tests/test_frontend_parts_contract.py \

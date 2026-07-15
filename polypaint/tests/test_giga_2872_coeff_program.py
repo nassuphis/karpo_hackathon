@@ -64,7 +64,7 @@ class TestGiga2872CoeffProgram(unittest.TestCase):
         self.assertEqual(constant["length"], 33)
         self.assertEqual(constant["values"][0], 1.0)
         self.assertEqual(constant["values"][1], 0.0)
-        self.assertEqual(compiled["scalar_expr_count"], 3)
+        self.assertEqual(compiled["scalar_expr_count"], 4)
 
     def test_roots_ascii_literal_contract(self):
         """The generic glyph pattern behind the saved program: the checked-in

@@ -3,5 +3,5 @@
   "program_kind": "coeff_program",
   "name": "giga_2873",
   "chain": [],
-  "source_text": "poly = translate_roots(roots_ascii_literal(186), (0.05+0.9*t1) + 1i*(0.05+0.9*t2))\npoly\npoly = arange(0, 35)\npoly = argsort(poly, peek)\npoly\npoly = scan(35, 0, tos[0], prev + tos[k])\npoly = rem(poly, 35)\ndrop\npoly = scan(35, 0, tos[poly[k]], tos[poly[k]])\ndrop\npoly = multiply(poly, 0-1)\npoly = add(poly, 1)\nemit"
+  "source_text": "poly = translate_roots(roots_ascii_literal(186), (0.05+0.9*t1) + 1i*(0.05+0.9*t2))\npoly\npoly = arange(0, poly_len)\npoly = argsort(poly, peek)\npoly\npoly = scan(poly_len, 0, tos[0], prev + tos[k])\npoly = rem(poly, poly_len)\ndrop\npoly = scan(poly_len, 0, tos[poly[k]], tos[poly[k]])\ndrop\npoly = multiply(poly, 0-1)\npoly = add(poly, 1)\nemit"
 }

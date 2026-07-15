@@ -64,7 +64,7 @@ class TestGiga2873CoeffProgram(unittest.TestCase):
         self.assertEqual(constant["length"], 35)
         self.assertEqual(constant["values"][0], 1.0)
         self.assertEqual(constant["values"][1], 0.0)
-        self.assertEqual(compiled["scalar_expr_count"], 3)
+        self.assertEqual(compiled["scalar_expr_count"], 4)
 
     def test_round_trips_chain_to_source(self):
         import warnings

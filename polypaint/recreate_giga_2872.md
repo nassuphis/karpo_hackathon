@@ -166,13 +166,13 @@ probe rows; fingerprint-preserving round trip):
 ```text
 poly = translate_roots(roots_ascii_literal(178), (0.05+0.9*t1) + 1i*(0.05+0.9*t2))
 poly
-poly = arange(0, 33)
+poly = arange(0, poly_len)
 poly = argsort(poly, peek)
 poly
-poly = scan(33, 0, tos[0], prev + tos[k])
-poly = rem(poly, 33)
+poly = scan(poly_len, 0, tos[0], prev + tos[k])
+poly = rem(poly, poly_len)
 drop
-poly = scan(33, 0, tos[poly[k]], tos[poly[k]])
+poly = scan(poly_len, 0, tos[poly[k]], tos[poly[k]])
 drop
 poly = multiply(poly, 0-1)
 poly = add(poly, 1)

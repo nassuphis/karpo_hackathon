@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2888",
+  "chain": [],
+  "source_text": "poly = vector_literal(-3-3i, -2-3i, -1-3i, 0-3i, 1-3i, 2-3i, 3-3i, -3-2i, -2-2i, -1-2i, 0-2i, 1-2i, 2-2i, 3-2i, -3-1i, -2-1i, -1-1i, 0-1i, 1-1i, 2-1i, 3-1i, -3+0i, -2+0i, -1+0i, 0+0i, 1+0i, 2+0i, 3+0i, -3+1i, -2+1i, -1+1i, 0+1i, 1+1i, 2+1i, 3+1i, -3+2i, -2+2i, -1+2i, 0+2i, 1+2i, 2+2i, 3+2i, -3+3i, -2+3i, -1+3i, 0+3i, 1+3i, 2+3i, 3+3i)\npoly = add(poly, sin((-6.283185307179586 + 12.566370614359172*t1)) + 1i*cos((-6.283185307179586 + 12.566370614359172*t1)))\npoly\npoly = translate_roots(roots_literal(-3-3i, -2-3i, -1-3i, 0-3i, 1-3i, 2-3i, 3-3i, -3-2i, -2-2i, -1-2i, 0-2i, 1-2i, 2-2i, 3-2i, -3-1i, -2-1i, -1-1i, 0-1i, 1-1i, 2-1i, 3-1i, -3+0i, -2+0i, -1+0i, 0+0i, 1+0i, 2+0i, 3+0i, -3+1i, -2+1i, -1+1i, 0+1i, 1+1i, 2+1i, 3+1i, -3+2i, -2+2i, -1+2i, 0+2i, 1+2i, 2+2i, 3+2i, -3+3i, -2+3i, -1+3i, 0+3i, 1+3i, 2+3i, 3+3i), sin((-6.283185307179586 + 12.566370614359172*t1)) + 0.1*cos((-6.283185307179586 + 12.566370614359172*t2)) + 1i*cos((-6.283185307179586 + 12.566370614359172*t1)))\npoly = scan(50, 0, poly[0] + 0.0001*tos[0], poly[k] + 0.0001*(tos[k-49*floor(k/49)]*(1-floor(k/49)) + 10i*floor(k/49)))\ndrop\npoly\npoly = multiply(poly, poly)\npoly = add(poly, peek)\npoly = add(poly, 1)\npoly = multiply(poly, 0.00000000000000000000001)\npoly = add(pop, poly)\nemit"
+}

@@ -125,11 +125,36 @@ def _chain_has_transform(chain, name):
     return False
 
 
-def _sync_preview_budget_error(*, n_preview, coeff_transforms):
-    if _chain_has_transform(coeff_transforms, "roots_cm") and n_preview > ROOTS_CM_SYNC_MAX_N:
+def _program_chain_has_native(chain, name):
+    """Program chains lower native transforms to
+    ["_native_transform", <name>, ...] rows (and tolerate bare-name rows
+    from the passthrough serializer form)."""
+    if not isinstance(chain, list):
+        return False
+    needle = str(name)
+    for item in chain:
+        if not isinstance(item, list) or not item:
+            continue
+        if str(item[0]) == needle:
+            return True
+        if str(item[0]) == "_native_transform" and len(item) > 1 and str(item[1]) == needle:
+            return True
+    return False
+
+
+def _sync_preview_budget_error(*, n_preview, coeff_transforms, coeff_program_chain=None):
+    # roots_cm runs a companion-matrix zgeev eigensolve per row; at
+    # N-preview=256 that is 65k solves, past the 25s synchronous
+    # subprocess cap on the deployed LAPACK. Guard BOTH spellings: the
+    # legacy coefficient transform and the coeff-program chip (e.g.
+    # giga_2880's roots_p stage).
+    has_roots_cm = _chain_has_transform(coeff_transforms, "roots_cm") or \
+        _program_chain_has_native(coeff_program_chain, "roots_cm")
+    if has_roots_cm and n_preview > ROOTS_CM_SYNC_MAX_N:
         return (
-            "compute preview refused before coeffgen: roots_cm coefficient transform is too slow "
-            f"for the synchronous HTTP preview at N-preview={n_preview}; "
+            "compute preview refused before coeffgen: roots_cm is too slow "
+            f"for the synchronous HTTP preview at N-preview={n_preview} "
+            "(one eigensolve per row); "
             f"use N-preview <= {ROOTS_CM_SYNC_MAX_N}, remove roots_cm, or run the full Compute pipeline"
         )
     return None
@@ -538,7 +563,11 @@ def handler(event, context):
             coeff_program_chain=coeff_program_chain if pipeline_mode == "program" else None,
             pipeline_mode=pipeline_mode,
         )
-        budget_error = _sync_preview_budget_error(n_preview=n_preview, coeff_transforms=coeff_transforms_display)
+        budget_error = _sync_preview_budget_error(
+            n_preview=n_preview,
+            coeff_transforms=coeff_transforms_display,
+            coeff_program_chain=coeff_program_chain,
+        )
         if budget_error:
             return _json_response(400, {"message": f"{budget_error} ({ctx})"})
         n_steps = n_preview * n_preview

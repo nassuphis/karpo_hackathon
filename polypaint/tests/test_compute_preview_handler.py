@@ -594,11 +594,72 @@ class TestComputePreviewHandler(unittest.TestCase):
         body = json.loads(result["body"])
 
         self.assertEqual(result["statusCode"], 400)
-        self.assertIn("roots_cm coefficient transform is too slow", body["message"])
+        self.assertIn("roots_cm is too slow", body["message"])
         self.assertIn("N-preview=256", body["message"])
         self.assertIn("N-preview <= 128", body["message"])
         self.assertIn("coeff=legacy(power,poly,poly,8),legacy(roots_cm,poly,poly,hi),emit", body["message"])
         mock_run.assert_not_called()
+
+    @patch("handler_compute_preview.subprocess.run")
+    def test_compute_preview_refuses_large_roots_cm_in_coeff_program(self, mock_run):
+        # The same budget applies when roots_cm arrives as a coeff-program
+        # chip (giga_2880's roots_p stage) rather than a legacy coefficient
+        # transform: one companion-matrix eigensolve per row either way.
+        import handler_compute_preview as mod
+
+        source_text = "\n".join([
+            "poly = fill(33, 1)",
+            "poly = roots_cm(poly, lo, exact)",
+            "emit",
+        ])
+        result = mod.handler(
+            {
+                "body": json.dumps(
+                    _event(
+                        N_preview=256,
+                        pipeline_mode="program",
+                        coeff_program_source_text=source_text,
+                    )
+                )
+            },
+            None,
+        )
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 400)
+        self.assertIn("roots_cm is too slow", body["message"])
+        self.assertIn("N-preview <= 128", body["message"])
+        mock_run.assert_not_called()
+
+    @patch("handler_compute_preview.subprocess.run")
+    def test_compute_preview_allows_small_roots_cm_in_coeff_program(self, mock_run):
+        # At or under the budget the program must NOT be refused by the
+        # guard; the mocked subprocess then fails the run, proving the
+        # request got past the budget check.
+        import handler_compute_preview as mod
+
+        mock_run.side_effect = RuntimeError("stop after budget check")
+        source_text = "\n".join([
+            "poly = fill(33, 1)",
+            "poly = roots_cm(poly, lo, exact)",
+            "emit",
+        ])
+        result = mod.handler(
+            {
+                "body": json.dumps(
+                    _event(
+                        N_preview=128,
+                        pipeline_mode="program",
+                        coeff_program_source_text=source_text,
+                    )
+                )
+            },
+            None,
+        )
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 500)
+        self.assertNotIn("refused before coeffgen", body["message"])
+        mock_run.assert_called()
 
     def test_compute_preview_rejects_invalid_quantile_and_shim(self):
         # Client-input mistakes are 400s, not server faults (CR14): invalid

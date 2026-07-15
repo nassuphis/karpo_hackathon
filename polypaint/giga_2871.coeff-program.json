@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2871",
+  "chain": [],
+  "source_text": "poly = translate_roots(roots_ascii_literal(178), (0.05+0.9*t1) + 1i*(0.05+0.9*t2))\npoly = sort_abs(poly)\nemit"
+}

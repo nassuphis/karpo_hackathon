@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_outflow",
+  "chain": [],
+  "source_text": "poly = fill(2, 0)\npoly[0] = ((exp(pi2i*t1)*exp(pi2i*t1)*exp(pi2i*t1)) + 1i)/((exp(pi2i*t1)*exp(pi2i*t1)*exp(pi2i*t1)) - 1i)\npoly[1] = ((exp(pi2i*t2)*exp(pi2i*t2)*exp(pi2i*t2)) + 1i)/((exp(pi2i*t2)*exp(pi2i*t2)*exp(pi2i*t2)) - 1i)\npoly\npoly = scan(35, 0, angle(tos[0])*sin(0+1) + angle(tos[1])*cos(0+1) + log(abs(tos[0])+1)/(0+1), angle(tos[0])*sin(k+1) + angle(tos[1])*cos(k+1) + log(abs(tos[0])+1)/(k+1))\npoly = multiply(poly, 1i)\npoly = exp(poly)\npoly\nswap\npoly = scan(35, 0, log(abs(tos[0]) + abs(tos[1]) + (0+1))*((real(tos[0])+(0+1))*(imag(tos[1])+(0+1))*log(abs(tos[0])+1)), log(abs(tos[0]) + abs(tos[1]) + (k+1))*((real(tos[0])+(k+1))*(imag(tos[1])+(k+1))*log(abs(tos[0])+1)))\npoly\nswap\npoly = scan(35, 0, exp((0+1)*log(real(tos[0])))*sin((0+1)*angle(tos[1]))*exp((34-0)*log(imag(tos[1])))*cos((0+1)*abs(tos[0])), exp((k+1)*log(real(tos[0])))*sin((k+1)*angle(tos[1]))*exp((34-k)*log(imag(tos[1])))*cos((k+1)*abs(tos[0])))\ndrop\npoly = add(poly, pop)\npoly = multiply(poly, pop)\npoly = rev(poly)\nemit"
+}

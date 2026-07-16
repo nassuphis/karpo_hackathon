@@ -130,3 +130,82 @@ N =  766  ->     19,951,304 roots (5K-class validation)
 
 Saved through `/save-coeff-program` as id `giga-outflow`,
 predeploy-gated. No deploy needed.
+
+## 4. How the noise paints
+
+The claim "part of the image is rounding noise" is measurable, and the
+measurement explains the artwork's name. Mechanism, end to end:
+
+### 4.1 A quantity that is exactly zero
+
+For `w` on the unit circle, `(w+i)/(w-i)` multiplied through by the
+conjugate of its denominator gives numerator `w*conj(w) + i(w+conj(w))
++ i^2 = i*2Re(w)` — purely imaginary, EXACTLY. So `re(t')` has no
+mathematical content at all: whatever number the machine produces is
+the residue of catastrophic cancellation inside the complex division —
+a few ulps whose sign and size depend on which way each intermediate
+product rounded. Scale ~1e-16 (to ~1e-12 near the poles, where the
+denominator shrinks). Deterministic, but erratic in t: neighboring
+parameter values give unrelated dust — a hash of the input's low bits,
+in effect. This is a high-quality pseudo-random source, free of charge.
+
+### 4.2 A 1e24 lever arm
+
+poly_483 then computes `part1 = re(t1')^j * im(t2')^(35-j) * (trig)`.
+Two opposing exponentials collide:
+
+- `re(t1')^j` collapses: dust^1 ~ 1e-16, dust^2 ~ 1e-32, ...
+- `im(t2')^(35-j)` explodes: for typical |im| ~ 5, the j=1 slot
+  carries im^34 ~ 6e23.
+
+Their product survives ONLY at the lowest j: `dust * 6e23 ~ 1e8` at
+j=1, ~1e-9 at j=2, nothing beyond. Measured per-slot census (400
+rows): the dust changes exactly the post-rev slots 32-34 — the
+CONSTANT-side coefficients — by more than 10%; on most rows the
+constant term is dust-DOMINATED (the skeleton's part3*part4
+contribution there is O(10-100) against the dust term's ~1e8). One
+factor of noise, amplified twenty-four orders of magnitude, lands as
+the polynomial's constant term with pseudo-random sign and a magnitude
+that swings over several decades as t sweeps.
+
+### 4.3 What the constant term does to roots
+
+The constant term is (up to the leading coefficient) the PRODUCT of
+all 34 roots. A constant term that jumps erratically over decades
+forces the root set to accommodate an erratic product — which it does
+by throwing a few roots far outward (or inward), row by row, in
+directions organized by the deterministic phase structure but at radii
+set by the noise. Ten thousand rows of that is a radial spray.
+
+### 4.4 The kill switch (measured)
+
+Re-render with the noise surgically removed — `re(t')` forced to its
+mathematically exact value, zero — and compare (15k rows, saved view,
+log-density):
+
+- **Noise ON** (the artwork): a dark flower-medusa core wrapped in a
+  fine RADIAL SPRAY — rays streaming outward in every direction, plus
+  a diffuse halo of stray points filling the frame. The outflow.
+- **Noise OFF** (the skeleton): the same core, tentacled and compact —
+  and nothing else. No rays, no halo, no spray. Confined.
+- Cloud correlation between the two: **0.70** (against a same-ensemble
+  noise floor of ~0.71 for unrelated halves — i.e. the spray is a
+  first-order feature, not a perturbation).
+
+**The outflow that names the piece IS the rounding noise.** The
+deterministic chain paints the flower; numpy's division residue paints
+everything flying off it.
+
+### 4.5 Why it is recreatable anyway
+
+Neither numpy nor the VM can reproduce the OTHER's dust per row (the
+bits differ; even the park's own exp/log dust differs), but both
+produce dust of the same scale, sign symmetry, and t-decorrelation —
+the same DISTRIBUTION. The spray's statistics (ray density, halo
+falloff, radial law) depend only on that distribution, so the
+aggregate images agree: corr 0.863 between the numpy-dust and VM-dust
+ensembles, against the 0.712 same-ensemble floor. Per-row the dice
+differ; per-image the artwork is the same. The reference was
+co-authored by numpy's division routine; the recreation is co-authored
+by the VM's — and the two collaborators, given the same brief, paint
+the same picture.

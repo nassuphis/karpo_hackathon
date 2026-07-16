@@ -322,6 +322,55 @@ const BUILTIN_PALETTE_ENTRIES = PALETTE_DEFS.map(def => ({
     search_text: def.name.toLowerCase(),
 }));
 
+// --- Custom hex-stop palettes -------------------------------------------
+// The user pastes hex stops ("#879CAA, #AAA4A4 ..." — the # signals each
+// color, commas/whitespace optional). Canonical wire form is the palette
+// NAME itself: "custom:rrggbb-rrggbb-..." (2..32 stops, equal distance,
+// linear interpolation — palette_lut.h parses the same string natively).
+const CUSTOM_PALETTE_MAX_STOPS = 32;
+let _customPaletteTextByMode = {};
+
+function _parseCustomPaletteStops(text) {
+    const matches = [...String(text || '').matchAll(/#\s*([0-9a-fA-F]{6})\b/g)];
+    const stops = matches.map(m => '#' + m[1].toLowerCase());
+    if (stops.length < 2 || stops.length > CUSTOM_PALETTE_MAX_STOPS) return null;
+    return stops;
+}
+
+function _customPaletteNameFromStops(stops) {
+    return 'custom:' + stops.map(s => s.slice(1)).join('-');
+}
+
+function _customStopsFromName(name) {
+    if (typeof name !== 'string' || !name.startsWith('custom:')) return null;
+    const groups = name.slice(7).split('-');
+    if (groups.length < 2 || groups.length > CUSTOM_PALETTE_MAX_STOPS) return null;
+    if (!groups.every(g => /^[0-9a-fA-F]{6}$/.test(g))) return null;
+    return groups.map(g => '#' + g.toLowerCase());
+}
+
+function _customPaletteTextForMode(mode) {
+    return _customPaletteTextByMode[mode] || '';
+}
+
+function _setCustomPaletteTextForMode(mode, text) {
+    _customPaletteTextByMode[mode] = String(text || '');
+}
+
+function _customPaletteTextFromName(name) {
+    const stops = _customStopsFromName(name);
+    return stops ? stops.join(', ') : '';
+}
+
+function _applyCustomPaletteText(mode, text) {
+    _setCustomPaletteTextForMode(mode, text);
+    const stops = _parseCustomPaletteStops(text);
+    if (!stops) return false;
+    setPaletteForMode(mode, _customPaletteNameFromStops(stops));
+    if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
+    return true;
+}
+
 function _paletteContainerId(mode) {
     return mode === 'proximity' ? 'palette-circles-root-proximity'
         : mode === 'solve_score' ? 'palette-circles-solve-score'
@@ -574,6 +623,52 @@ function _renderPaletteRow(mode) {
     };
     children.push(longSwatch);
 
+    const customText = _customPaletteTextForMode(mode);
+    const customStops = _parseCustomPaletteStops(customText)
+        || _customStopsFromName(currentPalette);
+    const customActive = typeof currentPalette === 'string' && currentPalette.startsWith('custom:');
+    const customSwatch = document.createElement('div');
+    customSwatch.className = 'pal-circle pal-circle-builtin pal-circle-custom' + (customActive ? ' active' : '');
+    customSwatch.textContent = 'HEX';
+    customSwatch.title = customStops
+        ? `Custom palette (${customStops.length} stops) — equal distance, linear interpolation`
+        : 'Custom palette: enter hex stops in the box (e.g. #879CAA, #AAA4A4); # starts each color';
+    customSwatch.style.background = customStops ? _stopsToGradient(customStops) : '#555';
+    customSwatch.onclick = () => {
+        const stops = _parseCustomPaletteStops(_customPaletteTextForMode(mode));
+        if (stops) {
+            setPaletteForMode(mode, _customPaletteNameFromStops(stops));
+            if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
+        }
+    };
+    children.push(customSwatch);
+
+    const customInput = document.createElement('input');
+    customInput.type = 'text';
+    customInput.className = 'pal-custom-input';
+    customInput.placeholder = '#hex, #hex, ...';
+    customInput.title = 'Custom palette stops: hex colors, # starts each one, commas optional. Applied on Enter or focus-out.';
+    customInput.value = customText;
+    customInput.oninput = () => {
+        // live: remember the text and preview the swatch WITHOUT rebuilding
+        // the row (a rebuild would steal focus mid-typing)
+        _setCustomPaletteTextForMode(mode, customInput.value);
+        const stops = _parseCustomPaletteStops(customInput.value);
+        customSwatch.style.background = stops ? _stopsToGradient(stops) : '#555';
+        customInput.classList.toggle('invalid', !stops && customInput.value.trim() !== '');
+    };
+    customInput.onchange = () => {
+        if (customInput.value.trim() === '') return;
+        _applyCustomPaletteText(mode, customInput.value);
+    };
+    customInput.onkeydown = (ev) => {
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            _applyCustomPaletteText(mode, customInput.value);
+        }
+    };
+    children.push(customInput);
+
     container.replaceChildren();
     children.forEach(child => container.appendChild(child));
 }
@@ -792,6 +887,13 @@ function setPaletteForMode(mode, name) {
     } else if (typeof name === 'string' && name.startsWith('long_')) {
         const longName = name.slice(5);
         if (_longPaletteEntryByName(longName)) _setRememberedLongPalette(mode, longName);
+    } else if (typeof name === 'string' && name.startsWith('custom:')) {
+        // loading a saved run restores the text box from the canonical name
+        // (unless the user's own text already parses to this palette)
+        const current = _parseCustomPaletteStops(_customPaletteTextForMode(mode));
+        if (!current || _customPaletteNameFromStops(current) !== name) {
+            _setCustomPaletteTextForMode(mode, _customPaletteTextFromName(name));
+        }
     }
     _renderPaletteRow(mode);
     if (mode === 'repalette' && _repalettePopupState.open) _renderRepalettePopup();

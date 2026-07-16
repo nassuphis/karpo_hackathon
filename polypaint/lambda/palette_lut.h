@@ -205,8 +205,76 @@ static const PaletteDef PALETTES[] = {
     {NULL, NULL, 0}
 };
 
+/* Custom hex-stop palettes: the NAME carries the definition —
+ * "custom:rrggbb-rrggbb-..." (case-insensitive hex, 2..32 stops, equal
+ * distance, linear interpolation like every built-in). Parsed into ONE
+ * static slot: every binary that includes this header selects a single
+ * palette per process (palette_bins_render, score_raw_render,
+ * solve_palette_debug), so repeated findPalette calls with the same
+ * custom name are idempotent; two DIFFERENT custom palettes in one
+ * process are not supported. */
+#define CUSTOM_PALETTE_MAX_STOPS 32
+
+static RGB CUSTOM_PALETTE_COLORS[CUSTOM_PALETTE_MAX_STOPS];
+static PaletteDef CUSTOM_PALETTE_DEF = {"custom", CUSTOM_PALETTE_COLORS, 0};
+
+static int customPaletteHexNibble(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* Returns stop count (>= 2) on success, 0 on any malformation. */
+static int parseCustomPalette(const char *spec, RGB *out, int cap) {
+    if (!spec || strncmp(spec, "custom:", 7) != 0) return 0;
+    const char *p = spec + 7;
+    int n = 0;
+    while (*p) {
+        if (n >= cap) return 0;
+        int v[6];
+        for (int k = 0; k < 6; k++) {
+            v[k] = customPaletteHexNibble(p[k]);
+            if (v[k] < 0) return 0;
+        }
+        out[n].r = (unsigned char)(v[0] * 16 + v[1]);
+        out[n].g = (unsigned char)(v[2] * 16 + v[3]);
+        out[n].b = (unsigned char)(v[4] * 16 + v[5]);
+        n++;
+        p += 6;
+        if (*p == '-') {
+            p++;
+            if (!*p) return 0;   /* trailing dash */
+        } else if (*p) {
+            return 0;            /* junk between stops */
+        }
+    }
+    return n >= 2 ? n : 0;
+}
+
+/* Strict validity check for binaries that reject unknown names instead of
+ * falling back: table names or a well-formed custom spec. */
+static int paletteNameIsValid(const char *name) {
+    if (!name) return 0;
+    if (strncmp(name, "custom:", 7) == 0) {
+        RGB probe[CUSTOM_PALETTE_MAX_STOPS];
+        return parseCustomPalette(name, probe, CUSTOM_PALETTE_MAX_STOPS) >= 2;
+    }
+    for (int i = 0; PALETTES[i].name; i++)
+        if (strcmp(PALETTES[i].name, name) == 0) return 1;
+    return 0;
+}
+
 static const PaletteDef *findPalette(const char *name) {
     if (!name) return &PALETTES[0];
+    if (strncmp(name, "custom:", 7) == 0) {
+        int n = parseCustomPalette(name, CUSTOM_PALETTE_COLORS, CUSTOM_PALETTE_MAX_STOPS);
+        if (n >= 2) {
+            CUSTOM_PALETTE_DEF.n_colors = n;
+            return &CUSTOM_PALETTE_DEF;
+        }
+        return &PALETTES[0];   /* malformed custom -> inferno, like unknown names */
+    }
     for (int i = 0; PALETTES[i].name; i++)
         if (strcmp(PALETTES[i].name, name) == 0)
             return &PALETTES[i];

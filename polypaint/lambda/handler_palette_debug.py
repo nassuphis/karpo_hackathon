@@ -12,7 +12,7 @@ import time
 
 import boto3
 
-from palette_names import VALID_PALETTE_NAMES
+from palette_names import is_valid_palette_name
 from root_pipeline_programs import root_program_for_run
 from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, imgpipe_env
 
@@ -105,7 +105,7 @@ def handler(event, context):
             raise ValueError()
     except (TypeError, ValueError):
         raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {solve_score_quantile}")
-    if palette not in VALID_PALETTE_NAMES:
+    if not is_valid_palette_name(palette):
         raise RuntimeError(f"Invalid palette: {palette}")
 
     tmp_bin = "/tmp/palette_lores.bin"

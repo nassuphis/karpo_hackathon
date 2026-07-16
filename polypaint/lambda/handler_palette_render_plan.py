@@ -19,7 +19,7 @@ from calc_chunks import (
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
 from color_render_contract import normalize_color_interpretation, validate_color_output_contract
 from logical_sections import build_physical_section_items, build_solve_source_manifest, write_solve_source_manifest
-from palette_names import VALID_PALETTE_NAMES
+from palette_names import is_valid_palette_name
 from param_source import chunk_items_have_params
 from pipeline_programs import root_program_for_run, solve_score_program_for_run
 from shared import BUCKET, parse_body, ok_response
@@ -706,7 +706,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         execution["solve_score_hist_input_mode"] = "sectioned"
         execution["palette_chunk_input_mode"] = "sectioned"
     palette = str(source.get("palette") or "").strip()
-    if palette not in VALID_PALETTE_NAMES:
+    if not is_valid_palette_name(palette):
         raise RuntimeError(f"Solve-score Color artifact {source['artifact_id']} has invalid palette {palette!r}")
     q = _artifact_meta_quantile(source, "solve_score_quantile")
     if q is None:
@@ -949,7 +949,7 @@ def handler(event, context):
     root_transforms = root_params["root_transforms"]
     if metric not in VALID_METRICS:
         raise RuntimeError(f"Invalid metric: {metric}")
-    if _interpretation_uses_palette(color_interpretation) and palette not in VALID_PALETTE_NAMES:
+    if _interpretation_uses_palette(color_interpretation) and not is_valid_palette_name(palette):
         raise RuntimeError(f"Invalid palette: {palette}")
     q = compiled_score["quantile"]
     omega = compiled_score["omega"]

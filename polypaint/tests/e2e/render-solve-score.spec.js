@@ -231,14 +231,33 @@ test.describe('Solve Score UI', () => {
     await page.click('.tab-btn:text("Render")');
     const solveCircles = page.locator('#palette-circles-solve-score .pal-circle');
     const solveCount = await solveCircles.count();
-    expect(solveCount).toBe(3);
+    expect(solveCount).toBe(4);   // PAL, TRI, LONG, HEX (custom)
   });
 
-  test('render solve-score row shows built-in, TRI, and LONG swatches', async ({ page }) => {
+  test('render solve-score row shows built-in, TRI, LONG, and HEX swatches', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await expect(page.locator('#palette-circles-solve-score [data-palette-popup="builtin"]')).toBeVisible();
     await expect(page.locator('#palette-circles-solve-score .pal-circle-tri')).toBeVisible();
     await expect(page.locator('#palette-circles-solve-score .pal-circle-long')).toBeVisible();
+    await expect(page.locator('#palette-circles-solve-score .pal-circle-custom')).toBeVisible();
+    await expect(page.locator('#palette-circles-solve-score .pal-custom-input')).toBeVisible();
+  });
+
+  test('custom hex-stop palette entry applies the canonical custom name', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const input = page.locator('#palette-circles-solve-score .pal-custom-input');
+    await input.fill('#879CAA, #AAA4A4 #0E3057');
+    await input.press('Enter');
+    const palette = await page.evaluate(() => renderSolveScorePalette);
+    expect(palette).toBe('custom:879caa-aaa4a4-0e3057');
+    await expect(page.locator('#palette-circles-solve-score .pal-circle-custom')).toHaveClass(/active/);
+
+    // invalid text (single stop) marks the box and leaves the palette alone
+    await input.fill('#879CAA');
+    const invalid = page.locator('#palette-circles-solve-score .pal-custom-input.invalid');
+    await expect(invalid).toBeVisible();
+    const unchanged = await page.evaluate(() => renderSolveScorePalette);
+    expect(unchanged).toBe('custom:879caa-aaa4a4-0e3057');
   });
 
   test('left-click built-in swatch opens popup and selecting a row activates palette', async ({ page }) => {
@@ -375,10 +394,11 @@ test.describe('Solve Score UI', () => {
     await page.locator('#btn-render-repalette').click();
     await expect(page.locator('#repalette-popup-overlay')).toBeVisible();
     const swatches = page.locator('#palette-circles-repalette .pal-circle');
-    await expect(swatches).toHaveCount(3);
+    await expect(swatches).toHaveCount(4);
     await expect(swatches.nth(0)).toContainText('PAL');
     await expect(swatches.nth(1)).toContainText('TRI');
     await expect(swatches.nth(2)).toContainText('LONG');
+    await expect(swatches.nth(3)).toContainText('HEX');
 
     await page.locator('#palette-circles-repalette [data-palette-popup="builtin"]').click();
     await expect(page.locator('#builtin-popup-overlay')).toBeVisible();

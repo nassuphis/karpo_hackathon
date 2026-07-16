@@ -59,14 +59,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    int found = 0;
-    for (int i = 0; PALETTES[i].name; i++) {
-        if (strcmp(PALETTES[i].name, palName) == 0) {
-            found = 1;
-            break;
-        }
-    }
-    if (!found) {
+    if (!paletteNameIsValid(palName)) {
         fprintf(stderr, "Invalid palette: %s\n", palName);
         return 1;
     }

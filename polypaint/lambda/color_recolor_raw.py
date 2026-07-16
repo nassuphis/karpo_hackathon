@@ -12,7 +12,7 @@ from color_artifact_meta import (
     write_color_artifact_meta_overlay,
 )
 from color_render_contract import apply_channel_names, repalette_target_for_source
-from palette_names import VALID_PALETTE_NAMES
+from palette_names import is_valid_palette_name
 from raw_score_render import (
     histogram_from_raw_path,
     histogram_from_raw_path_channel0,
@@ -475,7 +475,7 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
     source_artifact_id = params["source_artifact_id"]
     source_image_key = params["source_image_key"]
     new_palette = str(params["new_palette"]).strip()
-    if new_palette not in VALID_PALETTE_NAMES:
+    if not is_valid_palette_name(new_palette):
         raise RuntimeError(f"Invalid palette: {new_palette}")
 
     temp_paths = []

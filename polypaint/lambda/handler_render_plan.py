@@ -29,7 +29,7 @@ from logical_sections import (
     validate_section_count,
     write_solve_source_manifest,
 )
-from palette_names import VALID_PALETTE_NAMES
+from palette_names import is_valid_palette_name
 from color_render_contract import DEFAULT_BACKGROUND_COLOR, normalize_background_color, validate_color_output_contract
 from shared import BUCKET, BILEVEL_SPARSE_PIPELINE, REF_SIZE, parse_body, ok_response
 from solve_score_chain import (
@@ -414,7 +414,7 @@ def _build_fused_color_plan(
         raise RuntimeError("fused color does not support match_mode overrides")
 
     palette = str(fused_params.get("palette") or "inferno").strip()
-    if palette not in VALID_PALETTE_NAMES:
+    if not is_valid_palette_name(palette):
         raise RuntimeError(f"Invalid palette: {palette}")
     fused_params["palette"] = palette
 

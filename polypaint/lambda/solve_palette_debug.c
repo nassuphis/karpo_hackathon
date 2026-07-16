@@ -93,17 +93,13 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Invalid metric: %s\n", metricStr);
         return 1;
     }
-    const PaletteDef *pal = findPalette(palName);
-    /* Validate palette name — reject unknown instead of silent fallback */
-    {
-        int found = 0;
-        for (int i = 0; PALETTES[i].name; i++)
-            if (strcmp(PALETTES[i].name, palName) == 0) { found = 1; break; }
-        if (!found) {
-            fprintf(stderr, "Invalid palette: %s\n", palName);
-            return 1;
-        }
+    /* Validate palette name — reject unknown instead of silent fallback
+     * (paletteNameIsValid also accepts well-formed custom: hex-stop specs) */
+    if (!paletteNameIsValid(palName)) {
+        fprintf(stderr, "Invalid palette: %s\n", palName);
+        return 1;
     }
+    const PaletteDef *pal = findPalette(palName);
 
     /* Read input file */
     FILE *f = fopen(inPath, "rb");

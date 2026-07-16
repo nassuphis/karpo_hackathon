@@ -14,7 +14,7 @@ import time
 
 import boto3
 
-from palette_names import VALID_PALETTE_NAMES
+from palette_names import is_valid_palette_name
 from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, parse_boolish, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
@@ -239,7 +239,7 @@ def handler(event, context):
     task_id = params["task_id"]
     source_palette_id = params["source_palette_id"]
     new_palette = str(params["new_palette"]).strip()
-    if new_palette not in VALID_PALETTE_NAMES:
+    if not is_valid_palette_name(new_palette):
         raise RuntimeError(f"Invalid palette: {new_palette}")
 
     progress = {"phase": "repalette", "family": "palette", "source_palette_id": source_palette_id}

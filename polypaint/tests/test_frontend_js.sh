@@ -100,6 +100,10 @@ assertIncludes(".render-background-eye {\n    margin: 0;", 'background pipette b
 assertIncludes("id=\"render-pix\" value=\"4096\" max=\"32768\"", 'render pix input should expose the backend maximum');
 assertIncludes("const RENDER_MAX_PIX = 32768;", 'render orchestration should clamp pix before dispatch');
 assertIncludes("id=\"btn-palette-create\" class=\"btn-secondary btn-inline\" onclick=\"runPaletteArtifact()\">Generate Artifact</button>", 'palette tab action should be a clearly labeled generate artifact button');
+assertIncludes("function _parseCustomPaletteStops(text) {", 'custom hex-stop palette parser should exist');
+assertIncludes("'custom:' + stops.map(s => s.slice(1)).join('-')", 'custom palettes should canonicalize to the custom: wire name');
+assertIncludes("customInput.className = 'pal-custom-input';", 'palette rows should render the custom hex-stop text box');
+assertIncludes(".pal-custom-input.invalid", 'custom palette input should style invalid entries');
 assertNotIncludes("btn-palette-create\" class=\"btn-inline-offset\"", 'palette generate action should not live in the compact stack row');
 assertIncludes("function _paletteRunBlocksNewRun() {", 'frontend should centralize active Palette/ExtractPalette lock checks');
 assertIncludes("function _blockPaletteActionIfActive(actionLabel) {", 'frontend should make active Palette/ExtractPalette locks visible instead of silently ignoring clicks');

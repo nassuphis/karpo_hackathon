@@ -483,7 +483,9 @@
                 "coeffs_key.$": "$.post.lores.coeffs_key",
                 "n_coeffs.$": "$.post.n_coeffs",
                 "n_steps.$": "$.post.lores.n_steps",
-                "s3_key.$": "$.post.lores.bin_key"
+                "s3_key.$": "$.post.lores.bin_key",
+                "solve_mode.$": "$.plan.solve.bin_mode",
+                "max_iter.$": "$.plan.solve.iters"
               }
             },
             "ResultSelector": { "body.$": "States.StringToJson($.Payload.body)" },
@@ -546,6 +548,7 @@
               "coeff_program.$": "$.plan.pipeline.coeff_program",
               "cfpv.$": "$.plan.pipeline.cfpv",
               "solver_mode.$": "$.plan.solve.mode",
+              "solver_iters.$": "$.plan.solve.iters",
               "n_coeffs.$": "$.post.n_coeffs",
               "degree.$": "$.post.degree",
               "fused_threads.$": "$.plan.fused.threads"
@@ -605,6 +608,8 @@
               "n_coeffs.$": "$.post.n_coeffs",
               "n_steps.$": "$$.Map.Item.Value.step_count",
               "s3_key.$": "$$.Map.Item.Value.bin_key",
+              "solve_mode.$": "$.plan.solve.bin_mode",
+              "max_iter.$": "$.plan.solve.iters",
               "solver_function_name.$": "$.plan.solve.function_name"
             },
             "ItemProcessor": {

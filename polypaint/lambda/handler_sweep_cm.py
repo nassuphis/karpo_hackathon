@@ -42,6 +42,11 @@ def handle_solve_cm(params):
         i1_end = params.get("row_end", params.get("i1_end"))
         n_steps = (i1_end - i1_start) * n2
     task_id = params.get("task_id", f"sweep_{chunk_idx}")
+    # solver brushes: the sweep_cm binary also hosts Jenkins-Traub and
+    # Newton+deflation row loops (solver-brush wave)
+    solve_mode = str(params.get("solve_mode") or "solve_cm").strip().lower() or "solve_cm"
+    if solve_mode not in ("solve_cm", "solve_jt", "solve_newton"):
+        raise RuntimeError(f"sweep_cm solve_mode must be one of solve_cm, solve_jt, solve_newton; got {solve_mode!r}")
 
     try:
         report_status(job_id, task_id, "started")
@@ -60,11 +65,13 @@ def handle_solve_cm(params):
 
         bin_path = "/tmp/roots_chunk.bin"
         spec = {
-            "mode": "solve_cm",
+            "mode": solve_mode,
             "coeffs_file": coeffs_file,
             "n_coeffs": n_coeffs,
             "n_steps": n_steps,
         }
+        if params.get("n_threads") is not None:
+            spec["n_threads"] = int(params["n_threads"])
         result = subprocess.run(
             [SWEEP_CM, bin_path],
             input=json.dumps(spec),
@@ -74,7 +81,7 @@ def handle_solve_cm(params):
         if result.returncode != 0:
             if "No space left on device" in (result.stderr or ""):
                 raise RuntimeError(build_tmp_enospc_message(
-                    solver_label="solve_cm",
+                    solver_label=solve_mode,
                     phase="native solve",
                     tmp_file=bin_path,
                     coeffs_key=coeffs_key,
@@ -85,7 +92,7 @@ def handle_solve_cm(params):
                     chunk_idx=chunk_idx,
                     task_id=task_id,
                 ))
-            raise RuntimeError(f"solve_cm failed (rc={result.returncode}): {result.stderr.strip()}")
+            raise RuntimeError(f"{solve_mode} failed (rc={result.returncode}): {result.stderr.strip()}")
         if not result.stdout.strip().startswith("{"):
             raise RuntimeError(f"solve_cm produced non-JSON stdout: {result.stdout[:200]!r} stderr: {result.stderr[:200]!r}")
 
@@ -123,7 +130,7 @@ def handle_solve_cm(params):
     except Exception as e:
         if is_enospc(e):
             err = RuntimeError(build_tmp_enospc_message(
-                solver_label="solve_cm",
+                solver_label=solve_mode,
                 phase="local temp write",
                 tmp_file="/tmp",
                 coeffs_key=coeffs_key,

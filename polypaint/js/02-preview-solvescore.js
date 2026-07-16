@@ -9,6 +9,7 @@ function _computePreviewSignatureNow() {
         n_preview: parseInt(document.getElementById('compute-preview-n')?.value) || 256,
         preview_size: parseInt(document.getElementById('compute-preview-size')?.value) || 1000,
         solver_mode: document.getElementById('compute-preview-solver')?.value || 'aberth_mt',
+        solver_iters: Math.max(0, Math.min(64, parseInt(document.getElementById('compute-preview-iters')?.value, 10) || 0)),
         quantile: (parseFloat(document.getElementById('compute-preview-quantile')?.value) || 0) / 100,
         shim: (parseFloat(document.getElementById('compute-preview-shim')?.value) || 5) / 100,
         function: document.getElementById('render-function')?.value || '',
@@ -238,6 +239,7 @@ async function runComputePreview() {
     let nPreview = Math.max(8, parseInt(document.getElementById('compute-preview-n').value) || 256);
     const previewSize = Math.max(64, parseInt(document.getElementById('compute-preview-size').value) || 1000);
     const solverMode = document.getElementById('compute-preview-solver').value || 'aberth_mt';
+    const solverIters = Math.max(0, Math.min(64, parseInt(document.getElementById('compute-preview-iters')?.value, 10) || 0));
     const quantile = Math.max(0, parseFloat(document.getElementById('compute-preview-quantile').value) || 0) / 100;
     const shim = Math.max(0, parseFloat(document.getElementById('compute-preview-shim').value) || 5) / 100;
     const paramTransforms = _effectiveParamTransformsForCompute();
@@ -267,6 +269,7 @@ async function runComputePreview() {
         log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName}${cfpvDisplay ? '(' + cfpvDisplay + ')' : ''} [${ctDisplay || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
         const result = await lambdaPost('compute-preview', _attachProgramSourcePayload({
             solver_mode: solverMode,
+            solver_iters: solverMode === 'aberth_mt' ? solverIters : 0,
             N_preview: nPreview,
             preview_size: previewSize,
             quantile,
@@ -307,6 +310,7 @@ function _populateComputeFromDetail(jobId, detail) {
     if (chunksVal != null) solverPrefs.nChunks = Math.max(1, parseInt(chunksVal, 10) || solverPrefs.nChunks || 10);
     solverPrefs.fused = true;
     solverPrefs.fusedThreads = _clampRenderMtThreads(calc.fused_threads || solverPrefs.fusedThreads || 4);
+    solverPrefs.solverIters = _clampSolverIters(calc.solver_iters);
     solverPrefs.loresParamGenThreads = _clampRenderMtThreads(calc.lores_param_gen_threads || solverPrefs.loresParamGenThreads || 1);
     solverPrefs.loresCoeffgenThreads = _clampRenderMtThreads(calc.lores_coeffgen_threads || solverPrefs.loresCoeffgenThreads || 1);
     if (calc.probe_degree && calc.probe_n_coeffs) {

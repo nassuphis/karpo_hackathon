@@ -35,10 +35,15 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* solver-brush knob (capped Aberth): g_max_iter < MAX_ITER renders the
+ * PARTIALLY CONVERGED state — the constellation caught between the seed
+ * circle and the truth. Default = MAX_ITER = today's full solve. */
+static int g_max_iter = MAX_ITER;
+
 static int solveEA(const double *cr, const double *ci, int n,
                    double *rRe, double *rIm, int degree)
 {
-    for (int iter = 0; iter < MAX_ITER; iter++) {
+    for (int iter = 0; iter < g_max_iter; iter++) {
         double maxCorr2 = 0;
         for (int i = 0; i < degree; i++) {
             double zR = rRe[i], zI = rIm[i];
@@ -87,7 +92,7 @@ static int solveEA(const double *cr, const double *ci, int n,
         }
         if (maxCorr2 < TOL2) return iter + 1;
     }
-    return MAX_ITER;
+    return g_max_iter;
 }
 
 static const char *skip(const char *p) {
@@ -408,6 +413,12 @@ static int runSolveMT(const char *buf, const char *outPath) {
         return 1;
     }
 
+    cp = findKey(buf, "max_iter");
+    if (cp) {
+        int mi = (int)parseNum(&cp);
+        if (mi >= 1 && mi <= MAX_ITER) g_max_iter = mi;
+    }
+
     int requestedThreads = 0;
     cp = findKey(buf, "n_threads");
     if (cp) requestedThreads = (int)parseNum(&cp);
@@ -653,10 +664,10 @@ static int runSolveMT(const char *buf, const char *outPath) {
            "\"i1_start\":%d,\"i1_end\":%d,"
            "\"n_t\":%ld,\"stride\":%d,\"matched\":false,"
            "\"data_bytes\":%ld,\"elapsed_us\":%ld,"
-           "\"avg_iterations\":%.2f,\"n_threads\":%d}\n",
+           "\"avg_iterations\":%.2f,\"n_threads\":%d,\"max_iter\":%d}\n",
            degree, n1, n2, i1_start, i1_end,
            totalSteps, degree * 2, rootBytes, elapsed_us,
-           avgIters, nThreads);
+           avgIters, nThreads, g_max_iter);
     return 0;
 }
 

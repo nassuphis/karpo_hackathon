@@ -57,6 +57,8 @@ class TestComputePreviewHandler(unittest.TestCase):
         for solver_mode, solve_mode in (
             ("aberth_mt", "solve_mt"),
             ("companion_matrix", "solve_cm"),
+            ("jenkins_traub", "solve_jt"),
+            ("newton", "solve_newton"),
         ):
             with self.subTest(solver_mode=solver_mode):
                 modes = []
@@ -74,9 +76,10 @@ class TestComputePreviewHandler(unittest.TestCase):
                             "degree": 2,
                         }
                     if spec["mode"] == solve_mode:
-                        if solve_mode == "solve_cm":
+                        if solve_mode in ("solve_cm", "solve_jt", "solve_newton"):
                             # CM threading wave: the preview passes 2 threads
-                            # (the 4 GB preview lambda has ~2 vCPUs)
+                            # (the 4 GB preview lambda has ~2 vCPUs); the
+                            # brush modes share the threaded row loop
                             self.assertEqual(spec["n_threads"], 2)
                         with open(out_path, "wb") as fh:
                             fh.write(_roots_bytes(8 * 8, 2))
@@ -101,6 +104,61 @@ class TestComputePreviewHandler(unittest.TestCase):
                 self.assertEqual(modes, ["coeffgen", solve_mode])
                 self.assertNotIn("direct_coeff_solve", body)
                 self.assertNotIn("coeff_precision", body)
+
+    @patch("handler_compute_preview.tmp_space_stats")
+    @patch("handler_compute_preview._run_json_binary")
+    @patch("handler_compute_preview.compute_viewport_from_bin")
+    def test_preview_solver_iters_caps_aberth(self, mock_viewport, mock_binary, mock_tmp_stats):
+        """solver_iters lands in the aberth solve spec as max_iter; 0 stays
+        absent; out-of-range values are 400s."""
+        import handler_compute_preview as mod
+
+        mock_tmp_stats.return_value = {
+            "path": "/tmp",
+            "free_bytes": 8 * 1024 * 1024 * 1024,
+            "total_bytes": 10 * 1024 * 1024 * 1024,
+        }
+        mock_viewport.return_value = {
+            "center_re": 0.0,
+            "center_im": 0.0,
+            "scale": 4096.0,
+            "n_roots": 32,
+            "q_re": [-1.0, 1.0],
+            "q_im": [-1.0, 1.0],
+        }
+        for solver_iters, expect_max_iter in ((5, 5), (0, None)):
+            with self.subTest(solver_iters=solver_iters):
+                specs = {}
+
+                def run_binary(_binary, out_path, spec, **_kwargs):
+                    specs[spec["mode"]] = spec
+                    if spec["mode"] == "coeffgen":
+                        with open(out_path, "wb") as fh:
+                            fh.write(b"\0" * (8 * 8 * 3 * 8))
+                        return {"mode": "coeffgen", "data_bytes": 8 * 8 * 3 * 8,
+                                "n_coeffs": 3, "degree": 2}
+                    with open(out_path, "wb") as fh:
+                        fh.write(_roots_bytes(8 * 8, 2))
+                    return {"mode": spec["mode"], "n_t": 8 * 8, "degree": 2}
+
+                mock_binary.side_effect = run_binary
+                result = mod.handler({"body": json.dumps(_event(
+                    solver_mode="aberth_mt",
+                    solver_iters=solver_iters,
+                    N_preview=8,
+                    preview_size=64,
+                ))}, None)
+                self.assertEqual(result["statusCode"], 200, result["body"])
+                if expect_max_iter is None:
+                    self.assertNotIn("max_iter", specs["solve_mt"])
+                else:
+                    self.assertEqual(specs["solve_mt"]["max_iter"], expect_max_iter)
+
+        result = mod.handler({"body": json.dumps(_event(
+            solver_mode="aberth_mt", solver_iters=99, N_preview=8, preview_size=64,
+        ))}, None)
+        self.assertEqual(result["statusCode"], 400)
+        self.assertIn("solver_iters", json.loads(result["body"])["message"])
 
     @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")

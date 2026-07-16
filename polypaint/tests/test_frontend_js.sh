@@ -511,7 +511,12 @@ assertNotIncludes("id=\"compute-mt-classic-panel\"", 'AE-MT compute popup should
 assertNotIncludes("id=\"compute-mt-classic-chunks\"", 'AE-MT compute popup should not expose classic chunk input');
 assertNotIncludes("id=\"compute-mt-param-gen-threads\"", 'AE-MT compute popup should not expose classic param-gen thread input');
 assertNotIncludes("id=\"compute-mt-coeffgen-threads\"", 'AE-MT compute popup should not expose classic coeffgen thread input');
-assertIncludes("runCalculateWithSolver(solverMode, { nChunks, fused: true, fusedThreads, loresParamGenThreads, loresCoeffgenThreads });", 'AE-MT compute popup should launch fused explicitly');
+assertIncludes("runCalculateWithSolver(solverMode, { nChunks, fused: true, fusedThreads, loresParamGenThreads, loresCoeffgenThreads, solverIters });", 'AE-MT compute popup should launch fused explicitly with the iteration-cap brush knob');
+assertIncludes("id=\"btn-calculate-jt\" onclick=\"runCalculateJT()\"", 'Jenkins-Traub solver brush button should exist');
+assertIncludes("id=\"btn-calculate-newton\" onclick=\"runCalculateNewton()\"", 'Newton solver brush button should exist');
+assertIncludes("<option value=\"jenkins_traub\">JT</option>", 'compute preview should offer the Jenkins-Traub brush');
+assertIncludes("<option value=\"newton\">Newton</option>", 'compute preview should offer the Newton brush');
+assertIncludes("id=\"compute-preview-iters\"", 'compute preview should expose the Aberth iteration cap');
 assertIncludes("const coeffProgramSourceText = _effectiveCoeffProgramSourceTextForCompute() || '';\n    const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];\n    const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4);", 'AE-MT degree probe should define coeffProgramSourceText before using it in the probe signature');
 assertIncludes("function _normalizeComputeSolverMode(solver) {", 'compute should normalize legacy solver metadata to supported solvers');
 assertIncludes("function _computeLoresPhaseTrackers(runId, solverMode) {", 'compute log should define deterministic lores phase trackers');

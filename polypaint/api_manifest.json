@@ -214,11 +214,15 @@
     ],
     "solver_dispatch_targets": {
       "aberth_mt": "sweep_mt",
-      "companion_matrix": "sweep_cm"
+      "companion_matrix": "sweep_cm",
+      "jenkins_traub": "sweep_cm",
+      "newton": "sweep_cm"
     },
     "solver_lores_endpoints": {
       "aberth_mt": "sweep-mt",
-      "companion_matrix": "sweep-cm"
+      "companion_matrix": "sweep-cm",
+      "jenkins_traub": "sweep-cm",
+      "newton": "sweep-cm"
     },
     "storage_paths": [
       "/add-favorite",

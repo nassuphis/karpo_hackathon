@@ -125,18 +125,23 @@ with open("/tmp/cm_fixture.bin", "wb") as fh:
             if r == 7: re, im = 0.0, 0.0
             if r == 13 and k == 0: re = float("inf")
             fh.write(struct.pack("<ff", re, im))
-outs = {}
-for t in (1, 6):
-    spec = {"mode": "solve_cm", "coeffs_file": "/tmp/cm_fixture.bin",
-            "n_coeffs": nc, "n_threads": t}
-    p = subprocess.run(["/work/sweep_cm", f"/tmp/cm_out_{t}.bin"],
-                       input=json.dumps(spec), capture_output=True, text=True)
-    assert p.returncode == 0, p.stderr[:300]
-    meta = json.loads(p.stdout)
-    assert meta["n_threads"] == t, meta
-    outs[t] = open(f"/tmp/cm_out_{t}.bin", "rb").read()
-assert outs[1] == outs[6], "threaded sweep_cm output diverged from sequential"
-print(f"sweep_cm thread byte-identity (1 vs 6, netlib): OK ({len(outs[1])} bytes)")
+# solver-brush wave: all three sweep_cm row loops (zgeev, Jenkins-Traub,
+# Newton+deflation) must be byte-identical across thread counts on the
+# deployed lineage, guard rows included.
+for mode in ("solve_cm", "solve_jt", "solve_newton"):
+    outs = {}
+    for t in (1, 6):
+        spec = {"mode": mode, "coeffs_file": "/tmp/cm_fixture.bin",
+                "n_coeffs": nc, "n_threads": t}
+        p = subprocess.run(["/work/sweep_cm", f"/tmp/cm_out_{t}.bin"],
+                           input=json.dumps(spec), capture_output=True, text=True)
+        assert p.returncode == 0, (mode, p.stderr[:300])
+        meta = json.loads(p.stdout)
+        assert meta["n_threads"] == t, meta
+        assert meta["mode"] == mode, meta
+        outs[t] = open(f"/tmp/cm_out_{t}.bin", "rb").read()
+    assert outs[1] == outs[6], f"threaded {mode} output diverged from sequential"
+    print(f"{mode} thread byte-identity (1 vs 6, netlib): OK ({len(outs[1])} bytes)")
 CMEOF
         python3 - <<PYEOF
 import json, subprocess

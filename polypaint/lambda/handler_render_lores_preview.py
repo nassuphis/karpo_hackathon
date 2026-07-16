@@ -275,7 +275,20 @@ def _calc_solver_mode(calc):
     raw = str((calc or {}).get("solver") or "aberth_mt").strip().lower()
     if raw in ("companion_matrix", "cm", "solve_cm"):
         return "companion_matrix"
+    if raw in ("jenkins_traub", "jt", "solve_jt"):
+        return "jenkins_traub"
+    if raw in ("newton", "solve_newton"):
+        return "newton"
     return "aberth_mt"
+
+
+def _calc_solver_iters(calc):
+    """Aberth iteration cap persisted with the run (0 = solver default)."""
+    try:
+        iters = int((calc or {}).get("solver_iters") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return iters if 1 <= iters <= 64 else 0
 
 
 def _read_file_bytes(path):
@@ -704,6 +717,7 @@ def _materialize_recomputed_preview(*, params, calc, job_id, degree, n_coeffs, v
     threads = _coerce_int(params.get("recompute_threads", params.get("solve_score_threads", 4)), "recompute_threads", default=4, min_value=1, max_value=16)
     pipeline = _calc_pipeline(calc)
     solver_mode = _calc_solver_mode(calc)
+    solver_iters = _calc_solver_iters(calc)
 
     t_param = time.time()
     param_spec = {
@@ -755,10 +769,14 @@ def _materialize_recomputed_preview(*, params, calc, job_id, degree, n_coeffs, v
         raise RuntimeError(f"recompute coeff size mismatch: got {coeff_size}, expected {expected_coeff_size}")
 
     t_solve = time.time()
-    if solver_mode == "companion_matrix":
+    if solver_mode in ("companion_matrix", "jenkins_traub", "newton"):
         solve_binary = SWEEP_CM
         solve_spec = {
-            "mode": "solve_cm",
+            "mode": {
+                "companion_matrix": "solve_cm",
+                "jenkins_traub": "solve_jt",
+                "newton": "solve_newton",
+            }[solver_mode],
             "coeffs_file": TMP_COEFFS,
             "n_coeffs": int(n_coeffs),
             "n_steps": int(n_steps),
@@ -775,6 +793,9 @@ def _materialize_recomputed_preview(*, params, calc, job_id, degree, n_coeffs, v
             "match_roots": False,
             "n_threads": int(threads),
         }
+        if solver_iters:
+            # reproduce the run's capped-Aberth brush at lores fidelity
+            solve_spec["max_iter"] = solver_iters
     solve_meta = _run_json_binary(solve_binary, TMP_ROOTS, solve_spec, phase="recompute solve", timeout_s=300)
     solve_ms = int((time.time() - t_solve) * 1000)
     root_size = os.path.getsize(TMP_ROOTS)

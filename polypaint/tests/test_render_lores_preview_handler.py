@@ -117,6 +117,22 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertNotIn("direct_coeff_solve", result)
         self.assertNotIn("coeff_precision", result)
 
+    def test_recompute_routes_brush_solvers_and_aberth_iters(self):
+        """Solver-brush wave: calc.solver jenkins_traub/newton recompute via
+        the sweep_cm binary with their own mode strings; calc.solver_iters
+        flows to the aberth spec as max_iter."""
+        import handler_render_lores_preview as mod
+
+        self.assertEqual(mod._calc_solver_mode({"solver": "jenkins_traub"}), "jenkins_traub")
+        self.assertEqual(mod._calc_solver_mode({"solver": "solve_jt"}), "jenkins_traub")
+        self.assertEqual(mod._calc_solver_mode({"solver": "newton"}), "newton")
+        self.assertEqual(mod._calc_solver_mode({"solver": "solve_newton"}), "newton")
+        self.assertEqual(mod._calc_solver_mode({"solver": "nonsense"}), "aberth_mt")
+        self.assertEqual(mod._calc_solver_iters({"solver_iters": 5}), 5)
+        self.assertEqual(mod._calc_solver_iters({"solver_iters": 0}), 0)
+        self.assertEqual(mod._calc_solver_iters({"solver_iters": 999}), 0)
+        self.assertEqual(mod._calc_solver_iters({}), 0)
+
     def test_preview_palette_grid_requires_complete_pass_grid(self):
         from handler_render_lores_preview import _preview_palette_grid_n
 

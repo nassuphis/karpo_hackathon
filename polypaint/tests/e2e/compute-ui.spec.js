@@ -168,6 +168,8 @@ test.describe('Compute UI', () => {
     await page.fill('#compute-mt-fused-threads', '7');
     await page.fill('#compute-mt-lores-param-gen-threads-fused', '3');
     await page.fill('#compute-mt-lores-coeffgen-threads-fused', '2');
+    await expect(page.locator('#compute-mt-solver-iters-row')).toBeVisible();
+    await page.fill('#compute-mt-solver-iters', '5');
     await expect(page.locator('#compute-mt-popup-run')).toBeEnabled();
     await page.click('#compute-mt-popup-run');
 
@@ -180,6 +182,7 @@ test.describe('Compute UI', () => {
         fusedThreads: 7,
         loresParamGenThreads: 3,
         loresCoeffgenThreads: 2,
+        solverIters: 5,
       },
     });
   });
@@ -214,8 +217,10 @@ test.describe('Compute UI', () => {
     await expect(page.locator('#compute-mt-popup-overlay')).toBeVisible();
     await expect(page.locator('#compute-mt-popup-summary')).toContainText('Solver: CM');
     await expect(page.locator('#compute-mt-tab-classic')).toHaveCount(0);
-    await expect(page.locator('#compute-mt-fused-solve-row')).toBeHidden();
+    await expect(page.locator('#compute-mt-fused-solve-row')).toBeVisible();
+    await expect(page.locator('#compute-mt-solver-iters-row')).toBeHidden();
     await page.fill('#compute-mt-fused-threads', '6');
+    await expect(page.locator('#compute-mt-fused-solve-threads')).toHaveText('6');
     await page.click('#compute-mt-popup-run');
 
     await expect(page.locator('#compute-mt-popup-overlay')).toBeHidden();

@@ -1034,6 +1034,7 @@ function _closeComputeMtPopup() {
         fused: true,
         nChunks: Math.max(1, parseInt(_computeMtPopupState.nChunks, 10) || 10),
         fusedThreads: _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4),
+        solverIters: _clampSolverIters(_computeMtPopupState.solverIters),
         loresParamGenThreads: _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads),
         loresCoeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads),
         probe: _computeMtPopupState.probe || null,
@@ -1106,6 +1107,10 @@ function _renderComputeMtPopup() {
     fusedSolveMirrorEl.textContent = String(fusedThreads);
     loresThreadsFusedEl.value = String(loresParamGenThreads);
     loresCoeffThreadsFusedEl.value = String(loresCoeffgenThreads);
+    const solverItersRowEl = document.getElementById('compute-mt-solver-iters-row');
+    const solverItersEl = document.getElementById('compute-mt-solver-iters');
+    if (solverItersRowEl) solverItersRowEl.style.display = solverMode === 'aberth_mt' ? '' : 'none';
+    if (solverItersEl) solverItersEl.value = String(_clampSolverIters(_computeMtPopupState.solverIters));
     const funcName = document.getElementById('render-function')?.value || '?';
     const n = parseInt(document.getElementById('render-n')?.value, 10) || 0;
     const times = Math.max(1, parseInt(document.getElementById('render-times')?.value, 10) || 1);
@@ -1205,6 +1210,12 @@ async function _applyComputeMtSafeChunks() {
     return safeChunks;
 }
 
+function _clampSolverIters(value) {
+    const iters = parseInt(value, 10);
+    if (!Number.isFinite(iters) || iters <= 0) return 0;
+    return Math.min(64, iters);
+}
+
 async function openComputeSolverPopup(solverMode) {
     const prefs = { ..._computePopupPrefsForSolver(solverMode) };
     const sharedChunkState = Math.max(1, parseInt(document.getElementById('render-stripes')?.value, 10) || 0);
@@ -1214,6 +1225,7 @@ async function openComputeSolverPopup(solverMode) {
         fused: true,
         nChunks: sharedChunkState || Math.max(1, parseInt(prefs.nChunks, 10) || 10),
         fusedThreads: _clampRenderMtThreads(prefs.fusedThreads || 4),
+        solverIters: _clampSolverIters(prefs.solverIters),
         loresParamGenThreads: _clampRenderMtThreads(prefs.loresParamGenThreads || 1),
         loresCoeffgenThreads: _clampRenderMtThreads(prefs.loresCoeffgenThreads || 1),
         probe: prefs.probe || null,

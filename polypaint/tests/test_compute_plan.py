@@ -47,6 +47,60 @@ class TestComputePlan(unittest.TestCase):
                 self.assertNotIn("direct_coeff_solve", plan["pipeline"])
                 self.assertNotIn("direct_coeff_solve", plan["compute"])
 
+    def test_solver_brush_modes_and_iters_in_plan(self):
+        """Solver-brush wave: all four solver modes build plans; the solve
+        dict carries bin_mode (native mode string for the lores lambda and
+        fused chunks), iters (0 = default), and routes JT/Newton to the
+        sweep_cm lambda. Bad modes and out-of-range iters are rejected."""
+        import handler_compute_plan as mod
+
+        base = {
+            "job_id": "compute_j",
+            "run_id": "run_brush",
+            "task_id": "compute_run_x_run_brush",
+            "params": {
+                "N": 20,
+                "times": 1,
+                "n_chunks": 2,
+                "function": "g1",
+                "param_transforms": [],
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+        }
+        expected = {
+            "aberth_mt": ("solve_mt", mod.SWEEP_MT_FUNCTION),
+            "companion_matrix": ("solve_cm", mod.SWEEP_CM_FUNCTION),
+            "jenkins_traub": ("solve_jt", mod.SWEEP_CM_FUNCTION),
+            "newton": ("solve_newton", mod.SWEEP_CM_FUNCTION),
+        }
+        for solver_mode, (bin_mode, fn_name) in expected.items():
+            with self.subTest(solver_mode=solver_mode):
+                request = json.loads(json.dumps(base))
+                request["params"]["solver_mode"] = solver_mode
+                plan = json.loads(mod.handle_build_plan(request)["body"])
+                self.assertEqual(plan["solve"]["mode"], solver_mode)
+                self.assertEqual(plan["solve"]["bin_mode"], bin_mode)
+                self.assertEqual(plan["solve"]["iters"], 0)
+                self.assertEqual(plan["solve"]["function_name"], fn_name)
+
+        request = json.loads(json.dumps(base))
+        request["params"]["solver_mode"] = "aberth_mt"
+        request["params"]["solver_iters"] = 7
+        plan = json.loads(mod.handle_build_plan(request)["body"])
+        self.assertEqual(plan["solve"]["iters"], 7)
+
+        request = json.loads(json.dumps(base))
+        request["params"]["solver_mode"] = "durand_kerner"
+        with self.assertRaises(RuntimeError):
+            mod.handle_build_plan(request)
+
+        for bad_iters in (-1, 65, "lots"):
+            request = json.loads(json.dumps(base))
+            request["params"]["solver_iters"] = bad_iters
+            with self.assertRaises(RuntimeError):
+                mod.handle_build_plan(request)
+
     def test_build_plan_chunk_items_include_solve_fields(self):
         import handler_compute_plan as mod
 

@@ -58,8 +58,13 @@ def handle_fused_chunk(params):
     degree = _require_int(params, "degree", minimum=1)
     fused_threads = _require_int(params, "fused_threads", minimum=1) if "fused_threads" in params else 4
     solver_mode = str(params.get("solver_mode") or "aberth_mt").strip().lower() or "aberth_mt"
-    if solver_mode not in {"aberth_mt", "companion_matrix"}:
-        raise RuntimeError(f"fused compute solver_mode must be one of aberth_mt, companion_matrix; got {solver_mode!r}")
+    if solver_mode not in {"aberth_mt", "companion_matrix", "jenkins_traub", "newton"}:
+        raise RuntimeError(
+            f"fused compute solver_mode must be one of aberth_mt, companion_matrix, jenkins_traub, newton; got {solver_mode!r}"
+        )
+    solver_iters = int(params.get("solver_iters") or 0)
+    if solver_iters < 0 or solver_iters > 64:
+        raise RuntimeError(f"fused compute solver_iters must be in 0..64; got {solver_iters}")
     task_id = str(params.get("task_id") or f"compute_fused_{chunk_idx}")
     function_name = _require_str(params, "function")
     param_transforms = params.get("param_transforms") or []
@@ -233,6 +238,7 @@ def handle_fused_chunk(params):
                 n_coeffs=n_coeffs,
                 n_steps=step_count,
                 fused_threads=fused_threads,
+                solver_iters=solver_iters,
                 progress_path=progress_path if solver_mode == "aberth_mt" else None,
             )
             solve_us = int((time.time() - solve_t0) * 1e6)
@@ -450,15 +456,21 @@ def _timed_upload(local_path, key, metadata=None):
     return int((time.time() - t0) * 1e6)
 
 
-def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps, fused_threads, progress_path=None):
-    if solver_mode == "companion_matrix":
+def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps, fused_threads, solver_iters=0, progress_path=None):
+    if solver_mode in ("companion_matrix", "jenkins_traub", "newton"):
+        bin_mode = {
+            "companion_matrix": "solve_cm",
+            "jenkins_traub": "solve_jt",
+            "newton": "solve_newton",
+        }[solver_mode]
         spec = {
-            "mode": "solve_cm",
+            "mode": bin_mode,
             "coeffs_file": coeffs_path,
             "n_coeffs": n_coeffs,
             "n_steps": n_steps,
             # CM threading wave: the row loop partitions across workers,
             # byte-identical to the sequential path at any thread count.
+            # JT/Newton share the same row loop in the same binary.
             "n_threads": fused_threads,
         }
         binary = SWEEP_CM
@@ -473,6 +485,10 @@ def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps
             "match_roots": False,
             "n_threads": fused_threads,
         }
+        if solver_iters:
+            # solver-brush knob: cap the Aberth loop to render the
+            # partially converged state (0 = full convergence default)
+            spec["max_iter"] = solver_iters
         if progress_path:
             # sweep_mt publishes durable flush watermarks here so the
             # streaming uploader can ship parts while the solve runs

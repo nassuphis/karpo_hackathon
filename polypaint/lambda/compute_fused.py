@@ -192,7 +192,9 @@ def _solver_scratch_step_bytes(solver_mode, degree):
     base = max(1, int(degree)) * 8
     if solver_mode == "companion_matrix":
         return base * 18
-    if solver_mode == "aberth_mt":
+    if solver_mode in ("aberth_mt", "jenkins_traub", "newton"):
+        # JT/Newton per-row scratch is a fixed few KB of stack arrays;
+        # the aberth budget already dominates it
         return base * 10
     raise RuntimeError(f"unsupported fused solver_mode: {solver_mode!r}")
 
@@ -209,6 +211,14 @@ def _solve_us_per_step(*, solver_mode, degree, fused_threads):
     degree = max(1.0, float(degree))
     if solver_mode == "companion_matrix":
         return 90.0 * (degree / 35.0)
+    if solver_mode == "jenkins_traub":
+        # measured 66 us/step vs CM 362 at degree 35 single-thread (M3,
+        # 2026-07-16), i.e. 0.18x the CM anchor; x2 safety margin, and the
+        # CM-style thread scaling (row-partitioned in the same binary)
+        return (33.0 * (degree / 35.0)) / max(1.0, min(float(fused_threads), 8.0) ** 0.55)
+    if solver_mode == "newton":
+        # measured 41 us/step vs CM 362 at degree 35 single-thread (M3)
+        return (21.0 * (degree / 35.0)) / max(1.0, min(float(fused_threads), 8.0) ** 0.55)
     if solver_mode == "aberth_mt":
         return (28.0 * (degree / 35.0)) / max(1.0, min(float(fused_threads), 8.0) ** 0.55)
     raise RuntimeError(f"unsupported fused solver_mode: {solver_mode!r}")

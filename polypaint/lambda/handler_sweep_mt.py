@@ -67,6 +67,10 @@ def handle_solve_mt_from_coeffs(params):
         }
         if params.get("n_threads") is not None:
             spec["n_threads"] = int(params["n_threads"])
+        max_iter = int(params.get("max_iter") or 0)
+        if 1 <= max_iter <= 64:
+            # solver-brush knob: capped Aberth (0/absent = full convergence)
+            spec["max_iter"] = max_iter
 
         result = subprocess.run(
             [SWEEP_MT, bin_path],

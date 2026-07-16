@@ -111,6 +111,7 @@ def handle_build_plan(params):
     pipeline_mode = pipeline_mode_from_params(run_params)
 
     solver_mode = _validate_solver_mode(run_params.get("solver_mode", "aberth_mt"))
+    solver_iters = _validate_solver_iters(run_params.get("solver_iters"))
     execution_method = execution_method_from_params(run_params)
     n = _validate_positive_int(run_params.get("N"), "N", max_value=MAX_N)
     times = _validate_positive_int(run_params.get("times", 1), "times", max_value=MAX_TIMES)
@@ -348,6 +349,10 @@ def handle_build_plan(params):
         },
         "solve": {
             "mode": solver_mode,
+            # bin_mode/iters flow to the lores solve lambda and the fused
+            # chunk map via the ASL template; iters=0 means solver default
+            "bin_mode": _solver_bin_mode(solver_mode),
+            "iters": solver_iters,
             "function_name": _solver_function_name(solver_mode),
             "task_prefix": f"compute_{run_id}_solve_",
         },
@@ -608,6 +613,7 @@ def handle_finalize_metadata(params):
         "function": plan["pipeline"]["function"],
         "N": int(plan["compute"]["N"]),
         "solver": plan["solve"]["mode"],
+        "solver_iters": int(plan["solve"].get("iters", 0) or 0),
         "n_chunks": int(plan["compute"]["n_chunks"]),
         "n_steps": int(plan["compute"]["n_steps"]),
         "execution_method": str(plan["compute"].get("execution_method") or "classic_chunk_pipeline"),
@@ -682,9 +688,26 @@ def _finalize_results_task_prefix(plan, params):
 
 def _validate_solver_mode(value):
     solver_mode = str(value or "aberth_mt").strip().lower()
-    if solver_mode not in ("aberth_mt", "companion_matrix"):
-        raise RuntimeError(f"solver_mode must be one of aberth_mt, companion_matrix; got {value!r}")
+    if solver_mode not in ("aberth_mt", "companion_matrix", "jenkins_traub", "newton"):
+        raise RuntimeError(
+            f"solver_mode must be one of aberth_mt, companion_matrix, jenkins_traub, newton; got {value!r}"
+        )
     return solver_mode
+
+
+def _validate_solver_iters(value):
+    """Aberth iteration cap (solver-brush knob). 0 = solver default (full
+    64-iteration convergence); 1..64 caps the loop, rendering the partially
+    converged state. Ignored by the other solvers."""
+    if value in (None, "", 0, "0"):
+        return 0
+    try:
+        iters = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solver_iters must be an integer, got {value!r}")
+    if iters < 0 or iters > 64:
+        raise RuntimeError(f"solver_iters must be in 0..64, got {iters}")
+    return iters
 
 
 def _validate_positive_int(value, field_name, max_value=None):
@@ -700,9 +723,20 @@ def _validate_positive_int(value, field_name, max_value=None):
 
 
 def _solver_function_name(solver_mode):
-    if solver_mode == "companion_matrix":
+    # jenkins_traub and newton live inside the sweep_cm binary/lambda
+    if solver_mode in ("companion_matrix", "jenkins_traub", "newton"):
         return SWEEP_CM_FUNCTION
     return SWEEP_MT_FUNCTION
+
+
+def _solver_bin_mode(solver_mode):
+    """The native binary's mode string for a given API solver_mode."""
+    return {
+        "aberth_mt": "solve_mt",
+        "companion_matrix": "solve_cm",
+        "jenkins_traub": "solve_jt",
+        "newton": "solve_newton",
+    }[solver_mode]
 
 
 def _compute_lores_n(n, times, degree):

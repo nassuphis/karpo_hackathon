@@ -636,6 +636,67 @@ class TestRunSolveLocalPayloads(unittest.TestCase):
             "n_threads": 6,
         })
 
+    def test_brush_solve_specs_are_pinned(self):
+        """Solver-brush wave: jenkins_traub/newton dispatch to the sweep_cm
+        binary with their own mode strings (threaded like CM), and
+        solver_iters flows to the aberth spec as max_iter (only when set)."""
+        import handler_compute_chunk_fused as mod
+
+        captured = {}
+
+        def fake_run(cmd, input=None, capture_output=None, text=None, timeout=None):
+            captured["spec"] = json.loads(input)
+            captured["binary"] = cmd[0]
+
+            class R:
+                returncode = 0
+                stdout = json.dumps({"mode": captured["spec"]["mode"], "n_t": 1})
+                stderr = ""
+            return R()
+
+        for solver_mode, bin_mode in (("jenkins_traub", "solve_jt"), ("newton", "solve_newton")):
+            with patch("handler_compute_chunk_fused.subprocess.run", side_effect=fake_run):
+                mod._run_solve_local(
+                    output_path="/tmp/x.bin", coeffs_path="/tmp/c.bin",
+                    solver_mode=solver_mode, n_coeffs=71, n_steps=1234,
+                    fused_threads=6,
+                )
+            self.assertEqual(captured["binary"], mod.SWEEP_CM)
+            self.assertEqual(captured["spec"], {
+                "mode": bin_mode,
+                "coeffs_file": "/tmp/c.bin",
+                "n_coeffs": 71,
+                "n_steps": 1234,
+                "n_threads": 6,
+            })
+
+        with patch("handler_compute_chunk_fused.subprocess.run", side_effect=fake_run):
+            mod._run_solve_local(
+                output_path="/tmp/x.bin", coeffs_path="/tmp/c.bin",
+                solver_mode="aberth_mt", n_coeffs=71, n_steps=1234,
+                fused_threads=6, solver_iters=5,
+            )
+        self.assertEqual(captured["spec"], {
+            "mode": "solve_mt",
+            "coeffs_file": "/tmp/c.bin",
+            "n_coeffs": 71,
+            "n2": 1234,
+            "i1_start": 0,
+            "i1_end": 1,
+            "match_roots": False,
+            "max_iter": 5,
+            "n_threads": 6,
+        })
+
+        # solver_iters=0 must NOT add max_iter (default full convergence)
+        with patch("handler_compute_chunk_fused.subprocess.run", side_effect=fake_run):
+            mod._run_solve_local(
+                output_path="/tmp/x.bin", coeffs_path="/tmp/c.bin",
+                solver_mode="aberth_mt", n_coeffs=71, n_steps=1234,
+                fused_threads=6, solver_iters=0,
+            )
+        self.assertNotIn("max_iter", captured["spec"])
+
 
 if __name__ == "__main__":
     unittest.main()

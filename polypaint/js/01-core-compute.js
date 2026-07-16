@@ -1390,35 +1390,50 @@ function _solverShortLabel(solver) {
     return solver === 'companion_matrix' ? 'CM'
         : solver === 'aberth_mt' ? 'AE-MT'
         : solver === 'aberth' ? 'AE'
+        : solver === 'jenkins_traub' ? 'JT'
+        : solver === 'newton' ? 'NEWT'
         : solver || '-';
 }
 
 function _normalizeComputeSolverMode(solver) {
-    return solver === 'companion_matrix' ? 'companion_matrix' : 'aberth_mt';
+    return solver === 'companion_matrix' ? 'companion_matrix'
+        : solver === 'jenkins_traub' ? 'jenkins_traub'
+        : solver === 'newton' ? 'newton'
+        : 'aberth_mt';
 }
 
 function _solverRunLabel(solver) {
     return solver === 'companion_matrix' ? 'Calculate-CM'
+        : solver === 'jenkins_traub' ? 'Calculate-JT'
+        : solver === 'newton' ? 'Calculate-NEWT'
         : 'Calculate-AE-MT';
 }
 
 function _solverButtonId(solver) {
     return solver === 'companion_matrix' ? 'btn-calculate-cm'
+        : solver === 'jenkins_traub' ? 'btn-calculate-jt'
+        : solver === 'newton' ? 'btn-calculate-newton'
         : 'btn-calculate-mt';
 }
 
 function _solverTag(solver) {
     return solver === 'companion_matrix' ? 'CM'
+        : solver === 'jenkins_traub' ? 'JT'
+        : solver === 'newton' ? 'NEWT'
         : 'AE-MT';
 }
 
 function _solverLoresEndpoint(solver) {
     return solver === 'companion_matrix' ? 'sweep-cm'
+        : solver === 'jenkins_traub' ? 'sweep-cm'
+        : solver === 'newton' ? 'sweep-cm'
         : 'sweep-mt';
 }
 
 function _solverDispatchTarget(solver) {
     return solver === 'companion_matrix' ? 'sweep_cm'
+        : solver === 'jenkins_traub' ? 'sweep_cm'
+        : solver === 'newton' ? 'sweep_cm'
         : 'sweep_mt';
 }
 
@@ -1431,7 +1446,10 @@ function _computePopupPrefsForSolver(solverMode) {
 }
 
 function _solverHasThreadedFusedSolve(solverMode) {
-    return solverMode === 'aberth_mt';
+    // all four brushes thread their fused solve since the CM threading wave
+    // (sweep_cm row loop partitions byte-identically; JT/Newton share it)
+    return solverMode === 'aberth_mt' || solverMode === 'companion_matrix'
+        || solverMode === 'jenkins_traub' || solverMode === 'newton';
 }
 
 function _computePopupSharedThreadsLabel(solverMode) {

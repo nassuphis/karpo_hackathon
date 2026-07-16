@@ -74,7 +74,11 @@ def _json_response(status_code, body):
 
 
 def _solver_tag(solver_mode):
-    return "CM" if solver_mode == "companion_matrix" else "AE-MT"
+    return {
+        "companion_matrix": "CM",
+        "jenkins_traub": "JT",
+        "newton": "NEWT",
+    }.get(solver_mode, "AE-MT")
 
 
 def _format_chain(chain):
@@ -531,8 +535,14 @@ def handler(event, context):
         except ValueError as e:
             return _json_response(400, {"message": str(e)})
         solver_mode = str(params.get("solver_mode") or "aberth_mt").strip() or "aberth_mt"
-        if solver_mode not in {"aberth_mt", "companion_matrix"}:
+        if solver_mode not in {"aberth_mt", "companion_matrix", "jenkins_traub", "newton"}:
             return _json_response(400, {"message": f"unsupported preview solver_mode: {solver_mode}"})
+        try:
+            solver_iters = int(params.get("solver_iters") or 0)
+        except (TypeError, ValueError):
+            return _json_response(400, {"message": f"solver_iters must be an integer, got {params.get('solver_iters')!r}"})
+        if solver_iters < 0 or solver_iters > 64:
+            return _json_response(400, {"message": f"solver_iters must be in 0..64, got {solver_iters}"})
 
         try:
             compiled = _compile_compute_inputs(params)
@@ -606,15 +616,19 @@ def handler(event, context):
         degree = int(coeff_meta["degree"])
         _exact_tmp_capacity(coeffs_size, degree, n_steps)
 
-        if solver_mode == "companion_matrix":
+        if solver_mode in ("companion_matrix", "jenkins_traub", "newton"):
             solve_binary = SWEEP_CM
             solve_spec = {
-                "mode": "solve_cm",
+                "mode": {
+                    "companion_matrix": "solve_cm",
+                    "jenkins_traub": "solve_jt",
+                    "newton": "solve_newton",
+                }[solver_mode],
                 "coeffs_file": TMP_COEFFS,
                 "n_coeffs": n_coeffs,
                 "n_steps": n_steps,
-                # the 4 GB preview lambda has ~2 vCPUs; the CM row loop
-                # threads byte-identically (CM threading wave)
+                # the 4 GB preview lambda has ~2 vCPUs; the sweep_cm row
+                # loop threads byte-identically (CM threading wave)
                 "n_threads": 2,
             }
         elif solver_mode == "aberth_mt":
@@ -628,6 +642,10 @@ def handler(event, context):
                 "i1_end": 1,
                 "match_roots": False,
             }
+            if solver_iters:
+                # solver-brush knob: capped Aberth renders the partially
+                # converged state
+                solve_spec["max_iter"] = solver_iters
 
         t0 = time.time()
         solve_meta = _run_json_binary(solve_binary, TMP_ROOTS, solve_spec, phase="solve", timeout_s=25)

@@ -1720,10 +1720,15 @@ button {
                         <div class="compute-preview-matrix-head">Action</div>
 
                         <input type="number" id="compute-preview-n" value="256" min="8" max="1024" step="8" style="width:8em" onchange="_markComputePreviewStale()">
-                        <select id="compute-preview-solver" style="width:7em; font-size:12px" onchange="_markComputePreviewStale()">
-                            <option value="aberth_mt">AE-MT</option>
-                            <option value="companion_matrix">CM</option>
-                        </select>
+                        <div style="display:flex; gap:4px; align-items:center">
+                            <select id="compute-preview-solver" style="width:7em; font-size:12px" onchange="_markComputePreviewStale()">
+                                <option value="aberth_mt">AE-MT</option>
+                                <option value="companion_matrix">CM</option>
+                                <option value="jenkins_traub">JT</option>
+                                <option value="newton">Newton</option>
+                            </select>
+                            <input type="number" id="compute-preview-iters" value="0" min="0" max="64" step="1" style="width:4em" title="Aberth iteration cap: 0 = full 64-iteration convergence; 1-63 renders the partially converged state (AE-MT only)" onchange="_markComputePreviewStale()">
+                        </div>
                         <input type="number" id="compute-preview-quantile" value="0" min="0" max="10" step="0.1" style="width:5em" onchange="_markComputePreviewStale()">
                         <input type="number" id="compute-preview-shim" value="5" min="0" max="50" step="0.5" style="width:5em" onchange="_markComputePreviewStale()">
                         <input type="number" id="compute-preview-size" value="1000" min="64" max="4096" step="8" style="width:6em" onchange="_markComputePreviewStale()">
@@ -1754,6 +1759,8 @@ button {
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
                 <button class="btn-primary" id="btn-calculate-mt" onclick="runCalculateAEMT()" style="background:#287">Calculate-AE-MT</button>
                 <button class="btn-primary" id="btn-calculate-cm" onclick="runCalculateCM()" style="background:#64a">Calculate-CM</button>
+                <button class="btn-primary" id="btn-calculate-jt" onclick="runCalculateJT()" style="background:#a46">Calculate-JT</button>
+                <button class="btn-primary" id="btn-calculate-newton" onclick="runCalculateNewton()" style="background:#886">Calculate-NEWT</button>
                 <button class="btn-primary" id="btn-param-debug" onclick="runParamDebug()" style="background:#446" title="Preview-scale parameter image. Uses Compute Preview N/Pix, not full Calculate N.">Param</button>
                 <select id="param-debug-mode" style="width:7em; font-size:11px">
                     <option value="together">together</option>
@@ -3303,6 +3310,10 @@ button {
                             <tr id="compute-mt-fused-solve-row" style="border-bottom:1px solid #222">
                                 <td style="padding:8px">Hires solve threads</td>
                                 <td style="padding:8px"><span id="compute-mt-fused-solve-threads">4</span></td>
+                            </tr>
+                            <tr id="compute-mt-solver-iters-row" style="border-bottom:1px solid #222">
+                                <td style="padding:8px" title="Solver-brush knob: cap the Aberth iteration loop. 0 = full 64-iteration convergence; 1-63 renders the partially converged state.">AE iteration cap (0 = full)</td>
+                                <td style="padding:8px"><input id="compute-mt-solver-iters" type="number" min="0" max="64" step="1" value="0"></td>
                             </tr>
                             <tr style="border-bottom:1px solid #222">
                                 <td style="padding:8px">Lores param-gen threads</td>

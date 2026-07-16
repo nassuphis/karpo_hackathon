@@ -103,6 +103,10 @@ def _solver_label(raw):
         return "CM"
     if solver == "aberth_mt":
         return "AE-MT"
+    if solver == "jenkins_traub":
+        return "JT"
+    if solver == "newton":
+        return "NEWT"
     return solver
 
 

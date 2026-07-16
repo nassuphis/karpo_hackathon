@@ -110,6 +110,14 @@ PYEOF
     run_case "sweep_cm_threaded_clean" \
         "{\"mode\":\"solve_cm\",\"coeffs_file\":\"$CM_FIX\",\"n_coeffs\":21,\"n_threads\":8}" \
         "$WORK/cm_out.bin" no
+    # solver-brush wave: JT keeps per-worker heap JtState, Newton is
+    # stack-local — both must be race-free over the same partition
+    run_case "sweep_jt_threaded_clean" \
+        "{\"mode\":\"solve_jt\",\"coeffs_file\":\"$CM_FIX\",\"n_coeffs\":21,\"n_threads\":8}" \
+        "$WORK/jt_out.bin" no
+    run_case "sweep_newton_threaded_clean" \
+        "{\"mode\":\"solve_newton\",\"coeffs_file\":\"$CM_FIX\",\"n_coeffs\":21,\"n_threads\":8}" \
+        "$WORK/newton_out.bin" no
     BIN="$OLD_BIN"
 else
     echo "skip [sweep_cm_threaded_clean]: no LAPACK linkable on this host"

@@ -28,6 +28,11 @@
 
 #define HAVE_LAPACK_COMPANION 1
 #include "companion_solver.h"
+#include "jt_solver.h"
+#include "newton_solver.h"
+
+/* solver brushes: which per-row algorithm this run paints with */
+enum { CM_KIND_ZGEEV = 0, CM_KIND_JT = 1, CM_KIND_NEWTON = 2 };
 
 #define READ_BUF_SIZE (256 * 1024)
 #define CM_MAX_THREADS 64
@@ -87,6 +92,7 @@ typedef struct {
     long rowStart;
     long rowEnd;
     int nCoeffs;
+    int kind;                 /* CM_KIND_* */
     long skippedOverflow;
     int failed;
 } CmWorkerArg;
@@ -106,14 +112,30 @@ static void *cmWorkerMain(void *vp) {
     }
     CompanionWorkspace ws;
     memset(&ws, 0, sizeof(ws));
+    JtState *jt = NULL;
+    if (arg->kind == CM_KIND_JT) {
+        jt = malloc(sizeof(JtState));
+        if (!jt) {
+            free(cfRe); free(cfIm); free(rootRe); free(rootIm);
+            arg->failed = 1;
+            return NULL;
+        }
+    }
     for (long r = arg->rowStart; r < arg->rowEnd; r++) {
         const float *src = arg->coeffData + (size_t)r * nCoeffs * 2;
         for (int k = 0; k < nCoeffs; k++) {
             cfRe[k] = (double)src[k * 2];
             cfIm[k] = (double)src[k * 2 + 1];
         }
-        int rc = solve_companion_coeffs_ws(&ws, cfRe, cfIm, nCoeffs,
+        int rc;
+        if (arg->kind == CM_KIND_JT) {
+            rc = solve_jt_coeffs(jt, cfRe, cfIm, nCoeffs, rootRe, rootIm);
+        } else if (arg->kind == CM_KIND_NEWTON) {
+            rc = solve_newton_coeffs(cfRe, cfIm, nCoeffs, rootRe, rootIm);
+        } else {
+            rc = solve_companion_coeffs_ws(&ws, cfRe, cfIm, nCoeffs,
                                            rootRe, rootIm, 0);
+        }
         if (rc < 0) arg->skippedOverflow++;
         float *dst = arg->outData + (size_t)r * degree * 2;
         for (int k = 0; k < degree; k++) {
@@ -121,6 +143,7 @@ static void *cmWorkerMain(void *vp) {
             dst[k * 2 + 1] = rootIm[k];
         }
     }
+    free(jt);
     companion_ws_release(&ws);
     free(cfRe);
     free(cfIm);
@@ -152,6 +175,14 @@ int main(int argc, char **argv) {
     cp = find_key(buf, "n_coeffs");
     if (cp) nCoeffs = (int)parse_num(&cp);
     if (nCoeffs < 2) { fprintf(stderr, "Invalid n_coeffs: %d\n", nCoeffs); return 1; }
+
+    int kind = CM_KIND_ZGEEV;
+    char modeStr[64] = "";
+    cp = find_key(buf, "mode");
+    if (cp) parse_string(cp, modeStr, sizeof(modeStr));
+    if (strcmp(modeStr, "solve_jt") == 0) kind = CM_KIND_JT;
+    else if (strcmp(modeStr, "solve_newton") == 0) kind = CM_KIND_NEWTON;
+    else strcpy(modeStr, "solve_cm");
 
     int nThreads = 1;
     cp = find_key(buf, "n_threads");
@@ -221,6 +252,7 @@ int main(int argc, char **argv) {
             args[i].rowStart = cursor;
             args[i].rowEnd = cursor + count;
             args[i].nCoeffs = nCoeffs;
+            args[i].kind = kind;
             args[i].skippedOverflow = 0;
             args[i].failed = 0;
             cursor += count;
@@ -287,8 +319,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "WARNING: %ld/%ld polynomials skipped (coefficient overflow)\n",
                 skippedOverflow, totalSteps);
 
-    printf("{\"mode\":\"solve_cm\",\"n_t\":%ld,\"degree\":%d,\"avg_iterations\":0,\"compute_us\":%ld,\"skipped_overflow\":%ld,\"n_threads\":%d}\n",
-           totalSteps, degree, elapsed_us, skippedOverflow, nThreads);
+    printf("{\"mode\":\"%s\",\"n_t\":%ld,\"degree\":%d,\"avg_iterations\":0,\"compute_us\":%ld,\"skipped_overflow\":%ld,\"n_threads\":%d}\n",
+           modeStr, totalSteps, degree, elapsed_us, skippedOverflow, nThreads);
 
     return 0;
 }

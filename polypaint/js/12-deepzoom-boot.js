@@ -615,6 +615,8 @@ async function runParamDebug() {
 
 async function runCalculateAEMT() { return openComputeSolverPopup('aberth_mt'); }
 async function runCalculateCM() { return openComputeSolverPopup('companion_matrix'); }
+async function runCalculateJT() { return openComputeSolverPopup('jenkins_traub'); }
+async function runCalculateNewton() { return openComputeSolverPopup('newton'); }
 function _aggregateComputeParamGenPerf(results) {
     const row = Array.isArray(results) && results.length ? results[0] : null;
     if (!row) return null;
@@ -923,6 +925,8 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
         if (computeMtOptions) {
             orchPayload.params.execution_method = fused ? 'fused_chunk_pipeline' : 'classic_chunk_pipeline';
             if (fused && fusedThreads != null) orchPayload.params.fused_threads = fusedThreads;
+            const solverIters = Math.max(0, Math.min(64, parseInt(computeMtOptions.solverIters, 10) || 0));
+            if (solverIters > 0 && solverMode === 'aberth_mt') orchPayload.params.solver_iters = solverIters;
         }
         if (effectiveParamGenThreads != null) orchPayload.params.param_gen_threads = effectiveParamGenThreads;
         if (effectiveCoeffgenThreads != null) orchPayload.params.coeffgen_threads = effectiveCoeffgenThreads;

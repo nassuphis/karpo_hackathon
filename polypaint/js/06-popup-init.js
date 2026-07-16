@@ -102,12 +102,14 @@ function _initComputeMtPopup() {
     const applySafeChunksBtn = document.getElementById('compute-mt-apply-safe-chunks');
     const loresThreadsFusedEl = document.getElementById('compute-mt-lores-param-gen-threads-fused');
     const loresCoeffThreadsFusedEl = document.getElementById('compute-mt-lores-coeffgen-threads-fused');
+    const solverItersEl = document.getElementById('compute-mt-solver-iters');
     const runComputeMtPopup = async () => {
         const solverMode = _computeMtPopupState.solverMode || 'aberth_mt';
         const nChunks = Math.max(1, parseInt(_computeMtPopupState.nChunks, 10) || 10);
         const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads);
         const loresParamGenThreads = _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads);
         const loresCoeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads);
+        const solverIters = solverMode === 'aberth_mt' ? _clampSolverIters(_computeMtPopupState.solverIters) : 0;
         if (!_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate) {
             await _refreshComputeMtProbe();
         }
@@ -122,7 +124,7 @@ function _initComputeMtPopup() {
         _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
         document.getElementById('render-stripes').value = String(nChunks);
         _closeComputeMtPopup();
-        await runCalculateWithSolver(solverMode, { nChunks, fused: true, fusedThreads, loresParamGenThreads, loresCoeffgenThreads });
+        await runCalculateWithSolver(solverMode, { nChunks, fused: true, fusedThreads, loresParamGenThreads, loresCoeffgenThreads, solverIters });
         return true;
     };
     _bindPopupShell({
@@ -164,6 +166,12 @@ function _initComputeMtPopup() {
         loresCoeffThreadsFusedEl.addEventListener('input', (ev) => {
             _computeMtPopupState.loresCoeffgenThreads = _clampRenderMtThreads(ev.target.value);
             _renderComputeMtPopup();
+        });
+    }
+    if (solverItersEl) {
+        solverItersEl.addEventListener('input', (ev) => {
+            _computeMtPopupState.solverIters = _clampSolverIters(ev.target.value);
+            // no probe refresh: the iteration cap changes solve cost, not sizing
         });
     }
     if (runBtn) {

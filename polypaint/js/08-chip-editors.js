@@ -1055,7 +1055,9 @@ function _solveScoreOpHelpItem(name, spec, category) {
     const argNames = params.map((param, idx) => _programHelpParamName(param, idx));
     const arity = Number(spec && spec.arity) || 0;
     const stackArgs = Array.from({ length: arity }, (_, i) => (arity === 1 ? 'expr' : `expr${i + 1}`));
-    const signature = `${name}(${stackArgs.concat(argNames).join(', ')})`;
+    const signature = category === 'output'
+        ? `${name}(expr)  |  ${name}()`
+        : `${name}(${stackArgs.concat(argNames).join(', ')})`;
     const snippet = String((spec && spec.snippet) || '');
     return _programHelpItem(name, signature, (spec && spec.tooltip) || '', {
         category,
@@ -1096,6 +1098,30 @@ function _programHelpBuildSolveScoreRegistry() {
         _programHelpItem('push', 'push(expr)', 'Push a score expression onto the stack.', {
             category: 'statement form',
             forms: ['push(metric(proximity, slv, q=0.1%))'],
+        }),
+        _programHelpItem('emit', 'emit(expr) / emit_norm(expr) / emit_none(expr)', 'Emit one output channel: emit writes the raw score, emit_norm a normalized [0,1] byte, emit_none pops and discards. With no argument the value is popped from the stack. Emit statements cannot be mixed with a score = assignment.', {
+            category: 'statement form',
+            forms: ['emit_norm(metric(proximity, slv, q=0.1%))', 'push(metric(spread, slv, q=0.1%))\nemit_norm()'],
+            aliases: ['emit_norm', 'emit_none'],
+        }),
+        _programHelpItem('local', 'name = expr', 'Write-once local alias, substituted at compile time. Any name except the reserved words (score, pop, metric, and the operation names).', {
+            category: 'statement form',
+            forms: ['x1 = metric(proximity, slv, q=0.1%)', 'score = (x1 + 1) * 0.5'],
+            aliases: ['locals', 'alias'],
+        }),
+        _programHelpItem('infix', 'a + b   a - b   a * b   a / b', 'Infix arithmetic inside expressions, standard precedence, parentheses and unary minus supported. Lowers to add/subtract/mult/ratio. Bare numbers are constants; a trailing % is stripped (0.1% reads as 0.1).', {
+            category: 'expression form',
+            forms: ['score = metric(crowding, slv, q=1%) * 0.5 + 0.25'],
+            aliases: ['+', '-', '*', '/', 'arithmetic'],
+        }),
+        _programHelpItem('pop', 'pop()', 'Expression that pops the top of the stack, usable anywhere an expression is: score = pop() * 2, avg(pop(), pop()).', {
+            category: 'expression form',
+            forms: ['push(metric(proximity, slv, q=0.1%))', 'score = pop() * 2'],
+        }),
+        _programHelpItem('stackops', 'sin()  pow(2)  avg()  ...', 'Every unary/combine operation doubles as a bare statement operating on the stack: sin() transforms the top value, avg() combines the top two. The same names also work as expressions: sin(expr), avg(expr1, expr2).', {
+            category: 'statement form',
+            forms: ['push(metric(crowding, slv, q=1%))\nasin()\nemit_norm()'],
+            aliases: ['stack'],
         }),
     ]);
     const metricItems = _solveScoreMetricNames.map(name => {

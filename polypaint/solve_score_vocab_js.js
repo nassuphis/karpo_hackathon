@@ -381,6 +381,18 @@ window._solveScoreVocab = {
     "unit_annulus_fraction_01"
   ],
   "unarySpecs": {
+    "acos": {
+      "arity": 1,
+      "params": [],
+      "tooltip": "arccosine, radians; input clamped to [-1,1]",
+      "snippet": "score = acos(metric(proximity, slv, q=0.1%))"
+    },
+    "asin": {
+      "arity": 1,
+      "params": [],
+      "tooltip": "arcsine, radians; input clamped to [-1,1]",
+      "snippet": "score = asin(metric(proximity, slv, q=0.1%))"
+    },
     "clamp": {
       "arity": 1,
       "params": [],
@@ -557,19 +569,19 @@ window._solveScoreVocab = {
           ]
         }
       ],
-      "tooltip": "pop one score; raw/norm emit a byte, none discards it for debugging branches",
+      "tooltip": "emit(expr) or bare emit(): pop one score, write a RAW output channel",
       "snippet": "emit(metric(proximity, slv, q=0.1%))"
     },
     "emit_none": {
       "arity": 1,
       "params": [],
-      "tooltip": "legacy alias for emit(none)",
+      "tooltip": "emit_none(expr) or bare emit_none(): pop one score and discard it (debugging branches)",
       "snippet": "emit_none(metric(proximity, slv, q=0.1%))\nemit_norm(metric(proximity, slv, q=0.1%))"
     },
     "emit_norm": {
       "arity": 1,
       "params": [],
-      "tooltip": "legacy alias for emit(norm)",
+      "tooltip": "emit_norm(expr) or bare emit_norm(): pop one score, write a NORMALIZED [0,1] output channel",
       "snippet": "emit_norm(metric(proximity, slv, q=0.1%))"
     }
   },

@@ -175,13 +175,24 @@ function _solveScoreProgramMetaHtml(program, options = {}) {
     )).join('')}</div>`;
 }
 
-function _renderSolveScoreProgramChipsHtml(program, options = {}) {
-    const fallbackMetric = options.prefix === 'palette' ? paletteTabMetric : renderSolveMetric;
-    const normalized = _normalizeSolveScoreChain(program && program.chain, fallbackMetric || 'proximity');
-    if (!normalized.length) return _solveScoreModalMessageHtml('No solve-score chips.');
-    const renderOptions = { readonly: true, solveScore: true, chain: normalized };
-    const chips = normalized.map((item, i) => _renderScoreChipHtml(item, i, 'modal-ss', _ssCatalog, renderOptions)).join('');
-    return `<div class="chip-container solve-score-modal-chip-strip" aria-label="Solve score program chips">${chips}</div>`;
+function _renderSolveScoreProgramSourceHtml(program) {
+    // The card shows EXACTLY the text loading would put in the textbox:
+    // stored source_text verbatim, else the server-derived reconstruction
+    // (the same /solve-score-chain-to-source call the load path makes).
+    const stored = String(program && program.source_text || '').trim();
+    const derived = String(program && program._derived_source_text || '').trim();
+    const deriveError = String(program && program._derived_source_error || '').trim();
+    const text = stored || derived;
+    if (text) {
+        return `<pre class="coeff-program-modal-source" aria-label="Solve score program source">${_escapeHtml(text)}</pre>`;
+    }
+    if (deriveError) {
+        return _solveScoreModalMessageHtml(`Source reconstruction failed: ${deriveError}`, true);
+    }
+    if (Array.isArray(program && program.chain) && program.chain.length) {
+        return _solveScoreModalMessageHtml('Deriving source text…');
+    }
+    return _solveScoreModalMessageHtml('No solve-score program.');
 }
 
 function _renderSolveScoreProgramCardHtml(program, options = {}) {
@@ -193,10 +204,26 @@ function _renderSolveScoreProgramCardHtml(program, options = {}) {
     }
     if (program.error) return _solveScoreModalMessageHtml(`Error: ${program.error}`, true);
     try {
-        return _solveScoreProgramMetaHtml(program, options) + _renderSolveScoreProgramChipsHtml(program, options);
+        return _solveScoreProgramMetaHtml(program, options) + _renderSolveScoreProgramSourceHtml(program);
     } catch (e) {
         return _solveScoreModalMessageHtml(`Error: ${e && e.message ? e.message : String(e)}`, true);
     }
+}
+
+async function _deriveSolveScoreProgramSourceText(program, rerender) {
+    if (!program || typeof program !== 'object') return;
+    if (String(program.source_text || '').trim()) return;
+    if (program._derived_source_text || program._derived_source_error || program._derived_source_pending) return;
+    if (!Array.isArray(program.chain) || !program.chain.length) return;
+    program._derived_source_pending = true;
+    try {
+        program._derived_source_text = await _solveScoreSourceTextFromChainRoute(program.chain);
+    } catch (e) {
+        program._derived_source_error = e && e.message ? e.message : String(e);
+    } finally {
+        program._derived_source_pending = false;
+    }
+    if (typeof rerender === 'function') rerender();
 }
 
 function _setSolveScoreModalStatus(message, isError = false) {
@@ -239,7 +266,31 @@ function _renderSolveScoreProgramModal() {
             : 'Global saved solve-score programs on the left; current Render-tab live chain on the right.';
     }
     if (nameEl && nameEl.value !== _solveScoreModalState.nameInput) nameEl.value = _solveScoreModalState.nameInput;
-    if (currentEl) currentEl.innerHTML = _renderSolveScoreProgramCardHtml(currentProgram, { prefix: _solveScoreModalState.prefix });
+    if (currentEl) {
+        // The current live card rebuilds its summary object every render, so
+        // chain-derived source text caches on modal state keyed by the chain.
+        if (currentProgram && !currentProgram.error && !String(currentProgram.source_text || '').trim()
+            && Array.isArray(currentProgram.chain) && currentProgram.chain.length) {
+            const chainKey = JSON.stringify(currentProgram.chain);
+            const cache = _solveScoreModalState.currentSourceCache;
+            if (cache && cache.key === chainKey) {
+                if (cache.text) currentProgram._derived_source_text = cache.text;
+                if (cache.error) currentProgram._derived_source_error = cache.error;
+            } else {
+                _solveScoreModalState.currentSourceCache = { key: chainKey, text: '', error: '' };
+                void (async () => {
+                    const probe = { source_text: '', chain: currentProgram.chain };
+                    await _deriveSolveScoreProgramSourceText(probe, null);
+                    const entry = _solveScoreModalState.currentSourceCache;
+                    if (!entry || entry.key !== chainKey) return;
+                    entry.text = String(probe._derived_source_text || '');
+                    entry.error = String(probe._derived_source_error || '');
+                    if (_solveScoreModalState.open) _renderSolveScoreProgramModal();
+                })();
+            }
+        }
+        currentEl.innerHTML = _renderSolveScoreProgramCardHtml(currentProgram, { prefix: _solveScoreModalState.prefix });
+    }
     if (selectedEl) {
         if (_solveScoreModalState.selectedLoading) {
             selectedEl.innerHTML = _solveScoreModalMessageHtml('Loading selected saved program...');
@@ -374,6 +425,9 @@ async function _selectSolveScoreProgram(id) {
         _solveScoreModalState.selectedProgram = program;
         _solveScoreModalState.selectedError = '';
         _solveScoreModalState.selectedLoading = false;
+        void _deriveSolveScoreProgramSourceText(program, () => {
+            if (_solveScoreModalState.selectedId === id) _renderSolveScoreProgramModal();
+        });
     } catch (e) {
         if (_solveScoreModalState.selectedId !== id) return;
         _solveScoreModalState.selectedProgram = null;

@@ -51,6 +51,8 @@ def _tooltip(kind: str, name: str, spec: dict) -> str:
         "clamp": "clamp the top stack value to [0,1]",
         "sin": "raw sin(score), radians",
         "cos": "raw cos(score), radians",
+        "asin": "arcsine, radians; input clamped to [-1,1]",
+        "acos": "arccosine, radians; input clamped to [-1,1]",
         "log": "natural log; invalid inputs become 0",
         "exp": "raw exp(score); overflow becomes 0",
         "pow": "raw pow(score, exponent)",
@@ -59,9 +61,9 @@ def _tooltip(kind: str, name: str, spec: dict) -> str:
         "subtract": "raw a-b; top of stack is b",
         "ratio": "raw a/b; zero if denominator is zero",
         "ema": "a*alpha + b*(1-alpha), b is top/latest",
-        "emit": "pop one score; raw/norm emit a byte, none discards it for debugging branches",
-        "emit_norm": "legacy alias for emit(norm)",
-        "emit_none": "legacy alias for emit(none)",
+        "emit": "emit(expr) or bare emit(): pop one score, write a RAW output channel",
+        "emit_norm": "emit_norm(expr) or bare emit_norm(): pop one score, write a NORMALIZED [0,1] output channel",
+        "emit_none": "emit_none(expr) or bare emit_none(): pop one score and discard it (debugging branches)",
     }
     if name in explicit:
         return explicit[name]

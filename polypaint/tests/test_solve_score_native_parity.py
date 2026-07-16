@@ -154,6 +154,20 @@ class TestSolveScoreNativeParity(unittest.TestCase):
                 None,
             ),
             (
+                # asin/acos brush ops: domain-clamped totals; the wide clip
+                # range drives inputs outside [-1,1] to exercise the clamp
+                [
+                    ["crowding", "slv", "1"],
+                    ["dup"],
+                    ["asin"],
+                    ["emit", "raw"],
+                    ["acos"],
+                    ["emit", "raw"],
+                ],
+                {"crowding": (-10, 10)},
+                None,
+            ),
+            (
                 [
                     ["crowding", "slv", "1"],
                     ["crowding", "slv-1", "1"],

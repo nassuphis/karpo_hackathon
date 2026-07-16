@@ -171,6 +171,10 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#solve-score-modal-body .tri-popup-row')).toHaveCount(1);
     await page.locator('#solve-score-modal-body .tri-popup-row').first().click();
     await expect(page.locator('#solve-score-modal-selected')).toContainText('Proximity q=0.1%');
+    // chain-only saved program: the card shows the SAME derived source text
+    // that loading will put in the textbox (not a chip strip)
+    await expect(page.locator('#solve-score-modal-selected .coeff-program-modal-source'))
+      .toContainText('score = metric(proximity, slv, q=0.1%)');
     await page.click('#solve-score-modal-load');
     await expect(page.locator('#render-solve-score-program-status')).toContainText('Loaded Proximity q=0.1%');
     await expect(page.locator('#solve-score-modal-name')).toHaveValue('Proximity q=0.1%');

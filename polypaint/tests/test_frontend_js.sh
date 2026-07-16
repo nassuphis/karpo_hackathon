@@ -579,7 +579,9 @@ assertIncludes(".solve-score-modal-chip-strip {\n    display: grid;\n    grid-te
 assertIncludes(".solve-score-modal-chip-strip .score-chip-readonly {\n    width: 100%;", 'Saved-program modal readonly chips should wrap inside the preview width');
 assertIncludes(".solve-score-modal-chip-strip .chip-input-readonly {\n    display: inline-block;", 'Saved-program modal readonly input values should wrap instead of widening the modal');
 assertIncludes("function _renderSolveScoreProgramCardHtml(program, options = {}) {", 'Solve Scores modal should render selected programs through a card renderer');
-assertIncludes("readonly: true, solveScore: true, chain: normalized", 'Solve Scores modal chip renderer should reuse solve-score chips in read-only mode');
+assertIncludes("function _renderSolveScoreProgramSourceHtml(program) {", 'Solve Scores modal should render programs as source text, not chip cards');
+assertIncludes("aria-label=\"Solve score program source\"", 'Solve Scores modal source block should be labeled');
+assertIncludes("_deriveSolveScoreProgramSourceText(program", 'Solve Scores modal should derive source text for chain-only saved programs via the load route');
 assertIncludes("currentEl.innerHTML = _renderSolveScoreProgramCardHtml(currentProgram", 'Solve Scores modal current program should render chip markup, not debug text');
 assertIncludes("selectedEl.innerHTML = _renderSolveScoreProgramCardHtml(_solveScoreModalState.selectedProgram", 'Solve Scores modal selected program should render chip markup, not debug text');
 assertIncludes("score-chip-readonly", 'Solve Scores modal should expose read-only chip styling');

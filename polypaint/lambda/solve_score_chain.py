@@ -152,6 +152,8 @@ UNARY_CHIPS = {
     "clamp": {"arity": 1, "params": 0},
     "sin": {"arity": 1, "params": 0},
     "cos": {"arity": 1, "params": 0},
+    "asin": {"arity": 1, "params": 0},
+    "acos": {"arity": 1, "params": 0},
     "log": {"arity": 1, "params": 0},
     "exp": {"arity": 1, "params": 0},
     "pow": {"arity": 1, "params": 1},
@@ -985,7 +987,7 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
                 raise RuntimeError("clamp takes no parameters")
             program_tokens.append({"kind": "clamp"})
             continue
-        if name in ("sin", "cos", "log", "exp"):
+        if name in ("sin", "cos", "asin", "acos", "log", "exp"):
             if stack_depth < 1:
                 raise RuntimeError(f"{name} requires one score value on the stack")
             if len(params) != 0:

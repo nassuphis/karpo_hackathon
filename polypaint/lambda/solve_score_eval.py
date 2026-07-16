@@ -508,6 +508,14 @@ def eval_program_outputs_from_buffers(current_metrics, program_spec, recent_metr
             stack[-1] = _finite_or_zero(math.sin(stack[-1]))
         elif token == "cos":
             stack[-1] = _finite_or_zero(math.cos(stack[-1]))
+        elif token == "asin":
+            v = stack[-1]
+            v = 0.0 if not math.isfinite(v) else min(1.0, max(-1.0, v))
+            stack[-1] = _finite_or_zero(math.asin(v))
+        elif token == "acos":
+            v = stack[-1]
+            v = 0.0 if not math.isfinite(v) else min(1.0, max(-1.0, v))
+            stack[-1] = _finite_or_zero(math.acos(v))
         elif token == "log":
             stack[-1] = 0.0 if (not math.isfinite(stack[-1]) or stack[-1] <= 0.0) else _finite_or_zero(math.log(stack[-1]))
         elif token == "exp":

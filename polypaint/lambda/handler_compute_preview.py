@@ -631,6 +631,9 @@ def handler(event, context):
                 # loop threads byte-identically (CM threading wave)
                 "n_threads": 2,
             }
+            if solver_mode == "newton" and solver_iters:
+                # capped-Newton brush: per-root step budget
+                solve_spec["max_iter"] = solver_iters
         elif solver_mode == "aberth_mt":
             solve_binary = SWEEP_MT
             solve_spec = {

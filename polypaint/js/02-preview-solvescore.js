@@ -269,7 +269,7 @@ async function runComputePreview() {
         log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName}${cfpvDisplay ? '(' + cfpvDisplay + ')' : ''} [${ctDisplay || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
         const result = await lambdaPost('compute-preview', _attachProgramSourcePayload({
             solver_mode: solverMode,
-            solver_iters: solverMode === 'aberth_mt' ? solverIters : 0,
+            solver_iters: (solverMode === 'aberth_mt' || solverMode === 'newton') ? solverIters : 0,
             N_preview: nPreview,
             preview_size: previewSize,
             quantile,

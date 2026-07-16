@@ -93,6 +93,7 @@ typedef struct {
     long rowEnd;
     int nCoeffs;
     int kind;                 /* CM_KIND_* */
+    int newtonMaxSteps;       /* solver-brush knob; 0 = Newton default (50) */
     long skippedOverflow;
     int failed;
 } CmWorkerArg;
@@ -131,7 +132,8 @@ static void *cmWorkerMain(void *vp) {
         if (arg->kind == CM_KIND_JT) {
             rc = solve_jt_coeffs(jt, cfRe, cfIm, nCoeffs, rootRe, rootIm);
         } else if (arg->kind == CM_KIND_NEWTON) {
-            rc = solve_newton_coeffs(cfRe, cfIm, nCoeffs, rootRe, rootIm);
+            rc = solve_newton_coeffs(cfRe, cfIm, nCoeffs, rootRe, rootIm,
+                                     arg->newtonMaxSteps);
         } else {
             rc = solve_companion_coeffs_ws(&ws, cfRe, cfIm, nCoeffs,
                                            rootRe, rootIm, 0);
@@ -183,6 +185,15 @@ int main(int argc, char **argv) {
     if (strcmp(modeStr, "solve_jt") == 0) kind = CM_KIND_JT;
     else if (strcmp(modeStr, "solve_newton") == 0) kind = CM_KIND_NEWTON;
     else strcpy(modeStr, "solve_cm");
+
+    /* capped-Newton brush knob: fewer steps = faster and MORE textured
+     * (fewer roots fully converge). Ignored by solve_cm / solve_jt. */
+    int newtonMaxSteps = 0;
+    cp = find_key(buf, "max_iter");
+    if (cp) {
+        int mi = (int)parse_num(&cp);
+        if (mi >= 1 && mi <= 64) newtonMaxSteps = mi;
+    }
 
     int nThreads = 1;
     cp = find_key(buf, "n_threads");
@@ -253,6 +264,7 @@ int main(int argc, char **argv) {
             args[i].rowEnd = cursor + count;
             args[i].nCoeffs = nCoeffs;
             args[i].kind = kind;
+            args[i].newtonMaxSteps = newtonMaxSteps;
             args[i].skippedOverflow = 0;
             args[i].failed = 0;
             cursor += count;
@@ -319,8 +331,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "WARNING: %ld/%ld polynomials skipped (coefficient overflow)\n",
                 skippedOverflow, totalSteps);
 
-    printf("{\"mode\":\"%s\",\"n_t\":%ld,\"degree\":%d,\"avg_iterations\":0,\"compute_us\":%ld,\"skipped_overflow\":%ld,\"n_threads\":%d}\n",
-           modeStr, totalSteps, degree, elapsed_us, skippedOverflow, nThreads);
+    int newtonEffectiveSteps = (kind == CM_KIND_NEWTON)
+        ? ((newtonMaxSteps >= 1 && newtonMaxSteps <= 50) ? newtonMaxSteps : 50)
+        : 0;
+    printf("{\"mode\":\"%s\",\"n_t\":%ld,\"degree\":%d,\"avg_iterations\":0,\"compute_us\":%ld,\"skipped_overflow\":%ld,\"n_threads\":%d,\"max_iter\":%d}\n",
+           modeStr, totalSteps, degree, elapsed_us, skippedOverflow, nThreads, newtonEffectiveSteps);
 
     return 0;
 }

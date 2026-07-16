@@ -473,6 +473,9 @@ def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps
             # JT/Newton share the same row loop in the same binary.
             "n_threads": fused_threads,
         }
+        if solver_mode == "newton" and solver_iters:
+            # capped-Newton brush: per-root step budget (C clamps to 1..50)
+            spec["max_iter"] = solver_iters
         binary = SWEEP_CM
     elif solver_mode == "aberth_mt":
         spec = {

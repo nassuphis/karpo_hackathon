@@ -109,7 +109,7 @@ function _initComputeMtPopup() {
         const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads);
         const loresParamGenThreads = _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads);
         const loresCoeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads);
-        const solverIters = solverMode === 'aberth_mt' ? _clampSolverIters(_computeMtPopupState.solverIters) : 0;
+        const solverIters = (solverMode === 'aberth_mt' || solverMode === 'newton') ? _clampSolverIters(_computeMtPopupState.solverIters) : 0;
         if (!_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate) {
             await _refreshComputeMtProbe();
         }

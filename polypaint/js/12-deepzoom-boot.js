@@ -926,7 +926,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
             orchPayload.params.execution_method = fused ? 'fused_chunk_pipeline' : 'classic_chunk_pipeline';
             if (fused && fusedThreads != null) orchPayload.params.fused_threads = fusedThreads;
             const solverIters = Math.max(0, Math.min(64, parseInt(computeMtOptions.solverIters, 10) || 0));
-            if (solverIters > 0 && solverMode === 'aberth_mt') orchPayload.params.solver_iters = solverIters;
+            if (solverIters > 0 && (solverMode === 'aberth_mt' || solverMode === 'newton')) orchPayload.params.solver_iters = solverIters;
         }
         if (effectiveParamGenThreads != null) orchPayload.params.param_gen_threads = effectiveParamGenThreads;
         if (effectiveCoeffgenThreads != null) orchPayload.params.coeffgen_threads = effectiveCoeffgenThreads;

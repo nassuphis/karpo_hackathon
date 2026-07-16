@@ -1109,7 +1109,7 @@ function _renderComputeMtPopup() {
     loresCoeffThreadsFusedEl.value = String(loresCoeffgenThreads);
     const solverItersRowEl = document.getElementById('compute-mt-solver-iters-row');
     const solverItersEl = document.getElementById('compute-mt-solver-iters');
-    if (solverItersRowEl) solverItersRowEl.style.display = solverMode === 'aberth_mt' ? '' : 'none';
+    if (solverItersRowEl) solverItersRowEl.style.display = (solverMode === 'aberth_mt' || solverMode === 'newton') ? '' : 'none';
     if (solverItersEl) solverItersEl.value = String(_clampSolverIters(_computeMtPopupState.solverIters));
     const funcName = document.getElementById('render-function')?.value || '?';
     const n = parseInt(document.getElementById('render-n')?.value, 10) || 0;

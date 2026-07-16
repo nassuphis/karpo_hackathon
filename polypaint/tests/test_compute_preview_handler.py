@@ -126,8 +126,13 @@ class TestComputePreviewHandler(unittest.TestCase):
             "q_re": [-1.0, 1.0],
             "q_im": [-1.0, 1.0],
         }
-        for solver_iters, expect_max_iter in ((5, 5), (0, None)):
-            with self.subTest(solver_iters=solver_iters):
+        for solver_mode, spec_mode, solver_iters, expect_max_iter in (
+            ("aberth_mt", "solve_mt", 5, 5),
+            ("aberth_mt", "solve_mt", 0, None),
+            ("newton", "solve_newton", 1, 1),
+            ("newton", "solve_newton", 0, None),
+        ):
+            with self.subTest(solver_mode=solver_mode, solver_iters=solver_iters):
                 specs = {}
 
                 def run_binary(_binary, out_path, spec, **_kwargs):
@@ -143,16 +148,16 @@ class TestComputePreviewHandler(unittest.TestCase):
 
                 mock_binary.side_effect = run_binary
                 result = mod.handler({"body": json.dumps(_event(
-                    solver_mode="aberth_mt",
+                    solver_mode=solver_mode,
                     solver_iters=solver_iters,
                     N_preview=8,
                     preview_size=64,
                 ))}, None)
                 self.assertEqual(result["statusCode"], 200, result["body"])
                 if expect_max_iter is None:
-                    self.assertNotIn("max_iter", specs["solve_mt"])
+                    self.assertNotIn("max_iter", specs[spec_mode])
                 else:
-                    self.assertEqual(specs["solve_mt"]["max_iter"], expect_max_iter)
+                    self.assertEqual(specs[spec_mode]["max_iter"], expect_max_iter)
 
         result = mod.handler({"body": json.dumps(_event(
             solver_mode="aberth_mt", solver_iters=99, N_preview=8, preview_size=64,

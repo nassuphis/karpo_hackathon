@@ -670,6 +670,23 @@ class TestRunSolveLocalPayloads(unittest.TestCase):
                 "n_threads": 6,
             })
 
+        # capped-Newton brush: solver_iters flows to newton as max_iter;
+        # jenkins_traub ignores it (no meaningful iteration knob)
+        with patch("handler_compute_chunk_fused.subprocess.run", side_effect=fake_run):
+            mod._run_solve_local(
+                output_path="/tmp/x.bin", coeffs_path="/tmp/c.bin",
+                solver_mode="newton", n_coeffs=71, n_steps=1234,
+                fused_threads=6, solver_iters=1,
+            )
+        self.assertEqual(captured["spec"]["max_iter"], 1)
+        with patch("handler_compute_chunk_fused.subprocess.run", side_effect=fake_run):
+            mod._run_solve_local(
+                output_path="/tmp/x.bin", coeffs_path="/tmp/c.bin",
+                solver_mode="jenkins_traub", n_coeffs=71, n_steps=1234,
+                fused_threads=6, solver_iters=5,
+            )
+        self.assertNotIn("max_iter", captured["spec"])
+
         with patch("handler_compute_chunk_fused.subprocess.run", side_effect=fake_run):
             mod._run_solve_local(
                 output_path="/tmp/x.bin", coeffs_path="/tmp/c.bin",

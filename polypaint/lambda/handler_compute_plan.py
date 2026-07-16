@@ -696,9 +696,10 @@ def _validate_solver_mode(value):
 
 
 def _validate_solver_iters(value):
-    """Aberth iteration cap (solver-brush knob). 0 = solver default (full
-    64-iteration convergence); 1..64 caps the loop, rendering the partially
-    converged state. Ignored by the other solvers."""
+    """Iteration-cap brush knob. 0 = solver default. For aberth_mt, 1..64
+    caps the Aberth loop (full convergence at 64); for newton, caps the
+    per-root step budget (C clamps to Newton's 50 ceiling). Ignored by
+    companion_matrix and jenkins_traub."""
     if value in (None, "", 0, "0"):
         return 0
     try:

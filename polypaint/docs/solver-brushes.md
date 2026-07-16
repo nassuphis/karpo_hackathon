@@ -16,7 +16,7 @@ design.
 | `aberth_mt` | `solve_mt` | sweep_mt | 40 | none at full 64 iters; with `solver_iters` = 1..63 the roots are caught mid-flight between the seed circle and the truth — a morph knob, not an error |
 | `companion_matrix` | `solve_cm` | sweep_cm | 362 | zgeev backward error ~machine-eps scaled by the companion matrix's condition number; blooms on ill-conditioned rows (giga_2864) |
 | `jenkins_traub` | `solve_jt` | sweep_cm | 66 | deflation compounds error root-by-root in *found* order (smallest-magnitude first via the Cauchy-bound shifts), so late roots carry the accumulated dust of early ones — an error *gradient* across each row |
-| `newton` | `solve_newton` | sweep_cm | 41 | the wild one: every root hunted from the FIXED seed 0.4+0.9i, so which root the seed finds is a fractal function of the coefficients (Newton basin boundaries), then forward deflation compounds. At degree 35 roughly half of random rows deviate visibly from np.roots — that's the brush |
+| `newton` | `solve_newton` | sweep_cm | 41 | the wild one: every root hunted from the FIXED seed 0.4+0.9i, so which root the seed finds is a fractal function of the coefficients (Newton basin boundaries), then forward deflation compounds. At degree 35 roughly half of random rows deviate visibly from np.roots — that's the brush. `solver_iters` (1..50) caps each root's step budget: faster and MORE textured (1 = a single step from the seed per deflation stage) |
 
 ¹ measured 2026-07-16, degree 35, 4000 random rows, single thread, M3
 (Accelerate build). Ratios feed `_solve_us_per_step` in
@@ -80,7 +80,8 @@ Correctness where correctness is due (test-pinned, tests/test_solver_brushes.py)
   gains `solver_iters.$: $.plan.solve.iters`.
 - **Fused chunk** (`handler_compute_chunk_fused.py`): JT/Newton solve
   via the bundled sweep_cm binary with `n_threads = fused_threads`;
-  aberth spec gains `max_iter` when `solver_iters` is set. Progress
+  aberth and newton specs gain `max_iter` when `solver_iters` is set
+  (JT has no meaningful iteration knob and ignores it). Progress
   streaming stays aberth-only (sweep_mt is the only binary with flush
   watermarks).
 - **Dedicated solver lambdas**: `handler_sweep_cm.py` accepts
@@ -101,6 +102,17 @@ Correctness where correctness is due (test-pinned, tests/test_solver_brushes.py)
 - The solver popup shows an "AE iteration cap" row for aberth only;
   the value flows to `params.solver_iters` and is restored when a
   saved calc is loaded back into the popup.
+
+## Why AE-MT outruns NEWT on real sweeps
+
+Cold-vs-cold they tie (~40 µs/step at degree 35). But `sweep_mt`
+warm-starts every row from the previous row's converged roots
+(sweep_mt.c; only worker-block boundaries reseed), and on a smooth
+sweep Aberth then converges in ~2 iterations (measured 14.7 µs/step vs
+Newton's 48 at 4000 smooth rows; the gap widens on real million-step
+runs). Newton cannot warm-start without erasing its own paint — the
+fixed seed IS the basin-boundary fractal. Capping `solver_iters` closes
+the speed gap from the other side: fewer steps per root, more texture.
 
 ## Gates
 

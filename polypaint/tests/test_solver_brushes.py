@@ -70,9 +70,11 @@ def _random_rows(seed, rows, n_coeffs):
             + 1j * rng.standard_normal((rows, n_coeffs))).astype(np.complex64)
 
 
-def _run_cm_binary(mode, coeffs_path, n_coeffs, out_path, n_threads=1):
+def _run_cm_binary(mode, coeffs_path, n_coeffs, out_path, n_threads=1, max_iter=None):
     spec = {"mode": mode, "coeffs_file": coeffs_path,
             "n_coeffs": n_coeffs, "n_threads": n_threads}
+    if max_iter is not None:
+        spec["max_iter"] = max_iter
     proc = subprocess.run(
         [SWEEP_CM_LOCAL, out_path], input=json.dumps(spec),
         capture_output=True, text=True, timeout=300,
@@ -170,6 +172,40 @@ class TestNewtonBrush(unittest.TestCase):
             ref = np.roots(cf[r].astype(np.complex128))
             worst = max(worst, _multiset_rel_err(got[r], ref))
         self.assertLess(worst, 1e-6, f"Newton broke on easy inputs: {worst}")
+
+    def test_newton_max_iter_caps_step_budget(self):
+        """solver_iters reaches Newton as max_iter: absent/50 -> identical
+        bytes (full budget); a 1-step cap changes the output (every root is
+        one Newton step from the fixed seed) and stays deterministic; the
+        meta echoes the effective cap (0 for non-Newton modes)."""
+        rows, nc = 128, 36
+        cf = _random_rows(17, rows, nc)
+        coeffs = "/tmp/brush_newton_cap.bin"
+        _write_rows(coeffs, cf)
+
+        meta_default = _run_cm_binary("solve_newton", coeffs, nc, "/tmp/brush_ncap_def.bin")
+        meta_50 = _run_cm_binary("solve_newton", coeffs, nc, "/tmp/brush_ncap_50.bin", max_iter=50)
+        meta_1 = _run_cm_binary("solve_newton", coeffs, nc, "/tmp/brush_ncap_1.bin", max_iter=1)
+        meta_1b = _run_cm_binary("solve_newton", coeffs, nc, "/tmp/brush_ncap_1b.bin", max_iter=1)
+        meta_cm = _run_cm_binary("solve_cm", coeffs, nc, "/tmp/brush_ncap_cm.bin", max_iter=7)
+
+        self.assertEqual(meta_default["max_iter"], 50)
+        self.assertEqual(meta_50["max_iter"], 50)
+        self.assertEqual(meta_1["max_iter"], 1)
+        self.assertEqual(meta_cm["max_iter"], 0)
+
+        def read(path):
+            with open(path, "rb") as fh:
+                return fh.read()
+
+        self.assertEqual(read("/tmp/brush_ncap_def.bin"), read("/tmp/brush_ncap_50.bin"))
+        self.assertNotEqual(read("/tmp/brush_ncap_def.bin"), read("/tmp/brush_ncap_1.bin"))
+        self.assertEqual(read("/tmp/brush_ncap_1.bin"), read("/tmp/brush_ncap_1b.bin"))
+
+        import numpy as np
+
+        got = _roots_from("/tmp/brush_ncap_1.bin", rows, nc - 1)
+        self.assertTrue(np.all(np.isfinite(got.view(np.float32))))
 
     def test_newton_texture_is_finite_and_deterministic(self):
         """At degree 35 the compounding deflation error IS the brush:

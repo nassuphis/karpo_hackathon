@@ -10,7 +10,8 @@
  * seed 0.4 + 0.9i (every root, every polynomial — which basin the seed
  * falls in is a fractal function of the coefficients, and those basin
  * boundaries paint). Convergence is |step| <= 1e-14 * |z| (or an exact
- * zero of p); after NEWTON_MAX_STEPS the CURRENT iterate is accepted
+ * zero of p); after max_steps (the solver_iters brush knob, default
+ * and ceiling NEWTON_MAX_STEPS) the CURRENT iterate is accepted
  * as-is — non-convergence is not an error here, it is texture. The
  * found root then deflates the polynomial by synthetic division
  * (forward Horner), compounding its error into every later root.
@@ -74,7 +75,8 @@ static inline void newton_eval(const double *cr, const double *ci, int n,
  * negative return -> skipped_overflow). Otherwise never "fails":
  * whatever Newton produced is the answer. */
 static inline int solve_newton_coeffs(const double *cfRe, const double *cfIm, int nCoeffs,
-                                      float *out_re, float *out_im) {
+                                      float *out_re, float *out_im, int max_steps) {
+    if (max_steps < 1 || max_steps > NEWTON_MAX_STEPS) max_steps = NEWTON_MAX_STEPS;
     int first = 0;
     while (first < nCoeffs - 1 && cfRe[first] == 0.0 && cfIm[first] == 0.0)
         first++;
@@ -99,7 +101,7 @@ static inline int solve_newton_coeffs(const double *cfRe, const double *cfIm, in
     int n = degree + 1;   /* current coefficient count */
     while (n > 2) {
         double zr = 0.4, zi = 0.9;
-        for (int it = 0; it < NEWTON_MAX_STEPS; it++) {
+        for (int it = 0; it < max_steps; it++) {
             double pr, pi_, dr, di;
             newton_eval(wr_, wi_, n, zr, zi, &pr, &pi_, &dr, &di);
             if (pr == 0.0 && pi_ == 0.0)
@@ -120,8 +122,15 @@ static inline int solve_newton_coeffs(const double *cfRe, const double *cfIm, in
                 break;
         }
         if (!isfinite(zr) || !isfinite(zi)) { zr = 0.0; zi = 0.0; }
-        out_re[found] = (float)zr;
-        out_im[found] = (float)zi;
+        {
+            /* guard the f32 cast too: a capped 1-step budget can accept a
+             * double-finite iterate beyond f32 range (caught by the
+             * max_iter=1 brush test) */
+            float fr = (float)zr, fi = (float)zi;
+            if (!isfinite(fr) || !isfinite(fi)) { fr = 0.0f; fi = 0.0f; }
+            out_re[found] = fr;
+            out_im[found] = fi;
+        }
         found++;
         /* forward deflation by (z - root): synthetic division */
         double br = wr_[0], bi = wi_[0];
@@ -138,8 +147,12 @@ static inline int solve_newton_coeffs(const double *cfRe, const double *cfIm, in
         double zr, zi;
         newton_cdiv(-wr_[1], -wi_[1], wr_[0], wi_[0], &zr, &zi);
         if (!isfinite(zr) || !isfinite(zi)) { zr = 0.0; zi = 0.0; }
-        out_re[found] = (float)zr;
-        out_im[found] = (float)zi;
+        {
+            float fr = (float)zr, fi = (float)zi;
+            if (!isfinite(fr) || !isfinite(fi)) { fr = 0.0f; fi = 0.0f; }
+            out_re[found] = fr;
+            out_im[found] = fi;
+        }
         found++;
     }
     return nCoeffs - 1;

@@ -1727,7 +1727,7 @@ button {
                                 <option value="jenkins_traub">JT</option>
                                 <option value="newton">Newton</option>
                             </select>
-                            <input type="number" id="compute-preview-iters" value="0" min="0" max="64" step="1" style="width:4em" title="Aberth iteration cap: 0 = full 64-iteration convergence; 1-63 renders the partially converged state (AE-MT only)" onchange="_markComputePreviewStale()">
+                            <input type="number" id="compute-preview-iters" value="0" min="0" max="64" step="1" style="width:4em" title="Iteration cap: AE-MT 0 = full 64; NEWT caps per-root Newton steps (1-50). Ignored by CM/JT." onchange="_markComputePreviewStale()">
                         </div>
                         <input type="number" id="compute-preview-quantile" value="0" min="0" max="10" step="0.1" style="width:5em" onchange="_markComputePreviewStale()">
                         <input type="number" id="compute-preview-shim" value="5" min="0" max="50" step="0.5" style="width:5em" onchange="_markComputePreviewStale()">
@@ -3312,7 +3312,7 @@ button {
                                 <td style="padding:8px"><span id="compute-mt-fused-solve-threads">4</span></td>
                             </tr>
                             <tr id="compute-mt-solver-iters-row" style="border-bottom:1px solid #222">
-                                <td style="padding:8px" title="Solver-brush knob: cap the Aberth iteration loop. 0 = full 64-iteration convergence; 1-63 renders the partially converged state.">AE iteration cap (0 = full)</td>
+                                <td style="padding:8px" title="Solver-brush knob: cap the solver's iteration budget. AE-MT: 0 = full 64-iteration convergence, 1-63 renders the partially converged state. NEWT: caps each root's Newton steps from the fixed seed (1-50; 0 = full 50).">Iteration cap (0 = full)</td>
                                 <td style="padding:8px"><input id="compute-mt-solver-iters" type="number" min="0" max="64" step="1" value="0"></td>
                             </tr>
                             <tr style="border-bottom:1px solid #222">

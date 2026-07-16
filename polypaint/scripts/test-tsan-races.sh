@@ -77,6 +77,44 @@ else
     echo "skip [param_static_forced_failure]: /dev/full not available on this host"
 fi
 
+# 4) sweep_cm threaded solve (CM threading wave): 8 workers over a mixed
+#    fixture incl. guard rows. LAPACK needed: Accelerate on macOS; skipped
+#    where no LAPACK is linkable (the ARM64 docker gate covers netlib).
+CM_BIN="$WORK/sweep_cm_tsan"
+CM_BUILT=no
+if [ "$(uname)" = "Darwin" ]; then
+    if "$CC" -O1 -g -pthread -fsanitize=thread -DPOLYPAINT_ACCELERATE_NEWLAPACK \
+        -I lambda lambda/sweep_cm.c -framework Accelerate -lm -o "$CM_BIN" 2>"$WORK/cm_build.err"; then
+        CM_BUILT=yes
+    fi
+elif "$CC" -O1 -g -pthread -fsanitize=thread -I lambda lambda/sweep_cm.c \
+        -llapack -lopenblas -lm -o "$CM_BIN" 2>"$WORK/cm_build.err"; then
+    CM_BUILT=yes
+fi
+if [ "$CM_BUILT" = "yes" ]; then
+    CM_FIX="$WORK/cm_fixture.bin"
+    python3 - "$CM_FIX" <<'PYEOF'
+import struct, sys, random
+random.seed(31)
+rows, nc = 300, 21
+with open(sys.argv[1], "wb") as fh:
+    for r in range(rows):
+        for k in range(nc):
+            re, im = random.gauss(0, 1), random.gauss(0, 1)
+            if r == 7: re, im = 0.0, 0.0
+            if r == 13 and k == 0: re = float("inf")
+            fh.write(struct.pack("<ff", re, im))
+PYEOF
+    OLD_BIN="$BIN"
+    BIN="$CM_BIN"
+    run_case "sweep_cm_threaded_clean" \
+        "{\"mode\":\"solve_cm\",\"coeffs_file\":\"$CM_FIX\",\"n_coeffs\":21,\"n_threads\":8}" \
+        "$WORK/cm_out.bin" no
+    BIN="$OLD_BIN"
+else
+    echo "skip [sweep_cm_threaded_clean]: no LAPACK linkable on this host"
+fi
+
 if ls "$TSAN_LOG"* >/dev/null 2>&1; then
     echo "FAIL: ThreadSanitizer wrote reports:"
     cat "$TSAN_LOG"*

@@ -74,6 +74,10 @@ class TestComputePreviewHandler(unittest.TestCase):
                             "degree": 2,
                         }
                     if spec["mode"] == solve_mode:
+                        if solve_mode == "solve_cm":
+                            # CM threading wave: the preview passes 2 threads
+                            # (the 4 GB preview lambda has ~2 vCPUs)
+                            self.assertEqual(spec["n_threads"], 2)
                         with open(out_path, "wb") as fh:
                             fh.write(_roots_bytes(8 * 8, 2))
                         return {"mode": solve_mode, "n_t": 8 * 8, "degree": 2}

@@ -5,10 +5,17 @@
  * builds companion matrix for each polynomial, computes eigenvalues.
  * Output format matches the Aberth solver: interleaved float32 re/im pairs.
  *
+ * Threading (CM threading wave): rows are independent and uniform-cost, so
+ * the spec's n_threads (default 1) statically partitions the row range
+ * across pthread workers, each with its own persistent zgeev workspace,
+ * writing to disjoint slices of one preallocated output buffer. Row order
+ * and per-row arithmetic are unchanged, so the output is byte-identical to
+ * the historical sequential path at any thread count.
+ *
  * Usage: sweep_cm output.bin < spec.json
  *
  * Build (dynamic, needs LAPACK/OpenBLAS from Lambda layer):
- *   gcc -O3 -o sweep_cm sweep_cm.c -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
+ *   gcc -O3 -pthread -o sweep_cm sweep_cm.c -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
  */
 
 #include <stdio.h>
@@ -17,11 +24,13 @@
 #include <math.h>
 #include <complex.h>
 #include <time.h>
+#include <pthread.h>
 
 #define HAVE_LAPACK_COMPANION 1
 #include "companion_solver.h"
 
 #define READ_BUF_SIZE (256 * 1024)
+#define CM_MAX_THREADS 64
 
 /* Simple JSON parser helpers */
 static char *read_stdin(void) {
@@ -72,10 +81,52 @@ static void parse_string(const char *p, char *out, int max) {
     out[i] = '\0';
 }
 
-/* Shared companion solver implementation lives in companion_solver.h. */
-static int solve_companion(const double *cfRe, const double *cfIm, int nCoeffs,
-                           float *out_re, float *out_im) {
-    return solve_companion_coeffs(cfRe, cfIm, nCoeffs, out_re, out_im, 0);
+typedef struct {
+    const float *coeffData;   /* rows * nCoeffs * 2 interleaved f32 */
+    float *outData;           /* rows * degree  * 2 interleaved f32 */
+    long rowStart;
+    long rowEnd;
+    int nCoeffs;
+    long skippedOverflow;
+    int failed;
+} CmWorkerArg;
+
+static void *cmWorkerMain(void *vp) {
+    CmWorkerArg *arg = (CmWorkerArg *)vp;
+    int nCoeffs = arg->nCoeffs;
+    int degree = nCoeffs - 1;
+    double *cfRe = malloc((size_t)nCoeffs * sizeof(double));
+    double *cfIm = malloc((size_t)nCoeffs * sizeof(double));
+    float *rootRe = malloc((size_t)degree * sizeof(float));
+    float *rootIm = malloc((size_t)degree * sizeof(float));
+    if (!cfRe || !cfIm || !rootRe || !rootIm) {
+        free(cfRe); free(cfIm); free(rootRe); free(rootIm);
+        arg->failed = 1;
+        return NULL;
+    }
+    CompanionWorkspace ws;
+    memset(&ws, 0, sizeof(ws));
+    for (long r = arg->rowStart; r < arg->rowEnd; r++) {
+        const float *src = arg->coeffData + (size_t)r * nCoeffs * 2;
+        for (int k = 0; k < nCoeffs; k++) {
+            cfRe[k] = (double)src[k * 2];
+            cfIm[k] = (double)src[k * 2 + 1];
+        }
+        int rc = solve_companion_coeffs_ws(&ws, cfRe, cfIm, nCoeffs,
+                                           rootRe, rootIm, 0);
+        if (rc < 0) arg->skippedOverflow++;
+        float *dst = arg->outData + (size_t)r * degree * 2;
+        for (int k = 0; k < degree; k++) {
+            dst[k * 2] = rootRe[k];
+            dst[k * 2 + 1] = rootIm[k];
+        }
+    }
+    companion_ws_release(&ws);
+    free(cfRe);
+    free(cfIm);
+    free(rootRe);
+    free(rootIm);
+    return NULL;
 }
 
 int main(int argc, char **argv) {
@@ -102,54 +153,96 @@ int main(int argc, char **argv) {
     if (cp) nCoeffs = (int)parse_num(&cp);
     if (nCoeffs < 2) { fprintf(stderr, "Invalid n_coeffs: %d\n", nCoeffs); return 1; }
 
+    int nThreads = 1;
+    cp = find_key(buf, "n_threads");
+    if (cp) nThreads = (int)parse_num(&cp);
+    if (nThreads < 1) nThreads = 1;
+    if (nThreads > CM_MAX_THREADS) nThreads = CM_MAX_THREADS;
+
     int degree = nCoeffs - 1;
 
-    /* Open coefficient file */
+    /* Read the whole coefficient file; the historical streaming loop
+     * stopped at the first short read, so a trailing partial row is
+     * ignored the same way here (rows = floor). */
     FILE *fin = fopen(coeffsFile, "rb");
     if (!fin) { fprintf(stderr, "Cannot open %s\n", coeffsFile); return 1; }
+    if (fseek(fin, 0, SEEK_END) != 0) { fclose(fin); fprintf(stderr, "Cannot seek %s\n", coeffsFile); return 1; }
+    long fileBytes = ftell(fin);
+    if (fileBytes < 0) { fclose(fin); fprintf(stderr, "Cannot size %s\n", coeffsFile); return 1; }
+    rewind(fin);
 
-    FILE *fout = fopen(outPath, "wb");
-    if (!fout) { fclose(fin); fprintf(stderr, "Cannot open %s\n", outPath); return 1; }
+    size_t rowBytes = (size_t)nCoeffs * 2 * sizeof(float);
+    long totalSteps = (long)((size_t)fileBytes / rowBytes);
 
-    float *coeffBuf = malloc(nCoeffs * 2 * sizeof(float));
-    float *rootRe = malloc(degree * sizeof(float));
-    float *rootIm = malloc(degree * sizeof(float));
-    double *cfRe = malloc(nCoeffs * sizeof(double));
-    double *cfIm = malloc(nCoeffs * sizeof(double));
-    if (!coeffBuf || !rootRe || !rootIm || !cfRe || !cfIm) {
-        fprintf(stderr, "Out of memory allocating solver buffers\n");
-        free(cfIm);
-        free(cfRe);
-        free(rootIm);
-        free(rootRe);
-        free(coeffBuf);
-        free(buf);
-        fclose(fout);
-        fclose(fin);
-        return 1;
+    float *coeffData = NULL;
+    float *outData = NULL;
+    if (totalSteps > 0) {
+        coeffData = malloc((size_t)totalSteps * rowBytes);
+        outData = malloc((size_t)totalSteps * (size_t)degree * 2 * sizeof(float));
+        if (!coeffData || !outData) {
+            fprintf(stderr, "Out of memory allocating solver buffers\n");
+            free(outData);
+            free(coeffData);
+            free(buf);
+            fclose(fin);
+            return 1;
+        }
+        if (fread(coeffData, 1, (size_t)totalSteps * rowBytes, fin)
+                != (size_t)totalSteps * rowBytes) {
+            fprintf(stderr, "Short read on %s\n", coeffsFile);
+            free(outData);
+            free(coeffData);
+            free(buf);
+            fclose(fin);
+            return 1;
+        }
     }
+    fclose(fin);
 
-    long totalSteps = 0;
-    long skippedOverflow = 0;
+    if (nThreads > totalSteps && totalSteps > 0) nThreads = (int)totalSteps;
+    if (totalSteps == 0) nThreads = 1;
+
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
-    while (fread(coeffBuf, sizeof(float), nCoeffs * 2, fin) == (size_t)(nCoeffs * 2)) {
-        totalSteps++;
-
-        /* Convert float32 coefficients to double */
-        for (int k = 0; k < nCoeffs; k++) {
-            cfRe[k] = (double)coeffBuf[k * 2];
-            cfIm[k] = (double)coeffBuf[k * 2 + 1];
+    long skippedOverflow = 0;
+    int workerFailed = 0;
+    if (totalSteps > 0) {
+        pthread_t threads[CM_MAX_THREADS];
+        int joinable[CM_MAX_THREADS] = {0};
+        CmWorkerArg args[CM_MAX_THREADS];
+        long rowsPer = totalSteps / nThreads;
+        long extra = totalSteps % nThreads;
+        long cursor = 0;
+        for (int i = 0; i < nThreads; i++) {
+            long count = rowsPer + (i < extra ? 1 : 0);
+            args[i].coeffData = coeffData;
+            args[i].outData = outData;
+            args[i].rowStart = cursor;
+            args[i].rowEnd = cursor + count;
+            args[i].nCoeffs = nCoeffs;
+            args[i].skippedOverflow = 0;
+            args[i].failed = 0;
+            cursor += count;
         }
-
-        int rc = solve_companion(cfRe, cfIm, nCoeffs, rootRe, rootIm);
-        if (rc < 0) skippedOverflow++;
-
-        /* Write interleaved float32 re/im pairs */
-        for (int k = 0; k < degree; k++) {
-            float pair[2] = { rootRe[k], rootIm[k] };
-            fwrite(pair, sizeof(float), 2, fout);
+        for (int i = 0; i < nThreads; i++) {
+            if (i == nThreads - 1) {
+                /* run the last range on the main thread: one fewer spawn,
+                 * and the single-thread case never touches pthreads */
+                cmWorkerMain(&args[i]);
+            } else if (pthread_create(&threads[i], NULL, cmWorkerMain, &args[i]) == 0) {
+                joinable[i] = 1;
+            } else {
+                fprintf(stderr, "sweep_cm pthread_create failed for worker %d\n", i);
+                cmWorkerMain(&args[i]);  /* fall back: run this range inline */
+            }
+        }
+        for (int i = 0; i < nThreads - 1; i++) {
+            if (joinable[i]) pthread_join(threads[i], NULL);
+        }
+        for (int i = 0; i < nThreads; i++) {
+            skippedOverflow += args[i].skippedOverflow;
+            workerFailed |= args[i].failed;
         }
     }
 
@@ -157,21 +250,45 @@ int main(int argc, char **argv) {
     long elapsed_us = (t1.tv_sec - t0.tv_sec) * 1000000L +
                       (t1.tv_nsec - t0.tv_nsec) / 1000L;
 
-    fclose(fin);
+    if (workerFailed) {
+        fprintf(stderr, "sweep_cm worker allocation failed\n");
+        free(outData);
+        free(coeffData);
+        free(buf);
+        return 1;
+    }
+
+    FILE *fout = fopen(outPath, "wb");
+    if (!fout) {
+        fprintf(stderr, "Cannot open %s\n", outPath);
+        free(outData);
+        free(coeffData);
+        free(buf);
+        return 1;
+    }
+    if (totalSteps > 0) {
+        size_t outCount = (size_t)totalSteps * (size_t)degree * 2;
+        if (fwrite(outData, sizeof(float), outCount, fout) != outCount) {
+            fprintf(stderr, "Short write on %s\n", outPath);
+            fclose(fout);
+            free(outData);
+            free(coeffData);
+            free(buf);
+            return 1;
+        }
+    }
     fclose(fout);
-    free(coeffBuf);
-    free(rootRe);
-    free(rootIm);
-    free(cfRe);
-    free(cfIm);
+
+    free(outData);
+    free(coeffData);
     free(buf);
 
     if (skippedOverflow > 0)
         fprintf(stderr, "WARNING: %ld/%ld polynomials skipped (coefficient overflow)\n",
                 skippedOverflow, totalSteps);
 
-    printf("{\"mode\":\"solve_cm\",\"n_t\":%ld,\"degree\":%d,\"avg_iterations\":0,\"compute_us\":%ld,\"skipped_overflow\":%ld}\n",
-           totalSteps, degree, elapsed_us, skippedOverflow);
+    printf("{\"mode\":\"solve_cm\",\"n_t\":%ld,\"degree\":%d,\"avg_iterations\":0,\"compute_us\":%ld,\"skipped_overflow\":%ld,\"n_threads\":%d}\n",
+           totalSteps, degree, elapsed_us, skippedOverflow, nThreads);
 
     return 0;
 }

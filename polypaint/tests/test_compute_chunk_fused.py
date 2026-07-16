@@ -587,5 +587,55 @@ class TestComputeChunkFused(unittest.TestCase):
         self.assertIn("requires integer step_count", str(ctx.exception))
 
 
+class TestRunSolveLocalPayloads(unittest.TestCase):
+    def test_cm_and_ae_solve_specs_are_pinned(self):
+        """Exact dispatched spec shapes for both solvers (payload-contract
+        discipline). CM threading wave: the CM spec carries n_threads =
+        fused_threads, mirroring the AE branch."""
+        import handler_compute_chunk_fused as mod
+
+        captured = {}
+
+        def fake_run(cmd, input=None, capture_output=None, text=None, timeout=None):
+            captured["spec"] = json.loads(input)
+
+            class R:
+                returncode = 0
+                stdout = json.dumps({"mode": captured["spec"]["mode"], "n_t": 1})
+                stderr = ""
+            return R()
+
+        with patch("handler_compute_chunk_fused.subprocess.run", side_effect=fake_run):
+            mod._run_solve_local(
+                output_path="/tmp/x.bin", coeffs_path="/tmp/c.bin",
+                solver_mode="companion_matrix", n_coeffs=71, n_steps=1234,
+                fused_threads=6,
+            )
+        self.assertEqual(captured["spec"], {
+            "mode": "solve_cm",
+            "coeffs_file": "/tmp/c.bin",
+            "n_coeffs": 71,
+            "n_steps": 1234,
+            "n_threads": 6,
+        })
+
+        with patch("handler_compute_chunk_fused.subprocess.run", side_effect=fake_run):
+            mod._run_solve_local(
+                output_path="/tmp/x.bin", coeffs_path="/tmp/c.bin",
+                solver_mode="aberth_mt", n_coeffs=71, n_steps=1234,
+                fused_threads=6,
+            )
+        self.assertEqual(captured["spec"], {
+            "mode": "solve_mt",
+            "coeffs_file": "/tmp/c.bin",
+            "n_coeffs": 71,
+            "n2": 1234,
+            "i1_start": 0,
+            "i1_end": 1,
+            "match_roots": False,
+            "n_threads": 6,
+        })
+
+
 if __name__ == "__main__":
     unittest.main()

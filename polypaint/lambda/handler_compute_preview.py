@@ -613,6 +613,9 @@ def handler(event, context):
                 "coeffs_file": TMP_COEFFS,
                 "n_coeffs": n_coeffs,
                 "n_steps": n_steps,
+                # the 4 GB preview lambda has ~2 vCPUs; the CM row loop
+                # threads byte-identically (CM threading wave)
+                "n_threads": 2,
             }
         elif solver_mode == "aberth_mt":
             solve_binary = SWEEP_MT

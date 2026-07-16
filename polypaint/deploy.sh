@@ -1090,7 +1090,7 @@ docker run --rm --platform linux/arm64 \
         gcc -O3 -pthread -DHAVE_LAPACK_COMPANION -o /src/sweep_coeffgen /src/sweep_cli.c \
             -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
         echo "  sweep_coeffgen compiled: $(file /src/sweep_coeffgen)"
-        gcc -O3 -o /src/sweep_cm /src/sweep_cm.c \
+        gcc -O3 -pthread -o /src/sweep_cm /src/sweep_cm.c \
             -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
         echo "  sweep_cm compiled: $(file /src/sweep_cm)"
         # Smoke test: known cubic x^3 - 6x^2 + 11x - 6

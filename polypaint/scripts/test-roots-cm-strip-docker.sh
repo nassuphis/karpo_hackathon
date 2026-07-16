@@ -110,6 +110,34 @@ docker run --rm --platform linux/arm64 \
         export LD_LIBRARY_PATH=/opt/lib
         gcc -O2 -pthread -DHAVE_LAPACK_COMPANION -o /work/sweep_test /src/sweep_cli.c \
             -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
+        gcc -O3 -pthread -o /work/sweep_cm /src/sweep_cm.c \
+            -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
+        # CM threading wave: byte-identity across thread counts on the
+        # DEPLOYED LAPACK lineage (netlib), incl. guard rows.
+        python3 - <<CMEOF
+import struct, random, json, subprocess
+random.seed(31)
+rows, nc = 400, 36
+with open("/tmp/cm_fixture.bin", "wb") as fh:
+    for r in range(rows):
+        for k in range(nc):
+            re, im = random.gauss(0, 1), random.gauss(0, 1)
+            if r == 7: re, im = 0.0, 0.0
+            if r == 13 and k == 0: re = float("inf")
+            fh.write(struct.pack("<ff", re, im))
+outs = {}
+for t in (1, 6):
+    spec = {"mode": "solve_cm", "coeffs_file": "/tmp/cm_fixture.bin",
+            "n_coeffs": nc, "n_threads": t}
+    p = subprocess.run(["/work/sweep_cm", f"/tmp/cm_out_{t}.bin"],
+                       input=json.dumps(spec), capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr[:300]
+    meta = json.loads(p.stdout)
+    assert meta["n_threads"] == t, meta
+    outs[t] = open(f"/tmp/cm_out_{t}.bin", "rb").read()
+assert outs[1] == outs[6], "threaded sweep_cm output diverged from sequential"
+print(f"sweep_cm thread byte-identity (1 vs 6, netlib): OK ({len(outs[1])} bytes)")
+CMEOF
         python3 - <<PYEOF
 import json, subprocess
 spec = json.load(open("/work/probes.json"))

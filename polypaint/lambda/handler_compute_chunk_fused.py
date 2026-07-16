@@ -457,6 +457,9 @@ def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps
             "coeffs_file": coeffs_path,
             "n_coeffs": n_coeffs,
             "n_steps": n_steps,
+            # CM threading wave: the row loop partitions across workers,
+            # byte-identical to the sequential path at any thread count.
+            "n_threads": fused_threads,
         }
         binary = SWEEP_CM
     elif solver_mode == "aberth_mt":

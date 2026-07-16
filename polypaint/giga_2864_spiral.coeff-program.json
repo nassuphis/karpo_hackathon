@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2864_spiral",
+  "chain": [],
+  "source_text": "poly = scan(71, 0, 0-(t1*t1+t2*t2)-1i*t1*t2, prev*(0-(t1*t1+t2*t2)-1i*t1*t2))\nemit"
+}

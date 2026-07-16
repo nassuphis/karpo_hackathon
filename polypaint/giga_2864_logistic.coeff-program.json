@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2864_logistic",
+  "chain": [],
+  "source_text": "poly = scan(71, 0, 0.5, (3+(t1*t1+t2*t2)/2)*prev*(1-prev))\nemit"
+}

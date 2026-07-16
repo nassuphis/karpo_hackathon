@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2864_tent",
+  "chain": [],
+  "source_text": "poly = scan(71, 0, 0.37, (1+0.49*(t1*t1+t2*t2))*(0.5-abs(prev-0.5))*2)\nemit"
+}

@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2864_henon",
+  "chain": [],
+  "source_text": "poly = scan(71, 0, 0.1, 0.1, 1-(1+0.2*(t1*t1+t2*t2))*prev*prev+0.3*prev2)\nemit"
+}

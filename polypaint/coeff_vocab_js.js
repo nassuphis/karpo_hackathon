@@ -524,6 +524,20 @@ window._coeffRegistryVocab = {
           "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
         }
       ]
+    },
+    "expand_roots": {
+      "category": "roots",
+      "desc": "Expand the monic polynomial whose roots are the current vector's entries (np.poly, element order): length n becomes n+1, leading coefficient 1.",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     }
   },
   "categoryMeta": {

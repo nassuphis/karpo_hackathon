@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2911",
+  "chain": [],
+  "source_text": "poly = fill(2, 0)\npoly[0] = exp(pi2i*t1) + exp(pi2i*t2)\npoly[1] = floor(4583*abs(poly[0])) - 11*floor(floor(4583*abs(poly[0]))/11) + 1\nscan(11, 0, (0+1) - poly[1]*floor((0+1)/poly[1]) + 1, (k+1) - poly[1]*floor((k+1)/poly[1]) + 1)\nvector_literal(0.0, 7.700000000000006e-14, 2.523136000000002e-09, 1.1048658390000024e-06, 8.267812044800007e-05, 0.002349853515625, 0.03620424381235208, 0.3655622362656115, 2.7091966508400662, 15.85361717128798, 77.0)\npoly = divide(pop, poly[0] + 3)\npoly = multiply(poly, 3.141592653589793i)\npoly = exp(poly)\npoly = multiply(pop, poly)\npoly = scan(poly_len, 0, poly[0], prev + poly[k])\npoly = rev(poly)\npoly = roots_cm(poly, lo, exact)\npoly = scan(10, 0, poly[0], poly[k])\npoly\npoly = multiply(poly, 0-1)\npoly = add(poly, 1)\npoly\nswap\npoly = add(pop, 1)\npoly = multiply(poly, 1i)\npoly = divide(poly, pop)\npoly = expand_roots(poly)\nemit"
+}

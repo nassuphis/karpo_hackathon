@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2910",
+  "chain": [],
+  "source_text": "poly = scan(23, 0, ((t1*7919.7717 + t2*104729.31 + 0.5) - floor(t1*7919.7717 + t2*104729.31 + 0.5)) + 1i*((t1*104729.31 + t2*7919.7717 + 0.25) - floor(t1*104729.31 + t2*7919.7717 + 0.25)), ((real(prev)*9821.4959 + 0.211327) - floor(real(prev)*9821.4959 + 0.211327)) + 1i*((imag(prev)*9821.4959 + 0.531327) - floor(imag(prev)*9821.4959 + 0.531327)))\npoly[22] = t1 + 1i*t2\npoly\npoly = vector_literal(9, 100, 40, 9, 50, 9, 1, 4, 1, 40, 9)\npoly = scan(34, 0, tos[0], tos[(k - 23*floor(k/23))*(1-floor(k/23))]*(1-floor(k/23)) + poly[(k-23)*floor(k/23)]*floor(k/23))\npoly\nswap\ndrop\npoly = scan(253, 0, tos[23]*real(tos[0]) - 1i*tos[33]*imag(tos[0]), tos[23+floor(k/23)]*real(tos[k - 23*floor(k/23)]) - 1i*tos[33-floor(k/23)]*imag(tos[k - 23*floor(k/23)]))\ndrop\npoly\npoly = scan(253, 0, (1 + tos[0])/abs(1 + tos[0]), (prev + floor((23-(k - 23*floor(k/23)))/23)*(1-prev) + tos[k])/abs(prev + floor((23-(k - 23*floor(k/23)))/23)*(1-prev) + tos[k]))\ndrop\npoly = scan(11, 0, poly[22], poly[23*k+22])\npoly = roots_cm(poly, lo, exact)\npoly = scan(10, 0, poly[0], poly[k])\npoly\npoly = multiply(poly, 0-1)\npoly = add(poly, 6.123233995736766e-17-1.0i)\npoly\nswap\npoly = subtract(pop, 6.123233995736766e-17+1.0i)\npoly = divide(poly, pop)\npoly = expand_roots(poly)\nemit"
+}

@@ -3347,6 +3347,39 @@ static void ct_roots(double *cRe, double *cIm, int *nCoeffs, int iters, int padL
     ct_write_roots_padded(cRe, cIm, n, rootRe, rootIm, effDeg, padLo);
 }
 
+/* expand_roots: treat the current vector's entries as polynomial ROOTS
+ * and expand the monic polynomial, exactly as np.poly does: descending
+ * coefficients, a = convolve(a, [1, -r]) per root IN ELEMENT ORDER.
+ * (-r)*a == -(r*a) and x + (-y) == x - y exactly in IEEE, so the
+ * subtract form below is bitwise np.poly given the same root sequence.
+ * Length n -> n+1. */
+static int ct_expand_roots(double *cRe, double *cIm, int *nCoeffs) {
+    int n = *nCoeffs;
+    if (n < 0) return 1;
+    if (n + 1 > MAX_COEFFS) {
+        fprintf(stderr, "expand_roots output length %d exceeds %d\n", n + 1, MAX_COEFFS);
+        return 1;
+    }
+    double aRe[MAX_COEFFS], aIm[MAX_COEFFS];
+    aRe[0] = 1.0; aIm[0] = 0.0;
+    int len = 1;
+    for (int k = 0; k < n; k++) {
+        double rr = cRe[k], ri = cIm[k];
+        for (int i = len; i >= 1; i--) {
+            double mr, mi;
+            c_mul(rr, ri, aRe[i - 1], aIm[i - 1], &mr, &mi);
+            double baseRe = (i < len) ? aRe[i] : 0.0;
+            double baseIm = (i < len) ? aIm[i] : 0.0;
+            aRe[i] = baseRe - mr;
+            aIm[i] = baseIm - mi;
+        }
+        len++;
+    }
+    for (int i = 0; i < len; i++) { cRe[i] = aRe[i]; cIm[i] = aIm[i]; }
+    *nCoeffs = len;
+    return 0;
+}
+
 static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "none") == 0)        return ct_none;
     if (strcmp(name, "rev") == 0)         return ct_rev;
@@ -3387,6 +3420,10 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
         double x = 100.0, y = 0.0, w = 0.0, u = 0.0;
         if (!ct_linear_args(e, &x, &y, &w, &u)) return 1;
         ct_linear_affine(cRe, cIm, nCoeffs, x, y, w, u);
+        goto done;
+    }
+    if (strcmp(e->name, "expand_roots") == 0) {
+        rc = ct_expand_roots(cRe, cIm, nCoeffs);
         goto done;
     }
     if (strcmp(e->name, "roots_cm") == 0) {
@@ -4774,6 +4811,7 @@ static int coeffLegacyApply(int fnIndex, double *re, double *im, int *n,
         case 27: return ct_roots_cm(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 0) : 0,
                                     nArgs > 1 ? coeffLegacyIntArg(args[1], 0) : 0);
         case 28: ct_roots(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 8) : 8, nArgs > 1 ? coeffLegacyIntArg(args[1], 0) : 0); return 0;
+        case 29: return ct_expand_roots(re, im, n);
         default:
             fprintf(stderr, "coeff_program unknown legacy fn_index: %d\n", fnIndex);
             return 1;

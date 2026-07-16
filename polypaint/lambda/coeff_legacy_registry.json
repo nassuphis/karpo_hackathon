@@ -862,6 +862,27 @@
       }
     },
     {
+      "name": "expand_roots",
+      "fn_index": 29,
+      "category": "roots",
+      "allowed_src": [
+        "cf",
+        "poly",
+        "pop",
+        "peek"
+      ],
+      "allowed_tgt": [
+        "poly",
+        "push"
+      ],
+      "args": [],
+      "length_policy": "may_change",
+      "ui": {
+        "desc": "Expand the monic polynomial whose roots are the current vector's entries (np.poly, element order): length n becomes n+1, leading coefficient 1.",
+        "params": []
+      }
+    },
+    {
       "name": "roots_cm",
       "fn_index": 27,
       "category": "roots",

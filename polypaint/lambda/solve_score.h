@@ -1024,6 +1024,7 @@ enum SolveScoreProgramOp {
     SOLVE_SCORE_OP_FLUSH = 92,
     SOLVE_SCORE_OP_ASIN = 93,
     SOLVE_SCORE_OP_ACOS = 94,
+    SOLVE_SCORE_OP_ATAN = 95,
 };
 
 enum SolveScoreMetricSource {
@@ -1507,6 +1508,9 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
         } else if (strcmp(tok, "acos") == 0) {
             requiredDepth = 1;
             token.op = SOLVE_SCORE_OP_ACOS;
+        } else if (strcmp(tok, "atan") == 0) {
+            requiredDepth = 1;
+            token.op = SOLVE_SCORE_OP_ATAN;
         } else if (strcmp(tok, "log") == 0) {
             requiredDepth = 1;
             token.op = SOLVE_SCORE_OP_LOG;
@@ -2492,6 +2496,15 @@ static int solve_score_eval_program_outputs_from_buffers(const float *currentMet
                     double v = stack[sp - 1];
                     v = !isfinite(v) ? 0.0 : (v < -1.0 ? -1.0 : (v > 1.0 ? 1.0 : v));
                     stack[sp - 1] = solve_score_finite_or_zero(acos(v));
+                }
+                break;
+            /* atan is total on all of R: no domain clamp, only the
+             * non-finite-input zero (matches the Python evaluator) */
+            case SOLVE_SCORE_OP_ATAN:
+                if (sp < 1) return 0;
+                {
+                    double v = stack[sp - 1];
+                    stack[sp - 1] = solve_score_finite_or_zero(atan(!isfinite(v) ? 0.0 : v));
                 }
                 break;
             case SOLVE_SCORE_OP_LOG:

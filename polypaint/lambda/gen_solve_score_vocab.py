@@ -53,6 +53,7 @@ def _tooltip(kind: str, name: str, spec: dict) -> str:
         "cos": "raw cos(score), radians",
         "asin": "arcsine, radians; input clamped to [-1,1]",
         "acos": "arccosine, radians; input clamped to [-1,1]",
+        "atan": "arctangent, radians; maps any score into (-pi/2, pi/2)",
         "log": "natural log; invalid inputs become 0",
         "exp": "raw exp(score); overflow becomes 0",
         "pow": "raw pow(score, exponent)",

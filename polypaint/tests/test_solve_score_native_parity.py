@@ -159,9 +159,12 @@ class TestSolveScoreNativeParity(unittest.TestCase):
                 [
                     ["crowding", "slv", "1"],
                     ["dup"],
+                    ["dup"],
                     ["asin"],
                     ["emit", "raw"],
                     ["acos"],
+                    ["emit", "raw"],
+                    ["atan"],
                     ["emit", "raw"],
                 ],
                 {"crowding": (-10, 10)},

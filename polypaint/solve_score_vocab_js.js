@@ -393,6 +393,12 @@ window._solveScoreVocab = {
       "tooltip": "arcsine, radians; input clamped to [-1,1]",
       "snippet": "score = asin(metric(proximity, slv, q=0.1%))"
     },
+    "atan": {
+      "arity": 1,
+      "params": [],
+      "tooltip": "arctangent, radians; maps any score into (-pi/2, pi/2)",
+      "snippet": "score = atan(metric(proximity, slv, q=0.1%))"
+    },
     "clamp": {
       "arity": 1,
       "params": [],

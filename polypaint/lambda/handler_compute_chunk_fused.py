@@ -19,7 +19,7 @@ SWEEP_CM = os.path.join(os.path.dirname(__file__), "sweep_cm")
 
 # JT64/CM64: solve fused inside the coeffgen pass (f64 coefficients
 # straight into the f64 solver core), the AE sweep's pipeline shape
-FUSED_64_MODES = {"jt64", "cm64"}
+FUSED_64_MODES = {"jt64", "cm64", "ae64"}
 STAGE_META_PREFIX = "pp"
 
 
@@ -62,9 +62,9 @@ def handle_fused_chunk(params):
     degree = _require_int(params, "degree", minimum=1)
     fused_threads = _require_int(params, "fused_threads", minimum=1) if "fused_threads" in params else 4
     solver_mode = str(params.get("solver_mode") or "aberth_mt").strip().lower() or "aberth_mt"
-    if solver_mode not in {"aberth_mt", "companion_matrix", "jenkins_traub", "newton", "jt64", "cm64"}:
+    if solver_mode not in {"aberth_mt", "companion_matrix", "jenkins_traub", "newton", "jt64", "cm64", "ae64"}:
         raise RuntimeError(
-            f"fused compute solver_mode must be one of aberth_mt, companion_matrix, jenkins_traub, newton, jt64, cm64; got {solver_mode!r}"
+            f"fused compute solver_mode must be one of aberth_mt, companion_matrix, jenkins_traub, newton, jt64, cm64, ae64; got {solver_mode!r}"
         )
     solver_iters = int(params.get("solver_iters") or 0)
     if solver_iters < 0 or solver_iters > 64:

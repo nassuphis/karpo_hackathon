@@ -619,6 +619,7 @@ async function runCalculateJT() { return openComputeSolverPopup('jenkins_traub')
 async function runCalculateNewton() { return openComputeSolverPopup('newton'); }
 async function runCalculateJT64() { return openComputeSolverPopup('jt64'); }
 async function runCalculateCM64() { return openComputeSolverPopup('cm64'); }
+async function runCalculateAE64() { return openComputeSolverPopup('ae64'); }
 function _aggregateComputeParamGenPerf(results) {
     const row = Array.isArray(results) && results.length ? results[0] : null;
     if (!row) return null;

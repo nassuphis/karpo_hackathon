@@ -80,6 +80,7 @@ def _solver_tag(solver_mode):
         "newton": "NEWT",
         "jt64": "JT64",
         "cm64": "CM64",
+        "ae64": "AE64",
     }.get(solver_mode, "AE-MT")
 
 
@@ -540,7 +541,7 @@ def handler(event, context):
         except ValueError as e:
             return _json_response(400, {"message": str(e)})
         solver_mode = str(params.get("solver_mode") or "aberth_mt").strip() or "aberth_mt"
-        if solver_mode not in {"aberth_mt", "companion_matrix", "jenkins_traub", "newton", "jt64", "cm64"}:
+        if solver_mode not in {"aberth_mt", "companion_matrix", "jenkins_traub", "newton", "jt64", "cm64", "ae64"}:
             return _json_response(400, {"message": f"unsupported preview solver_mode: {solver_mode}"})
         try:
             solver_iters = int(params.get("solver_iters") or 0)
@@ -627,8 +628,8 @@ def handler(event, context):
             coeff_spec["coeff_program"] = coeff_program
         if cfpv:
             coeff_spec["cfpv"] = cfpv
-        if solver_mode in ("jt64", "cm64"):
-            # fused JT64/CM64: solve each row in-process from the f64
+        if solver_mode in ("jt64", "cm64", "ae64"):
+            # fused JT64/CM64/AE64: solve each row in-process from the f64
             # coefficients during coeffgen (the AE sweep's pipeline
             # shape) — the separate solve stage below is skipped
             coeff_spec["fused_solver"] = solver_mode
@@ -645,7 +646,7 @@ def handler(event, context):
         degree = int(coeff_meta["degree"])
         _exact_tmp_capacity(coeffs_size, degree, n_steps)
 
-        if solver_mode in ("jt64", "cm64"):
+        if solver_mode in ("jt64", "cm64", "ae64"):
             solve_binary = None
             solve_spec = None
         elif solver_mode in ("companion_matrix", "jenkins_traub", "newton"):

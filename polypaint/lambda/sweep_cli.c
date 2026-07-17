@@ -9360,6 +9360,7 @@ static int runParamDump(const char *buf, const char *outPath) {
 #define FUSED_SOLVER_NONE 0
 #define FUSED_SOLVER_JT64 1
 #define FUSED_SOLVER_CM64 2
+#define FUSED_SOLVER_AE64 3
 
 static int parseFusedSolver(const char *buf, int *outSolver) {
     *outSolver = FUSED_SOLVER_NONE;
@@ -9369,6 +9370,7 @@ static int parseFusedSolver(const char *buf, int *outSolver) {
     parseString(cp, name, sizeof(name));
     if (!name[0]) return 0;
     if (strcmp(name, "jt64") == 0) { *outSolver = FUSED_SOLVER_JT64; return 0; }
+    if (strcmp(name, "ae64") == 0) { *outSolver = FUSED_SOLVER_AE64; return 0; }
     if (strcmp(name, "cm64") == 0) {
         if (!companion_solver_available()) {
             fprintf(stderr, "fused_solver cm64 requires the LAPACK build\n");
@@ -9377,11 +9379,14 @@ static int parseFusedSolver(const char *buf, int *outSolver) {
         *outSolver = FUSED_SOLVER_CM64;
         return 0;
     }
-    fprintf(stderr, "Unknown fused_solver: %s (expected jt64 or cm64)\n", name);
+    fprintf(stderr, "Unknown fused_solver: %s (expected jt64, cm64 or ae64)\n", name);
     return 1;
 }
 
 /* Solve one f64 row in-process; write the f32 root row (degree slots).
+ * For AE64, rootRe/rootIm are the caller's PERSISTENT warm-start chain
+ * (seed once, then each row refines from the previous row's roots —
+ * the serpentine traversal keeps consecutive rows parameter-adjacent).
  * Returns 1 when the row was knifed/skipped, 0 otherwise. */
 static int fusedSolveRow(int solver, JtState *jt, CompanionWorkspace *cws,
                          const double *cRe, const double *cIm, int nCoeffs,
@@ -9395,12 +9400,65 @@ static int fusedSolveRow(int solver, JtState *jt, CompanionWorkspace *cws,
             break;
         }
     }
-    int rc;
     if (knife) {
-        for (int k = 0; k < degree; k++) { rootRe[k] = 0.0; rootIm[k] = 0.0; }
-        rc = -degree;
-    } else if (solver == FUSED_SOLVER_JT64) {
+        if (solver == FUSED_SOLVER_AE64) {
+            /* mirror the f32-file AE path, where such rows arrive as inf
+             * and solveEA emits NaN roots (binning skips them). The warm
+             * chain state is left intact so it survives escape bands. */
+            for (int k = 0; k < degree; k++) {
+                rowOut[k * 2]     = NAN;
+                rowOut[k * 2 + 1] = NAN;
+            }
+        } else {
+            /* mirror sweep_cm's skip: zeroed root row */
+            for (int k = 0; k < degree; k++) {
+                rowOut[k * 2]     = 0.0f;
+                rowOut[k * 2 + 1] = 0.0f;
+            }
+            for (int k = 0; k < degree; k++) { rootRe[k] = 0.0; rootIm[k] = 0.0; }
+        }
+        return 1;
+    }
+    int rc;
+    if (solver == FUSED_SOLVER_JT64) {
         rc = solve_jt_coeffs_f64(jt, cRe, cIm, nCoeffs, rootRe, rootIm);
+    } else if (solver == FUSED_SOLVER_AE64) {
+        /* mirror runSolveFromCoeffs' row logic on the f64 coefficients:
+         * strip, degenerate/linear shortcuts, warm-start preserved */
+        double ceRe[MAX_COEFFS], ceIm[MAX_COEFFS];
+        for (int k = 0; k < nCoeffs; k++) { ceRe[k] = cRe[k]; ceIm[k] = cIm[k]; }
+        int start = 0;
+        while (start < nCoeffs - 1 &&
+               ceRe[start] * ceRe[start] + ceIm[start] * ceIm[start] < 1e-30)
+            start++;
+        int effN = nCoeffs - start;
+        int trailingZeros = 0;
+        while (trailingZeros < effN - 1) {
+            int k = start + effN - 1 - trailingZeros;
+            if (ceRe[k] * ceRe[k] + ceIm[k] * ceIm[k] >= 1e-30) break;
+            trailingZeros++;
+        }
+        effN -= trailingZeros;
+        int effDeg = effN - 1;
+        if (effDeg <= 0) {
+            for (int i = 0; i < degree; i++) { rootRe[i] = 0.0; rootIm[i] = 0.0; }
+        } else if (effDeg == 1) {
+            for (int i = 1; i < degree; i++) { rootRe[i] = 0.0; rootIm[i] = 0.0; }
+            rootRe[0] = 0.0; rootIm[0] = 0.0;
+            double aR = ceRe[start], aI = ceIm[start];
+            double bR = ceRe[start + 1], bI = ceIm[start + 1];
+            double d = aR * aR + aI * aI;
+            if (d > 1e-30) {
+                rootRe[0] = -(bR * aR + bI * aI) / d;
+                rootIm[0] = -(bI * aR - bR * aI) / d;
+            }
+        } else {
+            for (int i = effDeg; i < degree; i++) { rootRe[i] = 0.0; rootIm[i] = 0.0; }
+            if (warmStartNeedsReseed(rootRe, rootIm, effDeg))
+                seedEAInitialGuess(rootRe, rootIm, effDeg);
+            solveEA(ceRe + start, ceIm + start, effN, rootRe, rootIm, effDeg);
+        }
+        rc = degree;
     } else {
         /* strip_exact=0 mirrors sweep_cm's solve_cm call exactly */
         rc = solve_companion_coeffs_ws_f64(cws, cRe, cIm, nCoeffs, rootRe, rootIm, 0);
@@ -9415,6 +9473,7 @@ static int fusedSolveRow(int solver, JtState *jt, CompanionWorkspace *cws,
 static const char *fusedSolverName(int solver) {
     return solver == FUSED_SOLVER_JT64 ? "jt64"
          : solver == FUSED_SOLVER_CM64 ? "cm64"
+         : solver == FUSED_SOLVER_AE64 ? "ae64"
          : "none";
 }
 
@@ -9565,6 +9624,8 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             fclose(fout);
             return 1;
         }
+        if (fusedSolver == FUSED_SOLVER_AE64)
+            seedEAInitialGuess(fusedRootRe, fusedRootIm, degree);
     }
     int stripeRows = i1_end - i1_start;
     /* Parse times (repeat count for dithering) */
@@ -11011,6 +11072,12 @@ static void *coeffGenWorkerMain(void *vp) {
             coeffGenSetThreadError(ctx, "fused solver worker alloc failed");
             return NULL;
         }
+        /* AE64: the warm-start chain lives per worker — seed once here,
+         * then each row of this worker's contiguous serpentine range
+         * refines from the previous row's roots (range boundaries are
+         * the only cold starts, same as chunk boundaries today). */
+        if (ctx->fusedSolver == FUSED_SOLVER_AE64)
+            seedEAInitialGuess(fusedRootRe, fusedRootIm, ctx->nCoeffsOut - 1);
     }
     CoeffProgramWorkspace *coeffWs = NULL;
     if (ctx->hasCoeffProgram) {

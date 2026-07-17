@@ -1394,6 +1394,7 @@ function _solverShortLabel(solver) {
         : solver === 'newton' ? 'NEWT'
         : solver === 'jt64' ? 'JT64'
         : solver === 'cm64' ? 'CM64'
+        : solver === 'ae64' ? 'AE64'
         : solver || '-';
 }
 
@@ -1403,6 +1404,7 @@ function _normalizeComputeSolverMode(solver) {
         : solver === 'newton' ? 'newton'
         : solver === 'jt64' ? 'jt64'
         : solver === 'cm64' ? 'cm64'
+        : solver === 'ae64' ? 'ae64'
         : 'aberth_mt';
 }
 
@@ -1412,6 +1414,7 @@ function _solverRunLabel(solver) {
         : solver === 'newton' ? 'Calculate-NEWT'
         : solver === 'jt64' ? 'Calculate-JT64'
         : solver === 'cm64' ? 'Calculate-CM64'
+        : solver === 'ae64' ? 'Calculate-AE64'
         : 'Calculate-AE-MT';
 }
 
@@ -1421,6 +1424,7 @@ function _solverButtonId(solver) {
         : solver === 'newton' ? 'btn-calculate-newton'
         : solver === 'jt64' ? 'btn-calculate-jt64'
         : solver === 'cm64' ? 'btn-calculate-cm64'
+        : solver === 'ae64' ? 'btn-calculate-ae64'
         : 'btn-calculate-mt';
 }
 
@@ -1430,6 +1434,7 @@ function _solverTag(solver) {
         : solver === 'newton' ? 'NEWT'
         : solver === 'jt64' ? 'JT64'
         : solver === 'cm64' ? 'CM64'
+        : solver === 'ae64' ? 'AE64'
         : 'AE-MT';
 }
 
@@ -1461,7 +1466,7 @@ function _solverHasThreadedFusedSolve(solverMode) {
     // solve inside the coeffgen worker threads themselves
     return solverMode === 'aberth_mt' || solverMode === 'companion_matrix'
         || solverMode === 'jenkins_traub' || solverMode === 'newton'
-        || solverMode === 'jt64' || solverMode === 'cm64';
+        || solverMode === 'jt64' || solverMode === 'cm64' || solverMode === 'ae64';
 }
 
 function _computePopupSharedThreadsLabel(solverMode) {

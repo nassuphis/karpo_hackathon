@@ -77,6 +77,7 @@ class TestComputePlan(unittest.TestCase):
             # runs inside coeffgen on the SWEEP_MT (fused chunk) lambda
             "jt64": ("fused_jt64", mod.SWEEP_MT_FUNCTION),
             "cm64": ("fused_cm64", mod.SWEEP_MT_FUNCTION),
+            "ae64": ("fused_ae64", mod.SWEEP_MT_FUNCTION),
         }
         for solver_mode, (bin_mode, fn_name) in expected.items():
             with self.subTest(solver_mode=solver_mode):

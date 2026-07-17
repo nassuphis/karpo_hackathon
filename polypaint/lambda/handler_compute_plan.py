@@ -688,9 +688,9 @@ def _finalize_results_task_prefix(plan, params):
 
 def _validate_solver_mode(value):
     solver_mode = str(value or "aberth_mt").strip().lower()
-    if solver_mode not in ("aberth_mt", "companion_matrix", "jenkins_traub", "newton", "jt64", "cm64"):
+    if solver_mode not in ("aberth_mt", "companion_matrix", "jenkins_traub", "newton", "jt64", "cm64", "ae64"):
         raise RuntimeError(
-            f"solver_mode must be one of aberth_mt, companion_matrix, jenkins_traub, newton, jt64, cm64; got {value!r}"
+            f"solver_mode must be one of aberth_mt, companion_matrix, jenkins_traub, newton, jt64, cm64, ae64; got {value!r}"
         )
     return solver_mode
 
@@ -741,6 +741,7 @@ def _solver_bin_mode(solver_mode):
         "newton": "solve_newton",
         "jt64": "fused_jt64",
         "cm64": "fused_cm64",
+        "ae64": "fused_ae64",
     }[solver_mode]
 
 

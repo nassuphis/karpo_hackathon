@@ -179,6 +179,38 @@ class TestFusedSolverCores(unittest.TestCase):
         self._knife_case(SWEEP_TEST_LAPACK, "cm64")
 
     @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+    def test_ae64_cluster_smooth_and_nan_knife(self):
+        """AE64: Aberth-Ehrlich in the fused hook with the warm-start
+        chain (seed once per worker range, then each serpentine-adjacent
+        row refines the previous roots). Same f64 input as jt64/cm64 —
+        measured double-root error 1.3e-8 median / 2.7e-8 max, and
+        22.8us/row at degree 36 INCLUDING coeffgen (warm chain). The
+        knife mirrors the f32-file AE path: NaN root rows (binning
+        skips them), not sweep_cm's zeros."""
+        import numpy as np
+
+        meta = _run_grid(SWEEP_TEST, _compiled(CLUSTER_SRC), "ae64", "ae64")
+        self.assertEqual(meta["fused_solver"], "ae64")
+        self.assertEqual(int(meta["solve_skipped"]), 0)
+        roots, coeffs = _load("ae64", 7)
+        fused_err, split_err = [], []
+        for i in range(len(roots)):
+            got = roots[i, :, 0].astype(float) + 1j * roots[i, :, 1].astype(float)
+            fused_err += [abs(z - A) for z in sorted(got, key=lambda z: abs(z - A))[:2]]
+            cf32 = coeffs[i, :, 0].astype(float) + 1j * coeffs[i, :, 1].astype(float)
+            split = sorted(np.roots(cf32), key=lambda z: abs(z - A))[:2]
+            split_err += [abs(z - A) for z in split]
+        self.assertLess(max(fused_err), 5e-7)
+        self.assertGreater(float(np.median(split_err)), 1e-5)
+
+        self._smooth_case(SWEEP_TEST, "ae64")
+
+        meta = _run_grid(SWEEP_TEST, _compiled(KNIFE_SRC), "ae64", "ae64_knife", n=3)
+        self.assertEqual(int(meta["solve_skipped"]), 9)
+        roots = np.fromfile("/tmp/fused64_ae64_knife_roots.bin", dtype=np.float32)
+        self.assertTrue(bool(np.all(np.isnan(roots))))
+
+    @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
     def test_cm64_requires_lapack_build(self):
         spec = {
             "mode": "coeffgen", "function": "const", "cfpv": [1, 0, 0],
@@ -199,13 +231,14 @@ class TestFusedSolverPlumbing(unittest.TestCase):
         sys.path.insert(0, LAMBDA_DIR)
         import handler_compute_chunk_fused as mod
 
-        self.assertEqual(mod.FUSED_64_MODES, {"jt64", "cm64"})
+        self.assertEqual(mod.FUSED_64_MODES, {"jt64", "cm64", "ae64"})
 
     def test_preview_solver_tags(self):
         import handler_compute_preview as mod
 
         self.assertEqual(mod._solver_tag("jt64"), "JT64")
         self.assertEqual(mod._solver_tag("cm64"), "CM64")
+        self.assertEqual(mod._solver_tag("ae64"), "AE64")
 
 
 if __name__ == "__main__":

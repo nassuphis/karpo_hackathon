@@ -399,12 +399,12 @@ EXPECTED_ALIASES = {
     "exp_affine": "exp",
     "pow_affine": "pow",
     "power_series": "power",
-    "scale100": "linear",
+    "scale100": "linear", "roots_ae": "roots",
 }
 EXPECTED_TEXT_ALIASES = {
     "exp_affine": "exp",
     "pow_affine": "pow",
-    "power_series": "power",
+    "power_series": "power", "roots_ae": "roots",
 }
 EXPECTED_CHIP_NAMES = {"exp": "exp_affine", "power": "power_series"}
 

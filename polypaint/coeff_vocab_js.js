@@ -5,12 +5,14 @@ window._coeffRegistryVocab = {
     "scale100": "linear",
     "exp_affine": "exp",
     "pow_affine": "pow",
-    "power_series": "power"
+    "power_series": "power",
+    "roots_ae": "roots"
   },
   "sourceAliasByName": {
     "exp": "exp_affine",
     "pow": "pow_affine",
-    "power": "power_series"
+    "power": "power_series",
+    "roots": "roots_ae"
   },
   "chipNameByRegistryName": {
     "exp": "exp_affine",
@@ -498,7 +500,7 @@ window._coeffRegistryVocab = {
     },
     "roots": {
       "category": "roots",
-      "desc": "Feed back the roots as coefficients: run k Aberth-Ehrlich iterations (leading/trailing zeros trimmed first) and write the \u2014 possibly unconverged for small k \u2014 roots into the coefficient slots, zero-padded hi or lo.",
+      "desc": "Feed back the roots as coefficients via Aberth-Ehrlich (alias roots_ae): the fastest root trip (measured 0.14ms at degree 64 vs roots_jt 0.26ms and roots_cm 2.5ms) and f64 end-to-end. iters caps the iterations (convergence exits early). CAVEAT: unit-circle seeding fails on tiny-leading polynomials and far-flung roots (the giga_2880 lesson) \u2014 use roots_cm or roots_jt for those.",
       "label": "roots",
       "params": [
         {

@@ -86,6 +86,22 @@ class TestRootsJtTransform(unittest.TestCase):
             FAMILY + "poly = roots_jt(poly, lo, exact)\nemit")
         self.assertTrue(compiled["tokens"])
 
+    def test_roots_ae_is_an_alias_for_roots(self):
+        """roots_ae completes the trio: it is a pure source alias for the
+        existing Aberth-Ehrlich trip (fn 28) — the fastest root trip
+        (measured 0.14ms at degree 64, f64 end-to-end) — and lowers to the
+        identical chain (fingerprint-equal to spelling roots)."""
+        from coeff_program_chain import legacy_registry
+        from coeff_program_source import compile_coeff_program_source
+
+        self.assertEqual(
+            legacy_registry()["text_alias_to_canonical"]["roots_ae"], "roots")
+        via_alias = compile_coeff_program_source(
+            FAMILY + "poly = roots_ae(poly, 16, lo)\nemit")
+        spelled = compile_coeff_program_source(
+            FAMILY + "poly = roots(poly, 16, lo)\nemit")
+        self.assertEqual(via_alias["fingerprint"], spelled["fingerprint"])
+
     @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
     def test_root_multiset_matches_np_roots_without_lapack(self):
         """JT agrees with np.roots as a MULTISET at the f32 solver floor —

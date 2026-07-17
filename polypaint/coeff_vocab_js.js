@@ -5,14 +5,12 @@ window._coeffRegistryVocab = {
     "scale100": "linear",
     "exp_affine": "exp",
     "pow_affine": "pow",
-    "power_series": "power",
-    "roots_ae": "roots"
+    "power_series": "power"
   },
   "sourceAliasByName": {
     "exp": "exp_affine",
     "pow": "pow_affine",
-    "power": "power_series",
-    "roots": "roots_ae"
+    "power": "power_series"
   },
   "chipNameByRegistryName": {
     "exp": "exp_affine",
@@ -500,7 +498,7 @@ window._coeffRegistryVocab = {
     },
     "roots": {
       "category": "roots",
-      "desc": "Feed back the roots as coefficients via Aberth-Ehrlich (alias roots_ae): the fastest root trip (measured 0.14ms at degree 64 vs roots_jt 0.26ms and roots_cm 2.5ms) and f64 end-to-end. iters caps the iterations (convergence exits early). CAVEAT: unit-circle seeding fails on tiny-leading polynomials and far-flung roots (the giga_2880 lesson) \u2014 use roots_cm or roots_jt for those.",
+      "desc": "Feed back the roots as coefficients via Aberth-Ehrlich, keeping the vector length (one slot becomes the zero pad). iters caps the iterations; small values leave roots deliberately unconverged. Prefer roots_ae for the clean np.roots form (no pad slot, full convergence).",
       "label": "roots",
       "params": [
         {
@@ -563,6 +561,21 @@ window._coeffRegistryVocab = {
             "exact"
           ]
         },
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
+    },
+    "roots_ae": {
+      "category": "roots",
+      "desc": "np.roots via Aberth-Ehrlich: length n in, n-1 roots out \u2014 no pad slot (expand_roots' inverse shape). Exact-zero leading coefficients strip like np.roots, trailing zeros become roots at 0; a degenerate (constant) input yields the single slot [0]. The fastest root trip (measured 0.14ms at degree 64 vs roots_jt 0.26ms and roots_cm 2.5ms), f64 end-to-end, full convergence (64-iteration cap, early exit). CAVEAT: unit-circle seeding fails on tiny-but-nonzero leading coefficients and far-flung roots (the giga_2880 lesson) \u2014 use roots_cm or roots_jt there.",
+      "label": "roots_ae",
+      "params": [
         {
           "kind": "andy",
           "ph": "andy",

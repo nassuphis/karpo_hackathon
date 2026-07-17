@@ -3399,6 +3399,46 @@ static void ct_roots(double *cRe, double *cIm, int *nCoeffs, int iters, int padL
     ct_write_roots_padded(cRe, cIm, n, rootRe, rootIm, effDeg, padLo);
 }
 
+/* roots_ae: the np.roots form of the Aberth-Ehrlich trip — length n in,
+ * n-1 roots out, NO pad slot (expand_roots' exact inverse shape).
+ * np.roots semantics: exact-zero leading coefficients strip first (each
+ * removes one output slot), exact-zero trailing coefficients become
+ * explicit roots at 0 (emitted last), the core solves at the full
+ * 64-iteration cap (converged rows exit early). Emission order is AE's
+ * found order — follow with sort_* when order matters. A degenerate
+ * vector (constant or all zeros) has no roots; np.roots would return
+ * empty, but the VM has no empty vectors (length >= 1 invariant), so
+ * the degenerate result is the single slot [0] — ct_roots' convention. */
+static int ct_roots_ae(double *cRe, double *cIm, int *nCoeffs) {
+    int n = *nCoeffs;
+    if (n < 0) return 1;
+
+    int start = 0;
+    while (start < n && cRe[start] == 0.0 && cIm[start] == 0.0)
+        start++;
+    int effN = n - start;
+    int outLen = effN > 0 ? effN - 1 : 0;
+
+    int trailing = 0;
+    while (trailing < outLen &&
+           cRe[start + effN - 1 - trailing] == 0.0 &&
+           cIm[start + effN - 1 - trailing] == 0.0)
+        trailing++;
+    int coreN = effN - trailing;
+    int coreDeg = coreN - 1;
+
+    double rootRe[MAX_DEGREE], rootIm[MAX_DEGREE];
+    if (coreDeg > 0) {
+        seedEAInitialGuess(rootRe, rootIm, coreDeg);
+        solveEALimited(cRe + start, cIm + start, coreN, rootRe, rootIm, coreDeg, 64);
+    }
+    for (int i = 0; i < coreDeg; i++) { cRe[i] = rootRe[i]; cIm[i] = rootIm[i]; }
+    for (int i = coreDeg; i < outLen; i++) { cRe[i] = 0.0; cIm[i] = 0.0; }
+    if (outLen == 0) { cRe[0] = 0.0; cIm[0] = 0.0; outLen = 1; }
+    *nCoeffs = outLen;
+    return 0;
+}
+
 /* expand_roots: treat the current vector's entries as polynomial ROOTS
  * and expand the monic polynomial, exactly as np.poly does: descending
  * coefficients, a = convolve(a, [1, -r]) per root IN ELEMENT ORDER.
@@ -3492,6 +3532,10 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
         int stripExact = ct_arg_strip_exact(e, 1, 0);
         if (stripExact < 0) return 1;
         rc = ct_roots_jt(cRe, cIm, nCoeffs, padLo, stripExact);
+        goto done;
+    }
+    if (strcmp(e->name, "roots_ae") == 0) {
+        rc = ct_roots_ae(cRe, cIm, nCoeffs);
         goto done;
     }
     if (strcmp(e->name, "power") == 0) {
@@ -4874,6 +4918,7 @@ static int coeffLegacyApply(int fnIndex, double *re, double *im, int *n,
         case 29: return ct_expand_roots(re, im, n);
         case 30: return ct_roots_jt(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 0) : 0,
                                     nArgs > 1 ? coeffLegacyIntArg(args[1], 0) : 0);
+        case 31: return ct_roots_ae(re, im, n);
         default:
             fprintf(stderr, "coeff_program unknown legacy fn_index: %d\n", fnIndex);
             return 1;

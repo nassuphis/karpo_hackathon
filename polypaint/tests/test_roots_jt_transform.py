@@ -3,6 +3,11 @@ roots_jt: the Jenkins-Traub mid-chain root trip (registry fn 30) — the
 cheaper alternative to roots_cm's zgeev eigensolve (O(n^2) vs O(n^3),
 no LAPACK requirement, so it works even in the plain sweep_test build).
 
+Also here: roots_ae (registry fn 31), the np.roots-shaped Aberth-Ehrlich
+trip — length n in, n-1 roots out, NO pad slot (expand_roots' inverse
+shape), exact-zero leading strip, trailing zeros as explicit 0 roots,
+f64 end-to-end at the full 64-iteration cap.
+
 Contract pinned here:
   * source/chain compile + registry drift (fn_index 30, roots_cm's
     pad/strip interface verbatim);
@@ -86,22 +91,6 @@ class TestRootsJtTransform(unittest.TestCase):
             FAMILY + "poly = roots_jt(poly, lo, exact)\nemit")
         self.assertTrue(compiled["tokens"])
 
-    def test_roots_ae_is_an_alias_for_roots(self):
-        """roots_ae completes the trio: it is a pure source alias for the
-        existing Aberth-Ehrlich trip (fn 28) — the fastest root trip
-        (measured 0.14ms at degree 64, f64 end-to-end) — and lowers to the
-        identical chain (fingerprint-equal to spelling roots)."""
-        from coeff_program_chain import legacy_registry
-        from coeff_program_source import compile_coeff_program_source
-
-        self.assertEqual(
-            legacy_registry()["text_alias_to_canonical"]["roots_ae"], "roots")
-        via_alias = compile_coeff_program_source(
-            FAMILY + "poly = roots_ae(poly, 16, lo)\nemit")
-        spelled = compile_coeff_program_source(
-            FAMILY + "poly = roots(poly, 16, lo)\nemit")
-        self.assertEqual(via_alias["fingerprint"], spelled["fingerprint"])
-
     @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
     def test_root_multiset_matches_np_roots_without_lapack(self):
         """JT agrees with np.roots as a MULTISET at the f32 solver floor —
@@ -143,6 +132,98 @@ poly[5] = 0-2
         got_exact = np.array(_run_program(tiny + "poly = roots_jt(poly, lo, exact)\nemit", 0.3, 0.7))
         self.assertLess(float(np.abs(got_rel).max()), 10.0)
         self.assertGreater(float(np.abs(got_exact).max()), 1e6)
+
+
+class TestRootsAeTransform(unittest.TestCase):
+    def test_registry_shape_and_source_compile(self):
+        """roots_ae is a REAL registry function (fn 31) with the plain
+        single-vector signature — no iters, no pad — cloning expand_roots'
+        interface; the old roots-alias spelling is gone."""
+        from coeff_program_chain import legacy_registry
+        from coeff_program_source import compile_coeff_program_source
+
+        reg = legacy_registry()
+        spec = reg["by_name"]["roots_ae"]
+        self.assertEqual(spec["fn_index"], 31)
+        self.assertEqual(list(spec["args"]), [])
+        self.assertEqual(spec["length_policy"], "may_change")
+        er = reg["by_name"]["expand_roots"]
+        self.assertEqual(spec["allowed_src"], er["allowed_src"])
+        self.assertEqual(spec["allowed_tgt"], er["allowed_tgt"])
+        self.assertNotIn("roots_ae", reg["text_alias_to_canonical"])
+
+        compiled = compile_coeff_program_source(
+            FAMILY + "poly = roots_ae(poly)\nemit")
+        self.assertTrue(compiled["tokens"])
+        # expression position composes too (registry-legal src/tgt)
+        composed = compile_coeff_program_source(
+            FAMILY + "poly = sort_abs(roots_ae(poly))\nemit")
+        self.assertTrue(composed["tokens"])
+
+    @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+    def test_np_roots_parity_no_pad_slot(self):
+        """Length 12 in -> 11 roots out, and f64 end-to-end: the multiset
+        agrees with np.roots at 1e-9 (JT's f32 cast floor is 1e-5)."""
+        import numpy as np
+
+        for t1, t2 in ((0.137, 0.823), (0.75, 0.31), (0.31, 0.77)):
+            with self.subTest(t1=t1, t2=t2):
+                got = np.array(_run_program(
+                    FAMILY + "poly = roots_ae(poly)\nemit", t1, t2))
+                self.assertEqual(len(got), 11)
+                T1 = np.exp(2j * np.pi * t1)
+                T2 = np.exp(2j * np.pi * t2)
+                cf = np.zeros(12, dtype=complex)
+                cf[0] = 1; cf[1] = 2 * T1; cf[3] = -1.5 * T2
+                cf[7] = 0.5 * t1 + 0.25; cf[11] = -2
+                pool = list(np.roots(cf))
+                worst = 0.0
+                for g in got:
+                    j = int(np.argmin([abs(g - p) for p in pool]))
+                    worst = max(worst, abs(g - pool.pop(j)))
+                self.assertEqual(len(pool), 0)
+                self.assertLess(worst, 1e-9)
+
+    @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+    def test_leading_strip_and_trailing_zero_roots(self):
+        """np.roots edge semantics: exact-zero LEADING coefficients each
+        remove an output slot; exact-zero TRAILING coefficients come back
+        as explicit roots at 0."""
+        import numpy as np
+
+        lead = """poly = fill(6, 0)
+poly[1] = 1
+poly[3] = 2
+poly[5] = 4
+"""
+        got = np.array(_run_program(lead + "poly = roots_ae(poly)\nemit", 0.3, 0.7))
+        self.assertEqual(len(got), 4)          # 6 -> strip 1 leading -> 5 -> 4 roots
+        pool = list(np.roots([1, 0, 2, 0, 4]))
+        worst = max(abs(g - pool.pop(int(np.argmin([abs(g - p) for p in pool]))))
+                    for g in got)
+        self.assertLess(worst, 1e-9)
+
+        trail = """poly = fill(4, 0)
+poly[0] = 1
+poly[1] = 5
+"""
+        got = np.array(_run_program(trail + "poly = roots_ae(poly)\nemit", 0.3, 0.7))
+        self.assertEqual(len(got), 3)
+        self.assertEqual(sorted(np.abs(got))[:2], [0.0, 0.0])   # exact zeros
+        self.assertLess(abs(sorted(got, key=abs)[2] - (-5.0)), 1e-12)
+
+    @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+    def test_degenerate_constant_yields_single_zero_slot(self):
+        """A constant polynomial has no roots. np.roots would return
+        empty, but the VM's vectors are length >= 1 (coeff_program_check_len),
+        so roots_ae adopts ct_roots' degenerate convention: the single
+        slot [0]."""
+        src = """poly = fill(1, 5)
+poly = roots_ae(poly)
+emit
+"""
+        got = _run_program(src, 0.3, 0.7)
+        self.assertEqual(got, [complex(0, 0)])
 
 
 if __name__ == "__main__":

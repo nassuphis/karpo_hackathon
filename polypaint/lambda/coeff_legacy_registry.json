@@ -1033,7 +1033,7 @@
       "length_policy": "may_change",
       "ui": {
         "label": "roots",
-        "desc": "Feed back the roots as coefficients via Aberth-Ehrlich (alias roots_ae): the fastest root trip (measured 0.14ms at degree 64 vs roots_jt 0.26ms and roots_cm 2.5ms) and f64 end-to-end. iters caps the iterations (convergence exits early). CAVEAT: unit-circle seeding fails on tiny-leading polynomials and far-flung roots (the giga_2880 lesson) — use roots_cm or roots_jt for those.",
+        "desc": "Feed back the roots as coefficients via Aberth-Ehrlich, keeping the vector length (one slot becomes the zero pad). iters caps the iterations; small values leave roots deliberately unconverged. Prefer roots_ae for the clean np.roots form (no pad slot, full convergence).",
         "params": [
           {
             "ph": "k",
@@ -1050,10 +1050,29 @@
             ]
           }
         ]
-      },
-      "aliases": [
-        "roots_ae"
-      ]
+      }
+    },
+    {
+      "name": "roots_ae",
+      "fn_index": 31,
+      "category": "roots",
+      "allowed_src": [
+        "cf",
+        "poly",
+        "pop",
+        "peek"
+      ],
+      "allowed_tgt": [
+        "poly",
+        "push"
+      ],
+      "args": [],
+      "length_policy": "may_change",
+      "ui": {
+        "label": "roots_ae",
+        "desc": "np.roots via Aberth-Ehrlich: length n in, n-1 roots out — no pad slot (expand_roots' inverse shape). Exact-zero leading coefficients strip like np.roots, trailing zeros become roots at 0; a degenerate (constant) input yields the single slot [0]. The fastest root trip (measured 0.14ms at degree 64 vs roots_jt 0.26ms and roots_cm 2.5ms), f64 end-to-end, full convergence (64-iteration cap, early exit). CAVEAT: unit-circle seeding fails on tiny-but-nonzero leading coefficients and far-flung roots (the giga_2880 lesson) — use roots_cm or roots_jt there.",
+        "params": []
+      }
     }
   ],
   "category_meta": {

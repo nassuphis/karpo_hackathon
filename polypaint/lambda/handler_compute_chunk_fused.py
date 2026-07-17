@@ -242,7 +242,13 @@ def handle_fused_chunk(params):
             # only its upload remains. No streamer: the fused pass
             # publishes no flush watermarks.
             # the binary times the in-loop solve (max per-worker wall,
-            # exact for single-worker runs) so stage timings stay honest
+            # exact for single-worker runs) so stage timings stay honest.
+            # streamer/stream_ok must be defined on this path too — the
+            # result_data telemetry reads them unconditionally (the JT64
+            # hang: NameError AFTER the chunk's work, so chunks retried
+            # forever without ever reporting success).
+            streamer = None
+            stream_ok = True
             solve_us = int(coeff_meta.get("solve_us", 0) or 0)
             solve_meta = {
                 "n_t": step_count,
@@ -334,9 +340,9 @@ def handle_fused_chunk(params):
             # (review F5: one field must never carry two meanings).
             "pre_solve_upload_wait_us": int(pre_solve_upload_wait_us),
             "upload_roots_tail_us": int(upload_roots_tail_us),
-            "roots_parts_during_solve": int(streamer.parts_during_solve),
-            "roots_parts_reverified": int(streamer.parts_reverified),
-            "roots_parts_repaired": int(streamer.parts_repaired),
+            "roots_parts_during_solve": int(streamer.parts_during_solve) if streamer else 0,
+            "roots_parts_reverified": int(streamer.parts_reverified) if streamer else 0,
+            "roots_parts_repaired": int(streamer.parts_repaired) if streamer else 0,
             "roots_upload_fallback": 0 if stream_ok else 1,
             "param_gen_threads": int(fused_threads),
             "coeffgen_threads": int(coeff_meta.get("threads", fused_threads) or fused_threads),
@@ -373,11 +379,12 @@ def handle_fused_chunk(params):
                 **build_identity(),
             },
         }
-        if stream_ok:
-            result_data["upload_roots_span_us"] = int(streamer.span_us)
-        else:
-            result_data["roots_stream_fail_reason"] = str(
-                streamer.fail_reason or "unknown")[:200]
+        if streamer is not None:
+            if stream_ok:
+                result_data["upload_roots_span_us"] = int(streamer.span_us)
+            else:
+                result_data["roots_stream_fail_reason"] = str(
+                    streamer.fail_reason or "unknown")[:200]
         if upload_roots_us is not None:
             result_data["upload_roots_us"] = int(upload_roots_us)
         if "skipped_overflow" in solve_meta:

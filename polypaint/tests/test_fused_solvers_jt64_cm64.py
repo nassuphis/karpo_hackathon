@@ -243,6 +243,52 @@ class TestFusedSolverPlumbing(unittest.TestCase):
         self.assertEqual(mod._solver_tag("cm64"), "CM64")
         self.assertEqual(mod._solver_tag("ae64"), "AE64")
 
+    @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+    def test_chunk_handler_fused_path_end_to_end(self):
+        """Execute handle_fused_chunk for jt64 with the real local binary
+        (S3/report mocked). REGRESSION: the fused branch left streamer/
+        stream_ok undefined while result_data reads them on every path —
+        chunks did their work, then died on NameError before reporting
+        success, and the job hung in endless Step Functions retries
+        (user's hung JT64 job)."""
+        import handler_compute_chunk_fused as mod
+
+        uploads = []
+        orig = (mod.SWEEP_COEFFGEN, mod._upload_file, mod._s3_size_matches,
+                mod.report_status)
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod._upload_file = lambda path, key, metadata=None: uploads.append(key)
+        mod._s3_size_matches = lambda *a, **k: False
+        mod.report_status = lambda *a, **k: None
+        try:
+            resp = mod.handle_fused_chunk({
+                "job_id": "test_job",
+                "chunk_idx": 0,
+                "step_start": 0,
+                "step_count": 64,
+                "N": 8,
+                "times": 1,
+                "n_coeffs": 12,
+                "degree": 11,
+                "fused_threads": 2,
+                "solver_mode": "jt64",
+                "function": "const",
+                "cfpv": [1, 0, 0],
+                "coeff_program": _compiled(SMOOTH_SRC),
+                "params_key": "t/params.bin",
+                "coeffs_key": "t/coeffs.bin",
+                "bin_key": "t/roots.bin",
+            })
+        finally:
+            (mod.SWEEP_COEFFGEN, mod._upload_file, mod._s3_size_matches,
+             mod.report_status) = orig
+        data = json.loads(resp["body"])
+        self.assertEqual(data["s3_key"], "t/roots.bin")
+        self.assertEqual(int(data["bin_size"]), 64 * 11 * 8)
+        self.assertEqual(int(data["skipped_overflow"]), 0)
+        self.assertEqual(int(data["roots_upload_fallback"]), 0)
+        self.assertIn("t/roots.bin", uploads)
+
     def test_chunk_estimators_accept_fused_modes(self):
         """The degree-probe estimate is what enables the popup's Execute
         button; compute_fused raising 'unsupported fused solver_mode'

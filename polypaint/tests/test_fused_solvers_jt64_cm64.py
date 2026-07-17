@@ -243,6 +243,19 @@ class TestFusedSolverPlumbing(unittest.TestCase):
         self.assertEqual(mod._solver_tag("cm64"), "CM64")
         self.assertEqual(mod._solver_tag("ae64"), "AE64")
 
+    def test_chunk_estimators_accept_fused_modes(self):
+        """The degree-probe estimate is what enables the popup's Execute
+        button; compute_fused raising 'unsupported fused solver_mode'
+        for the new modes greyed it out (user-reported). Fused modes
+        budget as their split kin."""
+        from compute_fused import estimate_fused_chunking
+
+        for mode in ("jt64", "cm64", "ae64"):
+            est = estimate_fused_chunking(
+                n=200, times=1, requested_chunks=10, degree=36,
+                n_coeffs=37, fused_threads=4, solver_mode=mode)
+            self.assertGreater(int(est["min_safe_chunks"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

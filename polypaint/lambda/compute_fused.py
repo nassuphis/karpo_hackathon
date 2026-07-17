@@ -188,7 +188,18 @@ def estimate_fused_chunking(*, n, times, requested_chunks, degree, n_coeffs, fus
     }
 
 
+# The fused JT64/CM64/AE64 modes share their split kin's cost class and
+# file footprint (same params/coeffs/roots files; the solve runs inside
+# the coeffgen workers), so the estimators budget them identically.
+_FUSED_SOLVER_KIN = {
+    "jt64": "jenkins_traub",
+    "cm64": "companion_matrix",
+    "ae64": "aberth_mt",
+}
+
+
 def _solver_scratch_step_bytes(solver_mode, degree):
+    solver_mode = _FUSED_SOLVER_KIN.get(solver_mode, solver_mode)
     base = max(1, int(degree)) * 8
     if solver_mode == "companion_matrix":
         return base * 18
@@ -208,6 +219,7 @@ def _coeffgen_us_per_step(n_coeffs):
 
 
 def _solve_us_per_step(*, solver_mode, degree, fused_threads):
+    solver_mode = _FUSED_SOLVER_KIN.get(solver_mode, solver_mode)
     degree = max(1.0, float(degree))
     if solver_mode == "companion_matrix":
         return 90.0 * (degree / 35.0)

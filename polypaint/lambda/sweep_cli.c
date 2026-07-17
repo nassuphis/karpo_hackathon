@@ -9350,6 +9350,74 @@ static int runParamDump(const char *buf, const char *outPath) {
     return 0;
 }
 
+/* ==== Fused in-process solvers (JT64 / CM64) ====
+ * The AE sweep's pipeline shape for the other two solver families: the
+ * row's f64 coefficients go straight from the generation loop into the
+ * f64 solver core — no coefficient file, no f32 anywhere before the
+ * root output cast. KNIFE PARITY: rows whose coefficients exceed the
+ * f32 transport range are skipped exactly as the split pipeline skips
+ * them (there they arrive as inf through the f32 file). */
+#define FUSED_SOLVER_NONE 0
+#define FUSED_SOLVER_JT64 1
+#define FUSED_SOLVER_CM64 2
+
+static int parseFusedSolver(const char *buf, int *outSolver) {
+    *outSolver = FUSED_SOLVER_NONE;
+    const char *cp = findKey(buf, "fused_solver");
+    if (!cp) return 0;
+    char name[32] = "";
+    parseString(cp, name, sizeof(name));
+    if (!name[0]) return 0;
+    if (strcmp(name, "jt64") == 0) { *outSolver = FUSED_SOLVER_JT64; return 0; }
+    if (strcmp(name, "cm64") == 0) {
+        if (!companion_solver_available()) {
+            fprintf(stderr, "fused_solver cm64 requires the LAPACK build\n");
+            return 1;
+        }
+        *outSolver = FUSED_SOLVER_CM64;
+        return 0;
+    }
+    fprintf(stderr, "Unknown fused_solver: %s (expected jt64 or cm64)\n", name);
+    return 1;
+}
+
+/* Solve one f64 row in-process; write the f32 root row (degree slots).
+ * Returns 1 when the row was knifed/skipped, 0 otherwise. */
+static int fusedSolveRow(int solver, JtState *jt, CompanionWorkspace *cws,
+                         const double *cRe, const double *cIm, int nCoeffs,
+                         double *rootRe, double *rootIm, float *rowOut) {
+    int degree = nCoeffs - 1;
+    int knife = 0;
+    for (int k = 0; k < nCoeffs; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k]) ||
+            fabs(cRe[k]) > (double)FLT_MAX || fabs(cIm[k]) > (double)FLT_MAX) {
+            knife = 1;
+            break;
+        }
+    }
+    int rc;
+    if (knife) {
+        for (int k = 0; k < degree; k++) { rootRe[k] = 0.0; rootIm[k] = 0.0; }
+        rc = -degree;
+    } else if (solver == FUSED_SOLVER_JT64) {
+        rc = solve_jt_coeffs_f64(jt, cRe, cIm, nCoeffs, rootRe, rootIm);
+    } else {
+        /* strip_exact=0 mirrors sweep_cm's solve_cm call exactly */
+        rc = solve_companion_coeffs_ws_f64(cws, cRe, cIm, nCoeffs, rootRe, rootIm, 0);
+    }
+    for (int k = 0; k < degree; k++) {
+        rowOut[k * 2]     = (float)rootRe[k];
+        rowOut[k * 2 + 1] = (float)rootIm[k];
+    }
+    return rc < 0 ? 1 : 0;
+}
+
+static const char *fusedSolverName(int solver) {
+    return solver == FUSED_SOLVER_JT64 ? "jt64"
+         : solver == FUSED_SOLVER_CM64 ? "cm64"
+         : "none";
+}
+
 static int runCoeffGen(const char *buf, const char *outPath) {
     char funcName[64] = "";
     const char *cp = findKey(buf, "function");
@@ -9457,6 +9525,47 @@ static int runCoeffGen(const char *buf, const char *outPath) {
         fclose(fout);
         return 1;
     }
+
+    /* Fused JT64/CM64: solve each row in-process from the f64
+     * coefficients and write f32 root rows alongside the coeff file. */
+    int fusedSolver = FUSED_SOLVER_NONE;
+    if (parseFusedSolver(buf, &fusedSolver) != 0) {
+        free(stepBuf);
+        fclose(fout);
+        return 1;
+    }
+    FILE *frootsOut = NULL;
+    float *rootStepBuf = NULL;
+    JtState *fusedJt = NULL;
+    CompanionWorkspace fusedCws;
+    memset(&fusedCws, 0, sizeof(fusedCws));
+    long fusedSkipped = 0;
+    double fusedRootRe[MAX_DEGREE], fusedRootIm[MAX_DEGREE];
+    if (fusedSolver != FUSED_SOLVER_NONE) {
+        char rootsFile[256] = "";
+        cp = findKey(buf, "roots_file");
+        if (cp) parseString(cp, rootsFile, sizeof(rootsFile));
+        if (!rootsFile[0]) {
+            fprintf(stderr, "fused_solver requires roots_file\n");
+            free(stepBuf);
+            fclose(fout);
+            return 1;
+        }
+        frootsOut = fopen(rootsFile, "wb");
+        rootStepBuf = malloc((size_t)degree * 2 * sizeof(float));
+        if (fusedSolver == FUSED_SOLVER_JT64)
+            fusedJt = malloc(sizeof(JtState));
+        if (!frootsOut || !rootStepBuf ||
+            (fusedSolver == FUSED_SOLVER_JT64 && !fusedJt)) {
+            fprintf(stderr, "fused solver setup failed\n");
+            if (frootsOut) fclose(frootsOut);
+            free(rootStepBuf);
+            free(fusedJt);
+            free(stepBuf);
+            fclose(fout);
+            return 1;
+        }
+    }
     int stripeRows = i1_end - i1_start;
     /* Parse times (repeat count for dithering) */
     int times = 1;
@@ -9542,6 +9651,13 @@ static int runCoeffGen(const char *buf, const char *outPath) {
                 stepBuf[k * 2 + 1] = (float)cIm[k];
             }
             fwrite(stepBuf, sizeof(float), nCoeffsOut * 2, fout);
+
+            if (fusedSolver != FUSED_SOLVER_NONE) {
+                fusedSkipped += fusedSolveRow(fusedSolver, fusedJt, &fusedCws,
+                                              cRe, cIm, nCoeffsOut,
+                                              fusedRootRe, fusedRootIm, rootStepBuf);
+                fwrite(rootStepBuf, sizeof(float), (size_t)degree * 2, frootsOut);
+            }
         }
     } /* end i1 loop */
     } /* end pass loop */
@@ -9552,6 +9668,10 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     fclose(fout);
     free(stepBuf);
     free(coeffWs);
+    if (frootsOut) fclose(frootsOut);
+    free(rootStepBuf);
+    free(fusedJt);
+    if (fusedSolver == FUSED_SOLVER_CM64) companion_ws_release(&fusedCws);
 
     long dataBytes = totalSteps * nCoeffsOut * 2 * (long)sizeof(float);
     printf("{\"mode\":\"coeffgen\",\"function\":\"%s\","
@@ -9565,6 +9685,11 @@ static int runCoeffGen(const char *buf, const char *outPath) {
            totalSteps, dataBytes, elapsed_us,
            hasParamProgram > 0 ? paramProgram.token_count : 0,
            hasCoeffProgram > 0 ? coeffProgram.token_count : 0);
+    if (fusedSolver != FUSED_SOLVER_NONE) {
+        printf(",\"fused_solver\":\"%s\",\"solve_skipped\":%ld,\"roots_bytes\":%ld",
+               fusedSolverName(fusedSolver), fusedSkipped,
+               totalSteps * degree * 2 * (long)sizeof(float));
+    }
     coeffPrintTelemetryFields(stdout, hasCoeffProgram > 0 ? &coeffProgram : NULL);
     printf("}\n");
     return 0;
@@ -10777,6 +10902,12 @@ typedef struct {
      * The error string stays mutex-guarded; final readers run after join. */
     atomic_int failed;
     char error[256];
+    /* Fused JT64/CM64: solve rows in-process from the f64 coefficients,
+     * writing f32 root rows to rootsFd (per-worker solver state). */
+    int fusedSolver;
+    int rootsFd;
+    long rootRowBytes;
+    atomic_long fusedSkipped;
 } CoeffGenThreadCtx;
 
 typedef struct {
@@ -10863,6 +10994,24 @@ static void *coeffGenWorkerMain(void *vp) {
         coeffGenSetThreadError(ctx, "coeffgen threaded block buffer alloc failed");
         return NULL;
     }
+    float *rootBlock = NULL;
+    JtState *fusedJt = NULL;
+    CompanionWorkspace fusedCws;
+    memset(&fusedCws, 0, sizeof(fusedCws));
+    double fusedRootRe[MAX_DEGREE], fusedRootIm[MAX_DEGREE];
+    if (ctx->fusedSolver != FUSED_SOLVER_NONE) {
+        rootBlock = (float *)malloc((size_t)COEFFGEN_IO_BLOCK_ROWS * (size_t)ctx->rootRowBytes);
+        if (ctx->fusedSolver == FUSED_SOLVER_JT64)
+            fusedJt = malloc(sizeof(JtState));
+        if (!rootBlock || (ctx->fusedSolver == FUSED_SOLVER_JT64 && !fusedJt)) {
+            free(paramBlock);
+            free(outBlock);
+            free(rootBlock);
+            free(fusedJt);
+            coeffGenSetThreadError(ctx, "fused solver worker alloc failed");
+            return NULL;
+        }
+    }
     CoeffProgramWorkspace *coeffWs = NULL;
     if (ctx->hasCoeffProgram) {
         coeffWs = coeff_program_workspace_new();
@@ -10936,6 +11085,14 @@ static void *coeffGenWorkerMain(void *vp) {
                 rowOut[k * 2]     = (float)cRe[k];
                 rowOut[k * 2 + 1] = (float)cIm[k];
             }
+
+            if (ctx->fusedSolver != FUSED_SOLVER_NONE) {
+                float *rootRow = rootBlock + r * (ctx->rootRowBytes / (long)sizeof(float));
+                if (fusedSolveRow(ctx->fusedSolver, fusedJt, &fusedCws,
+                                  cRe, cIm, ctx->nCoeffsOut,
+                                  fusedRootRe, fusedRootIm, rootRow))
+                    atomic_fetch_add_explicit(&ctx->fusedSkipped, 1, memory_order_relaxed);
+            }
         }
         if (atomic_load_explicit(&ctx->failed, memory_order_relaxed)) break;
 
@@ -10947,11 +11104,24 @@ static void *coeffGenWorkerMain(void *vp) {
             coeffGenSetThreadError(ctx, msg);
             break;
         }
+        if (ctx->fusedSolver != FUSED_SOLVER_NONE) {
+            off_t rootsOff = (off_t)(blockLo * ctx->rootRowBytes);
+            if (coeffGenWriteBlock(ctx->rootsFd, rootBlock,
+                                   (size_t)nRows * (size_t)ctx->rootRowBytes, rootsOff) != 0) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Short roots write at step %ld", ctx->globalStepStart + blockLo);
+                coeffGenSetThreadError(ctx, msg);
+                break;
+            }
+        }
     }
 
     free(paramBlock);
     free(outBlock);
     free(coeffWs);
+    free(rootBlock);
+    free(fusedJt);
+    if (ctx->fusedSolver == FUSED_SOLVER_CM64) companion_ws_release(&fusedCws);
     return NULL;
 }
 
@@ -11094,6 +11264,37 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         return 1;
     }
 
+    /* Fused JT64/CM64: an extra f32 root-row output beside the coeff file */
+    int fusedSolver = FUSED_SOLVER_NONE;
+    if (parseFusedSolver(buf, &fusedSolver) != 0) {
+        close(paramsFd);
+        close(outFd);
+        return 1;
+    }
+    int rootsFd = -1;
+    long rootRowBytes = (long)degree * 2 * (long)sizeof(float);
+    long fusedSkippedTotal = 0;
+    if (fusedSolver != FUSED_SOLVER_NONE) {
+        char rootsFile[256] = "";
+        const char *rp = findKey(buf, "roots_file");
+        if (rp) parseString(rp, rootsFile, sizeof(rootsFile));
+        if (!rootsFile[0]) {
+            fprintf(stderr, "fused_solver requires roots_file\n");
+            close(paramsFd);
+            close(outFd);
+            return 1;
+        }
+        rootsFd = open(rootsFile, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+        if (rootsFd < 0 ||
+            ftruncate(rootsFd, (off_t)(stepCount * rootRowBytes)) != 0) {
+            fprintf(stderr, "Cannot open/size %s\n", rootsFile);
+            if (rootsFd >= 0) close(rootsFd);
+            close(paramsFd);
+            close(outFd);
+            return 1;
+        }
+    }
+
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     int rc = 0;
@@ -11119,6 +11320,9 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         ctx.hasCoeffProgram = hasCoeffProgram > 0;
         ctx.cfpv = cfpv;
         ctx.n_cfpv = n_cfpv;
+        ctx.fusedSolver = fusedSolver;
+        ctx.rootsFd = rootsFd;
+        ctx.rootRowBytes = rootRowBytes;
         pthread_mutex_init(&ctx.mutex, NULL);
         CoeffGenWorkerArg arg;
         arg.ctx = &ctx;
@@ -11129,6 +11333,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
             fprintf(stderr, "%s\n", ctx.error[0] ? ctx.error : "coeffgen failure");
             rc = 1;
         }
+        fusedSkippedTotal = atomic_load(&ctx.fusedSkipped);
         pthread_mutex_destroy(&ctx.mutex);
     } else {
         CoeffGenThreadCtx ctx;
@@ -11148,6 +11353,9 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         ctx.hasCoeffProgram = hasCoeffProgram > 0;
         ctx.cfpv = cfpv;
         ctx.n_cfpv = n_cfpv;
+        ctx.fusedSolver = fusedSolver;
+        ctx.rootsFd = rootsFd;
+        ctx.rootRowBytes = rootRowBytes;
         pthread_mutex_init(&ctx.mutex, NULL);
 
         pthread_t *threads = (pthread_t *)calloc((size_t)threadsUsed, sizeof(pthread_t));
@@ -11184,6 +11392,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
             fprintf(stderr, "%s\n", ctx.error[0] ? ctx.error : "coeffgen threaded failure");
             rc = 1;
         }
+        fusedSkippedTotal = atomic_load(&ctx.fusedSkipped);
         free(threads);
         free(args);
         pthread_mutex_destroy(&ctx.mutex);
@@ -11194,6 +11403,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
                       (t1.tv_nsec - t0.tv_nsec) / 1000L;
     close(paramsFd);
     close(outFd);
+    if (rootsFd >= 0) close(rootsFd);
     if (rc != 0) return rc;
 
     long dataBytes = stepCount * nCoeffsOut * 2 * (long)sizeof(float);
@@ -11206,6 +11416,11 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
            stepStart, stepCount,
            stepCount, dataBytes, threadsUsed, elapsed_us,
            hasCoeffProgram > 0 ? coeffProgram.token_count : 0);
+    if (fusedSolver != FUSED_SOLVER_NONE) {
+        printf(",\"fused_solver\":\"%s\",\"solve_skipped\":%ld,\"roots_bytes\":%ld",
+               fusedSolverName(fusedSolver), fusedSkippedTotal,
+               stepCount * rootRowBytes);
+    }
     coeffPrintTelemetryFields(stdout, hasCoeffProgram > 0 ? &coeffProgram : NULL);
     printf("}\n");
 #ifdef PP_VM_PERF

@@ -475,4 +475,40 @@ static inline int solve_jt_coeffs(JtState *st,
     return nCoeffs - 1;
 }
 
+/* Full-width twin of solve_jt_coeffs for the fused JT64 pipeline: the
+ * same contract with f64 outputs, so the finished double-precision
+ * roots reach the caller without the f32 exit cast (the 5.3e-8 floor
+ * of the float interface). The float entry point above stays untouched
+ * so every existing paint path remains byte-identical; twin drift is
+ * pinned by tests/test_fused_solvers_jt64_cm64.py. */
+static inline int solve_jt_coeffs_f64(JtState *st,
+                                      const double *cfRe, const double *cfIm, int nCoeffs,
+                                      double *out_re, double *out_im) {
+    int first = 0;
+    while (first < nCoeffs - 1 && cfRe[first] == 0.0 && cfIm[first] == 0.0)
+        first++;
+    int degree = nCoeffs - 1 - first;
+    for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0.0; out_im[k] = 0.0; }
+    if (degree <= 0 || degree + 1 > JT_MAX_NN)
+        return nCoeffs - 1;
+    for (int k = first; k < nCoeffs; k++) {
+        if (!isfinite(cfRe[k]) || !isfinite(cfIm[k]))
+            return -(nCoeffs - 1);
+    }
+
+    double zr[JT_MAX_NN], zi[JT_MAX_NN];
+    memset(zr, 0, sizeof(zr));
+    memset(zi, 0, sizeof(zi));
+    int fail = jt_polyroot(st, cfRe + first, cfIm + first, degree, zr, zi);
+    if (fail)
+        return -(nCoeffs - 1);
+    for (int k = 0; k < degree; k++) {
+        double re = zr[k], im = zi[k];
+        if (!isfinite(re) || !isfinite(im)) { re = 0.0; im = 0.0; }
+        out_re[k] = re;
+        out_im[k] = im;
+    }
+    return nCoeffs - 1;
+}
+
 #endif

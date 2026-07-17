@@ -78,6 +78,8 @@ def _solver_tag(solver_mode):
         "companion_matrix": "CM",
         "jenkins_traub": "JT",
         "newton": "NEWT",
+        "jt64": "JT64",
+        "cm64": "CM64",
     }.get(solver_mode, "AE-MT")
 
 
@@ -538,7 +540,7 @@ def handler(event, context):
         except ValueError as e:
             return _json_response(400, {"message": str(e)})
         solver_mode = str(params.get("solver_mode") or "aberth_mt").strip() or "aberth_mt"
-        if solver_mode not in {"aberth_mt", "companion_matrix", "jenkins_traub", "newton"}:
+        if solver_mode not in {"aberth_mt", "companion_matrix", "jenkins_traub", "newton", "jt64", "cm64"}:
             return _json_response(400, {"message": f"unsupported preview solver_mode: {solver_mode}"})
         try:
             solver_iters = int(params.get("solver_iters") or 0)
@@ -625,6 +627,12 @@ def handler(event, context):
             coeff_spec["coeff_program"] = coeff_program
         if cfpv:
             coeff_spec["cfpv"] = cfpv
+        if solver_mode in ("jt64", "cm64"):
+            # fused JT64/CM64: solve each row in-process from the f64
+            # coefficients during coeffgen (the AE sweep's pipeline
+            # shape) — the separate solve stage below is skipped
+            coeff_spec["fused_solver"] = solver_mode
+            coeff_spec["roots_file"] = TMP_ROOTS
         coeff_meta = _run_json_binary(SWEEP_COEFFGEN, TMP_COEFFS, coeff_spec, phase="coeffgen", timeout_s=25)
         coeffgen_ms = int((time.time() - t0) * 1000)
 
@@ -637,7 +645,10 @@ def handler(event, context):
         degree = int(coeff_meta["degree"])
         _exact_tmp_capacity(coeffs_size, degree, n_steps)
 
-        if solver_mode in ("companion_matrix", "jenkins_traub", "newton"):
+        if solver_mode in ("jt64", "cm64"):
+            solve_binary = None
+            solve_spec = None
+        elif solver_mode in ("companion_matrix", "jenkins_traub", "newton"):
             solve_binary = SWEEP_CM
             solve_spec = {
                 "mode": {
@@ -671,9 +682,26 @@ def handler(event, context):
                 # converged state
                 solve_spec["max_iter"] = solver_iters
 
-        t0 = time.time()
-        solve_meta = _run_json_binary(solve_binary, TMP_ROOTS, solve_spec, phase="solve", timeout_s=25)
-        solve_ms = int((time.time() - t0) * 1000)
+        if solve_binary is None:
+            # fused JT64/CM64 already wrote TMP_ROOTS inside coeffgen;
+            # coeffgen_ms carries the combined stage
+            expected_roots = n_steps * degree * 2 * 4
+            actual_roots = os.path.getsize(TMP_ROOTS)
+            if actual_roots != expected_roots:
+                raise RuntimeError(
+                    f"fused solve size mismatch: expected {expected_roots}, got {actual_roots} ({ctx})"
+                )
+            solve_meta = {
+                "mode": f"fused_{solver_mode}",
+                "n_t": n_steps,
+                "degree": degree,
+                "skipped_overflow": int(coeff_meta.get("solve_skipped", 0) or 0),
+            }
+            solve_ms = 0
+        else:
+            t0 = time.time()
+            solve_meta = _run_json_binary(solve_binary, TMP_ROOTS, solve_spec, phase="solve", timeout_s=25)
+            solve_ms = int((time.time() - t0) * 1000)
 
         t0 = time.time()
         with open(TMP_ROOTS, "rb") as fh:

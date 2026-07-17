@@ -1775,6 +1775,8 @@ button {
                                 <option value="companion_matrix">CM</option>
                                 <option value="jenkins_traub">JT</option>
                                 <option value="newton">Newton</option>
+                                <option value="jt64">JT64</option>
+                                <option value="cm64">CM64</option>
                             </select>
                             <input type="number" id="compute-preview-iters" value="0" min="0" max="64" step="1" style="width:4em" title="Iteration cap: AE-MT 0 = full 64; NEWT caps per-root Newton steps (1-50). Ignored by CM/JT." onchange="_markComputePreviewStale()">
                         </div>
@@ -1825,6 +1827,8 @@ button {
                 <button class="btn-primary" id="btn-calculate-cm" onclick="runCalculateCM()" style="background:#64a">Calculate-CM</button>
                 <button class="btn-primary" id="btn-calculate-jt" onclick="runCalculateJT()" style="background:#a46">Calculate-JT</button>
                 <button class="btn-primary" id="btn-calculate-newton" onclick="runCalculateNewton()" style="background:#886">Calculate-NEWT</button>
+                <button class="btn-primary" id="btn-calculate-jt64" onclick="runCalculateJT64()" style="background:#a67" title="Jenkins-Traub, fused: solves the f64 coefficients in-process during coeffgen (no f32 file before the solver)">Calculate-JT64</button>
+                <button class="btn-primary" id="btn-calculate-cm64" onclick="runCalculateCM64()" style="background:#66b" title="Companion-matrix, fused: solves the f64 coefficients in-process during coeffgen (no f32 file before the solver)">Calculate-CM64</button>
                 <button class="btn-primary" id="btn-param-debug" onclick="runParamDebug()" style="background:#446" title="Preview-scale parameter image. Uses Compute Preview N/Pix, not full Calculate N.">Param</button>
                 <select id="param-debug-mode" style="width:7em; font-size:11px">
                     <option value="together">together</option>

@@ -688,9 +688,9 @@ def _finalize_results_task_prefix(plan, params):
 
 def _validate_solver_mode(value):
     solver_mode = str(value or "aberth_mt").strip().lower()
-    if solver_mode not in ("aberth_mt", "companion_matrix", "jenkins_traub", "newton"):
+    if solver_mode not in ("aberth_mt", "companion_matrix", "jenkins_traub", "newton", "jt64", "cm64"):
         raise RuntimeError(
-            f"solver_mode must be one of aberth_mt, companion_matrix, jenkins_traub, newton; got {value!r}"
+            f"solver_mode must be one of aberth_mt, companion_matrix, jenkins_traub, newton, jt64, cm64; got {value!r}"
         )
     return solver_mode
 
@@ -731,12 +731,16 @@ def _solver_function_name(solver_mode):
 
 
 def _solver_bin_mode(solver_mode):
-    """The native binary's mode string for a given API solver_mode."""
+    """The native binary's mode string for a given API solver_mode.
+    jt64/cm64 have no separate solve invocation — they run fused inside
+    the coeffgen pass (coeffgen_chunked with fused_solver set)."""
     return {
         "aberth_mt": "solve_mt",
         "companion_matrix": "solve_cm",
         "jenkins_traub": "solve_jt",
         "newton": "solve_newton",
+        "jt64": "fused_jt64",
+        "cm64": "fused_cm64",
     }[solver_mode]
 
 

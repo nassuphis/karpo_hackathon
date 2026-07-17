@@ -207,6 +207,98 @@ static inline int solve_companion_coeffs(const double *cfRe, const double *cfIm,
                                      out_re, out_im, strip_exact);
 }
 
+/* Full-width twin of solve_companion_coeffs_ws for the fused CM64
+ * pipeline: identical contract with f64 outputs, so the zgeev
+ * eigenvalues reach the caller without the f32 exit cast. The float
+ * entry points above stay untouched so every existing paint path
+ * remains byte-identical; twin drift is pinned by
+ * tests/test_fused_solvers_jt64_cm64.py. */
+static inline int solve_companion_coeffs_ws_f64(CompanionWorkspace *ws,
+                                                const double *cfRe, const double *cfIm, int nCoeffs,
+                                                double *out_re, double *out_im, int strip_exact) {
+    int first = 0;
+    double maxMag = 0.0;
+    for (int k = 0; k < nCoeffs; k++) {
+        double m = cfRe[k] * cfRe[k] + cfIm[k] * cfIm[k];
+        if (m > maxMag) maxMag = m;
+    }
+    if (maxMag < 1e-60) {
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0.0; out_im[k] = 0.0; }
+        return nCoeffs - 1;
+    }
+
+    double thr = strip_exact ? 0.0 : maxMag * 1e-15;
+    while (first < nCoeffs - 1 &&
+           (strip_exact
+                ? (cfRe[first] == 0.0 && cfIm[first] == 0.0)
+                : (cfRe[first] * cfRe[first] + cfIm[first] * cfIm[first]) < thr)) {
+        first++;
+    }
+
+    int degree = nCoeffs - 1 - first;
+    if (degree <= 0) {
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0.0; out_im[k] = 0.0; }
+        return nCoeffs - 1;
+    }
+
+    if (degree == 1) {
+        double _Complex a = cfRe[first] + I * cfIm[first];
+        double _Complex b = cfRe[first + 1] + I * cfIm[first + 1];
+        double _Complex root = -b / a;
+        out_re[0] = creal(root);
+        out_im[0] = cimag(root);
+        for (int k = 1; k < nCoeffs - 1; k++) { out_re[k] = 0.0; out_im[k] = 0.0; }
+        return nCoeffs - 1;
+    }
+
+    int n = degree;
+    if (companion_ws_ensure(ws, n) != 0) {
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0.0; out_im[k] = 0.0; }
+        return nCoeffs - 1;
+    }
+    double _Complex *A = ws->A;
+    memset(A, 0, (size_t)n * (size_t)n * sizeof(double _Complex));
+
+    double _Complex lead = cfRe[first] + I * cfIm[first];
+    if (!isfinite(cabs(lead))) {
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0.0; out_im[k] = 0.0; }
+        return -(nCoeffs - 1);
+    }
+
+    for (int j = 0; j < n; j++) {
+        double _Complex bj = cfRe[first + 1 + j] + I * cfIm[first + 1 + j];
+        A[j * n + 0] = -bj / lead;
+        if (!isfinite(creal(A[j * n + 0])) || !isfinite(cimag(A[j * n + 0]))) {
+            for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0.0; out_im[k] = 0.0; }
+            return -(nCoeffs - 1);
+        }
+    }
+    for (int k = 1; k < n; k++) {
+        A[(k - 1) * n + k] = 1.0;
+    }
+
+    int info = 0;
+    int ln = n, ldvl = 1, ldvr = 1;
+    int lwork = ws->lwork_n;
+    char jobvl = 'N', jobvr = 'N';
+    zgeev_(&jobvl, &jobvr, &ln, A, &ln, ws->W, NULL, &ldvl, NULL, &ldvr,
+           ws->work, &lwork, ws->rwork, &info);
+    if (info != 0) {
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0.0; out_im[k] = 0.0; }
+        return nCoeffs - 1;
+    }
+
+    for (int k = 0; k < n; k++) {
+        double re = creal(ws->W[k]), im = cimag(ws->W[k]);
+        if (!isfinite(re) || !isfinite(im)) { re = 0.0; im = 0.0; }
+        out_re[k] = re;
+        out_im[k] = im;
+    }
+    for (int k = n; k < nCoeffs - 1; k++) { out_re[k] = 0.0; out_im[k] = 0.0; }
+
+    return nCoeffs - 1;
+}
+
 #else
 
 static inline int companion_solver_available(void) {
@@ -234,6 +326,17 @@ static inline int solve_companion_coeffs(const double *cfRe, const double *cfIm,
     (void)cfIm;
     (void)strip_exact;
     for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0.0f; out_im[k] = 0.0f; }
+    return 0;
+}
+
+static inline int solve_companion_coeffs_ws_f64(CompanionWorkspace *ws,
+                                                const double *cfRe, const double *cfIm, int nCoeffs,
+                                                double *out_re, double *out_im, int strip_exact) {
+    (void)ws;
+    (void)cfRe;
+    (void)cfIm;
+    (void)strip_exact;
+    for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0.0; out_im[k] = 0.0; }
     return 0;
 }
 

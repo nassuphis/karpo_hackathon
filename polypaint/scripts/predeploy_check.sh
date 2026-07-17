@@ -121,6 +121,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_giga_2897_coeff_program.py \
     tests/test_giga_2898_family_coeff_programs.py \
     tests/test_giga_cf10p450_coeff_program.py \
+    tests/test_fused_solvers_jt64_cm64.py \
     tests/test_camera_programs.py \
     tests/test_sweep_cm_threads.py \
     tests/test_solver_brushes.py \

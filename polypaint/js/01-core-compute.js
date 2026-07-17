@@ -1392,6 +1392,8 @@ function _solverShortLabel(solver) {
         : solver === 'aberth' ? 'AE'
         : solver === 'jenkins_traub' ? 'JT'
         : solver === 'newton' ? 'NEWT'
+        : solver === 'jt64' ? 'JT64'
+        : solver === 'cm64' ? 'CM64'
         : solver || '-';
 }
 
@@ -1399,6 +1401,8 @@ function _normalizeComputeSolverMode(solver) {
     return solver === 'companion_matrix' ? 'companion_matrix'
         : solver === 'jenkins_traub' ? 'jenkins_traub'
         : solver === 'newton' ? 'newton'
+        : solver === 'jt64' ? 'jt64'
+        : solver === 'cm64' ? 'cm64'
         : 'aberth_mt';
 }
 
@@ -1406,6 +1410,8 @@ function _solverRunLabel(solver) {
     return solver === 'companion_matrix' ? 'Calculate-CM'
         : solver === 'jenkins_traub' ? 'Calculate-JT'
         : solver === 'newton' ? 'Calculate-NEWT'
+        : solver === 'jt64' ? 'Calculate-JT64'
+        : solver === 'cm64' ? 'Calculate-CM64'
         : 'Calculate-AE-MT';
 }
 
@@ -1413,6 +1419,8 @@ function _solverButtonId(solver) {
     return solver === 'companion_matrix' ? 'btn-calculate-cm'
         : solver === 'jenkins_traub' ? 'btn-calculate-jt'
         : solver === 'newton' ? 'btn-calculate-newton'
+        : solver === 'jt64' ? 'btn-calculate-jt64'
+        : solver === 'cm64' ? 'btn-calculate-cm64'
         : 'btn-calculate-mt';
 }
 
@@ -1420,6 +1428,8 @@ function _solverTag(solver) {
     return solver === 'companion_matrix' ? 'CM'
         : solver === 'jenkins_traub' ? 'JT'
         : solver === 'newton' ? 'NEWT'
+        : solver === 'jt64' ? 'JT64'
+        : solver === 'cm64' ? 'CM64'
         : 'AE-MT';
 }
 
@@ -1446,10 +1456,12 @@ function _computePopupPrefsForSolver(solverMode) {
 }
 
 function _solverHasThreadedFusedSolve(solverMode) {
-    // all four brushes thread their fused solve since the CM threading wave
-    // (sweep_cm row loop partitions byte-identically; JT/Newton share it)
+    // all brushes thread their fused solve: the sweep_cm row loop
+    // partitions byte-identically (CM threading wave), and jt64/cm64
+    // solve inside the coeffgen worker threads themselves
     return solverMode === 'aberth_mt' || solverMode === 'companion_matrix'
-        || solverMode === 'jenkins_traub' || solverMode === 'newton';
+        || solverMode === 'jenkins_traub' || solverMode === 'newton'
+        || solverMode === 'jt64' || solverMode === 'cm64';
 }
 
 function _computePopupSharedThreadsLabel(solverMode) {

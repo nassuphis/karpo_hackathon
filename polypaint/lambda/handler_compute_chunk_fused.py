@@ -16,6 +16,10 @@ s3 = boto3.client("s3")
 SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
 SWEEP_MT = os.path.join(os.path.dirname(__file__), "sweep_mt")
 SWEEP_CM = os.path.join(os.path.dirname(__file__), "sweep_cm")
+
+# JT64/CM64: solve fused inside the coeffgen pass (f64 coefficients
+# straight into the f64 solver core), the AE sweep's pipeline shape
+FUSED_64_MODES = {"jt64", "cm64"}
 STAGE_META_PREFIX = "pp"
 
 
@@ -58,9 +62,9 @@ def handle_fused_chunk(params):
     degree = _require_int(params, "degree", minimum=1)
     fused_threads = _require_int(params, "fused_threads", minimum=1) if "fused_threads" in params else 4
     solver_mode = str(params.get("solver_mode") or "aberth_mt").strip().lower() or "aberth_mt"
-    if solver_mode not in {"aberth_mt", "companion_matrix", "jenkins_traub", "newton"}:
+    if solver_mode not in {"aberth_mt", "companion_matrix", "jenkins_traub", "newton", "jt64", "cm64"}:
         raise RuntimeError(
-            f"fused compute solver_mode must be one of aberth_mt, companion_matrix, jenkins_traub, newton; got {solver_mode!r}"
+            f"fused compute solver_mode must be one of aberth_mt, companion_matrix, jenkins_traub, newton, jt64, cm64; got {solver_mode!r}"
         )
     solver_iters = int(params.get("solver_iters") or 0)
     if solver_iters < 0 or solver_iters > 64:
@@ -163,7 +167,10 @@ def handle_fused_chunk(params):
                 f"fused param_gen size mismatch for chunk {chunk_idx}: expected {params_expected}, got {params_size}"
             )
 
-        if _s3_size_matches(
+        # JT64/CM64 solve inside the coeffgen pass itself, so the reuse
+        # shortcut (skip coeffgen when the coeffs chunk already exists)
+        # would silently skip the solve — fused modes always recompute.
+        if solver_mode not in FUSED_64_MODES and _s3_size_matches(
             coeffs_key,
             coeffs_expected,
             expected_metadata=_stage_metadata(
@@ -197,6 +204,8 @@ def handle_fused_chunk(params):
                 source_step_start=step_start,
                 step_count=step_count,
                 fused_threads=fused_threads,
+                fused_solver=solver_mode if solver_mode in FUSED_64_MODES else None,
+                roots_file=roots_path if solver_mode in FUSED_64_MODES else None,
             )
             coeffgen_us = int((time.time() - coeff_t0) * 1e6)
             coeffs_upload_future = pre_uploads.submit(
@@ -226,39 +235,63 @@ def handle_fused_chunk(params):
         # durable watermarks in the progress sidecar — so after solve only
         # the tail parts and the multipart complete remain on the critical
         # path. Any streaming failure falls back to the plain serial upload.
-        streamer = RootsStreamUploader(
-            s3, BUCKET, bin_key, roots_path, progress_path, roots_expected)
-        streamer.start()
-        solve_t0 = time.time()
-        try:
-            solve_meta = _run_solve_local(
-                output_path=roots_path,
-                coeffs_path=coeffs_path,
-                solver_mode=solver_mode,
-                n_coeffs=n_coeffs,
-                n_steps=step_count,
-                fused_threads=fused_threads,
-                solver_iters=solver_iters,
-                progress_path=progress_path if solver_mode == "aberth_mt" else None,
-            )
-            solve_us = int((time.time() - solve_t0) * 1e6)
-
+        if solver_mode in FUSED_64_MODES:
+            # JT64/CM64 already solved inside the coeffgen pass (f64
+            # coefficients straight into the f64 solver core — no file,
+            # no cast before the root output). The roots file exists;
+            # only its upload remains. No streamer: the fused pass
+            # publishes no flush watermarks.
+            solve_us = 0
+            solve_meta = {
+                "n_t": step_count,
+                "degree": degree,
+                "elapsed_us": 0,
+                "skipped_overflow": int(coeff_meta.get("solve_skipped", 0) or 0),
+            }
             roots_size = os.path.getsize(roots_path)
             if roots_size != roots_expected:
                 raise RuntimeError(
                     f"fused solve size mismatch for chunk {chunk_idx}: expected {roots_expected}, got {roots_size}"
                 )
-        except BaseException:
-            streamer.abort()
-            raise
-        tail_t0 = time.time()
-        stream_ok = streamer.finish()
-        upload_roots_us = None
-        if not stream_ok:
+            tail_t0 = time.time()
             put_t0 = time.time()
             _upload_file(roots_path, bin_key)
             upload_roots_us = int((time.time() - put_t0) * 1e6)
-        upload_roots_tail_us = int((time.time() - tail_t0) * 1e6)
+            upload_roots_tail_us = int((time.time() - tail_t0) * 1e6)
+        else:
+            streamer = RootsStreamUploader(
+                s3, BUCKET, bin_key, roots_path, progress_path, roots_expected)
+            streamer.start()
+            solve_t0 = time.time()
+            try:
+                solve_meta = _run_solve_local(
+                    output_path=roots_path,
+                    coeffs_path=coeffs_path,
+                    solver_mode=solver_mode,
+                    n_coeffs=n_coeffs,
+                    n_steps=step_count,
+                    fused_threads=fused_threads,
+                    solver_iters=solver_iters,
+                    progress_path=progress_path if solver_mode == "aberth_mt" else None,
+                )
+                solve_us = int((time.time() - solve_t0) * 1e6)
+
+                roots_size = os.path.getsize(roots_path)
+                if roots_size != roots_expected:
+                    raise RuntimeError(
+                        f"fused solve size mismatch for chunk {chunk_idx}: expected {roots_expected}, got {roots_size}"
+                    )
+            except BaseException:
+                streamer.abort()
+                raise
+            tail_t0 = time.time()
+            stream_ok = streamer.finish()
+            upload_roots_us = None
+            if not stream_ok:
+                put_t0 = time.time()
+                _upload_file(roots_path, bin_key)
+                upload_roots_us = int((time.time() - put_t0) * 1e6)
+            upload_roots_tail_us = int((time.time() - tail_t0) * 1e6)
 
         # Join the pre-solve uploads: their failures surface HERE, before the
         # task can report success. The wait is the only critical-path cost
@@ -405,7 +438,7 @@ def _run_param_gen_local(*, output_path, n, times, step_start, step_count, param
     return meta
 
 
-def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, params_path, n, source_step_start, step_count, fused_threads, coeff_program=None):
+def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, params_path, n, source_step_start, step_count, fused_threads, coeff_program=None, fused_solver=None, roots_file=None):
     spec = {
         "mode": "coeffgen_chunked",
         "function": function_name,
@@ -422,6 +455,12 @@ def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, p
         spec["coeff_program"] = coeff_program
     if cfpv:
         spec["cfpv"] = list(cfpv)
+    if fused_solver:
+        # JT64/CM64: solve in-process from the f64 coefficients and
+        # write f32 root rows beside the coeff file (same shape as the
+        # AE sweep — no coefficient file feeds the solver)
+        spec["fused_solver"] = str(fused_solver)
+        spec["roots_file"] = str(roots_file)
     t0 = time.time()
     result = subprocess.run(
         [SWEEP_COEFFGEN, output_path],

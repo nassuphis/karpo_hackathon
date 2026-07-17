@@ -1,717 +1,1004 @@
 {
-  "Comment": "PolyPaint compute workflow — param_gen, coeffgen fan-out, lores solve, hires solve, calc.json save. Wrapped in Parallel to catch States.Runtime from parameter resolution errors.",
+  "Comment": "PolyPaint compute workflow \u2014 param_gen, coeffgen fan-out, lores solve, hires solve, calc.json save. Wrapped in Parallel to catch States.Runtime from parameter resolution errors.",
   "StartAt": "WorkflowWrapper",
   "States": {
-
     "WorkflowWrapper": {
       "Type": "Parallel",
-      "Branches": [{
-        "StartAt": "PlanPhase",
-        "States": {
-
-          "PlanPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
+      "Branches": [
+        {
+          "StartAt": "PlanPhase",
+          "States": {
+            "PlanPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.params.solver_mode",
+                  "phase": "plan",
+                  "phase_label": "Plan",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "RouteExecutionMethod"
+            },
+            "RouteExecutionMethod": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.params.execution_method",
+                  "StringEquals": "fused_chunk_pipeline",
+                  "Next": "DegreeProbePhase"
+                }
+              ],
+              "Default": "BuildPlan"
+            },
+            "BuildPlan": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${PlanFunctionArn}",
+                "Payload.$": "$"
+              },
+              "ResultSelector": {
+                "plan.$": "$.Payload.body"
+              },
+              "ResultPath": "$.plan_raw",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ParsePlan"
+            },
+            "ParsePlan": {
+              "Type": "Pass",
+              "Parameters": {
                 "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
                 "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "solver_mode.$": "$.params.solver_mode",
-                "phase": "plan",
-                "phase_label": "Plan"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "RouteExecutionMethod"
-          },
-
-          "RouteExecutionMethod": {
-            "Type": "Choice",
-            "Choices": [{
-              "Variable": "$.params.execution_method",
-              "StringEquals": "fused_chunk_pipeline",
-              "Next": "DegreeProbePhase"
-            }],
-            "Default": "BuildPlan"
-          },
-
-          "BuildPlan": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${PlanFunctionArn}",
-              "Payload.$": "$"
-            },
-            "ResultSelector": {
-              "plan.$": "$.Payload.body"
-            },
-            "ResultPath": "$.plan_raw",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ParsePlan"
-          },
-
-          "ParsePlan": {
-            "Type": "Pass",
-            "Parameters": {
-              "job_id.$": "$.job_id",
-              "run_id.$": "$.run_id",
-              "run_started_at_ms.$": "$.run_started_at_ms",
-              "task_id.$": "$.task_id",
-              "mode.$": "$.mode",
-              "params.$": "$.params",
-              "plan.$": "States.StringToJson($.plan_raw.plan)"
-            },
-            "Next": "ParamGenPhase"
-          },
-
-          "DegreeProbePhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
                 "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
                 "mode.$": "$.mode",
-                "solver_mode.$": "$.params.solver_mode",
-                "phase": "degree_probe",
-                "phase_label": "Degree probe"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "DegreeProbeTask"
-          },
-
-          "DegreeProbeTask": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${CoeffgenFunctionArn}",
-              "Payload": {
-                "phase": "degree_probe",
-                "function.$": "$.params.function",
-                "param_program_chain.$": "$.params.param_program_chain",
-                "param_program_source_text.$": "$.params.param_program_source_text",
-                "coeff_program_chain.$": "$.params.coeff_program_chain",
-                "coeff_program_source_text.$": "$.params.coeff_program_source_text",
-                "cfpv.$": "$.params.cfpv",
-                "solver_mode.$": "$.params.solver_mode",
-                "N.$": "$.params.N",
-                "times.$": "$.params.times",
-                "n_chunks.$": "$.params.n_chunks",
-                "fused_threads.$": "$.params.fused_threads",
-                "execution_method": "fused_chunk_pipeline"
-              }
-            },
-            "ResultSelector": {
-              "body.$": "States.StringToJson($.Payload.body)"
-            },
-            "ResultPath": "$.degree_probe",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "BuildFusedPlan"
-          },
-
-          "BuildFusedPlan": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${PlanFunctionArn}",
-              "Payload": {
-                "action": "build_plan",
-                "job_id.$": "$.job_id",
-                "run_id.$": "$.run_id",
-                "task_id.$": "$.task_id",
                 "params.$": "$.params",
-                "probe.$": "$.degree_probe.body"
-              }
+                "plan.$": "States.StringToJson($.plan_raw.plan)"
+              },
+              "Next": "ParamGenPhase"
             },
-            "ResultSelector": {
-              "plan.$": "$.Payload.body"
-            },
-            "ResultPath": "$.fused_plan_raw",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ParseFusedPlan"
-          },
-
-          "ParseFusedPlan": {
-            "Type": "Pass",
-            "Parameters": {
-              "job_id.$": "$.job_id",
-              "run_id.$": "$.run_id",
-              "run_started_at_ms.$": "$.run_started_at_ms",
-              "task_id.$": "$.task_id",
-              "mode.$": "$.mode",
-              "params.$": "$.params",
-              "plan.$": "States.StringToJson($.fused_plan_raw.plan)"
-            },
-            "Next": "AttachFusedPost"
-          },
-
-          "AttachFusedPost": {
-            "Type": "Pass",
-            "Parameters": {
-              "job_id.$": "$.job_id",
-              "run_id.$": "$.run_id",
-              "run_started_at_ms.$": "$.run_started_at_ms",
-              "task_id.$": "$.task_id",
-              "mode.$": "$.mode",
-              "params.$": "$.params",
-              "plan.$": "$.plan",
-              "post.$": "$.plan.post_seed"
-            },
-            "Next": "LoresParamGenPhase"
-          },
-
-          "ParamGenPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "solver_mode.$": "$.plan.solve.mode",
-                "phase": "param_gen",
-                "phase_label": "Param gen",
-                "expected.$": "$.plan.compute.n_chunks",
-                "subtask_prefix.$": "$.plan.param_gen.task_prefix"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ParamGenMap"
-          },
-
-          "ParamGenMap": {
-            "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
-            "MaxConcurrency": 50,
-            "ItemSelector": {
-              "phase": "param_gen",
-              "job_id.$": "$.job_id",
-              "N.$": "$.plan.compute.N",
-              "times.$": "$.plan.compute.times",
-              "param_program.$": "$.plan.pipeline.param_program",
-              "n_threads.$": "$.plan.compute.param_gen_threads",
-              "task_id.$": "$$.Map.Item.Value.paramgen_task_id",
-              "params_key.$": "$$.Map.Item.Value.params_key",
-              "step_start.$": "$$.Map.Item.Value.step_start",
-              "step_count.$": "$$.Map.Item.Value.step_count"
-            },
-            "ItemProcessor": {
-              "ProcessorConfig": {"Mode": "INLINE"},
-              "StartAt": "ParamGenWorker",
-              "States": {
-                "ParamGenWorker": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": { "FunctionName": "${CoeffgenFunctionArn}", "Payload.$": "$" },
-                  "ResultPath": null,
-                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-                  "End": true
+            "DegreeProbePhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.params.solver_mode",
+                  "phase": "degree_probe",
+                  "phase_label": "Degree probe",
+                  "execution_arn.$": "$$.Execution.Id"
                 }
-              }
-            },
-            "ResultPath": null,
-            "Next": "CoeffgenPhase"
-          },
-
-          "CoeffgenPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "solver_mode.$": "$.plan.solve.mode",
-                "phase": "coeffgen",
-                "phase_label": "Coeffgen",
-                "expected.$": "$.plan.compute.n_chunks",
-                "subtask_prefix.$": "$.plan.coeffgen.task_prefix"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "CoeffgenMap"
-          },
-
-          "CoeffgenMap": {
-            "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
-            "MaxConcurrency": 50,
-            "ItemSelector": {
-              "phase": "coeffgen_chunked",
-              "job_id.$": "$.job_id",
-              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
-              "task_id.$": "$$.Map.Item.Value.coeffgen_task_id",
-              "params_key.$": "$$.Map.Item.Value.params_key",
-              "params_step_start.$": "$$.Map.Item.Value.params_step_start",
-              "params_step_count.$": "$$.Map.Item.Value.params_step_count",
-              "step_start.$": "$$.Map.Item.Value.step_start",
-              "step_count.$": "$$.Map.Item.Value.step_count",
-              "N.$": "$.plan.compute.N",
-              "n_threads.$": "$.plan.compute.coeffgen_threads",
-              "function.$": "$.plan.pipeline.function",
-              "coeff_program.$": "$.plan.pipeline.coeff_program",
-              "cfpv.$": "$.plan.pipeline.cfpv",
-              "s3_key.$": "$$.Map.Item.Value.coeffs_key"
-            },
-            "ItemProcessor": {
-              "ProcessorConfig": {"Mode": "INLINE"},
-              "StartAt": "CoeffgenWorker",
-              "States": {
-                "CoeffgenWorker": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": { "FunctionName": "${CoeffgenFunctionArn}", "Payload.$": "$" },
-                  "ResultSelector": { "body.$": "States.StringToJson($.Payload.body)" },
-                  "OutputPath": "$.body",
-                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-                  "End": true
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
                 }
-              }
+              ],
+              "Next": "DegreeProbeTask"
             },
-            "ResultPath": null,
-            "Next": "PostCoeffgenPhase"
-          },
-
-          "PostCoeffgenPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
+            "DegreeProbeTask": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${CoeffgenFunctionArn}",
+                "Payload": {
+                  "phase": "degree_probe",
+                  "function.$": "$.params.function",
+                  "param_program_chain.$": "$.params.param_program_chain",
+                  "param_program_source_text.$": "$.params.param_program_source_text",
+                  "coeff_program_chain.$": "$.params.coeff_program_chain",
+                  "coeff_program_source_text.$": "$.params.coeff_program_source_text",
+                  "cfpv.$": "$.params.cfpv",
+                  "solver_mode.$": "$.params.solver_mode",
+                  "N.$": "$.params.N",
+                  "times.$": "$.params.times",
+                  "n_chunks.$": "$.params.n_chunks",
+                  "fused_threads.$": "$.params.fused_threads",
+                  "execution_method": "fused_chunk_pipeline"
+                }
+              },
+              "ResultSelector": {
+                "body.$": "States.StringToJson($.Payload.body)"
+              },
+              "ResultPath": "$.degree_probe",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "BuildFusedPlan"
+            },
+            "BuildFusedPlan": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${PlanFunctionArn}",
+                "Payload": {
+                  "action": "build_plan",
+                  "job_id.$": "$.job_id",
+                  "run_id.$": "$.run_id",
+                  "task_id.$": "$.task_id",
+                  "params.$": "$.params",
+                  "probe.$": "$.degree_probe.body"
+                }
+              },
+              "ResultSelector": {
+                "plan.$": "$.Payload.body"
+              },
+              "ResultPath": "$.fused_plan_raw",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ParseFusedPlan"
+            },
+            "ParseFusedPlan": {
+              "Type": "Pass",
+              "Parameters": {
                 "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
                 "run_started_at_ms.$": "$.run_started_at_ms",
+                "task_id.$": "$.task_id",
                 "mode.$": "$.mode",
-                "solver_mode.$": "$.plan.solve.mode",
-                "phase": "post_coeffgen",
-                "phase_label": "Post coeffgen"
-              }
+                "params.$": "$.params",
+                "plan.$": "States.StringToJson($.fused_plan_raw.plan)"
+              },
+              "Next": "AttachFusedPost"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "PostCoeffgen"
-          },
-
-          "PostCoeffgen": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${PlanFunctionArn}",
-              "Payload": {
-                "action": "post_coeffgen",
+            "AttachFusedPost": {
+              "Type": "Pass",
+              "Parameters": {
                 "job_id.$": "$.job_id",
+                "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
+                "task_id.$": "$.task_id",
+                "mode.$": "$.mode",
+                "params.$": "$.params",
                 "plan.$": "$.plan",
-                "task_prefix.$": "$.plan.coeffgen.task_prefix"
-              }
+                "post.$": "$.plan.post_seed"
+              },
+              "Next": "LoresParamGenPhase"
             },
-            "ResultSelector": {
-              "post.$": "$.Payload.body"
+            "ParamGenPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "phase": "param_gen",
+                  "phase_label": "Param gen",
+                  "expected.$": "$.plan.compute.n_chunks",
+                  "subtask_prefix.$": "$.plan.param_gen.task_prefix",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ParamGenMap"
             },
-            "ResultPath": "$.post_raw",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ParsePostCoeffgen"
-          },
-
-          "ParsePostCoeffgen": {
-            "Type": "Pass",
-            "Parameters": {
-              "job_id.$": "$.job_id",
-              "run_id.$": "$.run_id",
-              "run_started_at_ms.$": "$.run_started_at_ms",
-              "task_id.$": "$.task_id",
-              "mode.$": "$.mode",
-              "params.$": "$.params",
-              "plan.$": "$.plan",
-              "post.$": "States.StringToJson($.post_raw.post)"
-            },
-            "Next": "LoresParamGenPhase"
-          },
-
-          "LoresParamGenPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "solver_mode.$": "$.plan.solve.mode",
-                "phase": "lores_param_gen",
-                "phase_label": "Lores param gen",
-                "expected": 1,
-                "subtask_prefix.$": "$.post.lores.param_task_id"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "LoresParamGenTask"
-          },
-
-          "LoresParamGenTask": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${CoeffgenFunctionArn}",
-              "Payload": {
+            "ParamGenMap": {
+              "Type": "Map",
+              "ItemsPath": "$.plan.chunk_items",
+              "MaxConcurrency": 50,
+              "ItemSelector": {
                 "phase": "param_gen",
                 "job_id.$": "$.job_id",
-                "N.$": "$.post.lores.N",
-                "gridN.$": "$.plan.compute.N",
+                "N.$": "$.plan.compute.N",
                 "times.$": "$.plan.compute.times",
                 "param_program.$": "$.plan.pipeline.param_program",
-                "n_threads.$": "$.plan.compute.lores_param_gen_threads",
-                "task_id.$": "$.post.lores.param_task_id",
-                "params_key.$": "$.post.lores.params_key"
-              }
+                "n_threads.$": "$.plan.compute.param_gen_threads",
+                "task_id.$": "$$.Map.Item.Value.paramgen_task_id",
+                "params_key.$": "$$.Map.Item.Value.params_key",
+                "step_start.$": "$$.Map.Item.Value.step_start",
+                "step_count.$": "$$.Map.Item.Value.step_count"
+              },
+              "ItemProcessor": {
+                "ProcessorConfig": {
+                  "Mode": "INLINE"
+                },
+                "StartAt": "ParamGenWorker",
+                "States": {
+                  "ParamGenWorker": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Parameters": {
+                      "FunctionName": "${CoeffgenFunctionArn}",
+                      "Payload.$": "$"
+                    },
+                    "ResultPath": null,
+                    "Retry": [
+                      {
+                        "ErrorEquals": [
+                          "Lambda.ServiceException",
+                          "Lambda.AWSLambdaException",
+                          "Lambda.SdkClientException"
+                        ],
+                        "IntervalSeconds": 2,
+                        "BackoffRate": 2.0,
+                        "MaxAttempts": 3
+                      }
+                    ],
+                    "End": true
+                  }
+                }
+              },
+              "ResultPath": null,
+              "Next": "CoeffgenPhase"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "LoresCoeffgenPhase"
-          },
-
-          "LoresCoeffgenPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "solver_mode.$": "$.plan.solve.mode",
-                "phase": "lores_coeffgen",
-                "phase_label": "Lores coeffgen",
-                "expected": 1,
-                "subtask_prefix.$": "$.post.lores.coeff_task_id"
-              }
+            "CoeffgenPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "phase": "coeffgen",
+                  "phase_label": "Coeffgen",
+                  "expected.$": "$.plan.compute.n_chunks",
+                  "subtask_prefix.$": "$.plan.coeffgen.task_prefix",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "CoeffgenMap"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "LoresCoeffgenTask"
-          },
-
-          "LoresCoeffgenTask": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${CoeffgenFunctionArn}",
-              "Payload": {
+            "CoeffgenMap": {
+              "Type": "Map",
+              "ItemsPath": "$.plan.chunk_items",
+              "MaxConcurrency": 50,
+              "ItemSelector": {
                 "phase": "coeffgen_chunked",
                 "job_id.$": "$.job_id",
-                "chunk_idx": 9999,
-                "task_id.$": "$.post.lores.coeff_task_id",
-                "params_key.$": "$.post.lores.params_key",
-                "step_start": 0,
-                "step_count.$": "$.post.lores.n_steps",
-                "N.$": "$.post.lores.N",
-                "n_threads.$": "$.post.lores.coeffgen_threads",
+                "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+                "task_id.$": "$$.Map.Item.Value.coeffgen_task_id",
+                "params_key.$": "$$.Map.Item.Value.params_key",
+                "params_step_start.$": "$$.Map.Item.Value.params_step_start",
+                "params_step_count.$": "$$.Map.Item.Value.params_step_count",
+                "step_start.$": "$$.Map.Item.Value.step_start",
+                "step_count.$": "$$.Map.Item.Value.step_count",
+                "N.$": "$.plan.compute.N",
+                "n_threads.$": "$.plan.compute.coeffgen_threads",
                 "function.$": "$.plan.pipeline.function",
                 "coeff_program.$": "$.plan.pipeline.coeff_program",
                 "cfpv.$": "$.plan.pipeline.cfpv",
-                "s3_key.$": "$.post.lores.coeffs_key"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "LoresSolvePhase"
-          },
-
-          "LoresSolvePhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "solver_mode.$": "$.plan.solve.mode",
-                "phase": "lores_solve",
-                "phase_label": "Lores solve",
-                "expected": 1,
-                "subtask_prefix.$": "$.post.lores.solve_task_id"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "LoresSolveTask"
-          },
-
-          "LoresSolveTask": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName.$": "$.plan.solve.function_name",
-              "Payload": {
-                "job_id.$": "$.job_id",
-                "chunk_idx": 0,
-                "task_id.$": "$.post.lores.solve_task_id",
-                "coeffs_key.$": "$.post.lores.coeffs_key",
-                "n_coeffs.$": "$.post.n_coeffs",
-                "n_steps.$": "$.post.lores.n_steps",
-                "s3_key.$": "$.post.lores.bin_key",
-                "solve_mode.$": "$.plan.solve.bin_mode",
-                "max_iter.$": "$.plan.solve.iters"
-              }
-            },
-            "ResultSelector": { "body.$": "States.StringToJson($.Payload.body)" },
-            "ResultPath": "$.lores_solve",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "RouteHiresExecution"
-          },
-
-          "RouteHiresExecution": {
-            "Type": "Choice",
-            "Choices": [{
-              "Variable": "$.plan.compute.execution_method",
-              "StringEquals": "fused_chunk_pipeline",
-              "Next": "FusedChunkPhase"
-            }],
-            "Default": "SolvePhase"
-          },
-
-          "FusedChunkPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "solver_mode.$": "$.plan.solve.mode",
-                "phase": "compute_chunk_fused",
-                "phase_label": "Fused hires",
-                "expected.$": "$.plan.compute.n_chunks",
-                "subtask_prefix.$": "$.plan.fused.task_prefix"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "FusedChunkMap"
-          },
-
-          "FusedChunkMap": {
-            "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
-            "MaxConcurrency": 50,
-            "ItemSelector": {
-              "job_id.$": "$.job_id",
-              "N.$": "$.plan.compute.N",
-              "times.$": "$.plan.compute.times",
-              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
-              "step_start.$": "$$.Map.Item.Value.step_start",
-              "step_count.$": "$$.Map.Item.Value.step_count",
-              "task_id.$": "$$.Map.Item.Value.fused_task_id",
-              "params_key.$": "$$.Map.Item.Value.params_key",
-              "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
-              "bin_key.$": "$$.Map.Item.Value.bin_key",
-              "function.$": "$.plan.pipeline.function",
-              "param_program.$": "$.plan.pipeline.param_program",
-              "coeff_program.$": "$.plan.pipeline.coeff_program",
-              "cfpv.$": "$.plan.pipeline.cfpv",
-              "solver_mode.$": "$.plan.solve.mode",
-              "solver_iters.$": "$.plan.solve.iters",
-              "n_coeffs.$": "$.post.n_coeffs",
-              "degree.$": "$.post.degree",
-              "fused_threads.$": "$.plan.fused.threads"
-            },
-            "ItemProcessor": {
-              "ProcessorConfig": {"Mode": "INLINE"},
-              "StartAt": "FusedChunkWorker",
-              "States": {
-                "FusedChunkWorker": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": { "FunctionName": "${FusedChunkFunctionArn}", "Payload.$": "$" },
-                  "ResultSelector": { "body.$": "States.StringToJson($.Payload.body)" },
-                  "OutputPath": "$.body",
-                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-                  "End": true
+                "s3_key.$": "$$.Map.Item.Value.coeffs_key"
+              },
+              "ItemProcessor": {
+                "ProcessorConfig": {
+                  "Mode": "INLINE"
+                },
+                "StartAt": "CoeffgenWorker",
+                "States": {
+                  "CoeffgenWorker": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Parameters": {
+                      "FunctionName": "${CoeffgenFunctionArn}",
+                      "Payload.$": "$"
+                    },
+                    "ResultSelector": {
+                      "body.$": "States.StringToJson($.Payload.body)"
+                    },
+                    "OutputPath": "$.body",
+                    "Retry": [
+                      {
+                        "ErrorEquals": [
+                          "Lambda.ServiceException",
+                          "Lambda.AWSLambdaException",
+                          "Lambda.SdkClientException"
+                        ],
+                        "IntervalSeconds": 2,
+                        "BackoffRate": 2.0,
+                        "MaxAttempts": 3
+                      }
+                    ],
+                    "End": true
+                  }
                 }
-              }
+              },
+              "ResultPath": null,
+              "Next": "PostCoeffgenPhase"
             },
-            "ResultPath": null,
-            "Next": "SaveMetadataPhase"
-          },
-
-          "SolvePhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "solver_mode.$": "$.plan.solve.mode",
-                "phase": "solve",
-                "phase_label": "Solve",
-                "expected.$": "$.plan.compute.n_chunks",
-                "subtask_prefix.$": "$.plan.solve.task_prefix"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "SolveMap"
-          },
-
-          "SolveMap": {
-            "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
-            "MaxConcurrency": 50,
-            "ItemSelector": {
-              "job_id.$": "$.job_id",
-              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
-              "task_id.$": "$$.Map.Item.Value.solve_task_id",
-              "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
-              "n_coeffs.$": "$.post.n_coeffs",
-              "n_steps.$": "$$.Map.Item.Value.step_count",
-              "s3_key.$": "$$.Map.Item.Value.bin_key",
-              "solve_mode.$": "$.plan.solve.bin_mode",
-              "max_iter.$": "$.plan.solve.iters",
-              "solver_function_name.$": "$.plan.solve.function_name"
-            },
-            "ItemProcessor": {
-              "ProcessorConfig": {"Mode": "INLINE"},
-              "StartAt": "SolveWorker",
-              "States": {
-                "SolveWorker": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": { "FunctionName.$": "$.solver_function_name", "Payload.$": "$" },
-                  "ResultSelector": { "body.$": "States.StringToJson($.Payload.body)" },
-                  "OutputPath": "$.body",
-                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-                  "End": true
+            "PostCoeffgenPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "phase": "post_coeffgen",
+                  "phase_label": "Post coeffgen",
+                  "execution_arn.$": "$$.Execution.Id"
                 }
-              }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "PostCoeffgen"
             },
-            "ResultPath": null,
-            "Next": "SaveMetadataPhase"
-          },
-
-          "SaveMetadataPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
+            "PostCoeffgen": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${PlanFunctionArn}",
+                "Payload": {
+                  "action": "post_coeffgen",
+                  "job_id.$": "$.job_id",
+                  "plan.$": "$.plan",
+                  "task_prefix.$": "$.plan.coeffgen.task_prefix"
+                }
+              },
+              "ResultSelector": {
+                "post.$": "$.Payload.body"
+              },
+              "ResultPath": "$.post_raw",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ParsePostCoeffgen"
+            },
+            "ParsePostCoeffgen": {
+              "Type": "Pass",
+              "Parameters": {
                 "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
                 "run_started_at_ms.$": "$.run_started_at_ms",
+                "task_id.$": "$.task_id",
                 "mode.$": "$.mode",
-                "solver_mode.$": "$.plan.solve.mode",
-                "phase": "save_metadata",
-                "phase_label": "Save metadata"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "SaveMetadataTask"
-          },
-
-          "SaveMetadataTask": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${PlanFunctionArn}",
-              "Payload": {
-                "action": "finalize_metadata",
-                "job_id.$": "$.job_id",
+                "params.$": "$.params",
                 "plan.$": "$.plan",
-                "post.$": "$.post",
-                "lores_solve.$": "$.lores_solve.body",
-                "task_prefix.$": "$.plan.solve.task_prefix",
-                "expected.$": "$.plan.compute.n_chunks"
-              }
+                "post.$": "States.StringToJson($.post_raw.post)"
+              },
+              "Next": "LoresParamGenPhase"
             },
-            "ResultSelector": { "body.$": "States.StringToJson($.Payload.body)" },
-            "ResultPath": "$.save_metadata",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ReportDone"
-          },
-
-          "ReportDone": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "done",
+            "LoresParamGenPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "phase": "lores_param_gen",
+                  "phase_label": "Lores param gen",
+                  "expected": 1,
+                  "subtask_prefix.$": "$.post.lores.param_task_id",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "LoresParamGenTask"
+            },
+            "LoresParamGenTask": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${CoeffgenFunctionArn}",
+                "Payload": {
+                  "phase": "param_gen",
+                  "job_id.$": "$.job_id",
+                  "N.$": "$.post.lores.N",
+                  "gridN.$": "$.plan.compute.N",
+                  "times.$": "$.plan.compute.times",
+                  "param_program.$": "$.plan.pipeline.param_program",
+                  "n_threads.$": "$.plan.compute.lores_param_gen_threads",
+                  "task_id.$": "$.post.lores.param_task_id",
+                  "params_key.$": "$.post.lores.params_key"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "LoresCoeffgenPhase"
+            },
+            "LoresCoeffgenPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "phase": "lores_coeffgen",
+                  "phase_label": "Lores coeffgen",
+                  "expected": 1,
+                  "subtask_prefix.$": "$.post.lores.coeff_task_id",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "LoresCoeffgenTask"
+            },
+            "LoresCoeffgenTask": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${CoeffgenFunctionArn}",
+                "Payload": {
+                  "phase": "coeffgen_chunked",
+                  "job_id.$": "$.job_id",
+                  "chunk_idx": 9999,
+                  "task_id.$": "$.post.lores.coeff_task_id",
+                  "params_key.$": "$.post.lores.params_key",
+                  "step_start": 0,
+                  "step_count.$": "$.post.lores.n_steps",
+                  "N.$": "$.post.lores.N",
+                  "n_threads.$": "$.post.lores.coeffgen_threads",
+                  "function.$": "$.plan.pipeline.function",
+                  "coeff_program.$": "$.plan.pipeline.coeff_program",
+                  "cfpv.$": "$.plan.pipeline.cfpv",
+                  "s3_key.$": "$.post.lores.coeffs_key"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "LoresSolvePhase"
+            },
+            "LoresSolvePhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "phase": "lores_solve",
+                  "phase_label": "Lores solve",
+                  "expected": 1,
+                  "subtask_prefix.$": "$.post.lores.solve_task_id",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "LoresSolveTask"
+            },
+            "LoresSolveTask": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName.$": "$.plan.solve.function_name",
+                "Payload": {
+                  "job_id.$": "$.job_id",
+                  "chunk_idx": 0,
+                  "task_id.$": "$.post.lores.solve_task_id",
+                  "coeffs_key.$": "$.post.lores.coeffs_key",
+                  "n_coeffs.$": "$.post.n_coeffs",
+                  "n_steps.$": "$.post.lores.n_steps",
+                  "s3_key.$": "$.post.lores.bin_key",
+                  "solve_mode.$": "$.plan.solve.bin_mode",
+                  "max_iter.$": "$.plan.solve.iters"
+                }
+              },
+              "ResultSelector": {
+                "body.$": "States.StringToJson($.Payload.body)"
+              },
+              "ResultPath": "$.lores_solve",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "RouteHiresExecution"
+            },
+            "RouteHiresExecution": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.plan.compute.execution_method",
+                  "StringEquals": "fused_chunk_pipeline",
+                  "Next": "FusedChunkPhase"
+                }
+              ],
+              "Default": "SolvePhase"
+            },
+            "FusedChunkPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "phase": "compute_chunk_fused",
+                  "phase_label": "Fused hires",
+                  "expected.$": "$.plan.compute.n_chunks",
+                  "subtask_prefix.$": "$.plan.fused.task_prefix",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "FusedChunkMap"
+            },
+            "FusedChunkMap": {
+              "Type": "Map",
+              "ItemsPath": "$.plan.chunk_items",
+              "MaxConcurrency": 50,
+              "ItemSelector": {
                 "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
+                "N.$": "$.plan.compute.N",
+                "times.$": "$.plan.compute.times",
+                "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+                "step_start.$": "$$.Map.Item.Value.step_start",
+                "step_count.$": "$$.Map.Item.Value.step_count",
+                "task_id.$": "$$.Map.Item.Value.fused_task_id",
+                "params_key.$": "$$.Map.Item.Value.params_key",
+                "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
+                "bin_key.$": "$$.Map.Item.Value.bin_key",
+                "function.$": "$.plan.pipeline.function",
+                "param_program.$": "$.plan.pipeline.param_program",
+                "coeff_program.$": "$.plan.pipeline.coeff_program",
+                "cfpv.$": "$.plan.pipeline.cfpv",
                 "solver_mode.$": "$.plan.solve.mode",
-                "calc_key.$": "$.save_metadata.body.calc_key",
-                "degree.$": "$.save_metadata.body.degree",
-                "n_chunks.$": "$.save_metadata.body.n_chunks",
-                "solver.$": "$.save_metadata.body.solver"
-              }
+                "solver_iters.$": "$.plan.solve.iters",
+                "n_coeffs.$": "$.post.n_coeffs",
+                "degree.$": "$.post.degree",
+                "fused_threads.$": "$.plan.fused.threads"
+              },
+              "ItemProcessor": {
+                "ProcessorConfig": {
+                  "Mode": "INLINE"
+                },
+                "StartAt": "FusedChunkWorker",
+                "States": {
+                  "FusedChunkWorker": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Parameters": {
+                      "FunctionName": "${FusedChunkFunctionArn}",
+                      "Payload.$": "$"
+                    },
+                    "ResultSelector": {
+                      "body.$": "States.StringToJson($.Payload.body)"
+                    },
+                    "OutputPath": "$.body",
+                    "Retry": [
+                      {
+                        "ErrorEquals": [
+                          "Lambda.ServiceException",
+                          "Lambda.AWSLambdaException",
+                          "Lambda.SdkClientException"
+                        ],
+                        "IntervalSeconds": 2,
+                        "BackoffRate": 2.0,
+                        "MaxAttempts": 3
+                      }
+                    ],
+                    "End": true
+                  }
+                }
+              },
+              "ResultPath": null,
+              "Next": "SaveMetadataPhase"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "InnerSucceed"
-          },
-
-          "InnerSucceed": { "Type": "Succeed" }
+            "SolvePhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "phase": "solve",
+                  "phase_label": "Solve",
+                  "expected.$": "$.plan.compute.n_chunks",
+                  "subtask_prefix.$": "$.plan.solve.task_prefix",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "SolveMap"
+            },
+            "SolveMap": {
+              "Type": "Map",
+              "ItemsPath": "$.plan.chunk_items",
+              "MaxConcurrency": 50,
+              "ItemSelector": {
+                "job_id.$": "$.job_id",
+                "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+                "task_id.$": "$$.Map.Item.Value.solve_task_id",
+                "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
+                "n_coeffs.$": "$.post.n_coeffs",
+                "n_steps.$": "$$.Map.Item.Value.step_count",
+                "s3_key.$": "$$.Map.Item.Value.bin_key",
+                "solve_mode.$": "$.plan.solve.bin_mode",
+                "max_iter.$": "$.plan.solve.iters",
+                "solver_function_name.$": "$.plan.solve.function_name"
+              },
+              "ItemProcessor": {
+                "ProcessorConfig": {
+                  "Mode": "INLINE"
+                },
+                "StartAt": "SolveWorker",
+                "States": {
+                  "SolveWorker": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Parameters": {
+                      "FunctionName.$": "$.solver_function_name",
+                      "Payload.$": "$"
+                    },
+                    "ResultSelector": {
+                      "body.$": "States.StringToJson($.Payload.body)"
+                    },
+                    "OutputPath": "$.body",
+                    "Retry": [
+                      {
+                        "ErrorEquals": [
+                          "Lambda.ServiceException",
+                          "Lambda.AWSLambdaException",
+                          "Lambda.SdkClientException",
+                          "Lambda.TooManyRequestsException"
+                        ],
+                        "IntervalSeconds": 2,
+                        "BackoffRate": 2.0,
+                        "MaxAttempts": 3
+                      }
+                    ],
+                    "End": true
+                  }
+                }
+              },
+              "ResultPath": null,
+              "Next": "SaveMetadataPhase"
+            },
+            "SaveMetadataPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "phase": "save_metadata",
+                  "phase_label": "Save metadata",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "SaveMetadataTask"
+            },
+            "SaveMetadataTask": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${PlanFunctionArn}",
+                "Payload": {
+                  "action": "finalize_metadata",
+                  "job_id.$": "$.job_id",
+                  "plan.$": "$.plan",
+                  "post.$": "$.post",
+                  "lores_solve.$": "$.lores_solve.body",
+                  "task_prefix.$": "$.plan.solve.task_prefix",
+                  "expected.$": "$.plan.compute.n_chunks"
+                }
+              },
+              "ResultSelector": {
+                "body.$": "States.StringToJson($.Payload.body)"
+              },
+              "ResultPath": "$.save_metadata",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ReportDone"
+            },
+            "ReportDone": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "done",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "calc_key.$": "$.save_metadata.body.calc_key",
+                  "degree.$": "$.save_metadata.body.degree",
+                  "n_chunks.$": "$.save_metadata.body.n_chunks",
+                  "solver.$": "$.save_metadata.body.solver",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "InnerSucceed"
+            },
+            "InnerSucceed": {
+              "Type": "Succeed"
+            }
+          }
         }
-      }],
+      ],
       "ResultPath": null,
-      "Catch": [{
-        "ErrorEquals": ["States.ALL"],
-        "ResultPath": "$.error_info",
-        "Next": "ReportError"
-      }],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error_info",
+          "Next": "ReportError"
+        }
+      ],
       "Next": "Succeed"
     },
-
-    "Succeed": { "Type": "Succeed" },
-
+    "Succeed": {
+      "Type": "Succeed"
+    },
     "ReportError": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
@@ -726,14 +1013,25 @@
           "solver_mode.$": "$.params.solver_mode",
           "run_started_at_ms.$": "$.run_started_at_ms",
           "Error.$": "$.error_info.Error",
-          "Cause.$": "$.error_info.Cause"
+          "Cause.$": "$.error_info.Cause",
+          "execution_arn.$": "$$.Execution.Id"
         }
       },
       "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "BackoffRate": 2.0,
+          "MaxAttempts": 3
+        }
+      ],
       "Next": "Fail"
     },
-
     "Fail": {
       "Type": "Fail",
       "Error": "ComputeFailed",

@@ -1,477 +1,841 @@
 {
-  "Comment": "PolyPaint render workflow — color, bilevel, coeff_bilevel pipelines. Wrapped in Parallel to catch States.Runtime from parameter resolution errors.",
+  "Comment": "PolyPaint render workflow \u2014 color, bilevel, coeff_bilevel pipelines. Wrapped in Parallel to catch States.Runtime from parameter resolution errors.",
   "StartAt": "WorkflowWrapper",
   "States": {
-
     "WorkflowWrapper": {
       "Type": "Parallel",
-      "Branches": [{
-        "StartAt": "CleanRender",
-        "States": {
-
-          "CleanRender": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "phase": "plan",
-                "phase_label": "Clean + plan"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "BuildPlan"
-          },
-
-          "BuildPlan": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${PlanFunctionArn}",
-              "Payload.$": "$"
-            },
-            "ResultSelector": {
-              "plan.$": "$.Payload.body"
-            },
-            "ResultPath": "$.plan_raw",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ParsePlan"
-          },
-
-          "ParsePlan": {
-            "Type": "Pass",
-            "Parameters": {
-              "job_id.$": "$.job_id",
-              "run_id.$": "$.run_id",
-              "run_started_at_ms.$": "$.run_started_at_ms",
-              "task_id.$": "$.task_id",
-              "mode.$": "$.mode",
-              "params.$": "$.params",
-              "plan.$": "States.StringToJson($.plan_raw.plan)"
-            },
-            "Next": "ModeChoice"
-          },
-
-          "ModeChoice": {
-            "Type": "Choice",
-            "Choices": [
-              {"Variable": "$.mode", "StringEquals": "color", "Next": "ColorClipPhase"},
-              {"Variable": "$.mode", "StringEquals": "bilevel", "Next": "BilevelRasterPhase"},
-              {"Variable": "$.mode", "StringEquals": "coeff_bilevel", "Next": "CoeffRasterPhase"}
-            ],
-            "Default": "InnerFail"
-          },
-
-          "ColorClipPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "phase": "solve_score_clip",
-                "phase_label": "Solve score: clip",
-                "expected": 1,
-                "subtask_prefix.$": "States.Format('render_{}_solve_score_clip', $.run_id)"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ColorClipTask"
-          },
-
-          "ColorClipTask": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${SolveProximityFunctionArn}",
-              "Payload": {
-              "phase": "clip",
-              "job_id.$": "$.job_id",
-              "degree.$": "$.plan.calc.degree",
-              "solve_score_chain.$": "$.plan.solve_score.chain",
-              "solve_score_program_source_text.$": "$.plan.solve_score.source_text",
-              "solve_score_normalize.$": "$.plan.solve_score.normalize",
-              "solve_score_threads.$": "$.plan.solve_score.threads",
-              "lores_bin_key.$": "$.plan.calc.lores_bin_key",
-                "lores_coeffs_key.$": "$.plan.calc.lores_coeffs_key",
-                "lores_params_key.$": "$.plan.calc.lores_params_key",
-                "n_coeffs.$": "$.plan.calc.n_coeffs",
-                "root_transforms.$": "$.plan.params.root_transforms",
-                "out_key.$": "$.plan.solve_score.clip_key",
-                "task_id.$": "States.Format('render_{}_solve_score_clip', $.run_id)"
-              }
-            },
-            "ResultSelector": {
-              "parsed.$": "States.StringToJson($.Payload.body)"
-            },
-            "ResultPath": "$.solve_score_clip",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ColorRasterPhase"
-          },
-
-          "ColorRasterPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
-                "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
-                "run_id.$": "$.run_id",
-                "run_started_at_ms.$": "$.run_started_at_ms",
-                "mode.$": "$.mode",
-                "phase": "raster",
-                "phase_label": "Raster",
-                "expected.$": "$.plan.raster.item_count",
-                "subtask_prefix.$": "States.Format('render_{}_raster_', $.run_id)"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ColorRasterMap"
-          },
-
-          "ColorRasterMap": {
-            "Type": "Map",
-            "ItemsPath": "$.plan.raster.map_items",
-            "MaxConcurrencyPath": "$.plan.raster.workers",
-            "ItemSelector": {
-              "job_id.$": "$.job_id",
-              "section_idx.$": "$$.Map.Item.Value.section_idx",
-              "section_count.$": "$$.Map.Item.Value.section_count",
-              "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.section_idx)",
-              "step_start.$": "$$.Map.Item.Value.step_start",
-              "step_count.$": "$$.Map.Item.Value.step_count",
-              "logical_section.$": "$.plan.raster.logical_section",
-              "solve_source_manifest_key.$": "$.plan.solve_source_manifest_key",
-              "n_coeffs.$": "$.plan.calc.n_coeffs",
-              "pix.$": "$.plan.grid.pix",
-              "min_re.$": "$.plan.viewport.min_re",
-              "max_re.$": "$.plan.viewport.max_re",
-              "min_im.$": "$.plan.viewport.min_im",
-              "max_im.$": "$.plan.viewport.max_im",
-              "rotation.$": "$.plan.params.rotation",
-              "degree.$": "$.plan.calc.degree",
-              "root_transforms.$": "$.plan.params.root_transforms",
-              "solve_score_clip_key.$": "$.plan.solve_score.clip_key",
-              "solve_score_chain.$": "$.plan.solve_score.chain",
-              "solve_score_program_source_text.$": "$.plan.solve_score.source_text",
-              "prelude_rows.$": "$.plan.raster.prelude_rows",
-              "score_coeff_prelude_rows.$": "$.plan.raster.score_coeff_prelude_rows",
-              "score_param_prelude_rows.$": "$.plan.raster.score_param_prelude_rows",
-              "raster_function_name.$": "$.plan.raster.function_name",
-              "raster_mt_threads.$": "$.plan.raster.threads",
-              "raster_input_mode.$": "$.plan.raster.input_mode",
-              "raster_sectioned_retries.$": "$.plan.raster.sectioned_retries",
-              "associated_palette_mode.$": "$.plan.associated_palette.mode",
-              "associated_palette_fragment_prefix.$": "$.plan.associated_palette.fragment_prefix",
-              "associated_palette_grid_n.$": "$.plan.calc.N",
-              "fragment_prefix.$": "$.plan.outputs.fragment_prefix"
-            },
-            "ItemProcessor": {
-              "ProcessorConfig": {"Mode": "INLINE"},
-              "StartAt": "ColorRasterWorker",
-              "States": {
-                "ColorRasterWorker": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": { "FunctionName.$": "$.raster_function_name", "Payload.$": "$" },
-                  "ResultPath": null,
-                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-                  "End": true
+      "Branches": [
+        {
+          "StartAt": "CleanRender",
+          "States": {
+            "CleanRender": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "phase": "plan",
+                  "phase_label": "Clean + plan",
+                  "execution_arn.$": "$$.Execution.Id"
                 }
-              }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "BuildPlan"
             },
-            "ResultPath": null,
-            "Next": "ColorAssembleEncodePhase"
-          },
-
-          "ColorAssembleEncodePhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": {
-                "action": "phase",
+            "BuildPlan": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${PlanFunctionArn}",
+                "Payload.$": "$"
+              },
+              "ResultSelector": {
+                "plan.$": "$.Payload.body"
+              },
+              "ResultPath": "$.plan_raw",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ParsePlan"
+            },
+            "ParsePlan": {
+              "Type": "Pass",
+              "Parameters": {
                 "job_id.$": "$.job_id",
-                "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
                 "run_started_at_ms.$": "$.run_started_at_ms",
+                "task_id.$": "$.task_id",
                 "mode.$": "$.mode",
-                "phase": "finalize_mt",
-                "phase_label": "Assemble + encode",
-                "expected": 1,
-                "subtask_prefix.$": "States.Format('render_{}_finalize_mt', $.run_id)"
-              }
+                "params.$": "$.params",
+                "plan.$": "States.StringToJson($.plan_raw.plan)"
+              },
+              "Next": "ModeChoice"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ColorAssembleEncodeTask"
-          },
-
-          "ColorAssembleEncodeTask": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${FinalizeMTFunctionArn}",
-              "Payload": {
-                "phase": "finalize_mt",
-                "job_id.$": "$.job_id",
-                "run_id.$": "$.run_id",
-                "task_id.$": "States.Format('render_{}_finalize_mt', $.run_id)",
-                "mode.$": "$.mode",
-                "source_item_count.$": "$.plan.raster.item_count",
-                "pix.$": "$.plan.grid.pix",
-                "format.$": "$.plan.params.fmt",
-                "quality.$": "$.plan.params.quality",
-                "palette.$": "$.plan.params.palette",
-                "background_color.$": "$.plan.outputs.metadata.background_color",
-                "finalize_workers.$": "$.plan.finalize.workers",
-                "render_execution.$": "$.plan.render_execution",
-                "metadata.$": "$.plan.outputs.metadata",
-                "solve_score_program_source_text.$": "$.plan.solve_score.source_text",
-                "image_key.$": "$.plan.outputs.image_key",
-                "preview_key.$": "$.plan.outputs.preview_key",
-                "meta_key.$": "$.plan.outputs.meta_key",
-                "raw_key.$": "$.plan.outputs.raw_key",
-                "raw_meta_key.$": "$.plan.outputs.raw_meta_key",
-                "plan_params_digest.$": "$.plan.outputs.plan_params_digest",
-                "clip_slots.$": "$.solve_score_clip.parsed.clip_slots",
-                "score_program.$": "$.solve_score_clip.parsed.score_program",
-                "score_output_normalize.$": "$.solve_score_clip.parsed.score_output_normalize",
-                "score_output_clip_lo.$": "$.solve_score_clip.parsed.score_output_clip_lo",
-                "score_output_clip_hi.$": "$.solve_score_clip.parsed.score_output_clip_hi",
-                "score_output_channel_count.$": "$.solve_score_clip.parsed.score_output_channel_count",
-                "score_output_has_explicit_outputs.$": "$.solve_score_clip.parsed.score_output_has_explicit_outputs",
-                "score_output_interpretation.$": "$.plan.outputs.metadata.score_output_interpretation",
-                "score_output_channels.$": "$.solve_score_clip.parsed.score_output_channels",
-                "chain_fingerprint.$": "$.solve_score_clip.parsed.chain_fingerprint",
-                "solve_score_spec_version.$": "$.plan.outputs.metadata.solve_score_spec_version",
-                "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
-                "fragment_manifest": {
-                  "version": 1,
-                  "pair_encoding.$": "$.solve_score_clip.parsed.fragment_pair_encoding",
-                  "fragment_encoding.$": "$.solve_score_clip.parsed.fragment_encoding",
-                  "channels.$": "$.solve_score_clip.parsed.score_output_channel_count",
-                  "record_size_bytes.$": "$.solve_score_clip.parsed.fragment_record_size_bytes",
-                  "item_count.$": "$.plan.raster.item_count",
-                  "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
-                  "chain_fingerprint.$": "$.plan.outputs.metadata.solve_score_chain_fingerprint",
-                  "solve_score_spec_version.$": "$.plan.outputs.metadata.solve_score_spec_version"
+            "ModeChoice": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.mode",
+                  "StringEquals": "color",
+                  "Next": "ColorClipPhase"
                 },
-                "associated_palette.$": "$.plan.associated_palette",
+                {
+                  "Variable": "$.mode",
+                  "StringEquals": "bilevel",
+                  "Next": "BilevelRasterPhase"
+                },
+                {
+                  "Variable": "$.mode",
+                  "StringEquals": "coeff_bilevel",
+                  "Next": "CoeffRasterPhase"
+                }
+              ],
+              "Default": "InnerFail"
+            },
+            "ColorClipPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "phase": "solve_score_clip",
+                  "phase_label": "Solve score: clip",
+                  "expected": 1,
+                  "subtask_prefix.$": "States.Format('render_{}_solve_score_clip', $.run_id)",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ColorClipTask"
+            },
+            "ColorClipTask": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${SolveProximityFunctionArn}",
+                "Payload": {
+                  "phase": "clip",
+                  "job_id.$": "$.job_id",
+                  "degree.$": "$.plan.calc.degree",
+                  "solve_score_chain.$": "$.plan.solve_score.chain",
+                  "solve_score_program_source_text.$": "$.plan.solve_score.source_text",
+                  "solve_score_normalize.$": "$.plan.solve_score.normalize",
+                  "solve_score_threads.$": "$.plan.solve_score.threads",
+                  "lores_bin_key.$": "$.plan.calc.lores_bin_key",
+                  "lores_coeffs_key.$": "$.plan.calc.lores_coeffs_key",
+                  "lores_params_key.$": "$.plan.calc.lores_params_key",
+                  "n_coeffs.$": "$.plan.calc.n_coeffs",
+                  "root_transforms.$": "$.plan.params.root_transforms",
+                  "out_key.$": "$.plan.solve_score.clip_key",
+                  "task_id.$": "States.Format('render_{}_solve_score_clip', $.run_id)"
+                }
+              },
+              "ResultSelector": {
+                "parsed.$": "States.StringToJson($.Payload.body)"
+              },
+              "ResultPath": "$.solve_score_clip",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ColorRasterPhase"
+            },
+            "ColorRasterPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "phase": "raster",
+                  "phase_label": "Raster",
+                  "expected.$": "$.plan.raster.item_count",
+                  "subtask_prefix.$": "States.Format('render_{}_raster_', $.run_id)",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ColorRasterMap"
+            },
+            "ColorRasterMap": {
+              "Type": "Map",
+              "ItemsPath": "$.plan.raster.map_items",
+              "MaxConcurrencyPath": "$.plan.raster.workers",
+              "ItemSelector": {
+                "job_id.$": "$.job_id",
+                "section_idx.$": "$$.Map.Item.Value.section_idx",
+                "section_count.$": "$$.Map.Item.Value.section_count",
+                "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.section_idx)",
+                "step_start.$": "$$.Map.Item.Value.step_start",
+                "step_count.$": "$$.Map.Item.Value.step_count",
+                "logical_section.$": "$.plan.raster.logical_section",
+                "solve_source_manifest_key.$": "$.plan.solve_source_manifest_key",
+                "n_coeffs.$": "$.plan.calc.n_coeffs",
+                "pix.$": "$.plan.grid.pix",
+                "min_re.$": "$.plan.viewport.min_re",
+                "max_re.$": "$.plan.viewport.max_re",
+                "min_im.$": "$.plan.viewport.min_im",
+                "max_im.$": "$.plan.viewport.max_im",
+                "rotation.$": "$.plan.params.rotation",
+                "degree.$": "$.plan.calc.degree",
+                "root_transforms.$": "$.plan.params.root_transforms",
+                "solve_score_clip_key.$": "$.plan.solve_score.clip_key",
+                "solve_score_chain.$": "$.plan.solve_score.chain",
+                "solve_score_program_source_text.$": "$.plan.solve_score.source_text",
+                "prelude_rows.$": "$.plan.raster.prelude_rows",
+                "score_coeff_prelude_rows.$": "$.plan.raster.score_coeff_prelude_rows",
+                "score_param_prelude_rows.$": "$.plan.raster.score_param_prelude_rows",
+                "raster_function_name.$": "$.plan.raster.function_name",
+                "raster_mt_threads.$": "$.plan.raster.threads",
+                "raster_input_mode.$": "$.plan.raster.input_mode",
+                "raster_sectioned_retries.$": "$.plan.raster.sectioned_retries",
+                "associated_palette_mode.$": "$.plan.associated_palette.mode",
+                "associated_palette_fragment_prefix.$": "$.plan.associated_palette.fragment_prefix",
                 "associated_palette_grid_n.$": "$.plan.calc.N",
-                "associated_palette_times.$": "$.plan.calc.times",
-                "associated_palette_degree.$": "$.plan.calc.degree"
-              }
+                "fragment_prefix.$": "$.plan.outputs.fragment_prefix"
+              },
+              "ItemProcessor": {
+                "ProcessorConfig": {
+                  "Mode": "INLINE"
+                },
+                "StartAt": "ColorRasterWorker",
+                "States": {
+                  "ColorRasterWorker": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Parameters": {
+                      "FunctionName.$": "$.raster_function_name",
+                      "Payload.$": "$"
+                    },
+                    "ResultPath": null,
+                    "Retry": [
+                      {
+                        "ErrorEquals": [
+                          "Lambda.ServiceException",
+                          "Lambda.AWSLambdaException",
+                          "Lambda.SdkClientException",
+                          "Lambda.TooManyRequestsException"
+                        ],
+                        "IntervalSeconds": 2,
+                        "BackoffRate": 2.0,
+                        "MaxAttempts": 3
+                      }
+                    ],
+                    "End": true
+                  }
+                }
+              },
+              "ResultPath": null,
+              "Next": "ColorAssembleEncodePhase"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ReportDoneColor"
-          },
-
-          "ReportDoneColor": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.image_key" }
+            "ColorAssembleEncodePhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "phase": "finalize_mt",
+                  "phase_label": "Assemble + encode",
+                  "expected": 1,
+                  "subtask_prefix.$": "States.Format('render_{}_finalize_mt', $.run_id)",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ColorAssembleEncodeTask"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "InnerSucceed"
-          },
-
-          "BilevelRasterPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "bilevel_raster", "phase_label": "BiLevel raster", "expected.$": "$.plan.bilevel.item_count", "subtask_prefix.$": "States.Format('render_{}_bilevel_section_', $.run_id)" }
+            "ColorAssembleEncodeTask": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${FinalizeMTFunctionArn}",
+                "Payload": {
+                  "phase": "finalize_mt",
+                  "job_id.$": "$.job_id",
+                  "run_id.$": "$.run_id",
+                  "task_id.$": "States.Format('render_{}_finalize_mt', $.run_id)",
+                  "mode.$": "$.mode",
+                  "source_item_count.$": "$.plan.raster.item_count",
+                  "pix.$": "$.plan.grid.pix",
+                  "format.$": "$.plan.params.fmt",
+                  "quality.$": "$.plan.params.quality",
+                  "palette.$": "$.plan.params.palette",
+                  "background_color.$": "$.plan.outputs.metadata.background_color",
+                  "finalize_workers.$": "$.plan.finalize.workers",
+                  "render_execution.$": "$.plan.render_execution",
+                  "metadata.$": "$.plan.outputs.metadata",
+                  "solve_score_program_source_text.$": "$.plan.solve_score.source_text",
+                  "image_key.$": "$.plan.outputs.image_key",
+                  "preview_key.$": "$.plan.outputs.preview_key",
+                  "meta_key.$": "$.plan.outputs.meta_key",
+                  "raw_key.$": "$.plan.outputs.raw_key",
+                  "raw_meta_key.$": "$.plan.outputs.raw_meta_key",
+                  "plan_params_digest.$": "$.plan.outputs.plan_params_digest",
+                  "clip_slots.$": "$.solve_score_clip.parsed.clip_slots",
+                  "score_program.$": "$.solve_score_clip.parsed.score_program",
+                  "score_output_normalize.$": "$.solve_score_clip.parsed.score_output_normalize",
+                  "score_output_clip_lo.$": "$.solve_score_clip.parsed.score_output_clip_lo",
+                  "score_output_clip_hi.$": "$.solve_score_clip.parsed.score_output_clip_hi",
+                  "score_output_channel_count.$": "$.solve_score_clip.parsed.score_output_channel_count",
+                  "score_output_has_explicit_outputs.$": "$.solve_score_clip.parsed.score_output_has_explicit_outputs",
+                  "score_output_interpretation.$": "$.plan.outputs.metadata.score_output_interpretation",
+                  "score_output_channels.$": "$.solve_score_clip.parsed.score_output_channels",
+                  "chain_fingerprint.$": "$.solve_score_clip.parsed.chain_fingerprint",
+                  "solve_score_spec_version.$": "$.plan.outputs.metadata.solve_score_spec_version",
+                  "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
+                  "fragment_manifest": {
+                    "version": 1,
+                    "pair_encoding.$": "$.solve_score_clip.parsed.fragment_pair_encoding",
+                    "fragment_encoding.$": "$.solve_score_clip.parsed.fragment_encoding",
+                    "channels.$": "$.solve_score_clip.parsed.score_output_channel_count",
+                    "record_size_bytes.$": "$.solve_score_clip.parsed.fragment_record_size_bytes",
+                    "item_count.$": "$.plan.raster.item_count",
+                    "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
+                    "chain_fingerprint.$": "$.plan.outputs.metadata.solve_score_chain_fingerprint",
+                    "solve_score_spec_version.$": "$.plan.outputs.metadata.solve_score_spec_version"
+                  },
+                  "associated_palette.$": "$.plan.associated_palette",
+                  "associated_palette_grid_n.$": "$.plan.calc.N",
+                  "associated_palette_times.$": "$.plan.calc.times",
+                  "associated_palette_degree.$": "$.plan.calc.degree"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ReportDoneColor"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "BilevelRasterMap"
-          },
-
-          "BilevelRasterMap": {
-            "Type": "Map",
-            "ItemsPath": "$.plan.bilevel.section_items",
-            "MaxConcurrency": 10,
-            "ItemSelector": {
-              "phase": "section_raster", "job_id.$": "$.job_id",
-              "section_idx.$": "$$.Map.Item.Value.section_idx",
-              "section_count.$": "$$.Map.Item.Value.section_count",
-              "step_start.$": "$$.Map.Item.Value.step_start",
-              "step_count.$": "$$.Map.Item.Value.step_count",
-              "task_id.$": "States.Format('render_{}_bilevel_section_{}', $.run_id, $$.Map.Item.Value.section_idx)",
-              "solve_source_manifest_key.$": "$.plan.solve_source_manifest_key",
-              "fragment_prefix.$": "$.plan.bilevel.fragment_prefix",
-              "pix.$": "$.plan.grid.pix",
-              "min_re.$": "$.plan.viewport.min_re", "max_re.$": "$.plan.viewport.max_re",
-              "min_im.$": "$.plan.viewport.min_im", "max_im.$": "$.plan.viewport.max_im",
-              "rotation.$": "$.plan.params.rotation", "degree.$": "$.plan.calc.degree",
-              "root_transforms.$": "$.plan.params.root_transforms"
+            "ReportDoneColor": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "done",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "family.$": "$.plan.outputs.family",
+                  "artifact_id.$": "$.plan.outputs.artifact_id",
+                  "image_key.$": "$.plan.outputs.image_key",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "InnerSucceed"
             },
-            "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "BilevelRasterWorker", "States": { "BilevelRasterWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
-            "ResultPath": null, "Next": "BilevelFinalizePhase"
-          },
-
-          "BilevelFinalizePhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "bilevel_finalize", "phase_label": "Assemble + encode", "expected": 1 }
+            "BilevelRasterPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "phase": "bilevel_raster",
+                  "phase_label": "BiLevel raster",
+                  "expected.$": "$.plan.bilevel.item_count",
+                  "subtask_prefix.$": "States.Format('render_{}_bilevel_section_', $.run_id)",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "BilevelRasterMap"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "BilevelFinalizeTask"
-          },
-
-          "BilevelFinalizeTask": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${BilevelFunctionArn}",
-              "Payload": {
-                "phase": "finalize",
+            "BilevelRasterMap": {
+              "Type": "Map",
+              "ItemsPath": "$.plan.bilevel.section_items",
+              "MaxConcurrency": 10,
+              "ItemSelector": {
+                "phase": "section_raster",
                 "job_id.$": "$.job_id",
-                "task_id.$": "States.Format('render_{}_bilevel_finalize', $.run_id)",
-                "pix.$": "$.plan.grid.pix",
-                "source_item_count.$": "$.plan.bilevel.item_count",
+                "section_idx.$": "$$.Map.Item.Value.section_idx",
+                "section_count.$": "$$.Map.Item.Value.section_count",
+                "step_start.$": "$$.Map.Item.Value.step_start",
+                "step_count.$": "$$.Map.Item.Value.step_count",
+                "task_id.$": "States.Format('render_{}_bilevel_section_{}', $.run_id, $$.Map.Item.Value.section_idx)",
+                "solve_source_manifest_key.$": "$.plan.solve_source_manifest_key",
                 "fragment_prefix.$": "$.plan.bilevel.fragment_prefix",
-                "out_key.$": "$.plan.outputs.bilevel_key",
-                "preview_key.$": "$.plan.outputs.preview_key",
-                "metadata.$": "$.plan.outputs.metadata"
-              }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ReportDoneBilevel"
-          },
-
-          "ReportDoneBilevel": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.bilevel_key" }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "InnerSucceed"
-          },
-
-          "CoeffRasterPhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "coeff_raster", "phase_label": "Coeffs raster", "expected.$": "$.plan.coeff_bilevel.item_count", "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_section_', $.run_id)" }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "CoeffRasterMap"
-          },
-
-          "CoeffRasterMap": {
-            "Type": "Map",
-            "ItemsPath": "$.plan.coeff_bilevel.section_items",
-            "MaxConcurrency": 10,
-            "ItemSelector": {
-              "phase": "coeff_raster", "job_id.$": "$.job_id",
-              "section_idx.$": "$$.Map.Item.Value.section_idx",
-              "section_count.$": "$$.Map.Item.Value.section_count",
-              "step_start.$": "$$.Map.Item.Value.step_start",
-              "step_count.$": "$$.Map.Item.Value.step_count",
-              "task_id.$": "States.Format('render_{}_coeff_bilevel_section_{}', $.run_id, $$.Map.Item.Value.section_idx)",
-              "solve_source_manifest_key.$": "$.plan.solve_source_manifest_key",
-              "fragment_prefix.$": "$.plan.coeff_bilevel.fragment_prefix",
-              "pix.$": "$.plan.grid.pix",
-              "min_re.$": "$.plan.viewport.min_re", "max_re.$": "$.plan.viewport.max_re",
-              "min_im.$": "$.plan.viewport.min_im", "max_im.$": "$.plan.viewport.max_im",
-              "rotation.$": "$.plan.params.rotation", "degree.$": "$.plan.calc.degree", "n_coeffs.$": "$.plan.calc.n_coeffs"
-            },
-            "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "CoeffRasterWorker", "States": { "CoeffRasterWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
-            "ResultPath": null, "Next": "CoeffFinalizePhase"
-          },
-
-          "CoeffFinalizePhase": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "coeff_finalize", "phase_label": "Coeff assemble + encode", "expected": 1 }
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "CoeffFinalizeTask"
-          },
-
-          "CoeffFinalizeTask": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${BilevelFunctionArn}",
-              "Payload": {
-                "phase": "finalize",
-                "job_id.$": "$.job_id",
-                "task_id.$": "States.Format('render_{}_coeff_bilevel_finalize', $.run_id)",
                 "pix.$": "$.plan.grid.pix",
-                "source_item_count.$": "$.plan.coeff_bilevel.item_count",
+                "min_re.$": "$.plan.viewport.min_re",
+                "max_re.$": "$.plan.viewport.max_re",
+                "min_im.$": "$.plan.viewport.min_im",
+                "max_im.$": "$.plan.viewport.max_im",
+                "rotation.$": "$.plan.params.rotation",
+                "degree.$": "$.plan.calc.degree",
+                "root_transforms.$": "$.plan.params.root_transforms"
+              },
+              "ItemProcessor": {
+                "ProcessorConfig": {
+                  "Mode": "INLINE"
+                },
+                "StartAt": "BilevelRasterWorker",
+                "States": {
+                  "BilevelRasterWorker": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Parameters": {
+                      "FunctionName": "${BilevelFunctionArn}",
+                      "Payload.$": "$"
+                    },
+                    "ResultPath": null,
+                    "Retry": [
+                      {
+                        "ErrorEquals": [
+                          "Lambda.ServiceException",
+                          "Lambda.AWSLambdaException",
+                          "Lambda.SdkClientException",
+                          "Lambda.TooManyRequestsException"
+                        ],
+                        "IntervalSeconds": 2,
+                        "BackoffRate": 2.0,
+                        "MaxAttempts": 3
+                      }
+                    ],
+                    "End": true
+                  }
+                }
+              },
+              "ResultPath": null,
+              "Next": "BilevelFinalizePhase"
+            },
+            "BilevelFinalizePhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "phase": "bilevel_finalize",
+                  "phase_label": "Assemble + encode",
+                  "expected": 1,
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "BilevelFinalizeTask"
+            },
+            "BilevelFinalizeTask": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${BilevelFunctionArn}",
+                "Payload": {
+                  "phase": "finalize",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "States.Format('render_{}_bilevel_finalize', $.run_id)",
+                  "pix.$": "$.plan.grid.pix",
+                  "source_item_count.$": "$.plan.bilevel.item_count",
+                  "fragment_prefix.$": "$.plan.bilevel.fragment_prefix",
+                  "out_key.$": "$.plan.outputs.bilevel_key",
+                  "preview_key.$": "$.plan.outputs.preview_key",
+                  "metadata.$": "$.plan.outputs.metadata"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ReportDoneBilevel"
+            },
+            "ReportDoneBilevel": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "done",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "family.$": "$.plan.outputs.family",
+                  "artifact_id.$": "$.plan.outputs.artifact_id",
+                  "image_key.$": "$.plan.outputs.bilevel_key",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "InnerSucceed"
+            },
+            "CoeffRasterPhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "phase": "coeff_raster",
+                  "phase_label": "Coeffs raster",
+                  "expected.$": "$.plan.coeff_bilevel.item_count",
+                  "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_section_', $.run_id)",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "CoeffRasterMap"
+            },
+            "CoeffRasterMap": {
+              "Type": "Map",
+              "ItemsPath": "$.plan.coeff_bilevel.section_items",
+              "MaxConcurrency": 10,
+              "ItemSelector": {
+                "phase": "coeff_raster",
+                "job_id.$": "$.job_id",
+                "section_idx.$": "$$.Map.Item.Value.section_idx",
+                "section_count.$": "$$.Map.Item.Value.section_count",
+                "step_start.$": "$$.Map.Item.Value.step_start",
+                "step_count.$": "$$.Map.Item.Value.step_count",
+                "task_id.$": "States.Format('render_{}_coeff_bilevel_section_{}', $.run_id, $$.Map.Item.Value.section_idx)",
+                "solve_source_manifest_key.$": "$.plan.solve_source_manifest_key",
                 "fragment_prefix.$": "$.plan.coeff_bilevel.fragment_prefix",
-                "out_key.$": "$.plan.outputs.coeff_bilevel_key",
-                "preview_key.$": "$.plan.outputs.preview_key",
-                "metadata.$": "$.plan.outputs.metadata"
-              }
+                "pix.$": "$.plan.grid.pix",
+                "min_re.$": "$.plan.viewport.min_re",
+                "max_re.$": "$.plan.viewport.max_re",
+                "min_im.$": "$.plan.viewport.min_im",
+                "max_im.$": "$.plan.viewport.max_im",
+                "rotation.$": "$.plan.params.rotation",
+                "degree.$": "$.plan.calc.degree",
+                "n_coeffs.$": "$.plan.calc.n_coeffs"
+              },
+              "ItemProcessor": {
+                "ProcessorConfig": {
+                  "Mode": "INLINE"
+                },
+                "StartAt": "CoeffRasterWorker",
+                "States": {
+                  "CoeffRasterWorker": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Parameters": {
+                      "FunctionName": "${BilevelFunctionArn}",
+                      "Payload.$": "$"
+                    },
+                    "ResultPath": null,
+                    "Retry": [
+                      {
+                        "ErrorEquals": [
+                          "Lambda.ServiceException",
+                          "Lambda.AWSLambdaException",
+                          "Lambda.SdkClientException",
+                          "Lambda.TooManyRequestsException"
+                        ],
+                        "IntervalSeconds": 2,
+                        "BackoffRate": 2.0,
+                        "MaxAttempts": 3
+                      }
+                    ],
+                    "End": true
+                  }
+                }
+              },
+              "ResultPath": null,
+              "Next": "CoeffFinalizePhase"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ReportDoneCoeffBilevel"
-          },
-
-          "ReportDoneCoeffBilevel": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.coeff_bilevel_key" }
+            "CoeffFinalizePhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "phase": "coeff_finalize",
+                  "phase_label": "Coeff assemble + encode",
+                  "expected": 1,
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "CoeffFinalizeTask"
             },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "InnerSucceed"
-          },
-
-          "InnerSucceed": { "Type": "Succeed" },
-          "InnerFail": { "Type": "Fail", "Error": "InvalidMode", "Cause": "Unknown render mode" }
+            "CoeffFinalizeTask": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${BilevelFunctionArn}",
+                "Payload": {
+                  "phase": "finalize",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "States.Format('render_{}_coeff_bilevel_finalize', $.run_id)",
+                  "pix.$": "$.plan.grid.pix",
+                  "source_item_count.$": "$.plan.coeff_bilevel.item_count",
+                  "fragment_prefix.$": "$.plan.coeff_bilevel.fragment_prefix",
+                  "out_key.$": "$.plan.outputs.coeff_bilevel_key",
+                  "preview_key.$": "$.plan.outputs.preview_key",
+                  "metadata.$": "$.plan.outputs.metadata"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ReportDoneCoeffBilevel"
+            },
+            "ReportDoneCoeffBilevel": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "done",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "family.$": "$.plan.outputs.family",
+                  "artifact_id.$": "$.plan.outputs.artifact_id",
+                  "image_key.$": "$.plan.outputs.coeff_bilevel_key",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "InnerSucceed"
+            },
+            "InnerSucceed": {
+              "Type": "Succeed"
+            },
+            "InnerFail": {
+              "Type": "Fail",
+              "Error": "InvalidMode",
+              "Cause": "Unknown render mode"
+            }
+          }
         }
-      }],
+      ],
       "ResultPath": null,
-      "Catch": [{
-        "ErrorEquals": ["States.ALL"],
-        "ResultPath": "$.error_info",
-        "Next": "ReportError"
-      }],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error_info",
+          "Next": "ReportError"
+        }
+      ],
       "Next": "Succeed"
     },
-
-    "Succeed": { "Type": "Succeed" },
-
+    "Succeed": {
+      "Type": "Succeed"
+    },
     "ReportError": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
@@ -485,14 +849,26 @@
           "run_started_at_ms.$": "$.run_started_at_ms",
           "mode.$": "$.mode",
           "Error.$": "$.error_info.Error",
-          "Cause.$": "$.error_info.Cause"
+          "Cause.$": "$.error_info.Cause",
+          "execution_arn.$": "$$.Execution.Id"
         }
       },
       "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "BackoffRate": 2.0,
+          "MaxAttempts": 3
+        }
+      ],
       "Next": "Fail"
     },
-
     "Fail": {
       "Type": "Fail",
       "Error": "RenderFailed",

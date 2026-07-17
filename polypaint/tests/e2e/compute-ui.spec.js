@@ -79,6 +79,7 @@ test.describe('Compute UI', () => {
         window._computePreviewCalls.push(body);
         return {
           solver_mode: body.solver_mode,
+          viewport_mode: body.viewport_mode || 'quantile',
           image_width: body.preview_size,
           image_height: body.preview_size,
           quantile: body.quantile,
@@ -93,6 +94,7 @@ test.describe('Compute UI', () => {
           viewport_ms: 7,
           raster_ms: 9,
           total_ms: 40,
+          viewport: { min_re: -4, max_re: 4, min_im: -4, max_im: 4, center_re: 0, center_im: 0 },
           image_png_base64: previewBase64,
         };
       };
@@ -111,6 +113,10 @@ test.describe('Compute UI', () => {
     await expect(page.locator('#compute-preview-info')).toContainText('solver: CM');
     await expect(page.locator('#compute-preview-info')).toContainText('image: 960×960');
     await expect(page.locator('#compute-preview-info')).toContainText('view: q=2.5% · shim=7.5%');
+    // diagnostics: one item per row, no "timing" label
+    await expect(page.locator('#compute-preview-info')).toContainText('coeffgen 11ms');
+    await expect(page.locator('#compute-preview-info')).toContainText('total: 40ms');
+    await expect(page.locator('#compute-preview-info')).not.toContainText('timing:');
 
     const call = await page.evaluate(() => window._computePreviewCalls[0]);
     expect(call).toMatchObject({
@@ -119,8 +125,38 @@ test.describe('Compute UI', () => {
       preview_size: 960,
       quantile: 0.025,
       shim: 0.075,
+      viewport_mode: 'quantile',
       function: 'poly_1',
     });
+
+    // SQUARE viewport mode: centered side-S box in the payload
+    await page.check('input[name="compute-preview-viewport-mode"][value="square"]');
+    await page.fill('#compute-preview-square-side', '10');
+    await page.click('#btn-compute-preview');
+    await expect(page.locator('#compute-preview-info')).toContainText('view: square side=10');
+    const squareCall = await page.evaluate(() => window._computePreviewCalls[1]);
+    expect(squareCall).toMatchObject({
+      viewport_mode: 'explicit',
+      view_min_re: -5, view_max_re: 5, view_min_im: -5, view_max_im: 5,
+    });
+
+    // MARQUEE: drag a rectangle on the image; bounds translate through the
+    // displayed viewport (stubbed as +-4) and land in the next payload
+    await page.check('input[name="compute-preview-viewport-mode"][value="marquee"]');
+    const img = page.locator('#compute-preview-box img');
+    const rect = await img.boundingBox();
+    await page.mouse.move(rect.x + rect.width * 0.25, rect.y + rect.height * 0.25);
+    await page.mouse.down();
+    await page.mouse.move(rect.x + rect.width * 0.75, rect.y + rect.height * 0.5);
+    await page.mouse.up();
+    await expect(page.locator('#compute-preview-marquee-info')).toContainText('UL');
+    await page.click('#btn-compute-preview');
+    const marqueeCall = await page.evaluate(() => window._computePreviewCalls[2]);
+    expect(marqueeCall.viewport_mode).toBe('explicit');
+    expect(marqueeCall.view_min_re).toBeCloseTo(-2, 1);   // 0.25 of [-4,4]
+    expect(marqueeCall.view_max_re).toBeCloseTo(2, 1);    // 0.75
+    expect(marqueeCall.view_max_im).toBeCloseTo(2, 1);    // y=0.25 from top
+    expect(marqueeCall.view_min_im).toBeCloseTo(0, 1);    // y=0.50
   });
 
   test('function picker works from compute tab', async ({ page }) => {

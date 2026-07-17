@@ -543,6 +543,24 @@ def handler(event, context):
             return _json_response(400, {"message": f"solver_iters must be an integer, got {params.get('solver_iters')!r}"})
         if solver_iters < 0 or solver_iters > 64:
             return _json_response(400, {"message": f"solver_iters must be in 0..64, got {solver_iters}"})
+        viewport_mode = str(params.get("viewport_mode") or "quantile").strip().lower()
+        if viewport_mode not in {"quantile", "explicit"}:
+            return _json_response(400, {"message": f"unsupported viewport_mode: {viewport_mode}"})
+        explicit_bounds = None
+        if viewport_mode == "explicit":
+            try:
+                explicit_bounds = tuple(
+                    float(params[key]) for key in
+                    ("view_min_re", "view_max_re", "view_min_im", "view_max_im"))
+            except (KeyError, TypeError, ValueError):
+                return _json_response(400, {
+                    "message": "explicit viewport requires numeric view_min_re, view_max_re, view_min_im, view_max_im"})
+            vmin_re, vmax_re, vmin_im, vmax_im = explicit_bounds
+            spans = (vmax_re - vmin_re, vmax_im - vmin_im)
+            if not all(math.isfinite(v) for v in explicit_bounds) or min(spans) <= 0:
+                return _json_response(400, {"message": "explicit viewport bounds must be finite with max > min on both axes"})
+            if max(abs(v) for v in explicit_bounds) > 1e6 or max(spans) > 1e6 or min(spans) < 1e-9:
+                return _json_response(400, {"message": "explicit viewport bounds out of range"})
 
         try:
             compiled = _compile_compute_inputs(params)
@@ -657,7 +675,21 @@ def handler(event, context):
         t0 = time.time()
         with open(TMP_ROOTS, "rb") as fh:
             roots_data = fh.read()
-        viewport = compute_viewport_from_bin(roots_data, quantile=quantile, shim=shim)
+        if explicit_bounds is not None:
+            # explicit viewport (marquee / square modes): the square raster
+            # fits the requested rect isotropically around its center
+            vmin_re, vmax_re, vmin_im, vmax_im = explicit_bounds
+            world = max(vmax_re - vmin_re, vmax_im - vmin_im)
+            viewport = {
+                "center_re": (vmin_re + vmax_re) / 2.0,
+                "center_im": (vmin_im + vmax_im) / 2.0,
+                "scale": float(REF_SIZE) / world,
+                "n_roots": len(roots_data) // 8,
+                "q_re": [vmin_re, vmax_re],
+                "q_im": [vmin_im, vmax_im],
+            }
+        else:
+            viewport = compute_viewport_from_bin(roots_data, quantile=quantile, shim=shim)
         viewport_ms = int((time.time() - t0) * 1000)
 
         t0 = time.time()
@@ -672,6 +704,7 @@ def handler(event, context):
         total_ms = int((time.time() - t_total) * 1000)
         response = {
             "solver_mode": solver_mode,
+            "viewport_mode": viewport_mode,
             "N_preview": n_preview,
             "preview_size": preview_size,
             "degree": degree,

@@ -4,12 +4,115 @@
 // let/const bindings are shared across all parts, exactly as before
 // the split). Deploy rewrites the script tags to build-versioned asset
 // keys (assets/<BUILD_ID>/...), so a deploy flips atomically via index.html.
+// --- Preview viewport modes -----------------------------------------------
+// quantile (Q%/Shim% auto view), marquee (drag-select on the preview image,
+// translated to complex-plane bounds), square (centered side-S box).
+let _computePreviewViewportMode = 'quantile';
+let _computePreviewMarqueeBounds = null;   // {min_re,max_re,min_im,max_im}
+let _computePreviewLastViewport = null;    // bounds of the shown image
+
+function _setComputePreviewViewportMode(mode) {
+    _computePreviewViewportMode = (mode === 'marquee' || mode === 'square') ? mode : 'quantile';
+    _markComputePreviewStale();
+}
+
+function _computePreviewSquareBounds() {
+    const side = Math.abs(parseFloat(document.getElementById('compute-preview-square-side')?.value)) || 0;
+    if (!(side > 0)) return null;
+    return { min_re: -side / 2, max_re: side / 2, min_im: -side / 2, max_im: side / 2 };
+}
+
+// sel: fractional image coords {x0,y0,x1,y1} in [0,1] (y down);
+// viewport: the displayed image's bounds. Pure — pinned by the frontend harness.
+function _computePreviewMarqueeToBounds(sel, viewport) {
+    const fx0 = Math.min(sel.x0, sel.x1), fx1 = Math.max(sel.x0, sel.x1);
+    const fy0 = Math.min(sel.y0, sel.y1), fy1 = Math.max(sel.y0, sel.y1);
+    const w = viewport.max_re - viewport.min_re;
+    const h = viewport.max_im - viewport.min_im;
+    return {
+        min_re: viewport.min_re + fx0 * w,
+        max_re: viewport.min_re + fx1 * w,
+        max_im: viewport.max_im - fy0 * h,
+        min_im: viewport.max_im - fy1 * h,
+    };
+}
+
+function _computePreviewExplicitBounds() {
+    if (_computePreviewViewportMode === 'square') return _computePreviewSquareBounds();
+    if (_computePreviewViewportMode === 'marquee') return _computePreviewMarqueeBounds;
+    return null;
+}
+
+function _formatViewCoord(re, im) {
+    const fmt = (x) => (Math.abs(x) >= 1000 ? x.toExponential(2) : x.toFixed(3));
+    return `${fmt(re)}${im >= 0 ? '+' : ''}${fmt(im)}i`;
+}
+
+function _updateComputePreviewMarqueeInfo() {
+    const el = document.getElementById('compute-preview-marquee-info');
+    if (!el) return;
+    const b = _computePreviewMarqueeBounds;
+    el.textContent = b
+        ? `UL ${_formatViewCoord(b.min_re, b.max_im)} · LR ${_formatViewCoord(b.max_re, b.min_im)}`
+        : 'drag a rectangle on the preview image';
+}
+
+function _attachComputePreviewMarquee(img) {
+    const box = _computePreviewBox();
+    if (!box || !img) return;
+    let start = null;
+    let rectEl = null;
+    const relFrac = (ev) => {
+        const r = img.getBoundingClientRect();
+        return {
+            x: Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)),
+            y: Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)),
+            px: ev.clientX, py: ev.clientY, imgRect: r,
+        };
+    };
+    img.addEventListener('mousedown', (ev) => {
+        if (_computePreviewViewportMode !== 'marquee' || !_computePreviewLastViewport) return;
+        ev.preventDefault();
+        start = relFrac(ev);
+        rectEl = document.createElement('div');
+        rectEl.className = 'compute-preview-marquee-rect';
+        box.appendChild(rectEl);
+        const boxRect = box.getBoundingClientRect();
+        const draw = (mv) => {
+            const cur = relFrac(mv);
+            const x0 = Math.min(start.px, cur.px) - boxRect.left;
+            const y0 = Math.min(start.py, cur.py) - boxRect.top;
+            rectEl.style.left = `${x0}px`;
+            rectEl.style.top = `${y0}px`;
+            rectEl.style.width = `${Math.abs(cur.px - start.px)}px`;
+            rectEl.style.height = `${Math.abs(cur.py - start.py)}px`;
+        };
+        const finish = (up) => {
+            document.removeEventListener('mousemove', draw);
+            document.removeEventListener('mouseup', finish);
+            if (rectEl) { rectEl.remove(); rectEl = null; }
+            const end = relFrac(up);
+            if (Math.abs(end.x - start.x) < 0.01 || Math.abs(end.y - start.y) < 0.01) return;
+            _computePreviewMarqueeBounds = _computePreviewMarqueeToBounds(
+                { x0: start.x, y0: start.y, x1: end.x, y1: end.y },
+                _computePreviewLastViewport);
+            start = null;
+            _updateComputePreviewMarqueeInfo();
+            _markComputePreviewStale();
+        };
+        document.addEventListener('mousemove', draw);
+        document.addEventListener('mouseup', finish);
+    });
+}
+
 function _computePreviewSignatureNow() {
     return JSON.stringify({
         n_preview: parseInt(document.getElementById('compute-preview-n')?.value) || 256,
         preview_size: parseInt(document.getElementById('compute-preview-size')?.value) || 1000,
         solver_mode: document.getElementById('compute-preview-solver')?.value || 'aberth_mt',
         solver_iters: Math.max(0, Math.min(64, parseInt(document.getElementById('compute-preview-iters')?.value, 10) || 0)),
+        viewport_mode: _computePreviewViewportMode,
+        viewport_bounds: _computePreviewExplicitBounds(),
         quantile: (parseFloat(document.getElementById('compute-preview-quantile')?.value) || 0) / 100,
         shim: (parseFloat(document.getElementById('compute-preview-shim')?.value) || 5) / 100,
         function: document.getElementById('render-function')?.value || '',
@@ -89,16 +192,24 @@ function _applyComputePreviewResult(result) {
     const box = _computePreviewBox();
     const statusEl = _computePreviewStatusEl();
     const viewportLines = _computePreviewViewportInfoLines(result);
+    const viewLine = result.viewport_mode === 'explicit'
+        ? (_computePreviewViewportMode === 'square'
+            ? `view: square side=${document.getElementById('compute-preview-square-side')?.value || '?'}`
+            : 'view: marquee')
+        : `view: q=${((Number(result.quantile) || 0) * 100).toFixed(1)}% · shim=${((Number(result.shim) || 0) * 100).toFixed(1)}%`;
     const infoLines = [
         `solver: ${_solverTag(result.solver_mode || 'aberth_mt')}`,
         `image: ${result.image_width}×${result.image_height}`,
-        `view: q=${((Number(result.quantile) || 0) * 100).toFixed(1)}% · shim=${((Number(result.shim) || 0) * 100).toFixed(1)}%`,
+        viewLine,
         ...viewportLines,
         `degree: ${result.degree}`,
         `roots: ${result.n_roots_in_view}/${result.n_roots_total} in view`,
         `coeffs: ${((Number(result.coeffs_size) || 0) / 1e6).toFixed(1)}MB`,
         `roots bin: ${((Number(result.roots_size) || 0) / 1e6).toFixed(1)}MB`,
-        `timing: coeffgen ${result.coeffgen_ms}ms · solve ${result.solve_ms}ms · viewport ${result.viewport_ms}ms · raster ${result.raster_ms}ms`,
+        `coeffgen ${result.coeffgen_ms}ms`,
+        `solve ${result.solve_ms}ms`,
+        `viewport ${result.viewport_ms}ms`,
+        `raster ${result.raster_ms}ms`,
         `total: ${result.total_ms}ms`,
     ];
     if (box) {
@@ -110,6 +221,13 @@ function _applyComputePreviewResult(result) {
         img.style.cssText = 'max-width:100%; max-height:100%; width:100%; height:100%; object-fit:contain; image-rendering:pixelated; background:#000';
         box.appendChild(img);
         box.dataset.hasImage = '1';
+        if (result.viewport && Number.isFinite(Number(result.viewport.min_re))) {
+            _computePreviewLastViewport = {
+                min_re: Number(result.viewport.min_re), max_re: Number(result.viewport.max_re),
+                min_im: Number(result.viewport.min_im), max_im: Number(result.viewport.max_im),
+            };
+        }
+        _attachComputePreviewMarquee(img);
     }
     _computePreviewSignature = _computePreviewSignatureNow();
     _computePreviewIsStale = false;
@@ -258,6 +376,21 @@ async function runComputePreview() {
         log(`Compute preview: roots_cm is expensive; reduced N-preview from ${requestedN} to ${nPreview} to stay inside the synchronous preview timeout.`, 'warn', 'compute-log');
     }
 
+    const explicitBounds = _computePreviewExplicitBounds();
+    if (_computePreviewViewportMode === 'marquee' && !explicitBounds) {
+        if (statusEl) {
+            statusEl.textContent = 'Marquee viewport: drag a rectangle on the preview image first (run one Q-shim preview to get an image).';
+            statusEl.className = 'status error';
+        }
+        return;
+    }
+    if (_computePreviewViewportMode === 'square' && !explicitBounds) {
+        if (statusEl) {
+            statusEl.textContent = 'Square viewport: enter a positive side length.';
+            statusEl.className = 'status error';
+        }
+        return;
+    }
     btn.disabled = true;
     if (statusEl) {
         statusEl.textContent = `Previewing ${funcName} with ${_solverTag(solverMode)}...`;
@@ -267,7 +400,13 @@ async function runComputePreview() {
     try {
         const cfpvDisplay = _formatCfpvForDisplay(funcName, cfpv);
         log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName}${cfpvDisplay ? '(' + cfpvDisplay + ')' : ''} [${ctDisplay || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
+        const viewportPayload = explicitBounds
+            ? { viewport_mode: 'explicit',
+                view_min_re: explicitBounds.min_re, view_max_re: explicitBounds.max_re,
+                view_min_im: explicitBounds.min_im, view_max_im: explicitBounds.max_im }
+            : { viewport_mode: 'quantile' };
         const result = await lambdaPost('compute-preview', _attachProgramSourcePayload({
+            ...viewportPayload,
             solver_mode: solverMode,
             solver_iters: (solverMode === 'aberth_mt' || solverMode === 'newton') ? solverIters : 0,
             N_preview: nPreview,

@@ -521,6 +521,11 @@ assertIncludes("id=\"btn-calculate-newton\" onclick=\"runCalculateNewton()\"", '
 assertIncludes("<option value=\"jenkins_traub\">JT</option>", 'compute preview should offer the Jenkins-Traub brush');
 assertIncludes("<option value=\"newton\">Newton</option>", 'compute preview should offer the Newton brush');
 assertIncludes("id=\"compute-preview-iters\"", 'compute preview should expose the Aberth iteration cap');
+assertIncludes("name=\"compute-preview-viewport-mode\" value=\"quantile\"", 'preview viewport chooser should offer Q-shim');
+assertIncludes("name=\"compute-preview-viewport-mode\" value=\"marquee\"", 'preview viewport chooser should offer marquee select');
+assertIncludes("name=\"compute-preview-viewport-mode\" value=\"square\"", 'preview viewport chooser should offer the square side selector');
+assertIncludes("function _computePreviewMarqueeToBounds(sel, viewport) {", 'marquee pixel-to-complex mapping should be a pure function');
+assertNotIncludes("timing: coeffgen", 'preview diagnostics should list each timing on its own row without the timing label');
 assertIncludes("const coeffProgramSourceText = _effectiveCoeffProgramSourceTextForCompute() || '';\n    const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];\n    const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4);", 'AE-MT degree probe should define coeffProgramSourceText before using it in the probe signature');
 assertIncludes("function _normalizeComputeSolverMode(solver) {", 'compute should normalize legacy solver metadata to supported solvers');
 assertIncludes("function _computeLoresPhaseTrackers(runId, solverMode) {", 'compute log should define deterministic lores phase trackers');

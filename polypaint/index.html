@@ -327,6 +327,12 @@ button {
 .pal-circle-long {
     min-width: 50px;
 }
+.compute-preview-marquee-rect {
+    position: absolute;
+    border: 1px dashed #7fd6c8;
+    background: rgba(127, 214, 200, 0.15);
+    pointer-events: none;
+}
 .pal-circle-custom {
     min-width: 44px;
 }
@@ -1755,8 +1761,23 @@ button {
                     </div>
                     <div id="compute-preview-status" class="status" style="margin-top:0">No compute preview yet</div>
                     <div style="display:flex; gap:12px; align-items:flex-start; margin-top:8px; flex-wrap:wrap">
-                        <div id="compute-preview-box" style="width:320px; height:320px; border:1px solid #0f3460; border-radius:4px; background:#000; display:flex; align-items:center; justify-content:center"><span style="color:#444; font-size:11px">No compute preview yet</span></div>
+                        <div id="compute-preview-box" style="width:320px; height:320px; border:1px solid #0f3460; border-radius:4px; background:#000; display:flex; align-items:center; justify-content:center; position:relative"><span style="color:#444; font-size:11px">No compute preview yet</span></div>
                         <div id="compute-preview-info" style="min-width:180px; font-size:11px; color:#888; line-height:1.5"></div>
+                        <div id="compute-preview-viewport-chooser" style="min-width:220px; font-size:11px">
+                            <div style="color:#8c98aa; text-transform:uppercase; letter-spacing:0.06em; font-size:10px; margin-bottom:4px">Viewport</div>
+                            <div class="color-mode-row">
+                                <label class="color-mode-choice"><input type="radio" name="compute-preview-viewport-mode" value="quantile" checked onchange="_setComputePreviewViewportMode(this.value)"><span class="color-mode-name">Q-shim</span></label>
+                                <div class="color-mode-detail"><span class="autolevel-stage-text">auto view from the Q% and Shim% inputs</span></div>
+                            </div>
+                            <div class="color-mode-row">
+                                <label class="color-mode-choice"><input type="radio" name="compute-preview-viewport-mode" value="marquee" onchange="_setComputePreviewViewportMode(this.value)"><span class="color-mode-name">Marquee</span></label>
+                                <div class="color-mode-detail"><span class="autolevel-stage-text" id="compute-preview-marquee-info">drag a rectangle on the preview image</span></div>
+                            </div>
+                            <div class="color-mode-row">
+                                <label class="color-mode-choice"><input type="radio" name="compute-preview-viewport-mode" value="square" onchange="_setComputePreviewViewportMode(this.value)"><span class="color-mode-name">Square</span></label>
+                                <div class="color-mode-detail"><span class="autolevel-stage-text">side <input id="compute-preview-square-side" type="number" value="10" min="0.000001" step="0.5" style="width:5.5em" onchange="_markComputePreviewStale()"> centered on 0</span></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div id="compute-preview-debug-panel" class="compute-preview-panel">

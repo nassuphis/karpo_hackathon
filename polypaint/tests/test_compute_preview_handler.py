@@ -166,6 +166,66 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("solver_iters", json.loads(result["body"])["message"])
 
     @patch("handler_compute_preview.tmp_space_stats")
+    @patch("handler_compute_preview._run_json_binary")
+    @patch("handler_compute_preview.compute_viewport_from_bin")
+    def test_explicit_viewport_mode(self, mock_viewport, mock_binary, mock_tmp_stats):
+        """viewport_mode=explicit skips the quantile computation entirely
+        and rasters the requested rect (square canvas fits the larger span
+        around the rect center); malformed bounds and modes are 400s."""
+        import handler_compute_preview as mod
+
+        mock_tmp_stats.return_value = {
+            "path": "/tmp",
+            "free_bytes": 8 * 1024 * 1024 * 1024,
+            "total_bytes": 10 * 1024 * 1024 * 1024,
+        }
+
+        def run_binary(_binary, out_path, spec, **_kwargs):
+            if spec["mode"] == "coeffgen":
+                with open(out_path, "wb") as fh:
+                    fh.write(b"\0" * (8 * 8 * 3 * 8))
+                return {"mode": "coeffgen", "data_bytes": 8 * 8 * 3 * 8,
+                        "n_coeffs": 3, "degree": 2}
+            with open(out_path, "wb") as fh:
+                fh.write(_roots_bytes(8 * 8, 2))
+            return {"mode": spec["mode"], "n_t": 8 * 8, "degree": 2}
+
+        mock_binary.side_effect = run_binary
+        result = mod.handler({"body": json.dumps(_event(
+            solver_mode="aberth_mt", N_preview=8, preview_size=64,
+            viewport_mode="explicit",
+            view_min_re=-2.0, view_max_re=6.0,
+            view_min_im=-1.0, view_max_im=3.0,
+        ))}, None)
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 200, body)
+        self.assertEqual(body["viewport_mode"], "explicit")
+        mock_viewport.assert_not_called()
+        vp = body["viewport"]
+        # center preserved; the square raster fits the larger span (8 wide)
+        self.assertAlmostEqual(vp["center_re"], 2.0)
+        self.assertAlmostEqual(vp["center_im"], 1.0)
+        self.assertAlmostEqual(vp["max_re"] - vp["min_re"], 8.0)
+        self.assertAlmostEqual(vp["max_im"] - vp["min_im"], 8.0)
+        self.assertEqual(body["q_re"], [-2.0, 6.0])
+        self.assertEqual(body["q_im"], [-1.0, 3.0])
+
+        bad_cases = [
+            {"viewport_mode": "explicit"},                                  # missing bounds
+            {"viewport_mode": "explicit", "view_min_re": 1.0, "view_max_re": -1.0,
+             "view_min_im": 0.0, "view_max_im": 1.0},                       # inverted
+            {"viewport_mode": "explicit", "view_min_re": 0.0, "view_max_re": 1e9,
+             "view_min_im": 0.0, "view_max_im": 1.0},                       # oversized
+            {"viewport_mode": "fisheye"},                                   # unknown mode
+        ]
+        for extra in bad_cases:
+            with self.subTest(extra=extra):
+                result = mod.handler({"body": json.dumps(_event(
+                    solver_mode="aberth_mt", N_preview=8, preview_size=64, **extra,
+                ))}, None)
+                self.assertEqual(result["statusCode"], 400, result["body"])
+
+    @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")
     @patch("handler_compute_preview.compute_viewport_from_bin")
     def test_compute_preview_success_cm_returns_inline_png(self, mock_viewport, mock_run, mock_tmp_stats):

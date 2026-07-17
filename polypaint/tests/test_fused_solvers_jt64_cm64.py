@@ -289,6 +289,36 @@ class TestFusedSolverPlumbing(unittest.TestCase):
         self.assertEqual(int(data["roots_upload_fallback"]), 0)
         self.assertIn("t/roots.bin", uploads)
 
+    def test_every_ui_solver_is_accepted_across_the_dispatch_chain(self):
+        """Cross-layer pin: every solver mode the UI select offers must be
+        accepted by EVERY validation layer on the dispatch chain. Both
+        fused-mode incidents were one-at-a-time allow-list misses: the
+        chunk estimators raised (Execute greyed out) and the ORCHESTRATOR
+        rejected jt64 before start_execution (the "hung" job that never
+        existed — no execution, no ARN, no kill button, silent forever-
+        pending client). One list, checked everywhere."""
+        import re
+
+        import handler_compute_orchestrator as orch
+        import handler_compute_plan as plan
+        from compute_fused import estimate_fused_chunking
+
+        html = open(os.path.join(ROOT, "index.html")).read()
+        select = re.search(
+            r'id="compute-preview-solver".*?</select>', html, re.S).group(0)
+        ui_modes = re.findall(r'<option value="([^"]+)"', select)
+        self.assertGreaterEqual(len(ui_modes), 7)
+        for mode in ui_modes:
+            with self.subTest(mode=mode):
+                self.assertIn(mode, orch.VALID_SOLVERS)
+                self.assertEqual(plan._validate_solver_mode(mode), mode)
+                self.assertTrue(plan._solver_bin_mode(mode))
+                self.assertTrue(plan._solver_function_name(mode))
+                est = estimate_fused_chunking(
+                    n=100, times=1, requested_chunks=5, degree=20,
+                    n_coeffs=21, fused_threads=4, solver_mode=mode)
+                self.assertGreater(int(est["min_safe_chunks"]), 0)
+
     def test_chunk_estimators_accept_fused_modes(self):
         """The degree-probe estimate is what enables the popup's Execute
         button; compute_fused raising 'unsupported fused solver_mode'

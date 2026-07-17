@@ -74,7 +74,8 @@ def _first_text(*values):
 def _solver_label(raw):
     solver = str(raw or "").strip()
     return {"aberth": "AE", "companion_matrix": "CM", "aberth_mt": "AE-MT",
-            "jenkins_traub": "JT", "newton": "NEWT"}.get(solver, solver)
+            "jenkins_traub": "JT", "newton": "NEWT",
+            "jt64": "JT64", "cm64": "CM64", "ae64": "AE64"}.get(solver, solver)
 
 
 def _fmt_pct(value):

@@ -20,7 +20,7 @@ sfn_client = boto3.client("stepfunctions", region_name=os.environ.get("AWS_REGIO
 ddb_client = boto3.client("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
 STATE_MACHINE_ARN = os.environ.get("COMPUTE_STATE_MACHINE_ARN", "")
-VALID_SOLVERS = {"aberth_mt", "companion_matrix", "jenkins_traub", "newton"}
+VALID_SOLVERS = {"aberth_mt", "companion_matrix", "jenkins_traub", "newton", "jt64", "cm64", "ae64"}
 TERMINAL_STATUSES = {"done", "error"}
 ACTIVE_RUN_STALE_MS = int(os.environ.get("ACTIVE_RUN_STALE_MS", str(24 * 60 * 60 * 1000)) or 0)
 

@@ -107,6 +107,12 @@ def _solver_label(raw):
         return "JT"
     if solver == "newton":
         return "NEWT"
+    if solver == "jt64":
+        return "JT64"
+    if solver == "cm64":
+        return "CM64"
+    if solver == "ae64":
+        return "AE64"
     return solver
 
 

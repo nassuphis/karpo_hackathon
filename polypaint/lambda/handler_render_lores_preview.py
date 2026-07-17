@@ -273,12 +273,13 @@ def _calc_pipeline(calc):
 
 def _calc_solver_mode(calc):
     raw = str((calc or {}).get("solver") or "aberth_mt").strip().lower()
-    if raw in ("companion_matrix", "cm", "solve_cm"):
+    if raw in ("companion_matrix", "cm", "solve_cm", "cm64"):
         return "companion_matrix"
-    if raw in ("jenkins_traub", "jt", "solve_jt"):
+    if raw in ("jenkins_traub", "jt", "solve_jt", "jt64"):
         return "jenkins_traub"
     if raw in ("newton", "solve_newton"):
         return "newton"
+    # fused ae64 artifacts re-solve their lores with plain AE (same kin)
     return "aberth_mt"
 
 

@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_2921",
+  "chain": [],
+  "source_text": "r1 = exp(6.283185307179586i*t1)\nr2 = exp(6.283185307179586i*t2)\npoly = fill(25, 0)\npoly[0] = 30*r1*r1*r2\npoly[1] = 30*r1*r2*r2\npoly[2] = 40*r1**3\npoly[3] = 40*r2**3\npoly[4] = 0-25*r1*r1\npoly[5] = 0-25*r2*r2\npoly[6] = 10*r1*r2\npoly[9] = 100*r1**4*r2**4\npoly[11] = 0-5*r1\npoly[13] = 5*r2\npoly[24] = 0-10\npoly = roots_cm(poly, lo, exact)\npoly = poly[0:24]\nr3 = scan(24, 0, t1*7919.7717+t2*104729.31+0.5-floor(t1*7919.7717+t2*104729.31+0.5), prev*9821.4959+0.211327-floor(prev*9821.4959+0.211327))\nr4 = scan(24, 0, t1*3571.3331+t2*27644.437+0.25-floor(t1*3571.3331+t2*27644.437+0.25), prev*9821.4959+0.211327-floor(prev*9821.4959+0.211327))\nr5 = select(lt(r3, 0.0934), add(1.048, multiply(subtract(r4, 0.5), 0.443)), select(lt(r3, 0.4501), add(2.569, multiply(subtract(r4, 0.5), 0.686)), add(4.361, multiply(subtract(r4, 0.5), 0.585))))\npoly = multiply(divide(poly, abs(poly)), r5)\npoly = multiply(poly, exp(multiply(subtract(scan(24, 0, t1*1299.7091+t2*15485.863+0.75-floor(t1*1299.7091+t2*15485.863+0.75), prev*9821.4959+0.211327-floor(prev*9821.4959+0.211327)), 0.5), 0.3i)))\npoly = expand_roots(poly)\nemit"
+}

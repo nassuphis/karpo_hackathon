@@ -1566,6 +1566,9 @@ async function _pollActiveRenderRun() {
 
         const rd = check.results?.[0] || {};
         _logContractWarnings([rd], 'render-log');
+        if (rd.execution_arn) {
+            _jobsRailUpsert({ id: 'render:' + run.run_id, executionArn: rd.execution_arn, taskId: run.task_id });
+        }
         _syncRenderRunServerStart(run, rd);
 
         // No DDB row found — abandoned run
@@ -1920,6 +1923,44 @@ function _jobsRailProgress(id, detail) {
     _renderJobsRail();
 }
 
+const _JOBS_RAIL_KILL_TARGETS = {
+    compute: 'compute_orchestrator',
+    render: 'render_orchestrator',
+    palette: 'palette_orchestrator',
+};
+
+async function _jobsRailKill(id) {
+    const job = _jobsRailJobs.find(j => j.id === id);
+    if (!job || job.state !== 'running' || !job.executionArn) return;
+    const target = _JOBS_RAIL_KILL_TARGETS[job.kind];
+    if (!target) return;
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function'
+        && !window.confirm(`Stop this ${job.kind} run?
+${job.label || job.id}`)) return;
+    job.killRequested = true;
+    job.detail = 'stop requested…';
+    _renderJobsRail();
+    try {
+        const resp = await lambdaPost('dispatch', {
+            target,
+            jobs: [{
+                action: 'stop',
+                job_id: job.jobId,
+                task_id: job.taskId,
+                execution_arn: job.executionArn,
+            }],
+            expected_keys: [],
+        });
+        if ((resp.fired || 0) !== 1) throw new Error('stop dispatch failed');
+        // the run's own poll loop sees the stopped status row and finishes
+        // the card through its normal error path
+    } catch (e) {
+        job.killRequested = false;
+        job.detail = `stop failed: ${e.message}`;
+        _renderJobsRail();
+    }
+}
+
 function _jobsRailOpen(id) {
     const job = _jobsRailJobs.find(j => j.id === id);
     if (!job) return;
@@ -1979,12 +2020,17 @@ function _renderJobsRail() {
             // Click routes through a data attribute: onclick-string
             // interpolation would decode &#39; back to a quote before the
             // JS parses, so ids must never be embedded in code text.
-            return `<button type="button" class="jobs-rail-card jobs-rail-${state}" data-jobs-rail-id="${_escapeHtml(job.id)}" onclick="_jobsRailOpen(this.dataset.jobsRailId)" title="${_escapeHtml(detail)}">` +
+            // Cards are divs (not buttons) so the kill control can nest.
+            const canKill = state === 'running' && job.executionArn && !job.killRequested;
+            const killBtn = canKill
+                ? `<button type="button" class="jobs-rail-kill" data-jobs-rail-id="${_escapeHtml(job.id)}" onclick="event.stopPropagation(); _jobsRailKill(this.dataset.jobsRailId)" title="Stop this run">kill</button>`
+                : (job.killRequested && state === 'running' ? '<span class="jobs-rail-kill jobs-rail-kill-pending">stopping…</span>' : '');
+            return `<div role="button" tabindex="0" class="jobs-rail-card jobs-rail-${state}" data-jobs-rail-id="${_escapeHtml(job.id)}" onclick="_jobsRailOpen(this.dataset.jobsRailId)" title="${_escapeHtml(detail)}">` +
                 `<span class="jobs-rail-card-head"><span class="jobs-rail-kind">${_escapeHtml(job.kind || 'job')}</span>` +
-                `<span class="jobs-rail-state">${_escapeHtml(state === 'running' ? 'running · ' + age : state + ' · ' + age + ' ago')}</span></span>` +
+                `<span class="jobs-rail-state">${_escapeHtml(state === 'running' ? 'running · ' + age : state + ' · ' + age + ' ago')}</span>${killBtn}</span>` +
                 `<span class="jobs-rail-label">${_escapeHtml(job.label || job.id)}</span>` +
                 (detail ? `<span class="jobs-rail-detail">${_escapeHtml(detail)}</span>` : '') +
-                `</button>`;
+                `</div>`;
         }).join('');
     } catch (e) {}
 }

@@ -188,6 +188,11 @@ assertIncludes("route: '/compile-solve-score-program-source',", 'solve-score edi
 assertIncludes("id=\"jobs-rail\" class=\"jobs-rail\"", 'the jobs rail should be a persistent cross-tab surface');
 assertIncludes("id=\"jobs-rail-cards\"", 'the jobs rail should carry a card strip');
 assertIncludes("_jobsRailUpsert({\n        id: 'render:' + record.run_id,", 'render run dispatch should feed the jobs rail');
+assertIncludes("async function _jobsRailKill(id) {", 'jobs rail should offer a kill action for running jobs');
+assertIncludes("class=\"jobs-rail-kill\"", 'running rail cards with an execution ARN should render a kill button');
+assertIncludes("action: 'stop',", 'the rail kill should dispatch the orchestrator stop action');
+assertIncludes("executionArn: rd.execution_arn", 'run polls should arm the kill button with the recorded execution ARN');
+assertNotIncludes("<button type=\"button\" class=\"jobs-rail-card", 'rail cards must be divs so the kill control can nest (nested buttons are invalid HTML)');
 assertIncludes("id: 'palette:' + record.run_id,", 'palette run dispatch should feed the jobs rail');
 assertIncludes("computeRailId = 'compute:' + runId;", 'compute submission should feed the jobs rail');
 assertIncludes("_initJobsRail();", 'boot should hydrate the jobs rail from history');

@@ -977,6 +977,11 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
 
             const rd = check.results?.[0] || {};
             _logContractWarnings([rd], 'compute-log');
+            if (rd.execution_arn) {
+                // arm the rail's kill button once the orchestrator has
+                // recorded the Step Functions execution
+                _jobsRailUpsert({ id: computeRailId, executionArn: rd.execution_arn, taskId });
+            }
             const phase = rd.phase || '';
             const phaseLabel = rd.phase_label || phase || 'Working';
             const phaseStartMs = _coerceTimestampMs(rd.started_at_ms) || _coerceTimestampMs(rd.updated_at_ms);

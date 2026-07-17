@@ -1750,7 +1750,7 @@ grant_sfn_start_policy() {
             \"Version\": \"2012-10-17\",
             \"Statement\": [{
                 \"Effect\": \"Allow\",
-                \"Action\": \"states:StartExecution\",
+                \"Action\": [\"states:StartExecution\", \"states:StopExecution\"],
                 \"Resource\": [\"${RENDER_SM_ARN}\", \"${COMPUTE_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
             }]
         }"

@@ -1166,6 +1166,9 @@ async function _pollActivePaletteRun() {
 
         const rd = check.results?.[0] || {};
         _logContractWarnings([rd], 'palette-log');
+        if (rd.execution_arn) {
+            _jobsRailUpsert({ id: 'palette:' + run.run_id, executionArn: rd.execution_arn, taskId: run.task_id });
+        }
         if (document.getElementById('tab-render')?.classList.contains('active') && _renderActiveFamily === 'palette') {
             _logContractWarnings([rd], 'render-log');
         }

@@ -80,6 +80,8 @@ def _active_execution_for_job(job_id, task_prefix):
 
 def handler(event, context):
     params = parse_body(event)
+    if str(params.get("action") or "").strip().lower() == "stop":
+        return handle_stop(params)
     job_id = params["job_id"]
     # run_id feeds the SFN execution name + DDB task ids below (F9)
     run_id = assert_safe_id(params["run_id"], "run_id")
@@ -140,3 +142,28 @@ def handler(event, context):
         "task_id": task_id,
         "run_id": run_id,
     })
+
+
+def handle_stop(params):
+    """Stop a running workflow from the jobs rail: kill the Step Functions
+    execution and mark the run's status row as a user stop (the client's
+    poll loop then terminates through its normal error path)."""
+    execution_arn = str(params.get("execution_arn") or "").strip()
+    job_id = params["job_id"]
+    task_id = str(params.get("task_id") or "").strip()
+    if not execution_arn.startswith("arn:aws:states:") or not task_id:
+        raise RuntimeError("stop requires the run's execution_arn and task_id")
+    try:
+        sfn_client.stop_execution(
+            executionArn=execution_arn,
+            error="UserStopped",
+            cause="Stopped from the jobs rail",
+        )
+    except sfn_client.exceptions.ExecutionDoesNotExist:
+        pass   # already finished/expired; still mark the row stopped
+    report_status(job_id, task_id, "error", "Stopped by user", result_data={
+        "phase": "error",
+        "phase_label": "Stopped",
+        "stopped_by_user": True,
+    })
+    return ok_response({"stopped": True, "task_id": task_id})

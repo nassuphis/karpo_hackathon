@@ -47,6 +47,58 @@ class TestComputeStarterLambda(unittest.TestCase):
 
     @patch("handler_compute_orchestrator.report_status")
     @patch("handler_compute_orchestrator.sfn_client")
+    def test_stop_action_kills_execution_and_marks_status(self, mock_sfn, mock_report):
+        """The jobs-rail kill: action=stop calls StopExecution with the run's
+        ARN and marks the status row as a user stop (the client poll then
+        terminates through its normal error path)."""
+        import handler_compute_orchestrator as mod
+
+        class _NoSuch(Exception):
+            pass
+        mock_sfn.exceptions.ExecutionDoesNotExist = _NoSuch
+
+        arn = "arn:aws:states:us-east-1:123:execution:wf:compute_aberth_mt_run_x"
+        result = mod.handler(_make_event({
+            "action": "stop",
+            "job_id": "j",
+            "task_id": "compute_run_aberth_mt_run_x",
+            "execution_arn": arn,
+        }), None)
+        body = json.loads(result["body"])
+        self.assertTrue(body["stopped"])
+        mock_sfn.stop_execution.assert_called_once()
+        kwargs = mock_sfn.stop_execution.call_args.kwargs
+        self.assertEqual(kwargs["executionArn"], arn)
+        self.assertEqual(kwargs["error"], "UserStopped")
+        mock_sfn.start_execution.assert_not_called()
+        args = mock_report.call_args.args
+        self.assertEqual(args[0], "j")
+        self.assertEqual(args[1], "compute_run_aberth_mt_run_x")
+        self.assertEqual(args[2], "error")
+        self.assertEqual(args[3], "Stopped by user")
+
+        # already-finished executions still mark the row stopped
+        mock_report.reset_mock()
+        mock_sfn.stop_execution.side_effect = _NoSuch()
+        result = mod.handler(_make_event({
+            "action": "stop", "job_id": "j",
+            "task_id": "compute_run_aberth_mt_run_x", "execution_arn": arn,
+        }), None)
+        self.assertTrue(json.loads(result["body"])["stopped"])
+        self.assertEqual(mock_report.call_args.args[2], "error")
+
+        # malformed ARNs are rejected before any AWS call
+        mock_sfn.stop_execution.reset_mock()
+        mock_sfn.stop_execution.side_effect = None
+        with self.assertRaises(RuntimeError):
+            mod.handler(_make_event({
+                "action": "stop", "job_id": "j",
+                "task_id": "t", "execution_arn": "not-an-arn",
+            }), None)
+        mock_sfn.stop_execution.assert_not_called()
+
+    @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.sfn_client")
     def test_starter_calls_start_execution_once(self, mock_sfn, mock_report):
         mock_sfn.start_execution.return_value = {
             "executionArn": "arn:aws:states:us-east-1:123:execution:polypaint-compute-workflow:compute_aberth_mt_run_abc"

@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "julia_camera",
+  "chain": [],
+  "source_text": "r1 = 1.4*t1*exp(634.6017010557239i*t2)\npoly = scan(120, 0, r1, prev*prev-0.1226+0.7449i)\npoly\npoly = fill(122, 0)\npoly[0:120] = pop\npoly[120] = 20\npoly[121] = 3+0.5*r1\nemit"
+}

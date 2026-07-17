@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "mandel_camera",
+  "chain": [],
+  "source_text": "r1 = (t1*2.6-2.1)+1i*(t2*2.6-1.3)\npoly = scan(120, 0, r1, prev*prev+r1)\npoly\npoly = fill(122, 0)\npoly[0:120] = pop\npoly[120] = 20\npoly[121] = 3+0.5*((t1*2.6-2.1)+1i*(t2*2.6-1.3))\nemit"
+}

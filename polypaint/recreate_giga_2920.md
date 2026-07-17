@@ -77,6 +77,15 @@ painted = 0.9*sort_abs(roots(cf)) + 0.1*sort_abs(roots(prev_output))
   was). Fine for well-conditioned roots; the halo amplifies it, which
   is the paint.
 
+## 2b. The lite variant
+
+`giga_2920_lite` (uploaded 2026-07-17, fingerprint 974e871b) halves the
+dominant cost: branch B — the 10%-weight previous-row analog — uses the
+EXACTLY KNOWN phase-displaced lattice points instead of a second solved
+mix, so each row runs ONE degree-64 eigensolve instead of two. Measured
+lite-vs-full 2D cloud correlation: 0.979 against a 0.993 half-vs-half
+sampling floor — visually identical ensembles.
+
 ## 3. Polypaint Coeff Program
 
 `giga_2920.coeff-program.json` (86 tokens, stack_max 5; generator

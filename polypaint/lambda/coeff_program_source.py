@@ -701,6 +701,11 @@ def _typed_lower_value(text):
             # non-finite products clamp to 0.
             return _typed_lower_value(
                 f"add(multiply({c}, {a}), multiply(subtract(1, {c}), {b}))")
+        if name in _NATIVE_TRANSFORM_ALIASES or _canonical_native_name(name) in legacy_registry()["by_name"]:
+            # native transforms compose in expression position: the registry
+            # and the deployed VM already accept src=pop/tgt=push, so
+            # rev(expr) / sort_mod_keep_angle(expr) splice as plain chains
+            return _typed_lower_native_transform_value(name, args)
     return _typed_lower_scalar(raw), "scalar"
 
 
@@ -771,6 +776,21 @@ def _lower_vector_unary(name, args, *, target):
     return [[chip, target, src]]
 
 
+def _typed_lower_native_transform_value(name, args):
+    if not args:
+        raise CoeffProgramSourceError(
+            f"{name}(...) in expression position requires a vector argument "
+            f"(use {name}(poly) / {name}(pop) or pass an expression)")
+    first = str(args[0]).strip().lower()
+    if first in _SOURCE_NAMES:
+        return _lower_native_transform_call(name, list(args), target="push"), "vector"
+    chain, value_type = _typed_lower_value(args[0])
+    if value_type != "vector":
+        raise CoeffProgramSourceError(
+            f"{name}(...) in expression position requires a vector first argument")
+    return chain + _lower_native_transform_call(name, ["pop", *args[1:]], target="push"), "vector"
+
+
 def _lower_native_transform_call(name, args, *, target):
     name = _canonical_native_name(name)
     if len(args) == 0:
@@ -807,6 +827,19 @@ def _lower_native_transform_call(name, args, *, target):
             # hi/lo for roots) take the full-args token below, which
             # validates them against the registry declaration.
             pass
+    if args and str(args[0]).strip().lower() not in _SOURCE_NAMES:
+        # Expression first argument: lower it as a typed vector (leaves the
+        # value on the stack) and run the transform with src=pop. Ordered
+        # AFTER the scalar stack-args attempt so implicit-src forms like
+        # round(2) keep their existing lowering byte-for-byte; every case
+        # this rescues was a compile error before.
+        try:
+            value_chain, value_type = _typed_lower_value(args[0])
+        except CoeffProgramSourceError:
+            value_chain, value_type = None, None
+        if value_type == "vector":
+            return value_chain + _lower_native_transform_call(
+                name, ["pop", *args[1:]], target=target)
     fallback_args = list(fn_args)
     if andy_arg is not None:
         fallback_args.append(andy_arg)

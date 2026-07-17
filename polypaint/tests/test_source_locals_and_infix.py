@@ -77,12 +77,16 @@ class TestSourceLocalsCore(unittest.TestCase):
         table = self._table()
         self.assertFalse(table.try_define(_Stmt("poly[3] = 1")))
 
-    def test_rebind_rejected(self):
+    def test_rebind_substitutes_previous_value(self):
+        """Registers: rebinding inlines the PRIOR definition into the new
+        one (r1 = r1 + r2 semantics), then replaces the binding."""
         table = self._table()
         table.try_define(_Stmt("a = 1"))
-        with self.assertRaises(ProgramSourceError) as caught:
-            table.try_define(_Stmt("a = 2"))
-        self.assertEqual(caught.exception.code, "local_reassigned")
+        table.try_define(_Stmt("b = 2"))
+        self.assertTrue(table.try_define(_Stmt("a = a + b")))
+        self.assertEqual(table.substitute("a"), "(1 + 2)")
+        self.assertTrue(table.try_define(_Stmt("a = a * a")))
+        self.assertEqual(table.substitute("a"), "((1 + 2) * (1 + 2))")
 
     def test_self_reference_rejected(self):
         table = self._table()
@@ -146,14 +150,18 @@ class TestCoeffLocals(unittest.TestCase):
                 with self.assertRaises((CoeffProgramSourceCompileError, RuntimeError)):
                     compile_coeff_program_source(f"{name} = p1\npoly[0] = {name}\n")
 
-    def test_rebind_and_self_reference_error(self):
+    def test_rebind_allowed_and_first_use_self_reference_error(self):
         from coeff_program_source import (
             CoeffProgramSourceCompileError,
             compile_coeff_program_source,
         )
 
-        with self.assertRaises(CoeffProgramSourceCompileError):
-            compile_coeff_program_source("a = p1\na = p2\npoly[0] = a\n")
+        # rebinding is register-like: the second definition wins and any
+        # self-reference inlines the first
+        compiled = compile_coeff_program_source("a = 1\na = a + 2\npoly[0] = a\n")
+        inlined = compile_coeff_program_source("poly[0] = (1 + 2)\n")
+        self.assertEqual(compiled["fingerprint"], inlined["fingerprint"])
+        # a FIRST definition still cannot reference itself (undefined value)
         with self.assertRaises(CoeffProgramSourceCompileError):
             compile_coeff_program_source("a = sin(a)\npoly[0] = a\n")
 

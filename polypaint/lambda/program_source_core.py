@@ -318,8 +318,10 @@ class SourceLocals:
     later statements see whole-word occurrences of the name replaced by its
     definition text. Definitions inline any earlier aliases at definition
     time, so substitution is a single pass and define-before-use falls out
-    naturally. Write-once (matching solve-score locals): rebinding is an
-    error, and a definition cannot reference itself.
+    naturally. Rebinding is allowed and register-like: `r1 = r1 + r2`
+    inlines the PREVIOUS r1 into the new definition (pure sequential
+    semantics — indistinguishable from mutation because every expression
+    is deterministic). A first definition cannot reference itself.
 
     Substituted text is parenthesized unless the definition is a bare
     number/identifier or a complete call — infix fragments need the parens
@@ -370,11 +372,6 @@ class SourceLocals:
             raise self._error_cls(
                 f"local {lhs!r} definition is empty",
                 line=statement.line, column=statement.column, code="empty_expression",
-            )
-        if lhs in self._map:
-            raise self._error_cls(
-                f"local {lhs!r} is already assigned",
-                line=statement.line, column=statement.column, code="local_reassigned",
             )
         substituted = self.substitute(rhs)
         if re.search(rf"(?<![A-Za-z0-9_]){re.escape(lhs)}(?![A-Za-z0-9_])", substituted, re.IGNORECASE):

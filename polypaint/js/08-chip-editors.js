@@ -903,8 +903,13 @@ function _programHelpBuildCoeffRegistry() {
         _programHelpItem('vector-math', 'vector math: multiply(a, b), add(a, b), ...', 'Vectors (poly, cf, slices like poly[29:40], range/fill results, pop) NEVER use infix — combine them with the call forms add / subtract / multiply / divide / power / ge / gt / le / lt / eq / rem / ipow. Scalar arguments broadcast: multiply(poly[29:40], 2.5) scales a window in place.', {
             forms: ['poly[29:40] = multiply(poly[29:40], 2.5)', 'poly = add(power(range(1, 37), 2), multiply(range(1, 37), p1 * p2))'],
         }),
-        _programHelpItem('locals', 'name = expr', 'Write-once local alias, substituted at compile time. Any unreserved name; usable in expressions, call arguments, and indexes.', {
-            forms: ['gain = abs(p1 - p2)**2 + 1', 'poly[29:40] = divide(abs(poly[29:40]), gain)'],
+        _programHelpItem('locals', 'name = expr  (registers)', 'Compile-time register: any unreserved name (r1, gain, ...), usable in expressions, call arguments, and indexes. REBINDING is allowed and register-like — r1 = add(r1, r2) inlines the previous r1 into the new definition. Each use splices the definition inline (pure and deterministic, so identical to mutation; heavy reuse costs tokens against the 256 cap).', {
+            forms: ['r1 = scan(31, 0, 1, prev*2)\nr1 = add(r1, fill(31, 3))\npoly = r1'],
+            aliases: ['registers', 'r1', 'alias'],
+        }),
+        _programHelpItem('compose', 'transform(expr, ...)', 'Native transforms compose in expression position: the first argument may be any vector expression (or poly/pop/peek), so rev(x), sort_mod_keep_angle(x), roots_cm(x, lo, exact) nest inside add/multiply and register definitions.', {
+            forms: ['poly = add(sort_mod_keep_angle(fill(5, 2)), fill(5, 2))', 'poly = roots_cm(vector_literal(1, 0, -1), lo, exact)'],
+            aliases: ['composition', 'nesting'],
         }),
     ]);
     _programHelpAddSection(registry, 'Vectors + Windows', [

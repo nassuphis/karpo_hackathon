@@ -368,6 +368,7 @@ def test_registry_fn_indices_are_pinned():
         "exp": 16, "cos": 17, "sin": 18, "tan": 19, "cosh": 20,
         "sinh": 21, "tanh": 22, "round": 23, "pow": 24, "power": 25,
         "invpower": 26, "roots_cm": 27, "roots": 28, "expand_roots": 29,
+        "roots_jt": 30,
     }
     registry = legacy_registry()["by_name"]
     actual = {name: spec["fn_index"] for name, spec in registry.items()}

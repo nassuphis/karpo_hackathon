@@ -22,6 +22,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include "companion_solver.h"
+#include "jt_solver.h"
 
 /* f32 transport: coefficient/param/root values are written as float32. A finite
  * double outside the f32 range (e.g. 1e100) becomes +/-inf on the (float) cast,
@@ -504,6 +505,7 @@ static int ct_base_arg_count(const char *name) {
     if (strcmp(name, "round") == 0) return 2;
     if (strcmp(name, "pow") == 0) return 4;
     if (strcmp(name, "roots_cm") == 0) return 1;
+    if (strcmp(name, "roots_jt") == 0) return 1;
     if (strcmp(name, "roots") == 0) return 2;
     return 0;
 }
@@ -3308,6 +3310,56 @@ static int ct_roots_cm(double *cRe, double *cIm, int *nCoeffs, int padLo, int st
     return 0;
 }
 
+/* roots_jt(mode): like roots_cm but through the Jenkins-Traub CPOLY port
+ * (jt_solver.h) — O(n^2) per row vs zgeev's O(n^3), no LAPACK needed.
+ * Emission order is JT's found order (smallest-magnitude-first tendency),
+ * NOT np.roots order; follow with a sort_* transform when order matters.
+ * The rel strip mode mirrors solve_companion_coeffs' relative threshold
+ * exactly (|cf|^2 < max^2 * 1e-15) so the two are drop-in swappable. */
+static int ct_roots_jt(double *cRe, double *cIm, int *nCoeffs, int padLo, int stripExact) {
+    int n = *nCoeffs;
+    int degree = n - 1;
+    if (n <= 0) return 0;
+    if (degree <= 0) {
+        cRe[0] = 0.0;
+        cIm[0] = 0.0;
+        return 0;
+    }
+    double workRe[MAX_COEFFS], workIm[MAX_COEFFS];
+    for (int k = 0; k < n; k++) { workRe[k] = cRe[k]; workIm[k] = cIm[k]; }
+    if (!stripExact) {
+        double maxMag = 0.0;
+        for (int k = 0; k < n; k++) {
+            double m = workRe[k] * workRe[k] + workIm[k] * workIm[k];
+            if (m > maxMag) maxMag = m;
+        }
+        double thr = maxMag * 1e-15;
+        for (int k = 0; k < n - 1; k++) {
+            if (workRe[k] * workRe[k] + workIm[k] * workIm[k] < thr) {
+                workRe[k] = 0.0;
+                workIm[k] = 0.0;
+            } else {
+                break;
+            }
+        }
+    }
+    JtState jt;
+    float rootRe[MAX_DEGREE], rootIm[MAX_DEGREE];
+    int rc = solve_jt_coeffs(&jt, workRe, workIm, n, rootRe, rootIm);
+    if (rc < 0) {
+        /* JT's 2-pass shift failure or a non-finite row: zeros, like the
+         * companion path's skip convention */
+        for (int i = 0; i < degree; i++) { rootRe[i] = 0.0f; rootIm[i] = 0.0f; }
+    }
+    double outRe[MAX_DEGREE], outIm[MAX_DEGREE];
+    for (int i = 0; i < degree; i++) {
+        outRe[i] = (double)rootRe[i];
+        outIm[i] = (double)rootIm[i];
+    }
+    ct_write_roots_padded(cRe, cIm, n, outRe, outIm, degree, padLo);
+    return 0;
+}
+
 /* roots(k,mode): run k Aberth-Ehrlich iterations on the current coefficient
  * vector, then treat the resulting roots as the next coefficient vector.
  * Output length stays constant by padding one zero at the highest-order side
@@ -3432,6 +3484,14 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
         int stripExact = ct_arg_strip_exact(e, 1, 0);
         if (stripExact < 0) return 1;
         rc = ct_roots_cm(cRe, cIm, nCoeffs, padLo, stripExact);
+        goto done;
+    }
+    if (strcmp(e->name, "roots_jt") == 0) {
+        int padLo = ct_arg_pad_lo(e, 0, 0);
+        if (padLo < 0) return 1;
+        int stripExact = ct_arg_strip_exact(e, 1, 0);
+        if (stripExact < 0) return 1;
+        rc = ct_roots_jt(cRe, cIm, nCoeffs, padLo, stripExact);
         goto done;
     }
     if (strcmp(e->name, "power") == 0) {
@@ -4812,6 +4872,8 @@ static int coeffLegacyApply(int fnIndex, double *re, double *im, int *n,
                                     nArgs > 1 ? coeffLegacyIntArg(args[1], 0) : 0);
         case 28: ct_roots(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 8) : 8, nArgs > 1 ? coeffLegacyIntArg(args[1], 0) : 0); return 0;
         case 29: return ct_expand_roots(re, im, n);
+        case 30: return ct_roots_jt(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 0) : 0,
+                                    nArgs > 1 ? coeffLegacyIntArg(args[1], 0) : 0);
         default:
             fprintf(stderr, "coeff_program unknown legacy fn_index: %d\n", fnIndex);
             return 1;

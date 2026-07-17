@@ -538,6 +538,38 @@ window._coeffRegistryVocab = {
           "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
         }
       ]
+    },
+    "roots_jt": {
+      "category": "roots",
+      "desc": "Feed back the roots as coefficients via the Jenkins-Traub solver (no LAPACK, ~5-10x faster than roots_cm at high degree; emission order is JT's found order, not np.roots order \u2014 follow with a sort when order matters), zero-padding one slot (hi = leading, lo = constant) to keep the length.",
+      "params": [
+        {
+          "ph": "hi|lo",
+          "def": "hi",
+          "title": "Which slot takes the zero pad: hi = leading (highest power), lo = constant term.",
+          "choices": [
+            "hi",
+            "lo"
+          ]
+        },
+        {
+          "ph": "rel|exact",
+          "def": "rel",
+          "title": "Leading-strip mode: rel treats leading coefficients below max|cf|*3e-8 as zero (protective); exact strips only exactly-zero leads, like np.roots, keeping the giant roots of tiny leading structure.",
+          "choices": [
+            "rel",
+            "exact"
+          ]
+        },
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     }
   },
   "categoryMeta": {

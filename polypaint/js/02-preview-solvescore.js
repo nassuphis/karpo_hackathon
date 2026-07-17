@@ -368,7 +368,7 @@ async function runComputePreview() {
     const ptDisplay = _displayActiveParamPipeline(',');
     const ctDisplay = _displayActiveCoeffPipeline(',');
     const rootsCmSyncMaxN = 128;
-    if (_chainHasTransformName(coeffTransforms, 'roots_cm') && nPreview > rootsCmSyncMaxN) {
+    if ((_chainHasTransformName(coeffTransforms, 'roots_cm') || _chainHasTransformName(coeffTransforms, 'roots_jt')) && nPreview > rootsCmSyncMaxN) {
         const requestedN = nPreview;
         nPreview = rootsCmSyncMaxN;
         const nInput = document.getElementById('compute-preview-n');

@@ -152,8 +152,11 @@ def _sync_preview_budget_error(*, n_preview, coeff_transforms, coeff_program_cha
     # subprocess cap on the deployed LAPACK. Guard BOTH spellings: the
     # legacy coefficient transform and the coeff-program chip (e.g.
     # giga_2880's roots_p stage).
-    has_roots_cm = _chain_has_transform(coeff_transforms, "roots_cm") or \
-        _program_chain_has_native(coeff_program_chain, "roots_cm")
+    has_roots_cm = any(
+        _chain_has_transform(coeff_transforms, name)
+        or _program_chain_has_native(coeff_program_chain, name)
+        for name in ("roots_cm", "roots_jt")
+    )
     if has_roots_cm and n_preview > ROOTS_CM_SYNC_MAX_N:
         return (
             "compute preview refused before coeffgen: roots_cm is too slow "

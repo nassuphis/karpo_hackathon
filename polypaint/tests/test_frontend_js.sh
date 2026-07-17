@@ -2760,21 +2760,26 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	    'AllCol Share should open the standalone mosaic viewer');
 	  assert(els['btn-allcol-share'].disabled === false && els['btn-allcol-share'].textContent === 'Share',
 	    'AllCol Share should restore its button state');
+	  assert(ctx._artifactMosaicCanvasClick === undefined,
+	    'click-to-go-to-image is removed: left-click must stay pure navigation');
 	  imagePoint = {x: 1, y: 1025};
 	  const colorClickEvent = {quick: true, position: {x: 0, y: 0}};
-	  await ctx._artifactMosaicCanvasClick('color', colorClickEvent);
+	  const colorTile = ctx._tileFromMosaicClick('color', colorClickEvent);
+	  ctx._openMosaicContextMenu('color', colorTile, {clientX: 5, clientY: 5});
+	  assert(els['artifact-mosaic-context-menu'].innerHTML.includes('data-mosaic-action="go-image">Go Image'),
+	    'context menu should offer Go Image as the tile-open action');
+	  await ctx._runMosaicContextAction('go-image');
 	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedFamily === 'color' && selectedArtifact === 'b',
-	    'click mapping should use rendered tile-source columns, not the current control value');
-	  assert(colorClickEvent.preventDefaultAction === true, 'mosaic click should suppress OpenSeadragon default click action');
-	  assert(ensureSelectionCalls === 0, 'mosaic Go Render should not require Results row selection');
+	    'Go Image mapping should use rendered tile-source columns, not the current control value');
+	  assert(ensureSelectionCalls === 0, 'mosaic Go Image should not require Results row selection');
 	  selectedJob = '';
 	  selectedTab = '';
 	  selectedFamily = '';
 	  selectedArtifact = '';
 	  els['render-results-dir'].value = '';
-	  await ctx._artifactMosaicCanvasClick('color', {quick: true, position: {x: 0, y: 0}});
+	  await ctx._goMosaicTileRender('color', ctx._tileFromMosaicClick('color', {quick: true, position: {x: 0, y: 0}}));
 	  assert(selectedJob === 'j' && els['render-results-dir'].value === 'j' && selectedTab === 'render' && selectedFamily === 'color' && selectedArtifact === 'b',
-	    'mosaic click should open Render directly without Results selection');
+	    'Go Image should open Render directly without Results selection');
 	  await ctx.refreshAllColMosaic();
 	  assert(els['btn-allcol-refresh'].disabled === true, 'refresh should disable button while computing');
 	  assert(els['allcol-status'].textContent.includes('jobs 10/20'), 'refresh status should show job progress');
@@ -2797,9 +2802,9 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  assert(palSource.getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/palettes/pal_b/preview.png',
 	    'AllPal 500 filter should select 500 preview tile');
 	  imagePoint = {x: 1, y: 1};
-	  await ctx._artifactMosaicCanvasClick('palette', {quick: true, position: {x: 0, y: 0}});
+	  await ctx._goMosaicTileRender('palette', ctx._tileFromMosaicClick('palette', {quick: true, position: {x: 0, y: 0}}));
 	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedFamily === 'palette' && selectedArtifact === 'pal_b',
-	    'AllPal click should select palette artifact in render tab');
+	    'AllPal Go Image should select palette artifact in render tab');
 	  imagePoint = {x: 1, y: 1};
 	  lastPixelPoint = null;
 	  const nativeTile = ctx._tileFromMosaicDomEvent('color', {clientX: 15, clientY: 25});
@@ -2813,7 +2818,7 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	    stopPropagation() { this.stopped = true; },
 	  });
 	  assert(els['artifact-mosaic-context-menu'].style.display === 'block', 'right-click should open context menu');
-	  assert(els['artifact-mosaic-context-menu'].innerHTML.includes('Go Render'), 'context menu should render actions');
+	  assert(els['artifact-mosaic-context-menu'].innerHTML.includes('Go Image'), 'context menu should render actions');
 	  selectedTab = '';
 	  await ctx._runMosaicContextAction('favorite');
 	  assert(favoriteRef && favoriteRef.jobId === 'j' && favoriteRef.artifactId === 'a', 'favorite should use tile data directly');

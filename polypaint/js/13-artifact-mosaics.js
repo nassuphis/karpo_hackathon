@@ -418,7 +418,8 @@ function _ensureMosaicViewer(kind) {
         imageLoaderLimit: 16,
     });
     if (state.viewer && typeof state.viewer.addHandler === 'function') {
-        state.viewer.addHandler('canvas-click', (event) => _artifactMosaicCanvasClick(kind, event));
+        // left-click stays pure pan/zoom navigation; tile actions live in
+        // the right-click menu (Go Image replaces the old click-to-select)
         state.viewer.addHandler('canvas-contextmenu', (event) => _artifactMosaicContextMenuEvent(kind, event));
     }
     if (!state.contextMenuBound && typeof el.addEventListener === 'function') {
@@ -810,21 +811,6 @@ async function populateComputeFromJob(jobId) {
     switchTab('compute');
 }
 
-async function _artifactMosaicCanvasClick(kind, event) {
-    const cfg = _mosaicConfig(kind);
-    const tile = _tileFromMosaicClick(kind, event);
-    if (!cfg || !tile || !tile.job_id) return;
-    const artifactId = _mosaicArtifactId(kind, tile);
-    if (!artifactId) return;
-    if (event) event.preventDefaultAction = true;
-    try {
-        await _goMosaicTileRender(kind, tile);
-    } catch (e) {
-        _logMosaic(kind, `${cfg.label} click failed: ${e.message}`, 'err', `click-failed|${kind}|${tile.job_id}|${artifactId}|${e.message}`);
-        _setMosaicStatus(kind, `${cfg.label} click failed: ${e.message}`, 'error');
-    }
-}
-
 function _mosaicContextPointFromEvent(event) {
     const raw = (event && event.originalEvent) || event || {};
     return {
@@ -892,7 +878,7 @@ function _renderMosaicContextMenu() {
         </div>
         <div class="artifact-mosaic-menu-meta">${rows}</div>
         <div class="artifact-mosaic-menu-actions">
-            ${_mosaicContextButton('Go Render', 'go-render', ctx.busy)}
+            ${_mosaicContextButton('Go Image', 'go-image', ctx.busy)}
             ${_mosaicContextButton('Go Compute', 'go-compute', ctx.busy)}
             ${_mosaicContextButton('Go Result', 'go-result', ctx.busy)}
             ${_mosaicContextButton(favoriteDisabled ? 'Favorite (Color only)' : 'Favorite', 'favorite', ctx.busy || favoriteDisabled)}
@@ -1012,7 +998,7 @@ async function _runMosaicContextAction(action) {
     _renderMosaicContextMenu();
     try {
         const artifactId = _mosaicArtifactId(kind, tile);
-        if (action === 'go-render') {
+        if (action === 'go-image') {
             await _goMosaicTileRender(kind, tile);
             _closeMosaicContextMenu();
             return;

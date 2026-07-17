@@ -241,11 +241,13 @@ def handle_fused_chunk(params):
             # no cast before the root output). The roots file exists;
             # only its upload remains. No streamer: the fused pass
             # publishes no flush watermarks.
-            solve_us = 0
+            # the binary times the in-loop solve (max per-worker wall,
+            # exact for single-worker runs) so stage timings stay honest
+            solve_us = int(coeff_meta.get("solve_us", 0) or 0)
             solve_meta = {
                 "n_t": step_count,
                 "degree": degree,
-                "elapsed_us": 0,
+                "elapsed_us": solve_us,
                 "skipped_overflow": int(coeff_meta.get("solve_skipped", 0) or 0),
             }
             roots_size = os.path.getsize(roots_path)

@@ -684,8 +684,11 @@ def handler(event, context):
                 solve_spec["max_iter"] = solver_iters
 
         if solve_binary is None:
-            # fused JT64/CM64 already wrote TMP_ROOTS inside coeffgen;
-            # coeffgen_ms carries the combined stage
+            # fused JT64/CM64/AE64 already wrote TMP_ROOTS inside coeffgen.
+            # The binary times the in-loop solve separately (solve_us in
+            # its meta), so the diagnostics stay comparable with the
+            # split solvers: solve_ms is the real fused solve time and
+            # coeffgen_ms drops back to generation-only.
             expected_roots = n_steps * degree * 2 * 4
             actual_roots = os.path.getsize(TMP_ROOTS)
             if actual_roots != expected_roots:
@@ -697,8 +700,10 @@ def handler(event, context):
                 "n_t": n_steps,
                 "degree": degree,
                 "skipped_overflow": int(coeff_meta.get("solve_skipped", 0) or 0),
+                "elapsed_us": int(coeff_meta.get("solve_us", 0) or 0),
             }
-            solve_ms = 0
+            solve_ms = int(round(int(coeff_meta.get("solve_us", 0) or 0) / 1000.0))
+            coeffgen_ms = max(0, coeffgen_ms - solve_ms)
         else:
             t0 = time.time()
             solve_meta = _run_json_binary(solve_binary, TMP_ROOTS, solve_spec, phase="solve", timeout_s=25)

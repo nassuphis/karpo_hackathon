@@ -126,6 +126,9 @@ class TestFusedSolverCores(unittest.TestCase):
         meta = _run_grid(binary, _compiled(CLUSTER_SRC), solver, solver)
         self.assertEqual(meta["fused_solver"], solver)
         self.assertEqual(int(meta["solve_skipped"]), 0)
+        # the in-loop solve is timed separately so preview/chunk stage
+        # timings stay honest (the AE-MT-vs-AE64 "solve 0ms" bug)
+        self.assertGreater(int(meta["solve_us"]), 0)
         roots, coeffs = _load(solver, 7)
         self.assertEqual(len(roots), 64)
         fused_err, split_err = [], []

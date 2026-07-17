@@ -9599,6 +9599,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     CompanionWorkspace fusedCws;
     memset(&fusedCws, 0, sizeof(fusedCws));
     long fusedSkipped = 0;
+    long fusedSolveUs = 0;
     double fusedRootRe[MAX_DEGREE], fusedRootIm[MAX_DEGREE];
     if (fusedSolver != FUSED_SOLVER_NONE) {
         char rootsFile[256] = "";
@@ -9714,9 +9715,14 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             fwrite(stepBuf, sizeof(float), nCoeffsOut * 2, fout);
 
             if (fusedSolver != FUSED_SOLVER_NONE) {
+                struct timespec fs0, fs1;
+                clock_gettime(CLOCK_MONOTONIC, &fs0);
                 fusedSkipped += fusedSolveRow(fusedSolver, fusedJt, &fusedCws,
                                               cRe, cIm, nCoeffsOut,
                                               fusedRootRe, fusedRootIm, rootStepBuf);
+                clock_gettime(CLOCK_MONOTONIC, &fs1);
+                fusedSolveUs += (fs1.tv_sec - fs0.tv_sec) * 1000000L +
+                                (fs1.tv_nsec - fs0.tv_nsec) / 1000L;
                 fwrite(rootStepBuf, sizeof(float), (size_t)degree * 2, frootsOut);
             }
         }
@@ -9747,9 +9753,9 @@ static int runCoeffGen(const char *buf, const char *outPath) {
            hasParamProgram > 0 ? paramProgram.token_count : 0,
            hasCoeffProgram > 0 ? coeffProgram.token_count : 0);
     if (fusedSolver != FUSED_SOLVER_NONE) {
-        printf(",\"fused_solver\":\"%s\",\"solve_skipped\":%ld,\"roots_bytes\":%ld",
+        printf(",\"fused_solver\":\"%s\",\"solve_skipped\":%ld,\"roots_bytes\":%ld,\"solve_us\":%ld",
                fusedSolverName(fusedSolver), fusedSkipped,
-               totalSteps * degree * 2 * (long)sizeof(float));
+               totalSteps * degree * 2 * (long)sizeof(float), fusedSolveUs);
     }
     coeffPrintTelemetryFields(stdout, hasCoeffProgram > 0 ? &coeffProgram : NULL);
     printf("}\n");
@@ -10969,6 +10975,10 @@ typedef struct {
     int rootsFd;
     long rootRowBytes;
     atomic_long fusedSkipped;
+    /* max per-worker fused-solve wall time (mutex-guarded): with workers
+     * running concurrently, the max approximates the stage's wall-clock
+     * contribution; single-worker runs report it exactly. */
+    long fusedSolveUsMax;
 } CoeffGenThreadCtx;
 
 typedef struct {
@@ -11060,6 +11070,7 @@ static void *coeffGenWorkerMain(void *vp) {
     CompanionWorkspace fusedCws;
     memset(&fusedCws, 0, sizeof(fusedCws));
     double fusedRootRe[MAX_DEGREE], fusedRootIm[MAX_DEGREE];
+    long workerSolveUs = 0;
     if (ctx->fusedSolver != FUSED_SOLVER_NONE) {
         rootBlock = (float *)malloc((size_t)COEFFGEN_IO_BLOCK_ROWS * (size_t)ctx->rootRowBytes);
         if (ctx->fusedSolver == FUSED_SOLVER_JT64)
@@ -11155,10 +11166,15 @@ static void *coeffGenWorkerMain(void *vp) {
 
             if (ctx->fusedSolver != FUSED_SOLVER_NONE) {
                 float *rootRow = rootBlock + r * (ctx->rootRowBytes / (long)sizeof(float));
+                struct timespec fs0, fs1;
+                clock_gettime(CLOCK_MONOTONIC, &fs0);
                 if (fusedSolveRow(ctx->fusedSolver, fusedJt, &fusedCws,
                                   cRe, cIm, ctx->nCoeffsOut,
                                   fusedRootRe, fusedRootIm, rootRow))
                     atomic_fetch_add_explicit(&ctx->fusedSkipped, 1, memory_order_relaxed);
+                clock_gettime(CLOCK_MONOTONIC, &fs1);
+                workerSolveUs += (fs1.tv_sec - fs0.tv_sec) * 1000000L +
+                                 (fs1.tv_nsec - fs0.tv_nsec) / 1000L;
             }
         }
         if (atomic_load_explicit(&ctx->failed, memory_order_relaxed)) break;
@@ -11183,6 +11199,11 @@ static void *coeffGenWorkerMain(void *vp) {
         }
     }
 
+    if (ctx->fusedSolver != FUSED_SOLVER_NONE) {
+        pthread_mutex_lock(&ctx->mutex);
+        if (workerSolveUs > ctx->fusedSolveUsMax) ctx->fusedSolveUsMax = workerSolveUs;
+        pthread_mutex_unlock(&ctx->mutex);
+    }
     free(paramBlock);
     free(outBlock);
     free(coeffWs);
@@ -11341,6 +11362,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     int rootsFd = -1;
     long rootRowBytes = (long)degree * 2 * (long)sizeof(float);
     long fusedSkippedTotal = 0;
+    long fusedSolveUsTotal = 0;
     if (fusedSolver != FUSED_SOLVER_NONE) {
         char rootsFile[256] = "";
         const char *rp = findKey(buf, "roots_file");
@@ -11401,6 +11423,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
             rc = 1;
         }
         fusedSkippedTotal = atomic_load(&ctx.fusedSkipped);
+        fusedSolveUsTotal = ctx.fusedSolveUsMax;
         pthread_mutex_destroy(&ctx.mutex);
     } else {
         CoeffGenThreadCtx ctx;
@@ -11460,6 +11483,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
             rc = 1;
         }
         fusedSkippedTotal = atomic_load(&ctx.fusedSkipped);
+        fusedSolveUsTotal = ctx.fusedSolveUsMax;
         free(threads);
         free(args);
         pthread_mutex_destroy(&ctx.mutex);
@@ -11484,9 +11508,9 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
            stepCount, dataBytes, threadsUsed, elapsed_us,
            hasCoeffProgram > 0 ? coeffProgram.token_count : 0);
     if (fusedSolver != FUSED_SOLVER_NONE) {
-        printf(",\"fused_solver\":\"%s\",\"solve_skipped\":%ld,\"roots_bytes\":%ld",
+        printf(",\"fused_solver\":\"%s\",\"solve_skipped\":%ld,\"roots_bytes\":%ld,\"solve_us\":%ld",
                fusedSolverName(fusedSolver), fusedSkippedTotal,
-               stepCount * rootRowBytes);
+               stepCount * rootRowBytes, fusedSolveUsTotal);
     }
     coeffPrintTelemetryFields(stdout, hasCoeffProgram > 0 ? &coeffProgram : NULL);
     printf("}\n");

@@ -272,6 +272,35 @@ class TestCompiledEndToEnd(unittest.TestCase):
         self.assertTrue(compiled["fingerprint"])
 
 
+class TestConstantIndexFoldWithTosValue(unittest.TestCase):
+    """poly[n-1] = ...tos... — locals inline as text, so the index
+    arrives as "11-1"; the tos value forces the legacy poke chip, which
+    only takes literal indices. The index must constant-fold (user-
+    reported preview 400: "poke_poly index must be numeric, got '11-1'");
+    genuinely runtime indices with tos values raise a clear error."""
+
+    def test_constant_index_arithmetic_folds_for_tos_values(self):
+        from coeff_program_source import parse_coeff_program_source
+
+        src = ("n=11\npoly = fill(n, 0)\npoly\n"
+               "poly[n-1] = 10i * tos[n-1]\n"
+               "poly[floor(n/2)-1] = tos[0]\ndrop\nemit")
+        chain = parse_coeff_program_source(src)["chain"]
+        pokes = [row for row in chain if row and row[0] == "poke_poly"]
+        self.assertEqual([row[1] for row in pokes], ["10", "4"])
+
+    def test_runtime_index_with_tos_value_raises_clearly(self):
+        from coeff_program_source import (
+            CoeffProgramSourceCompileError,
+            compile_coeff_program_source,
+        )
+
+        with self.assertRaises(CoeffProgramSourceCompileError) as ctx:
+            compile_coeff_program_source(
+                "poly = fill(4,0)\npoly\npoly[floor(abs(p1))] = tos[0]\ndrop\nemit")
+        self.assertIn("constant index", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
 

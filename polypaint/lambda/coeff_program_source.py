@@ -509,6 +509,34 @@ _TOS_MENTION_RE = re.compile(r"(?<![A-Za-z0-9_])tos\d*(?![A-Za-z0-9_])", re.IGNO
 _STACK_EFFECT_RE = re.compile(
     r"(?<![A-Za-z0-9_])(pop|peek|tos\d*)(?![A-Za-z0-9_])", re.IGNORECASE)
 
+_CONST_INDEX_SAFE_RE = re.compile(r"^(?:floor\s*\(|[0-9+\-*/().\s])*$")
+
+
+def _try_fold_constant_index(expr_text):
+    """Fold a compile-time-constant poke index ("11-1", "floor(11/2)-1")
+    to its integer value, or None when the expression depends on runtime
+    state. Locals inline as literal text, so index arithmetic built from
+    them is the common case — and the legacy poke chip (required when
+    the VALUE reads tos) only accepts literal indices."""
+    text = (expr_text or "").strip()
+    if not text or not _CONST_INDEX_SAFE_RE.match(text):
+        return None
+    if re.search(r"[A-Za-z_]", text.replace("floor", "")):
+        return None
+    import math
+
+    try:
+        value = eval(text, {"__builtins__": {}}, {"floor": math.floor})  # noqa: S307
+    except Exception:
+        return None
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        value = int(value)
+    if not isinstance(value, int):
+        return None
+    return value
+
 
 def _reject_stack_effect_args(name, args):
     """select/window/step splice argument text more than once, so a stack-
@@ -1208,10 +1236,31 @@ class _CoeffStatementLowerer(ProfileStatementLowerer):
             # statement (e.g. a reduction result). The typed lowering pushes
             # the index first, so a typed tos read would see that index; the
             # legacy poke chip evaluates its VALUE as an expression plan
-            # against the pre-token stack frame. Index expressions keep the
-            # typed path (the index chain runs before anything is pushed,
-            # and the legacy chip only takes literal indices).
-            return [["poke_poly", _canonical_expr(index_expr), _canonical_expr(rhs)]]
+            # against the pre-token stack frame — but it only takes literal
+            # indices. Constant index arithmetic (locals inline as text, so
+            # poly[n-1] arrives as "11-1") folds to its literal here; a
+            # genuinely runtime-dependent index cannot combine with a tos
+            # value, and says so instead of failing downstream.
+            folded = _try_fold_constant_index(index_expr)
+            index_text = index_expr if index_expr.isdigit() else (
+                str(folded) if folded is not None else None)
+            if index_text is None:
+                raise CoeffProgramSourceError(
+                    f"{lhs_name}[{index_expr}] = ... : a value that reads tos "
+                    "needs a constant index (literal or arithmetic on "
+                    "literals/locals); compute the value into a plain slot "
+                    "or drop the tos read",
+                    line=statement.line,
+                    column=statement.column,
+                )
+            idx = int(index_text)
+            if idx < 0 or idx >= MAX_VECTOR_LEN:
+                raise CoeffProgramSourceError(
+                    f"{lhs_name} index must be in [0,{MAX_VECTOR_LEN - 1}], got {idx}",
+                    line=statement.line,
+                    column=statement.column,
+                )
+            return [["poke_poly", index_text, _canonical_expr(rhs)]]
         if index_expr.isdigit():
             idx = int(index_expr)
             if idx < 0 or idx >= MAX_VECTOR_LEN:

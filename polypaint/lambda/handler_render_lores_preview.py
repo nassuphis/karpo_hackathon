@@ -273,13 +273,17 @@ def _calc_pipeline(calc):
 
 def _calc_solver_mode(calc):
     raw = str((calc or {}).get("solver") or "aberth_mt").strip().lower()
-    if raw in ("companion_matrix", "cm", "solve_cm", "cm64"):
+    if raw in ("jt64", "cm64", "ae64", "fused_jt64", "fused_cm64", "fused_ae64"):
+        # fused artifacts recompute their preview FUSED (f64 in-process);
+        # kin-mapping them to the split solvers repaints the f32
+        # transport artifact the fused modes exist to avoid
+        return raw.replace("fused_", "")
+    if raw in ("companion_matrix", "cm", "solve_cm"):
         return "companion_matrix"
-    if raw in ("jenkins_traub", "jt", "solve_jt", "jt64"):
+    if raw in ("jenkins_traub", "jt", "solve_jt"):
         return "jenkins_traub"
     if raw in ("newton", "solve_newton"):
         return "newton"
-    # fused ae64 artifacts re-solve their lores with plain AE (same kin)
     return "aberth_mt"
 
 
@@ -756,6 +760,13 @@ def _materialize_recomputed_preview(*, params, calc, job_id, degree, n_coeffs, v
         coeff_spec["cfpv"] = pipeline["cfpv"]
     if pipeline.get("coeff_program"):
         coeff_spec["coeff_program"] = pipeline["coeff_program"]
+    fused_recompute = solver_mode in ("jt64", "cm64", "ae64")
+    if fused_recompute:
+        # solve in-process from the f64 coefficients during coeffgen —
+        # solving the f32 coeffs file afterwards repaints the transport
+        # artifact (user-caught on the compute-job previews)
+        coeff_spec["fused_solver"] = solver_mode
+        coeff_spec["roots_file"] = TMP_ROOTS
     coeff_meta = _run_json_binary(SWEEP_COEFFGEN, TMP_COEFFS, coeff_spec, phase="recompute coeffgen", timeout_s=300)
     coeff_ms = int((time.time() - t_coeff) * 1000)
     actual_n_coeffs = int(coeff_meta.get("n_coeffs") or 0)
@@ -770,7 +781,17 @@ def _materialize_recomputed_preview(*, params, calc, job_id, degree, n_coeffs, v
         raise RuntimeError(f"recompute coeff size mismatch: got {coeff_size}, expected {expected_coeff_size}")
 
     t_solve = time.time()
-    if solver_mode in ("companion_matrix", "jenkins_traub", "newton"):
+    if fused_recompute:
+        solve_binary = None
+        solve_spec = None
+        solve_meta = {
+            "mode": f"fused_{solver_mode}",
+            "n_t": int(n_steps),
+            "degree": int(degree),
+            "skipped_overflow": int(coeff_meta.get("solve_skipped", 0) or 0),
+            "elapsed_us": int(coeff_meta.get("solve_us", 0) or 0),
+        }
+    elif solver_mode in ("companion_matrix", "jenkins_traub", "newton"):
         solve_binary = SWEEP_CM
         solve_spec = {
             "mode": {
@@ -800,8 +821,11 @@ def _materialize_recomputed_preview(*, params, calc, job_id, degree, n_coeffs, v
         if solver_iters:
             # reproduce the run's capped-Aberth brush at lores fidelity
             solve_spec["max_iter"] = solver_iters
-    solve_meta = _run_json_binary(solve_binary, TMP_ROOTS, solve_spec, phase="recompute solve", timeout_s=300)
+    if solve_binary is not None:
+        solve_meta = _run_json_binary(solve_binary, TMP_ROOTS, solve_spec, phase="recompute solve", timeout_s=300)
     solve_ms = int((time.time() - t_solve) * 1000)
+    if fused_recompute:
+        solve_ms = int(round(int(coeff_meta.get("solve_us", 0) or 0) / 1000.0))
     root_size = os.path.getsize(TMP_ROOTS)
     expected_root_size = n_steps * root_row_bytes(degree)
     if root_size != expected_root_size:

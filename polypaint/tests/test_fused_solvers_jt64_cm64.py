@@ -396,6 +396,19 @@ class TestFusedSolverPlumbing(unittest.TestCase):
             (cg.s3, cg.SWEEP, cg.report_status) = orig_cg
             (smt.s3, smt.report_status) = orig_smt
 
+    def test_render_lores_preview_recomputes_fused(self):
+        """The render tab's lores preview RE-SOLVES artifacts locally.
+        REGRESSION (user-caught): _calc_solver_mode kin-mapped fused
+        artifacts to their split solvers, repainting the f32 transport
+        artifact. Fused artifacts must recompute fused."""
+        import handler_render_lores_preview as rlp
+
+        for raw, expected in (("jt64", "jt64"), ("cm64", "cm64"),
+                              ("ae64", "ae64"), ("fused_ae64", "ae64"),
+                              ("jenkins_traub", "jenkins_traub"),
+                              ("aberth_mt", "aberth_mt")):
+            self.assertEqual(rlp._calc_solver_mode({"solver": raw}), expected)
+
     def test_lores_coeffgen_asl_payload_carries_solver_mode(self):
         template = json.load(open(os.path.join(
             ROOT, "stepfunctions", "compute_workflow.asl.json.template")))

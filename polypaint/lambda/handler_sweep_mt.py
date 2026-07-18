@@ -43,9 +43,41 @@ def handle_solve_mt_from_coeffs(params):
         i1_end = params.get("row_end", params.get("i1_end"))
         n_steps = (i1_end - i1_start) * n2
     task_id = params.get("task_id", f"sweep_{chunk_idx}")
+    solve_mode = str(params.get("solve_mode") or "").strip().lower()
 
     try:
         report_status(job_id, task_id, "started")
+
+        if solve_mode.startswith("fused_"):
+            # JT64/CM64/AE64 lores: the roots were already solved
+            # IN-PROCESS from the f64 coefficients during the lores
+            # coeffgen and uploaded to s3_key — solving the f32 coeffs
+            # file here would repaint the AE-MT transport artifact the
+            # fused modes exist to avoid (user-caught: all three fused
+            # job previews rendered identically). Verify and report.
+            s3_key = params.get("s3_key", f"renders/{job_id}/chunk_{chunk_idx}.bin")
+            head = s3.head_object(Bucket=BUCKET, Key=s3_key)
+            bin_size = int(head["ContentLength"])
+            expected = int(n_steps) * (int(n_coeffs) - 1) * 8
+            if bin_size != expected:
+                raise RuntimeError(
+                    f"fused lores roots missing/mismatched at {s3_key}: "
+                    f"expected {expected} bytes, got {bin_size}")
+            result_data = {
+                "chunk_idx": chunk_idx,
+                "stripe_idx": chunk_idx,
+                "s3_key": s3_key,
+                "bin_size": bin_size,
+                "compute_us": 0,
+                "n_t": int(n_steps),
+                "degree": int(n_coeffs) - 1,
+                "avg_iterations": 0.0,
+                "n_threads": 0,
+                "fused_lores": solve_mode,
+            }
+            report_status(job_id, task_id, "done", result_data=result_data)
+            return ok_response({**result_data, "n_procs": 0})
+
         t0 = time.time()
 
         resp = s3.get_object(Bucket=BUCKET, Key=coeffs_key)

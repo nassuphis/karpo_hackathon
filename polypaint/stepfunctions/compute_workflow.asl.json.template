@@ -594,7 +594,9 @@
                   "function.$": "$.plan.pipeline.function",
                   "coeff_program.$": "$.plan.pipeline.coeff_program",
                   "cfpv.$": "$.plan.pipeline.cfpv",
-                  "s3_key.$": "$.post.lores.coeffs_key"
+                  "s3_key.$": "$.post.lores.coeffs_key",
+                  "solver_mode.$": "$.plan.solve.mode",
+                  "roots_key.$": "$.post.lores.bin_key"
                 }
               },
               "ResultPath": null,

@@ -319,6 +319,104 @@ class TestFusedSolverPlumbing(unittest.TestCase):
                     n_coeffs=21, fused_threads=4, solver_mode=mode)
                 self.assertGreater(int(est["min_safe_chunks"]), 0)
 
+    @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+    def test_lores_coeffgen_solves_fused_and_sweep_mt_skips(self):
+        """The job PREVIEW is the lores render. REGRESSION (user-caught):
+        the lores stage solved the f32 coeffs file via handler_sweep_mt's
+        hardcoded solve_mt for ALL modes, so AE64/JT64/CM64 job previews
+        rendered as identical AE-MT images carrying the f32 transport
+        artifact. Now the lores coeffgen solves fused in-process and
+        uploads the roots; the lores solve lambda verifies-and-skips for
+        fused_* solve modes instead of re-solving."""
+        import numpy as np
+
+        import handler_coeffgen as cg
+        import handler_sweep_mt as smt
+
+        # params slice for an 8x8 lores grid
+        n = 8
+        steps = n * n
+        params_data = np.zeros((steps, 4), dtype=np.float32)
+        for srow in range(steps):
+            i1, j = divmod(srow, n)
+            i2 = (n - 1 - j) if (i1 & 1) else j
+            params_data[srow] = (i1 / n, i2 / n, 0, 0)
+        uploads = {}
+
+        class _S3:
+            def get_object(self, Bucket, Key, Range=None):
+                data = params_data.tobytes()
+                if Range:
+                    lo, hi = Range.split("=")[1].split("-")
+                    data = data[int(lo):int(hi) + 1]
+                import io
+                return {"Body": io.BytesIO(data)}
+
+            def put_object(self, Bucket, Key, Body, ContentType=None):
+                uploads[Key] = Body.read() if hasattr(Body, "read") else Body
+
+            def head_object(self, Bucket, Key):
+                return {"ContentLength": len(uploads[Key])}
+
+        orig_cg = (cg.s3, cg.SWEEP, cg.report_status)
+        orig_smt = (smt.s3, smt.report_status)
+        cg.s3 = _S3()
+        cg.SWEEP = SWEEP_TEST
+        cg.report_status = lambda *a, **k: None
+        smt.s3 = cg.s3
+        smt.report_status = lambda *a, **k: None
+        try:
+            resp = cg.handle_coeffgen_chunked({
+                "job_id": "t", "chunk_idx": 9999, "task_id": "t_lores",
+                "params_key": "t/params.bin", "step_start": 0,
+                "step_count": steps, "N": n,
+                "n_threads": 1, "function": "const", "cfpv": [1, 0, 0],
+                "coeff_transforms": [],
+                "coeff_program_chain": [], "s3_key": "t/lores_coeffs.bin",
+                "solver_mode": "jt64", "roots_key": "t/lores_roots.bin",
+            })
+            body = json.loads(resp["body"])
+            degree = int(body["degree"])
+            self.assertIn("t/lores_roots.bin", uploads)
+            self.assertEqual(len(uploads["t/lores_roots.bin"]), steps * degree * 8)
+
+            # the lores solve lambda now verifies-and-skips for fused modes
+            resp2 = smt.handle_solve_mt_from_coeffs({
+                "job_id": "t", "chunk_idx": 0, "task_id": "t_solve",
+                "coeffs_key": "t/lores_coeffs.bin",
+                "n_coeffs": degree + 1, "n_steps": steps,
+                "s3_key": "t/lores_roots.bin",
+                "solve_mode": "fused_jt64",
+            })
+            body2 = json.loads(resp2["body"])
+            self.assertEqual(body2["fused_lores"], "fused_jt64")
+            self.assertEqual(int(body2["bin_size"]), steps * degree * 8)
+            self.assertEqual(int(body2["n_t"]), steps)
+        finally:
+            (cg.s3, cg.SWEEP, cg.report_status) = orig_cg
+            (smt.s3, smt.report_status) = orig_smt
+
+    def test_lores_coeffgen_asl_payload_carries_solver_mode(self):
+        template = json.load(open(os.path.join(
+            ROOT, "stepfunctions", "compute_workflow.asl.json.template")))
+
+        def get_state(node, name):
+            if isinstance(node, dict):
+                if name in node and isinstance(node[name], dict) and "Type" in node[name]:
+                    return node[name]
+                for v in node.values():
+                    r = get_state(v, name)
+                    if r:
+                        return r
+            elif isinstance(node, list):
+                for v in node:
+                    r = get_state(v, name)
+                    if r:
+                        return r
+        payload = get_state(template, "LoresCoeffgenTask")["Parameters"]["Payload"]
+        self.assertEqual(payload.get("solver_mode.$"), "$.plan.solve.mode")
+        self.assertEqual(payload.get("roots_key.$"), "$.post.lores.bin_key")
+
     def test_chunk_estimators_accept_fused_modes(self):
         """The degree-probe estimate is what enables the popup's Execute
         button; compute_fused raising 'unsupported fused solver_mode'

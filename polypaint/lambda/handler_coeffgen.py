@@ -437,6 +437,19 @@ def handle_coeffgen_chunked(params):
             "step_count": step_count,
             "n_threads": coeffgen_threads,
         }
+        # Fused JT64/CM64/AE64: solve the rows in-process from the f64
+        # coefficients DURING coeffgen and upload the roots alongside.
+        # Solving the f32 coeffs file afterwards (the old lores solve)
+        # cannot be faithful — the truncation already happened at file
+        # write — which is how all three fused job previews rendered as
+        # identical AE-MT images (user-caught).
+        solver_mode = str(params.get("solver_mode") or "").strip().lower()
+        roots_key = str(params.get("roots_key") or "").strip()
+        fused_lores = solver_mode in ("jt64", "cm64", "ae64") and bool(roots_key)
+        roots_path = f"/tmp/lores_roots_{chunk_idx}.bin"
+        if fused_lores:
+            spec["fused_solver"] = solver_mode
+            spec["roots_file"] = roots_path
         if grid_n > 0:
             spec["source_n1"] = grid_n
             spec["source_n2"] = grid_n
@@ -471,7 +484,17 @@ def handle_coeffgen_chunked(params):
             s3.put_object(Bucket=BUCKET, Key=coeffs_key,
                           Body=f, ContentType="application/octet-stream")
 
-        for p in [params_file, bin_path]:
+        if fused_lores:
+            roots_expected = step_count * int(meta["degree"]) * 8
+            roots_size = os.path.getsize(roots_path)
+            if roots_size != roots_expected:
+                raise RuntimeError(
+                    f"fused lores roots size mismatch: expected {roots_expected}, got {roots_size}")
+            with open(roots_path, "rb") as f:
+                s3.put_object(Bucket=BUCKET, Key=roots_key,
+                              Body=f, ContentType="application/octet-stream")
+
+        for p in [params_file, bin_path, roots_path]:
             try:
                 os.remove(p)
             except OSError:
@@ -491,6 +514,11 @@ def handle_coeffgen_chunked(params):
             "coeff_program_tokens": int(meta.get("coeff_program_tokens", 0) or 0),
             "elapsed_us": int((time.time() - t0) * 1e6),
         }
+        if fused_lores:
+            result_data["fused_solver"] = solver_mode
+            result_data["roots_key"] = roots_key
+            result_data["solve_skipped"] = int(meta.get("solve_skipped", 0) or 0)
+            result_data["solve_us"] = int(meta.get("solve_us", 0) or 0)
         report_status(job_id, task_id, "done", result_data=attach_contract_warnings(result_data, contract_warnings))
         return ok_response({
             "chunk_idx": chunk_idx,
@@ -503,7 +531,7 @@ def handle_coeffgen_chunked(params):
 
     except Exception as e:
         report_status(job_id, task_id, "error", str(e), result_data=attach_contract_warnings(dict(phase_meta), contract_warnings))
-        for p in ["/tmp/params_chunk.bin", f"/tmp/coeffs_chunk_{chunk_idx}.bin"]:
+        for p in ["/tmp/params_chunk.bin", f"/tmp/coeffs_chunk_{chunk_idx}.bin", f"/tmp/lores_roots_{chunk_idx}.bin"]:
             try:
                 os.remove(p)
             except OSError:

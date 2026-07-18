@@ -58,41 +58,46 @@ gates and i^e = exp(i*pi/2*e) (e = floor(4t) is exact on [0,1)); the
 2891 nested-pop miscompute stays designed out and pinned out of all
 three sources.
 
-## 2b. The giga_2895 dust investigation (user-reported)
+## 2b. The giga_2895 root-precision investigation (user-reported)
 
-The user saw "rounding errors in the roots" in the AE64 hires calc
-that the AE64 preview does not show. Fully diagnosed (2026-07-18):
+The user saw root differences between renders on giga_2895. THREE
+separate effects, fully diagnosed (2026-07-18) — the largest one
+user-spotted after the first two:
 
-1. **Preview vs calc is pure resolution unmasking.** Grid (preview)
-   and chunked (pipeline) AE64 produce statistically identical roots
-   (measured on 2500 rows: same medians, same failing-row positions —
-   the warm-chain structure difference is irrelevant). The dust's p99
-   is ~2.8e-2: about ONE preview pixel, but ~90 pixels at res 50000.
-   It is present in both renders; only the calc resolves it.
-2. **The dust is solver-universal and authentic.** The affected rows
-   are the b ~ 0 rows: a whisper of the far outer copy perturbing the
-   inner lattice. That whisper times the astronomical root-condition
-   of a degree-72 lattice polynomial legitimately throws roots O(1)
-   distances (the halo mechanism itself), and stretches coefficients
-   across ~45 decades — at which range EVERY f64 coefficient-based
-   solver carries a ~1e-2 error floor on the most sensitive roots.
-   Verified: AE at 64/128/256/1000 iterations, fresh-seed AE, JT, and
-   np.roots (QR) all land ~1e-2..3e-2 apart on those rows; Newton-
-   polishing each against the exact PRODUCT FORM moves QR max 1.75e-2
-   and AE max 1.95e-2 (medians ~1e-9), and the two polished sets
-   agree to exactly zero. The reference pyroots pipeline (np.roots on
-   the same f64 coefficients) contains the same dust class — it is
-   part of the artwork, not a pipeline defect.
+1. **The f32-transport shatter is REGION-STRUCTURED and huge in the
+   upper right** (the dominant, preview-visible effect: AE-MT and
+   AE64 previews differ there). Root condition vs coefficient
+   perturbation grows with |z| toward the outer displacement
+   direction (+1+1i), so the f32 coefficient truncation (6e-8
+   relative) that the split/file-fed solvers consume displaces roots
+   by location: core |z|<6 median 3.5e-7 (invisible), but the
+   upper-right region (re>2, im>2) median 2.6e-2 with p95 = 6.1 and
+   max 8.4 — WHOLE UNITS of the ~20-unit view. The corner does not
+   get noisier, it REARRANGES. AE-MT (f32 file input) paints the
+   rearranged version; AE64/JT64/CM64 (f64 in-process input) paint
+   the faithful one — and the f64 reference pipeline sides with
+   AE64. The AE-MT upper right is a polypaint f32-transport artifact
+   the reference never had.
+2. **A solver-universal ~1e-2 floor on the b ~ 0 rows** (all f64
+   coefficient-based solvers, reference included). The whisper of the
+   far outer copy stretches coefficients across ~45 decades; AE at
+   any iteration budget, JT, and np.roots (QR) land ~1e-2..3e-2 apart
+   on the sensitive roots; product-form Newton polishing moves QR max
+   1.75e-2 and AE max 1.95e-2 (medians ~1e-9) with the polished sets
+   agreeing exactly. Authentic — part of the artwork. At preview
+   resolution this one IS invisible (~1 pixel); it resolves at hires.
 3. **One real AE64-specific artifact**: ~0.5% of rows return NaN
    (Aberth internal collision) and drop out of the paint entirely,
    where JT64/CM64 would paint them. A fresh-seed retry rescues those
    rows (verified 2e-5); a retry-on-NaN hardening in fusedSolveRow is
    the one code change this investigation motivates.
 
-Solver guidance for 2895: AE64 is fine (fastest, no dustier than any
-alternative); CM64/JT64 avoid the NaN-dropped rows at higher cost.
-No solver choice removes the ~1e-2 floor — it is the price of a
-45-decade polynomial, and the reference paid it too.
+Solver guidance for 2895: use the fused-f64 solvers — AE64 (fastest;
+pending the NaN retry) or JT64/CM64 — because effect 1 makes the
+f32-fed solvers (AE-MT and the split brushes) paint a materially
+different, non-reference upper right. No solver choice removes
+effect 2's ~1e-2 floor — the price of a 45-decade polynomial, which
+the reference paid too.
 
 ## 3. Polypaint Coeff Programs
 

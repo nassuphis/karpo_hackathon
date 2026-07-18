@@ -58,6 +58,42 @@ gates and i^e = exp(i*pi/2*e) (e = floor(4t) is exact on [0,1)); the
 2891 nested-pop miscompute stays designed out and pinned out of all
 three sources.
 
+## 2b. The giga_2895 dust investigation (user-reported)
+
+The user saw "rounding errors in the roots" in the AE64 hires calc
+that the AE64 preview does not show. Fully diagnosed (2026-07-18):
+
+1. **Preview vs calc is pure resolution unmasking.** Grid (preview)
+   and chunked (pipeline) AE64 produce statistically identical roots
+   (measured on 2500 rows: same medians, same failing-row positions —
+   the warm-chain structure difference is irrelevant). The dust's p99
+   is ~2.8e-2: about ONE preview pixel, but ~90 pixels at res 50000.
+   It is present in both renders; only the calc resolves it.
+2. **The dust is solver-universal and authentic.** The affected rows
+   are the b ~ 0 rows: a whisper of the far outer copy perturbing the
+   inner lattice. That whisper times the astronomical root-condition
+   of a degree-72 lattice polynomial legitimately throws roots O(1)
+   distances (the halo mechanism itself), and stretches coefficients
+   across ~45 decades — at which range EVERY f64 coefficient-based
+   solver carries a ~1e-2 error floor on the most sensitive roots.
+   Verified: AE at 64/128/256/1000 iterations, fresh-seed AE, JT, and
+   np.roots (QR) all land ~1e-2..3e-2 apart on those rows; Newton-
+   polishing each against the exact PRODUCT FORM moves QR max 1.75e-2
+   and AE max 1.95e-2 (medians ~1e-9), and the two polished sets
+   agree to exactly zero. The reference pyroots pipeline (np.roots on
+   the same f64 coefficients) contains the same dust class — it is
+   part of the artwork, not a pipeline defect.
+3. **One real AE64-specific artifact**: ~0.5% of rows return NaN
+   (Aberth internal collision) and drop out of the paint entirely,
+   where JT64/CM64 would paint them. A fresh-seed retry rescues those
+   rows (verified 2e-5); a retry-on-NaN hardening in fusedSolveRow is
+   the one code change this investigation motivates.
+
+Solver guidance for 2895: AE64 is fine (fastest, no dustier than any
+alternative); CM64/JT64 avoid the NaN-dropped rows at higher cost.
+No solver choice removes the ~1e-2 floor — it is the price of a
+45-decade polynomial, and the reference paid it too.
+
 ## 3. Polypaint Coeff Programs
 
 One generator emits all three

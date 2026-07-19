@@ -30,7 +30,7 @@ plus the sheet configuration:
 | frames | number of tiles (= scan steps) |
 | N | per-frame grid (preview-class, e.g. 64..192) |
 | solver | any of the 7 solver modes (fused trio preferred) |
-| viewport | explicit bounds (shared by ALL frames) or auto-from-first-frame |
+| viewport | per-frame quantile (DEFAULT — each tile optimally framed, like the scrub popups) \| shared explicit bounds \| frozen-from-first-frame |
 | rotate | 0/90/180/270 (quarter turns — lossless on bilevel) |
 | grid | mosaic columns (rows derived) |
 | bilevel rule | hit-mask (pixel black iff >=1 root) v1; count threshold later |
@@ -78,10 +78,14 @@ upload sheets/{sheet_id}/sheet.png + sheet.json
   ~0.4s, JT64 ~1.4s, CM64 ~6s. A 64-frame AE64 sheet ~25s + raster;
   comfortably one invocation. Budget guard: estimated total must fit
   ~12 of the lambda's 15 minutes, else 400 with the math shown.
-- Viewport: frames must share ONE window or the sheet shimmers.
-  Explicit bounds (the marquee wave's viewport_mode=explicit already
-  exists in the preview handler) or computed once from frame 0's
-  quantile and frozen.
+- Viewport is a per-sheet knob, default PER-FRAME QUANTILE (each
+  tile optimally framed — the scrub-popup behavior). The trade-off is
+  comparability: per-frame framing hides the parameter's effect on
+  position/scale (a drifting, growing cloud renders as near-identical
+  centered tiles), so SHARED EXPLICIT bounds (marquee wave) and
+  FROZEN-FROM-FIRST-FRAME are offered for scans where the geometry
+  motion IS the point. All three paths already exist in the preview
+  handler.
 - Kill: no Step Functions here, so the rail's stop routes a cancel
   marker the loop checks between frames (seconds-level latency, good
   enough for a <=15min job).
@@ -110,8 +114,10 @@ walls.) One new tab:
 - grid row: columns;
 - Execute (async button discipline: busy + lingering result), rail
   card with frame progress + kill;
-- gallery: list of sheets, click -> full-size viewer (pan/zoom the
-  PNG; deep-zoom only if sheets outgrow browsers).
+- gallery: list of sheets, click -> viewer. Small sheets pan/zoom a
+  plain img; big sheets feed the EXISTING DeepZoom pipeline
+  (generator + viewer.html + share links) for OpenSeadragon viewing —
+  no new viewer code.
 
 ## 7. What already exists vs what is new
 
@@ -133,6 +139,8 @@ walls.) One new tab:
 1. **Scan tag form**: `$T` substitution token (recommended, zero
    compiler surface) vs structured per-element UI tags?
 2. **Bilevel rule**: pure hit-mask v1, threshold knob later — OK?
+   (viewport question RESOLVED: per-frame quantile default, shared
+   explicit + frozen-first as options)
 3. **Rotation**: quarter-turns only in v1 (arbitrary angles need
    resampling, which is ugly on bilevel) — OK?
 4. **Caps**: max frames (256?), max N (192?), plus the runtime budget

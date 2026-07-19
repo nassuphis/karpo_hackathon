@@ -434,7 +434,7 @@ def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
         report_status(job_id, task_id, "done", result_data={
             "phase": "done", "phase_label": "DeepZoom ready",
             "sheet_id": sheet_id, "export_id": export_id,
-            "share_url": share_url,
+            "share_url": share_url, "dzi_url": dzi_url,
         })
         return ok_response({
             "export_id": export_id,

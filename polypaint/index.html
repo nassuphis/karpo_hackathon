@@ -2465,14 +2465,9 @@ button {
             <div id="sheet-viewer" style="display:none">
                 <div style="display:flex; gap:8px; align-items:center; margin-bottom:4px">
                     <div id="sheet-viewer-meta" style="font-size:11px; color:#aaa; flex:1"></div>
-                    <button class="btn-secondary btn-inline" id="btn-sheet-fit" onclick="_sheetToggleFit()" style="padding:2px 10px; font-size:11px" title="Toggle fit-to-panel vs native 1:1 pixels (scroll to pan)">1:1</button>
-                    <button class="btn-secondary btn-inline" onclick="_sheetOpenDeepZoom(this)" style="padding:2px 10px; font-size:11px" title="Open (generating if needed) the OpenSeadragon DeepZoom viewer — the best way to inspect a big sheet">DeepZoom</button>
-                    <button class="btn-secondary btn-inline" onclick="_sheetOpenFull()" style="padding:2px 10px; font-size:11px" title="Open the full-resolution PNG in a new tab">Open</button>
                     <button class="btn-secondary btn-inline" onclick="_sheetDownload(this)" style="padding:2px 10px; font-size:11px" title="Download the full-resolution PNG">Download</button>
                 </div>
-                <div id="sheet-viewer-scroll" style="max-height:75vh; overflow:auto; border:1px solid #333">
-                    <img id="sheet-viewer-img" style="max-width:100%; image-rendering:pixelated; display:block" alt="sheet">
-                </div>
+                <div id="sheet-osd" style="height:75vh; background:#000; border:1px solid #333; border-radius:4px; position:relative"></div>
             </div>
         </div>
         <div id="tab-deepzoom" class="tab-content">

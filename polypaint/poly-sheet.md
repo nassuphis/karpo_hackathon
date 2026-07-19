@@ -130,18 +130,19 @@ walls.) One new tab:
   applied to sheet tiles server-side);
 - Execute (async button discipline: busy + lingering result), rail
   card with frame progress + kill;
-- gallery: list of sheets, click -> viewer. The viewer (v1.1) has a
-  1:1/Fit toggle (native pixels in a scrollable pane — a 5000px sheet
-  is unreadable squished to panel width), an Open button (full-res PNG
-  in a new tab) and a Download button (blob fetch -> save).
-- DeepZoom (v1.3, the preferred viewer for big sheets): after the
-  stitch the client auto-fires the deepzoom-export lambda's new
-  action='sheet' path — source key built server-side from the
-  validated sheet_id, NON-SQUARE mosaics allowed (the render export
-  path requires square), pyramid + viewer.html under
-  deepzoom/{sheet_id}/{export_id}/ so /list-deepzoom discovers sheet
-  exports with zero listing changes. The viewer's DeepZoom button
-  opens the export (generating on demand if missing).
+- gallery: list of sheets, click -> viewer. The viewer (v1.4) IS an
+  embedded OpenSeadragon pane on the tab (same OSD build as the
+  DeepZoom tab): clicking a sheet in the list swaps the pyramid in
+  place (a view-sequence guard makes the latest click win on rapid
+  switching); a legacy sheet with no export generates one in place
+  (deduped in-flight). Download (blob fetch -> save) is the one
+  remaining button; the old img + 1:1/Fit/Open surface is gone.
+- DeepZoom generation (v1.3): after the stitch the client auto-fires
+  the deepzoom-export lambda's action='sheet' path — source key built
+  server-side from the validated sheet_id, NON-SQUARE mosaics allowed
+  (the render export path requires square), pyramid + viewer.html
+  under deepzoom/{sheet_id}/{export_id}/ so /list-deepzoom discovers
+  sheet exports with zero listing changes.
 
 ## 7. What already exists vs what is new
 

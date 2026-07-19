@@ -207,9 +207,19 @@ async function _pollSheetTask(sheetId, jobId, taskId, statusEl, phaseLabel) {
     }
 }
 
-const _sheetDzUrls = {};   // sheet_id -> viewer share_url
+const _sheetDzExports = {};   // sheet_id -> {dzi_url, share_url}
+const _sheetDzInflight = {};  // sheet_id -> pending generation promise
 
-async function _sheetGenerateDeepZoom(sheetId, statusEl) {
+function _sheetGenerateDeepZoom(sheetId, statusEl) {
+    // dedupe: rapid re-clicks on a legacy sheet must not fire twice
+    if (!_sheetDzInflight[sheetId]) {
+        _sheetDzInflight[sheetId] = _sheetGenerateDeepZoomInner(sheetId, statusEl)
+            .finally(() => { delete _sheetDzInflight[sheetId]; });
+    }
+    return _sheetDzInflight[sheetId];
+}
+
+async function _sheetGenerateDeepZoomInner(sheetId, statusEl) {
     const taskId = `sheet_dz_${sheetId}_${Date.now().toString(36)}`;
     const disp = await lambdaPost('dispatch', {
         target: 'deepzoom_export',
@@ -219,42 +229,24 @@ async function _sheetGenerateDeepZoom(sheetId, statusEl) {
     });
     if ((disp.fired || 0) !== 1) throw new Error('deepzoom dispatch failed');
     const rd = await _pollSheetTask(sheetId, sheetId, taskId, statusEl, 'deepzoom');
-    if (rd.share_url) {
-        _sheetDzUrls[sheetId] = rd.share_url;
+    if (rd.dzi_url) {
+        _sheetDzExports[sheetId] = { dzi_url: rd.dzi_url, share_url: rd.share_url };
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: DeepZoom ready`; statusEl.className = 'status ok'; }
     }
-    return rd.share_url;
+    return _sheetDzExports[sheetId] || null;
 }
 
 async function _sheetFindDeepZoom(sheetId) {
-    if (_sheetDzUrls[sheetId]) return _sheetDzUrls[sheetId];
+    if (_sheetDzExports[sheetId]) return _sheetDzExports[sheetId];
     try {
         const resp = await lambdaPost('storage', {}, '/list-deepzoom');
-        const hit = (resp.exports || []).find(e => e.job_id === sheetId && e.share_url);
-        if (hit) { _sheetDzUrls[sheetId] = hit.share_url; return hit.share_url; }
+        const hit = (resp.exports || []).find(e => e.job_id === sheetId && e.dzi_url);
+        if (hit) {
+            _sheetDzExports[sheetId] = { dzi_url: hit.dzi_url, share_url: hit.share_url };
+            return _sheetDzExports[sheetId];
+        }
     } catch (e) { /* listing failure -> treat as no export */ }
     return null;
-}
-
-async function _sheetOpenDeepZoom(btn) {
-    if (!_sheetViewerId) return;
-    const sheetId = _sheetViewerId;
-    const statusEl = document.getElementById('sheets-status');
-    const orig = btn ? btn.textContent : 'DeepZoom';
-    if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
-    try {
-        let url = await _sheetFindDeepZoom(sheetId);
-        if (!url) {
-            if (btn) btn.textContent = 'Generating...';
-            url = await _sheetGenerateDeepZoom(sheetId, statusEl);
-        }
-        if (!url) throw new Error('no share URL');
-        window.open(url, '_blank');
-        if (btn) { btn.textContent = '✓ Open'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
-    } catch (e) {
-        if (btn) { btn.textContent = 'Failed'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000); }
-        if (statusEl) { statusEl.textContent = 'DeepZoom failed: ' + e.message; statusEl.className = 'status error'; }
-    }
 }
 
 async function cancelPolySheet() {
@@ -294,22 +286,28 @@ async function loadSheetsTab() {
 }
 
 let _sheetViewerId = null;
-let _sheetViewerFit = true;
+let _sheetViewSeq = 0;
+let _sheetOsd = null;
 
-function _sheetApplyFit() {
-    const img = document.getElementById('sheet-viewer-img');
-    const btn = document.getElementById('btn-sheet-fit');
-    if (img) img.style.maxWidth = _sheetViewerFit ? '100%' : 'none';
-    if (btn) btn.textContent = _sheetViewerFit ? '1:1' : 'Fit';
-}
-
-function _sheetToggleFit() {
-    _sheetViewerFit = !_sheetViewerFit;
-    _sheetApplyFit();
-}
-
-function _sheetOpenFull() {
-    if (_sheetViewerId) window.open(_publicStorageUrl(`sheets/${_sheetViewerId}/sheet.png`), '_blank');
+function _sheetShowOsd(dziUrl) {
+    const el = document.getElementById('sheet-osd');
+    if (!el) return;
+    if (_sheetOsd) {
+        _sheetOsd.destroy();
+        _sheetOsd = null;
+    }
+    el.innerHTML = '';
+    _sheetOsd = OpenSeadragon({
+        element: el,
+        tileSources: dziUrl,
+        prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
+        showNavigator: true,
+        navigatorPosition: 'BOTTOM_RIGHT',
+        navigatorMaintainSizeRatio: false,
+        navigatorWidth: '160px',
+        navigatorHeight: '160px',
+        maxZoomPixelRatio: 4,
+    });
 }
 
 async function _sheetDownload(btn) {
@@ -336,24 +334,46 @@ async function _sheetDownload(btn) {
 
 function _viewSheet(sheetId) {
     const viewer = document.getElementById('sheet-viewer');
-    const img = document.getElementById('sheet-viewer-img');
     const meta = document.getElementById('sheet-viewer-meta');
-    if (!viewer || !img) return;
+    if (!viewer) return;
     _sheetViewerId = sheetId;
+    const seq = ++_sheetViewSeq;   // rapid list clicks: only the latest wins
     viewer.style.display = '';
-    _sheetApplyFit();
-    img.src = _publicStorageUrl(`sheets/${sheetId}/sheet.png`) + '?t=' + Date.now();
     if (meta) {
         meta.textContent = sheetId + ' (loading manifest...)';
         fetch(_publicStorageUrl(`sheets/${sheetId}/sheet.json`) + '?t=' + Date.now())
             .then(r => r.json())
             .then(m => {
+                if (seq !== _sheetViewSeq) return;
                 meta.textContent = `${sheetId}: ${m.frames} frames · ${m.grid.cols}x${m.grid.rows} · ` +
                     `N=${m.n} tile=${m.tile_px}px · ${m.solver_mode} · ` +
                     `${m.scan.token} ${m.scan.from}..${m.scan.to} (${m.scan.spacing}) · ` +
                     `viewport ${m.viewport.mode} · ${m.elapsed_ms}ms`;
             })
-            .catch(() => { meta.textContent = sheetId; });
+            .catch(() => { if (seq === _sheetViewSeq) meta.textContent = sheetId; });
+    }
+    void _sheetViewDeepZoom(sheetId, seq);
+}
+
+async function _sheetViewDeepZoom(sheetId, seq) {
+    const statusEl = document.getElementById('sheets-status');
+    const osdEl = document.getElementById('sheet-osd');
+    try {
+        let exp = await _sheetFindDeepZoom(sheetId);
+        if (!exp) {
+            // legacy sheet with no pyramid yet: generate it in place
+            if (seq === _sheetViewSeq && osdEl && !_sheetOsd) {
+                osdEl.innerHTML = '<div style="color:#888; font-size:12px; padding:16px">Generating DeepZoom for ' + _escapeHtml(sheetId) + '...</div>';
+            }
+            if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: generating DeepZoom...`; statusEl.className = 'status'; }
+            exp = await _sheetGenerateDeepZoom(sheetId, statusEl);
+        }
+        if (!exp || !exp.dzi_url) throw new Error('no DZI produced');
+        if (seq !== _sheetViewSeq) return;   // user moved on to another sheet
+        _sheetShowOsd(exp.dzi_url);
+    } catch (e) {
+        if (seq !== _sheetViewSeq) return;
+        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: DeepZoom failed — ${e.message}`; statusEl.className = 'status error'; }
     }
 }
 

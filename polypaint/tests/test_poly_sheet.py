@@ -324,6 +324,47 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         self.assertEqual(body["cancelled"], "cx-sheet")
         self.assertEqual(body["frames_done"], 0)
 
+    def test_frame_labels_and_pipeline_manifest(self):
+        import handler_poly_sheet as mod
+
+        def run(sheet_id, label):
+            stub = _S3Stub()
+            orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+            self._patched(mod, stub)
+            try:
+                resp = mod.handle_run(_run_params(sheet_id, extra={
+                    "frame": {"n": 8, "tile_px": 128, "solver_mode": "jt64",
+                              "viewport": {"mode": "quantile", "quantile": 0.0,
+                                           "shim": 0.05},
+                              "rotate": 0, "label": label},
+                }))
+            finally:
+                (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+            return (json.loads(resp["body"]),
+                    stub.objects[f"sheets/{sheet_id}/sheet.png"])
+
+        labeled, png_on = run("label-on", True)
+        plain, png_off = run("label-off", False)
+        self.assertTrue(labeled["label"])
+        self.assertFalse(plain["label"])
+        # the stamped value text changes the pixels
+        self.assertNotEqual(png_on, png_off)
+        # the pipeline rides in the manifest UNSUBSTITUTED for populate
+        self.assertEqual(labeled["pipeline"]["function"], "const")
+        self.assertIn("$T", labeled["pipeline"]["coeff_program_source_text"])
+        self.assertEqual(labeled["pipeline"]["cfpv"], [1, 0, 0])
+
+    def test_draw_tile_label_geometry(self):
+        import handler_poly_sheet as mod
+
+        tile = bytearray(bytes([0]) * (128 * 128))
+        out = mod.draw_tile_label(tile, 128, "1.5", fg=255, bg=0)
+        # scale 1, pad 2: glyphs land inside the top-left 30x12 box
+        lit = [(i % 128, i // 128) for i, v in enumerate(out) if v == 255]
+        self.assertTrue(lit)
+        self.assertTrue(all(x < 2 + 3 * 8 and y < 12 for x, y in lit),
+                        f"label pixels escaped the corner box: {lit[:5]}")
+
     def test_explicit_viewport_and_rotation(self):
         import handler_poly_sheet as mod
 

@@ -121,13 +121,21 @@ walls.) One new tab:
 
 - pipeline pickers (reuse the existing program/function selectors);
 - scan tag row: token, from, to, steps, spacing;
-- frame row (v1.1): solver select (7 modes) + columns + a
-  freeze-frame-0 checkbox. N, pixel size, viewport mode/bounds
-  (Q-shim/marquee/square) and rotation are INHERITED from the Compute
-  preview controls — the sheet renders what Preview shows, no
-  duplicated knobs. Rotation is a new compute-preview select
+- frame row (v1.5): columns + polarity + margin + freeze-frame-0 +
+  label-frames checkboxes. SOLVER, N, pixel size, viewport mode/bounds
+  (Q-shim/marquee/square) and rotation are ALL inherited from the
+  Compute preview controls — the sheet renders what Preview shows, no
+  duplicated knobs. Rotation is a compute-preview select
   (0/90CW/90CCW/180, CSS-rotates the preview display, quarter-turn
-  applied to sheet tiles server-side);
+  applied to sheet tiles server-side). Label-frames stamps each tile's
+  scan value into its top-left corner (CP437 8x8 glyphs, scaled with
+  the tile, drawn after rotation so labels read upright);
+- Populate button: loads the selected sheet's manifest back into the
+  Compute tab (function/programs/cfpv via the same populate path the
+  Results tab uses) plus the preview + sheet controls — the manifest
+  stores the UNSUBSTITUTED pipeline sources for this;
+- the sheet list highlights the selected row (same convention as the
+  Results table);
 - Execute (async button discipline: busy + lingering result), rail
   card with frame progress + kill;
 - gallery: list of sheets, click -> viewer. The viewer (v1.4) IS an

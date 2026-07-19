@@ -35,6 +35,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from compute_fused import _solve_us_per_step
+from cp437_font import FONT_ROWS
 from handler_compute_preview import _compile_compute_inputs
 from shared import (
     BUCKET,
@@ -282,6 +283,45 @@ def bin_bilevel_tile(roots_bytes, bounds, tile_px, fg=255, bg=0):
     return tile
 
 
+def draw_tile_label(tile, tile_px, text, fg, bg):
+    """Stamp the frame's scan value into the tile's top-left corner
+    (CP437 8x8 glyphs on a bg backing box, scaled with the tile so the
+    label stays readable). Called AFTER rotation: labels read upright
+    whatever the tile orientation."""
+    scale = max(1, min(4, tile_px // 128))
+    pad = 2 * scale
+    max_chars = max(0, (tile_px - 2 * pad) // (8 * scale))
+    text = str(text)[:max_chars]
+    if not text:
+        return tile
+    box_w = pad + len(text) * 8 * scale + pad
+    box_h = pad + 8 * scale + pad
+    for y in range(min(box_h, tile_px)):
+        base = y * tile_px
+        for x in range(min(box_w, tile_px)):
+            tile[base + x] = bg
+    for ci, ch in enumerate(text):
+        rows = FONT_ROWS.get(ord(ch) + 1)
+        if rows is None:
+            continue
+        gx0 = pad + ci * 8 * scale
+        for gy in range(8):
+            row = rows[gy]
+            for gx in range(8):
+                if not (row & (1 << (7 - gx))):
+                    continue
+                for sy in range(scale):
+                    py = pad + gy * scale + sy
+                    if py >= tile_px:
+                        continue
+                    base = py * tile_px
+                    for sx in range(scale):
+                        px = gx0 + gx * scale + sx
+                        if px < tile_px:
+                            tile[base + px] = fg
+    return tile
+
+
 def rotate_tile(tile, tile_px, rotate):
     """Quarter-turn rotation (counter-clockwise, like np.rot90)."""
     turns = (int(rotate) // 90) % 4
@@ -322,6 +362,7 @@ def _parse_sheet_config(params):
     rotate = int(frame.get("rotate") or 0)
     if rotate not in (0, 90, 180, 270):
         raise RuntimeError(f"rotate must be one of 0/90/180/270, got {rotate}")
+    label = bool(frame.get("label"))
     polarity = str(frame.get("polarity") or "white_on_black").strip().lower()
     if polarity not in POLARITIES:
         raise RuntimeError(f"polarity must be one of {POLARITIES}, got {polarity!r}")
@@ -361,7 +402,7 @@ def _parse_sheet_config(params):
         "sheet_id": sheet_id, "scan": scan, "token": token, "steps": steps,
         "spacing": spacing, "values": values, "n": n, "tile_px": tile_px,
         "solver_mode": solver_mode, "rotate": rotate, "polarity": polarity,
-        "margin_px": margin_px, "vp_mode": vp_mode, "quantile": quantile,
+        "margin_px": margin_px, "label": label, "vp_mode": vp_mode, "quantile": quantile,
         "shim": shim, "explicit_bounds": explicit_bounds, "cols": cols,
         "rows": rows, "canvas_w": canvas_w, "canvas_h": canvas_h,
         "fg": fg, "bg": bg,
@@ -421,6 +462,9 @@ def _render_frame_tile(cfg, params, k, frozen_cache):
                             fg=cfg["fg"], bg=cfg["bg"])
     if cfg["rotate"]:
         tile = rotate_tile(tile, cfg["tile_px"], cfg["rotate"])
+    if cfg["label"]:
+        tile = draw_tile_label(tile, cfg["tile_px"], f"{value:.6g}",
+                               cfg["fg"], cfg["bg"])
     record = {"frame": k, "value": value, "degree": degree,
               "bounds": [round(b, 12) for b in bounds]}
     return tile, record
@@ -456,7 +500,13 @@ def _sheet_manifest(cfg, params, t0, degree, frame_records, render_mode):
         "rotate": cfg["rotate"],
         "polarity": cfg["polarity"],
         "margin_px": cfg["margin_px"],
+        "label": cfg["label"],
         "render_mode": render_mode,
+        "pipeline": {key: params[key] for key in (
+            "function", "cfpv", "param_transforms", "coeff_transforms",
+            "param_program_chain", "coeff_program_chain",
+            "param_program_source_text", "coeff_program_source_text")
+            if params.get(key) not in (None, "", [])},
         "scan": {"token": cfg["token"], "from": float(scan.get("from")),
                  "to": float(scan.get("to") or 0.0),
                  "step": (float(scan.get("step") or 0.0)

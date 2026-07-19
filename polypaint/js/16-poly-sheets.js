@@ -56,8 +56,10 @@ function _sheetInheritedFrame() {
     }
     return {
         n, tile_px: tile, rotate, viewport,
+        solver_mode: String(_sheetVal('compute-preview-solver', 'ae64')),
         polarity: String(_sheetVal('sheet-polarity', 'white_on_black')),
         margin_px: Math.max(0, Math.min(64, parseInt(_sheetVal('sheet-margin', 4), 10) || 0)),
+        label: !!document.getElementById('sheet-label')?.checked,
     };
 }
 
@@ -87,7 +89,6 @@ async function runPolySheet() {
     let frame;
     try {
         frame = _sheetInheritedFrame();
-        frame.solver_mode = String(_sheetVal('sheet-solver', 'ae64'));
     } catch (e) {
         if (statusEl) { statusEl.textContent = e.message; statusEl.className = 'status error'; }
         return;
@@ -293,10 +294,20 @@ async function loadSheetsTab() {
         return;
     }
     invEl.innerHTML = _sheetsInventory.map(row =>
-        `<div class="sheet-row" style="padding:4px 8px; cursor:pointer; border-bottom:1px solid #222" ` +
+        `<div class="sheet-row" data-sheet-id="${_escapeHtml(row.sheet_id)}" ` +
+        `style="padding:4px 8px; cursor:pointer; border-bottom:1px solid #222" ` +
         `onclick="_viewSheet('${_escapeHtml(row.sheet_id)}')">` +
         `${_escapeHtml(row.sheet_id)} <span style="color:#666">${_escapeHtml(row.modified.slice(0, 19))}</span></div>`
     ).join('');
+    _sheetMarkSelectedRow();
+}
+
+function _sheetMarkSelectedRow() {
+    const invEl = document.getElementById('sheets-inventory');
+    if (!invEl) return;
+    for (const rowEl of invEl.querySelectorAll('.sheet-row')) {
+        rowEl.classList.toggle('selected', rowEl.dataset.sheetId === _sheetViewerId);
+    }
 }
 
 let _sheetViewerId = null;
@@ -352,6 +363,7 @@ function _viewSheet(sheetId) {
     if (!viewer) return;
     _sheetViewerId = sheetId;
     const seq = ++_sheetViewSeq;   // rapid list clicks: only the latest wins
+    _sheetMarkSelectedRow();
     viewer.style.display = '';
     if (meta) {
         meta.textContent = sheetId + ' (loading manifest...)';
@@ -388,6 +400,75 @@ async function _sheetViewDeepZoom(sheetId, seq) {
     } catch (e) {
         if (seq !== _sheetViewSeq) return;
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: DeepZoom failed — ${e.message}`; statusEl.className = 'status error'; }
+    }
+}
+
+function _setInputValue(id, value) {
+    const el = document.getElementById(id);
+    if (el != null && value != null) el.value = String(value);
+}
+
+async function populateSelectedSheet(btn) {
+    const statusEl = document.getElementById('sheets-status');
+    if (!_sheetViewerId) {
+        if (statusEl) { statusEl.textContent = 'Select a sheet first.'; statusEl.className = 'status error'; }
+        return;
+    }
+    const sheetId = _sheetViewerId;
+    const orig = btn ? btn.textContent : 'Populate';
+    if (btn) { btn.disabled = true; btn.textContent = 'Populating...'; }
+    try {
+        const resp = await fetch(_publicStorageUrl(`sheets/${sheetId}/sheet.json`) + '?t=' + Date.now());
+        if (!resp.ok) throw new Error('manifest HTTP ' + resp.status);
+        const m = await resp.json();
+
+        // sheet scan + frame knobs first (the compute populate switches tabs)
+        _setInputValue('sheet-token', m.scan?.token);
+        _setInputValue('sheet-from', m.scan?.from);
+        _setInputValue('sheet-to', m.scan?.to);
+        if (m.scan?.spacing === 'step') _setInputValue('sheet-step', m.scan?.step);
+        _setInputValue('sheet-steps', m.scan?.steps);
+        _setInputValue('sheet-spacing', m.scan?.spacing);
+        _sheetSpacingChanged();
+        _setInputValue('sheet-cols', m.grid?.cols);
+        _setInputValue('sheet-polarity', m.polarity);
+        _setInputValue('sheet-margin', m.margin_px);
+        const freezeEl = document.getElementById('sheet-freeze');
+        if (freezeEl) freezeEl.checked = m.viewport?.mode === 'frozen';
+        const labelEl = document.getElementById('sheet-label');
+        if (labelEl) labelEl.checked = !!m.label;
+
+        // the inherited compute-preview controls
+        _setInputValue('compute-preview-n', m.n);
+        _setInputValue('compute-preview-size', m.tile_px);
+        _setInputValue('compute-preview-rotate', m.rotate);
+        _setInputValue('compute-preview-solver', m.solver_mode);
+        if (m.viewport) {
+            _setInputValue('compute-preview-quantile', (m.viewport.quantile || 0) * 100);
+            _setInputValue('compute-preview-shim', (m.viewport.shim || 0.05) * 100);
+        }
+        if (m.viewport?.mode !== 'explicit') {
+            const radio = document.querySelector('input[name="compute-preview-viewport-mode"][value="quantile"]');
+            if (radio) { radio.checked = true; _setComputePreviewViewportMode('quantile'); }
+        }
+        if (typeof _applyComputePreviewRotation === 'function') _applyComputePreviewRotation();
+
+        // pipeline (function + programs + cfpv) into the Compute tab
+        _populateComputeFromDetail(sheetId, {
+            pipeline: m.pipeline || {},
+            calc: { solver: m.solver_mode },
+        });
+        if (statusEl) {
+            const note = m.viewport?.mode === 'explicit'
+                ? ' (explicit viewport: re-drag the marquee on the preview)'
+                : '';
+            statusEl.textContent = `Populated Compute + Sheets controls from ${sheetId}${note}.`;
+            statusEl.className = 'status ok';
+        }
+        if (btn) { btn.textContent = '✓ Populated'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
+    } catch (e) {
+        if (statusEl) { statusEl.textContent = 'Populate failed: ' + e.message; statusEl.className = 'status error'; }
+        if (btn) { btn.textContent = orig; btn.disabled = false; }
     }
 }
 

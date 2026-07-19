@@ -1623,6 +1623,7 @@ button {
 #results-tbody tr { cursor: pointer; transition: background 0.1s; }
 #results-tbody tr:hover { background: rgba(233, 69, 96, 0.1); }
 #results-tbody tr.selected { background: rgba(233, 69, 96, 0.25); }
+#sheets-inventory .sheet-row.selected { background: rgba(233, 69, 96, 0.25); }
 #results-tbody td { padding: 3px 6px; border-bottom: 1px solid #0f3460; white-space: nowrap; }
 .results-table { width:100%; border-collapse:collapse; font-size:11px; font-family:monospace; table-layout:fixed; }
 .results-table th { padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; }
@@ -2434,15 +2435,6 @@ button {
                 <input type="number" id="sheet-step" value="1" step="any" style="width:5em; display:none" title="Frame k gets from + k*step; use step=1 for integer scans (degrees, counts)">
             </div>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
-                <select id="sheet-solver" style="width:6em">
-                    <option value="ae64">AE64</option>
-                    <option value="jt64">JT64</option>
-                    <option value="cm64">CM64</option>
-                    <option value="aberth_mt">AE-MT</option>
-                    <option value="companion_matrix">CM</option>
-                    <option value="jenkins_traub">JT</option>
-                    <option value="newton">Newton</option>
-                </select>
                 <label style="font-size:11px; color:#aaa">Cols</label>
                 <input type="number" id="sheet-cols" value="0" min="0" max="32" style="width:4em" title="0 = auto (square-ish)">
                 <select id="sheet-polarity" style="width:9em" title="Tile polarity">
@@ -2452,12 +2444,14 @@ button {
                 <label style="font-size:11px; color:#aaa">Margin</label>
                 <input type="number" id="sheet-margin" value="4" min="0" max="64" style="width:4em" title="Gutter between tiles (and around the border), in pixels">
                 <label style="font-size:11px; color:#aaa"><input type="checkbox" id="sheet-freeze"> freeze frame-0 viewport</label>
-                <span style="font-size:11px; color:#666">N, pixels, viewport (Q-shim/marquee/square) and rotation inherit from the Compute preview controls.</span>
+                <label style="font-size:11px; color:#aaa"><input type="checkbox" id="sheet-label" checked> label frames</label>
+                <span style="font-size:11px; color:#666">Solver, N, pixels, viewport (Q-shim/marquee/square) and rotation inherit from the Compute preview controls.</span>
             </div>
             <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px">
                 <button class="btn-primary" id="btn-sheet-run" onclick="runPolySheet()">Run Sheet</button>
                 <button class="btn-secondary btn-inline" onclick="cancelPolySheet()" style="padding:4px 12px; font-size:12px">Cancel</button>
                 <button class="btn-secondary btn-inline" onclick="loadSheetsTab()" style="padding:4px 12px; font-size:12px">Refresh</button>
+                <button class="btn-secondary btn-inline" id="btn-sheet-populate" onclick="populateSelectedSheet(this)" style="padding:4px 12px; font-size:12px" title="Load the selected sheet's pipeline + scan config back into the Compute tab and these controls">Populate</button>
                 <span style="font-size:11px; color:#666">Pipeline = the COMPUTE tab's current function + programs (what Preview renders). Put the token (e.g. $T) in a program source there, then Run here.</span>
             </div>
             <div id="sheets-status" class="status" style="margin-bottom:6px"></div>

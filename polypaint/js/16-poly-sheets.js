@@ -472,4 +472,29 @@ async function populateSelectedSheet(btn) {
     }
 }
 
+function _sheetsArrowNav(e) {
+    // same convention as the Results / Palette / Render artifact tables
+    // (bound from js/12-deepzoom-boot.js — parts are declaration-only)
+    const tab = document.getElementById('tab-sheets');
+    if (!tab || !tab.classList.contains('active')) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (_isTextInputFocused()) return;
+    if (!_sheetsInventory.length) return;
+    e.preventDefault();
+
+    const idx = _sheetViewerId
+        ? _sheetsInventory.findIndex(r => r.sheet_id === _sheetViewerId)
+        : -1;
+    let next;
+    if (e.key === 'ArrowDown') next = idx < _sheetsInventory.length - 1 ? idx + 1 : idx;
+    else next = idx > 0 ? idx - 1 : 0;
+    if (next < 0) next = 0;
+    const row = _sheetsInventory[next];
+    if (!row || row.sheet_id === _sheetViewerId) return;
+    _viewSheet(row.sheet_id);
+    const rowEl = document.querySelector(
+        `#sheets-inventory .sheet-row[data-sheet-id="${CSS.escape(row.sheet_id)}"]`);
+    if (rowEl && typeof rowEl.scrollIntoView === 'function') rowEl.scrollIntoView({ block: 'nearest' });
+}
+
 ;(window.__ppParts = window.__ppParts || []).push('16-poly-sheets');

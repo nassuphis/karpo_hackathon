@@ -1349,6 +1349,8 @@ document.addEventListener('keydown', (e) => {
     _renderSelectArtifact(_renderActiveFamily, next);
 });
 
+document.addEventListener('keydown', (e) => _sheetsArrowNav(e));
+
 document.addEventListener('keydown', (e) => {
     if (!document.getElementById('tab-render').classList.contains('active')) return;
     if (e.key !== 'Escape') return;

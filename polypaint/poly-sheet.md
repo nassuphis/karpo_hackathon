@@ -142,6 +142,16 @@ walls.) One new tab:
   stores the UNSUBSTITUTED pipeline sources for this;
 - the sheet list highlights the selected row (same convention as the
   Results table);
+- right-click on a frame in the embedded DeepZoom viewer (v1.7,
+  sheets tab only — bound on #sheet-osd, the DeepZoom tab is
+  untouched) opens a context popup (artifact-mosaic menu styling)
+  showing the frame index, each token's value, and the frame bounds,
+  with a Populate Frame action: the compute tab is populated with the
+  sheet's pipeline where every scan token is REPLACED by the literal
+  value that rendered the clicked frame (server literal spelling —
+  integers bare, negatives (0-x)). Gutter/border clicks close the
+  menu; Escape/outside click dismiss; pre-v1.5 manifests (no
+  pipeline) show a disabled action with a note;
 - Execute (async button discipline: busy + lingering result), rail
   card with frame progress + kill;
 - gallery: list of sheets, click -> viewer. The viewer (v1.4) IS an

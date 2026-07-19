@@ -335,6 +335,8 @@ function _sheetMarkSelectedRow() {
 let _sheetViewerId = null;
 let _sheetViewSeq = 0;
 let _sheetOsd = null;
+let _sheetViewerManifest = null;
+let _sheetContext = null;   // {sheetId, frame} while the popup is open
 
 function _sheetShowOsd(dziUrl) {
     const el = document.getElementById('sheet-osd');
@@ -344,6 +346,10 @@ function _sheetShowOsd(dziUrl) {
         _sheetOsd = null;
     }
     el.innerHTML = '';
+    if (!el.dataset.sheetCtxBound) {
+        el.addEventListener('contextmenu', _sheetOsdContextMenu);
+        el.dataset.sheetCtxBound = '1';
+    }
     _sheetOsd = OpenSeadragon({
         element: el,
         tileSources: dziUrl,
@@ -385,6 +391,8 @@ function _viewSheet(sheetId) {
     if (!viewer) return;
     _sheetViewerId = sheetId;
     const seq = ++_sheetViewSeq;   // rapid list clicks: only the latest wins
+    _sheetViewerManifest = null;
+    _sheetContextClose();
     _sheetMarkSelectedRow();
     viewer.style.display = '';
     if (meta) {
@@ -393,6 +401,7 @@ function _viewSheet(sheetId) {
             .then(r => r.json())
             .then(m => {
                 if (seq !== _sheetViewSeq) return;
+                _sheetViewerManifest = m;
                 const scansDesc = (m.scans || [m.scan]).map(sc =>
                     `${sc.token} ${sc.from}..${sc.spacing === 'step' ? `+${sc.step}·k` : sc.to} (${sc.spacing})`).join(' × ');
                 meta.textContent = `${sheetId}: ${m.frames} frames · ${m.grid.cols}x${m.grid.rows} · ` +
@@ -528,6 +537,159 @@ function _sheetsArrowNav(e) {
     const rowEl = document.querySelector(
         `#sheets-inventory .sheet-row[data-sheet-id="${CSS.escape(row.sheet_id)}"]`);
     if (rowEl && typeof rowEl.scrollIntoView === 'function') rowEl.scrollIntoView({ block: 'nearest' });
+}
+
+function _sheetFramePickFromImagePoint(m, x, y) {
+    /* Image-pixel point -> frame index, or null on gutters/borders/
+     * out-of-grid. Pure: exercised directly by the e2e harness. */
+    if (!m || !m.grid || !m.tile_px) return null;
+    const margin = m.margin_px || 0;
+    const span = m.tile_px + margin;
+    const cx = x - margin;
+    const cy = y - margin;
+    if (cx < 0 || cy < 0) return null;
+    const col = Math.floor(cx / span);
+    const row = Math.floor(cy / span);
+    if (col >= m.grid.cols || row >= m.grid.rows) return null;
+    if (cx - col * span >= m.tile_px || cy - row * span >= m.tile_px) return null;
+    const k = row * m.grid.cols + col;
+    return k < m.frames ? k : null;
+}
+
+function _sheetValueLiteral(v) {
+    // mirror of the server's _value_literal: integral values spell as
+    // integers, negatives as (0-x) — the grammar has no unary minus
+    const body = Number.isInteger(v) ? String(Math.abs(v)) : String(Math.abs(v));
+    return v < 0 ? `(0-${body})` : body;
+}
+
+function _sheetOsdContextMenu(e) {
+    e.preventDefault();
+    const m = _sheetViewerManifest;
+    const el = document.getElementById('sheet-osd');
+    if (!m || !_sheetOsd || !el) { _sheetContextClose(); return; }
+    const rect = el.getBoundingClientRect();
+    const web = new OpenSeadragon.Point(e.clientX - rect.left, e.clientY - rect.top);
+    const img = _sheetOsd.viewport.viewportToImageCoordinates(_sheetOsd.viewport.pointFromPixel(web));
+    const k = _sheetFramePickFromImagePoint(m, img.x, img.y);
+    if (k == null) { _sheetContextClose(); return; }
+    _sheetContext = { sheetId: _sheetViewerId, frame: k };
+    _sheetRenderContextMenu(e.clientX, e.clientY);
+}
+
+function _sheetContextClose() {
+    _sheetContext = null;
+    const menu = document.getElementById('sheet-context-menu');
+    if (menu) {
+        menu.style.display = 'none';
+        menu.setAttribute('aria-hidden', 'true');
+        menu.innerHTML = '';
+    }
+}
+
+function _sheetContextDismissClick(e) {
+    if (!_sheetContext) return;
+    const menu = document.getElementById('sheet-context-menu');
+    if (menu && e && e.target && menu.contains(e.target)) return;
+    _sheetContextClose();
+}
+
+function _sheetContextEscape(e) {
+    if (e && e.key === 'Escape') _sheetContextClose();
+}
+
+function _sheetRenderContextMenu(x, y) {
+    const menu = document.getElementById('sheet-context-menu');
+    const m = _sheetViewerManifest;
+    if (!menu || !m || !_sheetContext) return;
+    const k = _sheetContext.frame;
+    const rec = (m.frame_records || [])[k] || {};
+    const values = rec.values || (rec.value != null ? [rec.value] : []);
+    const scans = m.scans || (m.scan ? [m.scan] : []);
+    const canPopulate = !!m.pipeline;
+    const rows = [
+        `<div class="artifact-mosaic-menu-row"><span>frame</span><code>${k} of ${m.frames}</code></div>`,
+        ...scans.map((sc, i) =>
+            `<div class="artifact-mosaic-menu-row"><span>${_escapeHtml(sc.token)}</span><code>${_escapeHtml(String(values[i]))}</code></div>`),
+        rec.bounds
+            ? `<div class="artifact-mosaic-menu-row"><span>bounds</span><code>${rec.bounds.map(b => Number(b).toPrecision(4)).join(', ')}</code></div>`
+            : '',
+    ].filter(Boolean).join('');
+    menu.innerHTML = `
+        <div class="artifact-mosaic-menu-head">
+            <div class="artifact-mosaic-menu-title">Sheet frame</div>
+            <button type="button" class="artifact-mosaic-menu-close" data-sheet-action="close" aria-label="Close">x</button>
+        </div>
+        <div class="artifact-mosaic-menu-meta">${rows}</div>
+        <div class="artifact-mosaic-menu-actions">
+            <button type="button" class="artifact-mosaic-menu-action" data-sheet-action="populate-frame"${canPopulate ? '' : ' disabled'}>Populate Frame</button>
+            <button type="button" class="artifact-mosaic-menu-action" data-sheet-action="close">Close</button>
+        </div>
+        ${canPopulate ? '' : '<div class="artifact-mosaic-menu-note err">manifest has no pipeline (sheet predates v1.5) — re-run it to enable Populate</div>'}
+    `;
+    menu.style.display = 'block';
+    menu.setAttribute('aria-hidden', 'false');
+    const rect = menu.getBoundingClientRect();
+    const vw = window.innerWidth || 1200;
+    const vh = window.innerHeight || 800;
+    menu.style.left = `${Math.max(8, Math.min(x, vw - (rect.width || 260) - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, vh - (rect.height || 220) - 8))}px`;
+    if (!menu._sheetBound) {
+        menu.addEventListener('click', (ev) => {
+            const btn = ev.target && ev.target.closest ? ev.target.closest('[data-sheet-action]') : null;
+            if (!btn) return;
+            ev.preventDefault();
+            const action = btn.getAttribute('data-sheet-action');
+            if (action === 'close') _sheetContextClose();
+            else if (action === 'populate-frame') _sheetPopulateFrame();
+        });
+        menu._sheetBound = true;
+    }
+}
+
+function _sheetPopulateFrame() {
+    const statusEl = document.getElementById('sheets-status');
+    const m = _sheetViewerManifest;
+    const ctx = _sheetContext;
+    _sheetContextClose();
+    if (!m || !ctx || !m.pipeline) return;
+    const k = ctx.frame;
+    const rec = (m.frame_records || [])[k] || {};
+    const values = rec.values || (rec.value != null ? [rec.value] : []);
+    const scans = m.scans || (m.scan ? [m.scan] : []);
+
+    // the clicked frame's exact sources: every token replaced by the
+    // literal value that rendered it (same spelling the server used)
+    const pipeline = { ...m.pipeline };
+    for (const field of ['param_program_source_text', 'coeff_program_source_text']) {
+        let text = pipeline[field];
+        if (typeof text !== 'string' || !text) continue;
+        scans.forEach((sc, i) => {
+            if (values[i] != null) text = text.split(sc.token).join(_sheetValueLiteral(values[i]));
+        });
+        pipeline[field] = text;
+    }
+
+    // preview controls, as in populateSelectedSheet
+    _setInputValue('compute-preview-n', m.n);
+    _setInputValue('compute-preview-size', m.tile_px);
+    _setInputValue('compute-preview-rotate', m.rotate);
+    _setInputValue('compute-preview-solver', m.solver_mode);
+    if (m.viewport) {
+        _setInputValue('compute-preview-quantile', (m.viewport.quantile || 0) * 100);
+        _setInputValue('compute-preview-shim', (m.viewport.shim || 0.05) * 100);
+    }
+    if (typeof _applyComputePreviewRotation === 'function') _applyComputePreviewRotation();
+
+    _populateComputeFromDetail(ctx.sheetId, {
+        pipeline,
+        calc: { solver: m.solver_mode },
+    });
+    if (statusEl) {
+        const desc = scans.map((sc, i) => `${sc.token}=${values[i]}`).join(', ');
+        statusEl.textContent = `Populated Compute from ${ctx.sheetId} frame ${k} (${desc} substituted into the sources).`;
+        statusEl.className = 'status ok';
+    }
 }
 
 ;(window.__ppParts = window.__ppParts || []).push('16-poly-sheets');

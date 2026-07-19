@@ -1350,6 +1350,8 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => _sheetsArrowNav(e));
+document.addEventListener('keydown', (e) => _sheetContextEscape(e));
+document.addEventListener('click', (e) => _sheetContextDismissClick(e));
 
 document.addEventListener('keydown', (e) => {
     if (!document.getElementById('tab-render').classList.contains('active')) return;

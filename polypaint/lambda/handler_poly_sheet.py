@@ -308,7 +308,8 @@ def draw_tile_label(tile, tile_px, text, fg, bg):
         for gy in range(8):
             row = rows[gy]
             for gx in range(8):
-                if not (row & (1 << (7 - gx))):
+                # LSB-leftmost packing (cp437_font header): bit gx IS column gx
+                if not (row & (1 << gx)):
                     continue
                 for sy in range(scale):
                     py = pad + gy * scale + sy

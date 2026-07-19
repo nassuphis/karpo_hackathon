@@ -365,6 +365,26 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         self.assertTrue(all(x < 2 + 3 * 8 and y < 12 for x, y in lit),
                         f"label pixels escaped the corner box: {lit[:5]}")
 
+    def test_draw_tile_label_not_mirrored(self):
+        """The font packs LSB-leftmost; reading MSB-first mirrors every
+        glyph (user saw 'text from the wrong side of a window'). Pin the
+        exact rendered pattern of 'L' against the correct bit order."""
+        import handler_poly_sheet as mod
+        from cp437_font import FONT_ROWS
+
+        tile = bytearray(bytes([0]) * (64 * 64))
+        out = mod.draw_tile_label(tile, 64, "L", fg=255, bg=0)
+        rows = FONT_ROWS[ord("L") + 1]
+        for gy in range(8):
+            for gx in range(8):
+                expected = 255 if rows[gy] & (1 << gx) else 0
+                self.assertEqual(out[(2 + gy) * 64 + (2 + gx)], expected,
+                                 f"glyph pixel ({gx},{gy}) wrong — mirrored?")
+        # sanity on shape: L's vertical stroke hugs the LEFT edge
+        left_col = min(gx for gy in range(8) for gx in range(8)
+                       if out[(2 + gy) * 64 + (2 + gx)])
+        self.assertLessEqual(left_col, 1)
+
     def test_explicit_viewport_and_rotation(self):
         import handler_poly_sheet as mod
 

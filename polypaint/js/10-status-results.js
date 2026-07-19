@@ -1929,9 +1929,41 @@ const _JOBS_RAIL_KILL_TARGETS = {
     palette: 'palette_orchestrator',
 };
 
+function _jobsRailDismiss(id) {
+    const idx = _jobsRailJobs.findIndex(j => j.id === id);
+    if (idx < 0) return;
+    _jobsRailJobs.splice(idx, 1);
+    _jobsRailPersistHistory();
+    _renderJobsRail();
+}
+
 async function _jobsRailKill(id) {
     const job = _jobsRailJobs.find(j => j.id === id);
-    if (!job || job.state !== 'running' || !job.executionArn) return;
+    if (!job || job.state !== 'running') return;
+    if (String(job.id).startsWith('sheet:')) {
+        // sheets have no Step Functions execution — the kill is the S3
+        // cancel marker; workers stop between frames and the run's poll
+        // finishes the card through its normal error path
+        if (typeof window !== 'undefined' && typeof window.confirm === 'function'
+            && !window.confirm(`Stop this sheet run?\n${job.label || job.id}`)) return;
+        job.killRequested = true;
+        job.detail = 'cancel requested…';
+        _renderJobsRail();
+        try {
+            const resp = await lambdaPost('dispatch', {
+                target: 'poly_sheet',
+                jobs: [{ action: 'cancel', sheet_id: job.jobId }],
+                expected_keys: [],
+            });
+            if ((resp.fired || 0) !== 1) throw new Error('cancel dispatch failed');
+        } catch (e) {
+            job.killRequested = false;
+            job.detail = `cancel failed: ${e.message}`;
+            _renderJobsRail();
+        }
+        return;
+    }
+    if (!job.executionArn) return;
     const target = _JOBS_RAIL_KILL_TARGETS[job.kind];
     if (!target) return;
     if (typeof window !== 'undefined' && typeof window.confirm === 'function'
@@ -2021,13 +2053,17 @@ function _renderJobsRail() {
             // interpolation would decode &#39; back to a quote before the
             // JS parses, so ids must never be embedded in code text.
             // Cards are divs (not buttons) so the kill control can nest.
-            const canKill = state === 'running' && job.executionArn && !job.killRequested;
+            const sheetKillable = String(job.id).startsWith('sheet:');
+            const canKill = state === 'running' && !job.killRequested && (!!job.executionArn || sheetKillable);
             const killBtn = canKill
                 ? `<button type="button" class="jobs-rail-kill" data-jobs-rail-id="${_escapeHtml(job.id)}" onclick="event.stopPropagation(); _jobsRailKill(this.dataset.jobsRailId)" title="Stop this run">kill</button>`
                 : (job.killRequested && state === 'running' ? '<span class="jobs-rail-kill jobs-rail-kill-pending">stopping…</span>' : '');
+            // Dismiss removes the card from the rail only (client state) —
+            // the escape hatch for a card whose poll loop died mid-session.
+            const dismissBtn = `<button type="button" class="jobs-rail-dismiss" data-jobs-rail-id="${_escapeHtml(job.id)}" onclick="event.stopPropagation(); _jobsRailDismiss(this.dataset.jobsRailId)" title="Remove this card from the rail (does not stop the run)">×</button>`;
             return `<div role="button" tabindex="0" class="jobs-rail-card jobs-rail-${state}" data-jobs-rail-id="${_escapeHtml(job.id)}" onclick="_jobsRailOpen(this.dataset.jobsRailId)" title="${_escapeHtml(detail)}">` +
                 `<span class="jobs-rail-card-head"><span class="jobs-rail-kind">${_escapeHtml(job.kind || 'job')}</span>` +
-                `<span class="jobs-rail-state">${_escapeHtml(state === 'running' ? 'running · ' + age : state + ' · ' + age + ' ago')}</span>${killBtn}</span>` +
+                `<span class="jobs-rail-state">${_escapeHtml(state === 'running' ? 'running · ' + age : state + ' · ' + age + ' ago')}</span>${killBtn}${dismissBtn}</span>` +
                 `<span class="jobs-rail-label">${_escapeHtml(job.label || job.id)}</span>` +
                 (detail ? `<span class="jobs-rail-detail">${_escapeHtml(detail)}</span>` : '') +
                 `</div>`;

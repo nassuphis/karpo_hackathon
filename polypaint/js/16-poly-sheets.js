@@ -20,13 +20,32 @@ function _sheetVal(id, fallback) {
 }
 
 function _sheetSpacingChanged() {
-    const isStep = String(_sheetVal('sheet-spacing', 'linear')) === 'step';
-    for (const id of ['sheet-step', 'sheet-step-label']) {
-        const el = document.getElementById(id);
-        if (el) el.style.display = isStep ? '' : 'none';
+    for (const sfx of ['', '2']) {
+        const isStep = String(_sheetVal('sheet-spacing' + sfx, 'linear')) === 'step';
+        for (const id of [`sheet-step${sfx}`, `sheet-step${sfx}-label`]) {
+            const el = document.getElementById(id);
+            if (el) el.style.display = isStep ? '' : 'none';
+        }
+        const toEl = document.getElementById('sheet-to' + sfx);
+        if (toEl) toEl.disabled = isStep;
     }
-    const toEl = document.getElementById('sheet-to');
-    if (toEl) toEl.disabled = isStep;
+}
+
+function _sheetScanLine(sfx) {
+    const token = String(_sheetVal('sheet-token' + sfx, '')).trim();
+    if (!token) return null;   // blank token = inactive line
+    return {
+        token,
+        from: parseFloat(_sheetVal('sheet-from' + sfx, 0)),
+        to: parseFloat(_sheetVal('sheet-to' + sfx, 1)),
+        step: parseFloat(_sheetVal('sheet-step' + sfx, 1)),
+        steps: Math.max(1, Math.min(256, parseInt(_sheetVal('sheet-steps' + sfx, 16), 10) || 16)),
+        spacing: String(_sheetVal('sheet-spacing' + sfx, 'linear')),
+    };
+}
+
+function _sheetActiveScans() {
+    return ['', '2'].map(_sheetScanLine).filter(Boolean);
 }
 
 function _sheetInheritedFrame() {
@@ -80,8 +99,16 @@ async function runPolySheet() {
         if (statusEl) { statusEl.textContent = 'Select a function on the Render tab first.'; statusEl.className = 'status error'; }
         return;
     }
-    const token = String(_sheetVal('sheet-token', '$T')).trim();
-    const steps = Math.max(1, Math.min(256, parseInt(_sheetVal('sheet-steps', 16), 10) || 16));
+    const scans = _sheetActiveScans();
+    if (!scans.length) {
+        if (statusEl) { statusEl.textContent = 'Enter a scan token on at least one line (blank token = inactive).'; statusEl.className = 'status error'; }
+        return;
+    }
+    const steps = scans.reduce((a, sc) => a * sc.steps, 1);
+    if (steps > 256) {
+        if (statusEl) { statusEl.textContent = `Total frames ${steps} > 256 — reduce steps (product of active lines).`; statusEl.className = 'status error'; }
+        return;
+    }
     const sheetId = _sheetNewId();
     const jobId = sheetId;
     const taskId = 'sheet_run_' + sheetId;
@@ -104,16 +131,11 @@ async function runPolySheet() {
         param_program_chain: _effectiveParamProgramChainForCompute(),
         coeff_transforms: _effectiveCoeffTransformsForCompute(),
         coeff_program_chain: _effectiveCoeffProgramChainForCompute(),
-        scan: {
-            token,
-            from: parseFloat(_sheetVal('sheet-from', 0)),
-            to: parseFloat(_sheetVal('sheet-to', 1)),
-            step: parseFloat(_sheetVal('sheet-step', 1)),
-            steps,
-            spacing: String(_sheetVal('sheet-spacing', 'linear')),
-        },
+        scans,
         frame,
-        grid_cols: parseInt(_sheetVal('sheet-cols', 0), 10) || Math.ceil(Math.sqrt(steps)),
+        grid_cols: scans.length === 2
+            ? undefined   // cross product: the grid IS steps1 x steps2
+            : (parseInt(_sheetVal('sheet-cols', 0), 10) || Math.ceil(Math.sqrt(steps))),
     });
 
     const ranges = _sheetFrameRanges(steps, Math.min(SHEET_MAX_WORKERS, steps));
@@ -371,9 +393,11 @@ function _viewSheet(sheetId) {
             .then(r => r.json())
             .then(m => {
                 if (seq !== _sheetViewSeq) return;
+                const scansDesc = (m.scans || [m.scan]).map(sc =>
+                    `${sc.token} ${sc.from}..${sc.spacing === 'step' ? `+${sc.step}·k` : sc.to} (${sc.spacing})`).join(' × ');
                 meta.textContent = `${sheetId}: ${m.frames} frames · ${m.grid.cols}x${m.grid.rows} · ` +
                     `N=${m.n} tile=${m.tile_px}px · ${m.solver_mode} · ` +
-                    `${m.scan.token} ${m.scan.from}..${m.scan.to} (${m.scan.spacing}) · ` +
+                    `${scansDesc} · ` +
                     `viewport ${m.viewport.mode} · ${m.elapsed_ms}ms`;
             })
             .catch(() => { if (seq === _sheetViewSeq) meta.textContent = sheetId; });
@@ -423,12 +447,21 @@ async function populateSelectedSheet(btn) {
         const m = await resp.json();
 
         // sheet scan + frame knobs first (the compute populate switches tabs)
-        _setInputValue('sheet-token', m.scan?.token);
-        _setInputValue('sheet-from', m.scan?.from);
-        _setInputValue('sheet-to', m.scan?.to);
-        if (m.scan?.spacing === 'step') _setInputValue('sheet-step', m.scan?.step);
-        _setInputValue('sheet-steps', m.scan?.steps);
-        _setInputValue('sheet-spacing', m.scan?.spacing);
+        const scans = m.scans || (m.scan ? [m.scan] : []);
+        ['', '2'].forEach((sfx, i) => {
+            const sc = scans[i];
+            _setInputValue('sheet-token' + sfx, sc ? sc.token : '');
+            if (!sc) {
+                const tok = document.getElementById('sheet-token' + sfx);
+                if (tok) tok.value = '';
+                return;
+            }
+            _setInputValue('sheet-from' + sfx, sc.from);
+            _setInputValue('sheet-to' + sfx, sc.to);
+            if (sc.spacing === 'step') _setInputValue('sheet-step' + sfx, sc.step);
+            _setInputValue('sheet-steps' + sfx, sc.steps);
+            _setInputValue('sheet-spacing' + sfx, sc.spacing);
+        });
         _sheetSpacingChanged();
         _setInputValue('sheet-cols', m.grid?.cols);
         _setInputValue('sheet-polarity', m.polarity);

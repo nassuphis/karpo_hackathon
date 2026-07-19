@@ -56,8 +56,14 @@ compiler surface. The tag never reaches the compiler: the sheet
 runner substitutes text BEFORE compile, so no grammar change and no
 new chip.
 
-One varying parameter in v1 (a 1-D sequence wrapped into the mosaic
-grid). The obvious v2 is two tokens -> rows x columns.
+Two scan LINES in the UI (v1.6): a blank Token deactivates a line.
+One active line = the 1-D sequence wrapped into the grid (Cols knob
+applies). Both active = CROSS PRODUCT: line 1 walks the COLUMNS
+(steps <= 32, the column cap), line 2 walks the ROWS, frames row-major
+(frame k -> col k mod s1, row k div s1), total frames = s1*s2 <= 256,
+Cols ignored. Every active token must appear in a source; labels stamp
+'v1,v2'. Manifest: 'scans' list (per-axis resolved values), legacy
+'scan' = axis 0.
 
 ## 4. Execution model
 

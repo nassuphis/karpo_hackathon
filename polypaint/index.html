@@ -2434,7 +2434,7 @@ button {
         <div id="tab-sheets" class="tab-content">
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
                 <label style="font-size:11px; color:#aaa">Token</label>
-                <input type="text" id="sheet-token" value="$T" style="width:4em">
+                <input type="text" id="sheet-token" value="$T" style="width:4em" title="Blank = this scan line is inactive">
                 <label style="font-size:11px; color:#aaa">From</label>
                 <input type="number" id="sheet-from" value="0" step="any" style="width:6em">
                 <label style="font-size:11px; color:#aaa">To</label>
@@ -2449,6 +2449,25 @@ button {
                 </select>
                 <label id="sheet-step-label" style="font-size:11px; color:#aaa; display:none">Step</label>
                 <input type="number" id="sheet-step" value="1" step="any" style="width:5em; display:none" title="Frame k gets from + k*step; use step=1 for integer scans (degrees, counts)">
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
+                <label style="font-size:11px; color:#aaa">Token</label>
+                <input type="text" id="sheet-token2" value="" style="width:4em" title="Blank = this scan line is inactive. Both active = cross product: line 1 walks the columns, line 2 the rows (Cols is ignored).">
+                <label style="font-size:11px; color:#aaa">From</label>
+                <input type="number" id="sheet-from2" value="0" step="any" style="width:6em">
+                <label style="font-size:11px; color:#aaa">To</label>
+                <input type="number" id="sheet-to2" value="1" step="any" style="width:6em">
+                <label style="font-size:11px; color:#aaa">Steps</label>
+                <input type="number" id="sheet-steps2" value="16" min="1" max="256" style="width:4.5em">
+                <select id="sheet-spacing2" style="width:8em" onchange="_sheetSpacingChanged()">
+                    <option value="linear">linear from..to</option>
+                    <option value="step">from + k&middot;step</option>
+                    <option value="log">log from..to</option>
+                    <option value="angle">angle (end excl.)</option>
+                </select>
+                <label id="sheet-step2-label" style="font-size:11px; color:#aaa; display:none">Step</label>
+                <input type="number" id="sheet-step2" value="1" step="any" style="width:5em; display:none" title="Frame k gets from + k*step; use step=1 for integer scans (degrees, counts)">
+                <span style="font-size:11px; color:#666">2nd token active = cross product ($T&times;$S): line 1 = columns, line 2 = rows.</span>
             </div>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
                 <label style="font-size:11px; color:#aaa">Cols</label>

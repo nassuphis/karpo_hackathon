@@ -339,16 +339,20 @@ def _parse_sheet_config(params):
     """Validate the full sheet spec (shared by run/frames/stitch —
     every action re-derives the same geometry from the same params)."""
     sheet_id = _validated_sheet_id(params)
-    scan = params.get("scan") or {}
-    token = str(scan.get("token") or "").strip()
-    if not TOKEN_RE.match(token):
-        raise RuntimeError(f"scan token must match {TOKEN_RE.pattern}, got {token!r}")
-    steps = int(scan.get("steps") or 0)
+    raw_scans = params.get("scans")
+    if not raw_scans:
+        raw_scans = [params.get("scan") or {}]
+    if not isinstance(raw_scans, list) or not 1 <= len(raw_scans) <= 2:
+        raise RuntimeError(f"scans must be a list of 1..2 scan specs, got {raw_scans!r}")
+    axes = [_parse_scan_axis(spec) for spec in raw_scans]
+    if len(axes) == 2 and axes[0]["token"] == axes[1]["token"]:
+        raise RuntimeError(f"scan tokens must be distinct, both are {axes[0]['token']!r}")
+    steps = 1
+    for axis in axes:
+        steps *= axis["steps"]
     if not 1 <= steps <= MAX_STEPS:
-        raise RuntimeError(f"scan steps must be in 1..{MAX_STEPS}, got {steps}")
-    spacing = str(scan.get("spacing") or "linear").strip().lower()
-    values = scan_values(scan.get("from"), scan.get("to") or 0.0, steps, spacing,
-                         step=scan.get("step"))
+        raise RuntimeError(
+            f"total frames (product of scan steps) must be in 1..{MAX_STEPS}, got {steps}")
 
     frame = params.get("frame") or {}
     n = int(frame.get("n") or 0)
@@ -386,10 +390,19 @@ def _parse_sheet_config(params):
         except KeyError as missing:
             raise RuntimeError(f"explicit viewport requires min/max re/im, missing {missing}")
 
-    cols = int(params.get("grid_cols") or math.ceil(math.sqrt(steps)))
-    if not 1 <= cols <= MAX_COLS:
-        raise RuntimeError(f"grid_cols must be in 1..{MAX_COLS}, got {cols}")
-    rows = math.ceil(steps / cols)
+    if len(axes) == 2:
+        # cross product: axis 0 walks the columns, axis 1 walks the rows
+        cols = axes[0]["steps"]
+        if cols > MAX_COLS:
+            raise RuntimeError(
+                f"2-D sheet: first scan's steps become the columns and must be "
+                f"<= {MAX_COLS}, got {cols}")
+        rows = axes[1]["steps"]
+    else:
+        cols = int(params.get("grid_cols") or math.ceil(math.sqrt(steps)))
+        if not 1 <= cols <= MAX_COLS:
+            raise RuntimeError(f"grid_cols must be in 1..{MAX_COLS}, got {cols}")
+        rows = math.ceil(steps / cols)
     canvas_w = cols * tile_px + (cols + 1) * margin_px
     canvas_h = rows * tile_px + (rows + 1) * margin_px
     canvas_px = canvas_w * canvas_h
@@ -400,14 +413,52 @@ def _parse_sheet_config(params):
 
     fg, bg = (255, 0) if polarity == "white_on_black" else (0, 255)
     return {
-        "sheet_id": sheet_id, "scan": scan, "token": token, "steps": steps,
-        "spacing": spacing, "values": values, "n": n, "tile_px": tile_px,
+        "sheet_id": sheet_id, "axes": axes, "steps": steps,
+        "n": n, "tile_px": tile_px,
         "solver_mode": solver_mode, "rotate": rotate, "polarity": polarity,
         "margin_px": margin_px, "label": label, "vp_mode": vp_mode, "quantile": quantile,
         "shim": shim, "explicit_bounds": explicit_bounds, "cols": cols,
         "rows": rows, "canvas_w": canvas_w, "canvas_h": canvas_h,
         "fg": fg, "bg": bg,
     }
+
+
+def _parse_scan_axis(spec):
+    """One scan line -> validated axis with resolved per-frame values."""
+    if not isinstance(spec, dict):
+        raise RuntimeError(f"scan spec must be an object, got {spec!r}")
+    token = str(spec.get("token") or "").strip()
+    if not TOKEN_RE.match(token):
+        raise RuntimeError(f"scan token must match {TOKEN_RE.pattern}, got {token!r}")
+    steps = int(spec.get("steps") or 0)
+    if not 1 <= steps <= MAX_STEPS:
+        raise RuntimeError(f"scan steps must be in 1..{MAX_STEPS}, got {steps}")
+    spacing = str(spec.get("spacing") or "linear").strip().lower()
+    values = scan_values(spec.get("from"), spec.get("to") or 0.0, steps, spacing,
+                         step=spec.get("step"))
+    return {
+        "token": token, "steps": steps, "spacing": spacing, "values": values,
+        "from": float(spec.get("from")), "to": float(spec.get("to") or 0.0),
+        "step": (float(spec.get("step") or 0.0) if spacing == "step" else None),
+    }
+
+
+def _frame_values(cfg, k):
+    """Frame k's value per axis. 2-D is row-major over the mosaic grid:
+    axis 0 = column index (fastest), axis 1 = row index."""
+    axes = cfg["axes"]
+    if len(axes) == 1:
+        return (axes[0]["values"][k],)
+    s0 = axes[0]["steps"]
+    return (axes[0]["values"][k % s0], axes[1]["values"][k // s0])
+
+
+def _substitute_frame(params, cfg, k):
+    """Substitute every axis token for frame k (each must hit)."""
+    out = params
+    for axis, value in zip(cfg["axes"], _frame_values(cfg, k)):
+        out = substitute_token(out, axis["token"], value)
+    return out
 
 
 def _require_job_task(params, action):
@@ -432,8 +483,8 @@ def _budget_check(cfg, n_frames, what):
 
 def _render_frame_tile(cfg, params, k, frozen_cache):
     """Solve one frame and bin it. Returns (tile_bytes, record)."""
-    value = cfg["values"][k]
-    frame_params = substitute_token(params, cfg["token"], value)
+    values = _frame_values(cfg, k)
+    frame_params = _substitute_frame(params, cfg, k)
     compiled = _compile_compute_inputs(frame_params)
     roots, degree = _solve_frame(compiled, frame_params, cfg["n"],
                                  cfg["solver_mode"])
@@ -448,7 +499,7 @@ def _render_frame_tile(cfg, params, k, frozen_cache):
             else:
                 # deterministic pipeline: every worker derives frame 0's
                 # bounds identically, no cross-worker coordination
-                fp0 = substitute_token(params, cfg["token"], cfg["values"][0])
+                fp0 = _substitute_frame(params, cfg, 0)
                 roots0, _ = _solve_frame(_compile_compute_inputs(fp0), fp0,
                                          cfg["n"], cfg["solver_mode"])
                 frozen_cache["bounds"] = _bounds_from_viewport(
@@ -464,9 +515,12 @@ def _render_frame_tile(cfg, params, k, frozen_cache):
     if cfg["rotate"]:
         tile = rotate_tile(tile, cfg["tile_px"], cfg["rotate"])
     if cfg["label"]:
-        tile = draw_tile_label(tile, cfg["tile_px"], f"{value:.6g}",
+        tile = draw_tile_label(tile, cfg["tile_px"],
+                               ",".join(f"{v:.6g}" for v in values),
                                cfg["fg"], cfg["bg"])
-    record = {"frame": k, "value": value, "degree": degree,
+    record = {"frame": k,
+              "value": values[0] if len(values) == 1 else list(values),
+              "values": list(values), "degree": degree,
               "bounds": [round(b, 12) for b in bounds]}
     return tile, record
 
@@ -486,7 +540,10 @@ def _tile_key(sheet_id, k):
 
 
 def _sheet_manifest(cfg, params, t0, degree, frame_records, render_mode):
-    scan = cfg["scan"]
+    scans = [{"token": a["token"], "from": a["from"], "to": a["to"],
+              "step": a["step"], "steps": a["steps"], "spacing": a["spacing"],
+              "values": [round(v, 12) for v in a["values"]]}
+             for a in cfg["axes"]]
     return {
         "sheet_id": cfg["sheet_id"],
         "created_at_ms": int(t0 * 1000),
@@ -508,12 +565,8 @@ def _sheet_manifest(cfg, params, t0, degree, frame_records, render_mode):
             "param_program_chain", "coeff_program_chain",
             "param_program_source_text", "coeff_program_source_text")
             if params.get(key) not in (None, "", [])},
-        "scan": {"token": cfg["token"], "from": float(scan.get("from")),
-                 "to": float(scan.get("to") or 0.0),
-                 "step": (float(scan.get("step") or 0.0)
-                          if cfg["spacing"] == "step" else None),
-                 "steps": cfg["steps"], "spacing": cfg["spacing"],
-                 "values": [round(v, 12) for v in cfg["values"]]},
+        "scan": scans[0],
+        "scans": scans,
         "viewport": {"mode": cfg["vp_mode"], "quantile": cfg["quantile"],
                      "shim": cfg["shim"],
                      "explicit": (list(cfg["explicit_bounds"])
@@ -546,7 +599,7 @@ def handle_frames(params):
             f"frame_indices out of range 0..{cfg['steps'] - 1}: {indices}")
     _budget_check(cfg, len(indices) + (1 if cfg["vp_mode"] == "frozen" else 0),
                   "worker share")
-    substitute_token(params, cfg["token"], cfg["values"][indices[0]])
+    _substitute_frame(params, cfg, indices[0])
 
     report_status(job_id, task_id, "started", result_data={
         "phase": "sheet", "phase_label": "Sheet frames",
@@ -671,8 +724,8 @@ def handle_run(params):
     steps = cfg["steps"]
     _budget_check(cfg, steps, "sheet")
 
-    # substitution must hit at least once (validated on frame 0's value)
-    substitute_token(params, cfg["token"], cfg["values"][0])
+    # every token must hit at least once (validated on frame 0's values)
+    _substitute_frame(params, cfg, 0)
 
     t0 = time.time()
     report_status(job_id, task_id, "started", result_data={

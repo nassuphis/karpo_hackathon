@@ -28,6 +28,14 @@ poly[5] = 0-2
 emit
 """
 
+SHEET_SRC_2D = """poly = fill(6, 0)
+poly[0] = 1
+poly[1] = $S*exp(6.283185307179586i*t1)
+poly[3] = $T*exp(6.283185307179586i*t2)
+poly[5] = 0-2
+emit
+"""
+
 
 class _S3Stub:
     def __init__(self):
@@ -323,6 +331,65 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         body = json.loads(resp["body"])
         self.assertEqual(body["cancelled"], "cx-sheet")
         self.assertEqual(body["frames_done"], 0)
+
+    def test_cross_product_two_tokens(self):
+        import handler_poly_sheet as mod
+
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            p = _run_params("xy-sheet")
+            p["coeff_program_source_text"] = SHEET_SRC_2D
+            del p["scan"]
+            p["scans"] = [
+                {"token": "$T", "from": 0.5, "to": 1.0, "steps": 2,
+                 "spacing": "linear"},
+                {"token": "$S", "from": 1.0, "to": 3.0, "steps": 3,
+                 "spacing": "linear"},
+            ]
+            del p["grid_cols"]
+            resp = mod.handle_run(p)
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+        manifest = json.loads(resp["body"])
+        self.assertEqual(manifest["frames"], 6)
+        # cross product: axis 0 = columns, axis 1 = rows
+        self.assertEqual(manifest["grid"], {"cols": 2, "rows": 3})
+        self.assertEqual([f["values"] for f in manifest["frame_records"]],
+                         [[0.5, 1.0], [1.0, 1.0],
+                          [0.5, 2.0], [1.0, 2.0],
+                          [0.5, 3.0], [1.0, 3.0]])
+        self.assertEqual(len(manifest["scans"]), 2)
+        self.assertEqual(manifest["scans"][1]["token"], "$S")
+        self.assertEqual(manifest["scan"]["token"], "$T")   # legacy = axis 0
+        import struct as _s
+        w, h = _s.unpack(">II", stub.objects["sheets/xy-sheet/sheet.png"][16:24])
+        self.assertEqual((w, h), (64, 96))
+
+    def test_cross_product_validation(self):
+        import handler_poly_sheet as mod
+
+        orig = mod.report_status
+        mod.report_status = lambda *a, **k: None
+        try:
+            p = _run_params("dup-sheet")
+            del p["scan"]
+            p["scans"] = [
+                {"token": "$T", "from": 0, "to": 1, "steps": 2, "spacing": "linear"},
+                {"token": "$T", "from": 0, "to": 1, "steps": 2, "spacing": "linear"},
+            ]
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_run(p)
+            self.assertIn("distinct", str(ctx.exception))
+
+            p["scans"][1]["token"] = "$S"
+            p["scans"][0]["steps"] = 40   # columns cap
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_run(p)
+            self.assertIn("columns", str(ctx.exception))
+        finally:
+            mod.report_status = orig
 
     def test_frame_labels_and_pipeline_manifest(self):
         import handler_poly_sheet as mod

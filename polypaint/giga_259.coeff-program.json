@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_259",
+  "chain": [],
+  "source_text": "poly = fill(5, 0)\npoly[0] = angle((exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2)))\npoly[1] = angle(exp(6.283185307179586i*(t1+t2)))\npoly[2] = abs((exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2)))\npoly[3] = real(exp(6.283185307179586i*(t1+t2)))\npoly[4] = imag((exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2)))\npoly\npoly = scan(35, 0, log(tos[2]+k+1)*sin((k+1)*0.4487989505128276)+cos((k+1)*0.28559933214452665)*tos[3]+tos[4]*cos((k+1)*0.6283185307179586), log(tos[2]+k+1)*sin((k+1)*0.4487989505128276)+cos((k+1)*0.28559933214452665)*tos[3]+tos[4]*cos((k+1)*0.6283185307179586))\ndrop\npoly\npoly = fill(5, 0)\npoly[0] = angle((exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2)))\npoly[1] = angle(exp(6.283185307179586i*(t1+t2)))\npoly[2] = abs((exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2)))\npoly[3] = real(exp(6.283185307179586i*(t1+t2)))\npoly[4] = imag((exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2)))\npoly\npoly = scan(35, 0, exp(1i*(tos[0]+tos[1]*(k+1)+sin((k+1)*0.241660973353061))), exp(1i*(tos[0]+tos[1]*(k+1)+sin((k+1)*0.241660973353061))))\ndrop\npoly = multiply(poly, pop)\npoly = add(poly, scan(35, 0, exp(0-6.283185307179586i*(t1+t2))*sin((k+1)*0.18479956785822313), exp(0-6.283185307179586i*(t1+t2))*sin((k+1)*0.18479956785822313)))\npoly = rev(poly)\nemit"
+}

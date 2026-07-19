@@ -333,6 +333,131 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
         raise
 
 
+def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
+    """DeepZoom export for a poly-sheet mosaic. The source key is
+    constructed SERVER-SIDE from the validated sheet_id — the caller
+    never supplies a key, so the renders/ source pinning does not
+    apply. Non-square sources are allowed (sheet mosaics are
+    cols x rows grids; OpenSeadragon handles any aspect)."""
+    sheet_id = assert_safe_id(params.get("sheet_id"), "sheet_id")
+    job_id = assert_safe_id(str(params.get("job_id") or sheet_id), "job_id")
+    export_id = assert_safe_id(
+        params.get("export_id", f"dz_{int(time.time())}"), "export_id")
+    source_key = f"sheets/{sheet_id}/sheet.png"
+    source_path = ""
+    try:
+        report_status(job_id, task_id, "started")
+        t0 = time.time()
+        if _export_prefix_exists(job_id, export_id):
+            raise RuntimeError(
+                f"export prefix deepzoom/{job_id}/{export_id}/ already exists — "
+                "each export needs a fresh export_id")
+        source_path = "/tmp/deepzoom_source.png"
+        obj = s3.get_object(Bucket=BUCKET, Key=source_key)
+        _read_body_to_path(obj["Body"], source_path)
+        dl_ms = int((time.time() - t0) * 1000)
+
+        report_status(job_id, task_id, "generating")
+        dz_base = "/tmp/dz/image"
+        os.makedirs("/tmp/dz", exist_ok=True)
+        t1 = time.time()
+        result = subprocess.run(
+            [DZ_EXPORT, source_path, dz_base],
+            capture_output=True, text=True, timeout=600,
+            env=imgpipe_env())
+        if result.returncode != 0:
+            raise RuntimeError(f"dz_export failed: {result.stderr.strip()}")
+        meta = json.loads(result.stdout)
+        width = int(meta["width"])
+        height = int(meta["height"])
+        gen_ms = int((time.time() - t1) * 1000)
+        os.remove(source_path)
+        source_path = ""
+
+        report_status(job_id, task_id, "uploading")
+        s3_prefix = f"deepzoom/{job_id}/{export_id}"
+        dzi_path = dz_base + ".dzi"
+        tiles_dir = dz_base + "_files"
+        upload_tasks = []
+        if os.path.exists(dzi_path):
+            upload_tasks.append((dzi_path, f"{s3_prefix}/image.dzi", "application/xml"))
+        if os.path.isdir(tiles_dir):
+            for root, dirs, files in os.walk(tiles_dir):
+                for fname in files:
+                    local = os.path.join(root, fname)
+                    rel = os.path.relpath(local, os.path.dirname(tiles_dir))
+                    ct = "image/png" if fname.endswith(".png") else "application/octet-stream"
+                    upload_tasks.append((local, f"{s3_prefix}/{rel}", ct))
+
+        def upload_one(task):
+            local_path, s3_key, content_type = task
+            with open(local_path, "rb") as fh:
+                s3.put_object(Bucket=BUCKET, Key=s3_key, Body=fh.read(),
+                              ContentType=content_type,
+                              CacheControl=CACHE_IMMUTABLE)
+            return 1
+
+        t2 = time.time()
+        with ThreadPoolExecutor(max_workers=50) as pool:
+            uploaded = sum(pool.map(upload_one, upload_tasks))
+        upload_ms = int((time.time() - t2) * 1000)
+
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        dzi_url = f"https://{BUCKET}.s3.{region}.amazonaws.com/{s3_prefix}/image.dzi"
+        share_url = f"https://{BUCKET}.s3.{region}.amazonaws.com/{s3_prefix}/viewer.html"
+        created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        viewer_html = _render_viewer(job_id, export_id, created_at)
+        s3.put_object(Bucket=BUCKET, Key=f"{s3_prefix}/viewer.html",
+                      Body=viewer_html, ContentType="text/html; charset=utf-8",
+                      CacheControl=CACHE_IMMUTABLE)
+        manifest = {
+            "job_id": job_id,
+            "export_id": export_id,
+            "created_at": created_at,
+            "source_kind": "sheet",
+            "sheet_id": sheet_id,
+            "source_key": source_key,
+            "dzi_key": f"{s3_prefix}/image.dzi",
+            "dzi_url": dzi_url,
+            "share_url": share_url,
+            "tile_prefix": f"{s3_prefix}/image_files",
+            "pix": max(width, height),
+            "width": width,
+            "height": height,
+            "tiles_uploaded": uploaded,
+        }
+        s3.put_object(Bucket=BUCKET, Key=f"{s3_prefix}/meta.json",
+                      Body=json.dumps(manifest),
+                      ContentType="application/json")
+        import shutil
+        shutil.rmtree("/tmp/dz", ignore_errors=True)
+        report_status(job_id, task_id, "done", result_data={
+            "phase": "done", "phase_label": "DeepZoom ready",
+            "sheet_id": sheet_id, "export_id": export_id,
+            "share_url": share_url,
+        })
+        return ok_response({
+            "export_id": export_id,
+            "dzi_url": dzi_url,
+            "share_url": share_url,
+            "tiles_uploaded": uploaded,
+            "dl_ms": dl_ms,
+            "gen_ms": gen_ms,
+            "upload_ms": upload_ms,
+            "source_kind": "sheet",
+        })
+    except Exception as e:
+        report_status(job_id, task_id, "error", str(e))
+        import shutil
+        shutil.rmtree("/tmp/dz", ignore_errors=True)
+        if source_path:
+            try:
+                os.remove(source_path)
+            except OSError:
+                pass
+        raise
+
+
 def _looks_like_api_gateway(event):
     """True when the event arrived over the public HTTP API rather than a
     direct Lambda-to-Lambda invoke. The wall-pyramid build is storage's
@@ -361,5 +486,8 @@ def handler(event, context):
         return handle_build_wall_pyramid(params if params.get("internal_action") else event)
     # The caller may thread its own operation-unique task_id (code-review-29 F1)
     # so overlapping exports for one job never share a status row.
+    if str(params.get("action") or "").strip().lower() == "sheet":
+        task_id = assert_safe_id(str(params.get("task_id") or "sheet_deepzoom"), "task_id")
+        return handle_sheet_deepzoom(params, task_id=task_id)
     task_id = assert_safe_id(str(params.get("task_id") or "deepzoom_export"), "task_id")
     return handle_deepzoom_export_request(params, require_raw_sidecar=False, task_id=task_id)

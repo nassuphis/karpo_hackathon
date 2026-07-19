@@ -197,6 +197,7 @@
       "color_repalette",
       "color_to_bilevel",
       "compute_orchestrator",
+      "deepzoom_export",
       "palette_orchestrator",
       "pdf_artifact",
       "poly_sheet",

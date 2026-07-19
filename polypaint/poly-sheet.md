@@ -61,8 +61,16 @@ grid). The obvious v2 is two tokens -> rows x columns.
 
 ## 4. Execution model
 
-One **async lambda** (`polypaint-sheet`), invoked through the existing
-dispatch fan-out, budget-checked up front:
+One async lambda (`polypaint-poly-sheet`) with client-orchestrated
+FAN-OUT (v1.3): the client splits the frames over up to 8 'frames'
+worker jobs via the dispatch lambda, each worker renders its
+contiguous share and uploads sheets/{id}/tiles/{k}.bin+.json, then a
+'stitch' job assembles the mosaic + manifest and deletes the tiles.
+Fan-out output is byte-identical to the single-shot 'run' action
+(test-pinned). Frozen-first-frame viewport under fan-out: every
+worker derives frame 0's bounds itself — the pipeline is
+deterministic, so no cross-worker coordination. Per-worker budget
+guard replaces the whole-sheet one. Single-frame flow:
 
 ```
 for k in frames:
@@ -125,9 +133,15 @@ walls.) One new tab:
 - gallery: list of sheets, click -> viewer. The viewer (v1.1) has a
   1:1/Fit toggle (native pixels in a scrollable pane — a 5000px sheet
   is unreadable squished to panel width), an Open button (full-res PNG
-  in a new tab) and a Download button (blob fetch -> save). Big sheets
-  could later feed the EXISTING DeepZoom pipeline for OpenSeadragon
-  viewing.
+  in a new tab) and a Download button (blob fetch -> save).
+- DeepZoom (v1.3, the preferred viewer for big sheets): after the
+  stitch the client auto-fires the deepzoom-export lambda's new
+  action='sheet' path — source key built server-side from the
+  validated sheet_id, NON-SQUARE mosaics allowed (the render export
+  path requires square), pyramid + viewer.html under
+  deepzoom/{sheet_id}/{export_id}/ so /list-deepzoom discovers sheet
+  exports with zero listing changes. The viewer's DeepZoom button
+  opens the export (generating on demand if missing).
 
 ## 7. What already exists vs what is new
 

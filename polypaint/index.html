@@ -2466,6 +2466,7 @@ button {
                 <div style="display:flex; gap:8px; align-items:center; margin-bottom:4px">
                     <div id="sheet-viewer-meta" style="font-size:11px; color:#aaa; flex:1"></div>
                     <button class="btn-secondary btn-inline" id="btn-sheet-fit" onclick="_sheetToggleFit()" style="padding:2px 10px; font-size:11px" title="Toggle fit-to-panel vs native 1:1 pixels (scroll to pan)">1:1</button>
+                    <button class="btn-secondary btn-inline" onclick="_sheetOpenDeepZoom(this)" style="padding:2px 10px; font-size:11px" title="Open (generating if needed) the OpenSeadragon DeepZoom viewer — the best way to inspect a big sheet">DeepZoom</button>
                     <button class="btn-secondary btn-inline" onclick="_sheetOpenFull()" style="padding:2px 10px; font-size:11px" title="Open the full-resolution PNG in a new tab">Open</button>
                     <button class="btn-secondary btn-inline" onclick="_sheetDownload(this)" style="padding:2px 10px; font-size:11px" title="Download the full-resolution PNG">Download</button>
                 </div>

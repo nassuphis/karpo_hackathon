@@ -33,7 +33,7 @@ class _S3Stub:
     def __init__(self):
         self.objects = {}
 
-    def put_object(self, Bucket, Key, Body, ContentType=None):
+    def put_object(self, Bucket, Key, Body, ContentType=None, CacheControl=None):
         self.objects[Key] = Body if isinstance(Body, (bytes, bytearray)) else Body.encode()
 
     def head_object(self, Bucket, Key):
@@ -41,6 +41,17 @@ class _S3Stub:
             from botocore.exceptions import ClientError
             raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
         return {"ContentLength": len(self.objects[Key])}
+
+    def get_object(self, Bucket, Key):
+        import io
+        if Key not in self.objects:
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        return {"Body": io.BytesIO(bytes(self.objects[Key]))}
+
+    def delete_objects(self, Bucket, Delete):
+        for entry in Delete["Objects"]:
+            self.objects.pop(entry["Key"], None)
 
 
 def _run_params(sheet_id, steps=4, solver="jt64", extra=None):
@@ -238,6 +249,80 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         self.assertEqual(manifest["scan"]["spacing"], "step")
         self.assertEqual(manifest["scan"]["step"], 1.0)
         self.assertEqual(manifest["scan"]["values"], [1.0, 2.0, 3.0, 4.0])
+
+    def test_fanout_workers_and_stitch_match_single_run(self):
+        import handler_poly_sheet as mod
+
+        # single-shot reference
+        stub_single = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub_single)
+        try:
+            mod.handle_run(_run_params("single-sheet"))
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+        ref_png = stub_single.objects["sheets/single-sheet/sheet.png"]
+
+        # fan-out: two workers with split frame ranges, then stitch
+        stub = _S3Stub()
+        self._patched(mod, stub)
+        try:
+            p = _run_params("fan-sheet")
+            mod.handle_frames({**p, "action": "frames",
+                               "task_id": "sheet_tiles_fan-sheet_w0",
+                               "frame_indices": [0, 1]})
+            mod.handle_frames({**p, "action": "frames",
+                               "task_id": "sheet_tiles_fan-sheet_w1",
+                               "frame_indices": [2, 3]})
+            self.assertIn("sheets/fan-sheet/tiles/00000.bin", stub.objects)
+            resp = mod.handle_stitch({**p, "action": "stitch",
+                                      "task_id": "sheet_stitch_fan-sheet"})
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+        manifest = json.loads(resp["body"])
+        self.assertEqual(manifest["render_mode"], "fanout")
+        self.assertEqual([f["value"] for f in manifest["frame_records"]],
+                         [0.5, 1.0, 1.5, 2.0])
+        self.assertEqual(manifest["degree"], 5)
+        # the stitched mosaic is byte-identical to the single-shot render
+        self.assertEqual(stub.objects["sheets/fan-sheet/sheet.png"], ref_png)
+        # scaffolding tiles are removed after the stitch
+        self.assertFalse([k for k in stub.objects if "/tiles/" in k])
+
+    def test_stitch_with_missing_tiles_errors(self):
+        import handler_poly_sheet as mod
+
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            p = _run_params("gap-sheet")
+            mod.handle_frames({**p, "action": "frames",
+                               "task_id": "sheet_tiles_gap-sheet_w0",
+                               "frame_indices": [0, 1]})   # frames 2,3 never rendered
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_stitch({**p, "action": "stitch",
+                                   "task_id": "sheet_stitch_gap-sheet"})
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+        self.assertIn("missing 2 of 4 tiles", str(ctx.exception))
+
+    def test_worker_cancel_stops_between_frames(self):
+        import handler_poly_sheet as mod
+
+        stub = _S3Stub()
+        stub.objects[mod._cancel_key("cx-sheet")] = b"1"
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            resp = mod.handle_frames({**_run_params("cx-sheet"), "action": "frames",
+                                      "task_id": "sheet_tiles_cx-sheet_w0",
+                                      "frame_indices": [0, 1]})
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+        body = json.loads(resp["body"])
+        self.assertEqual(body["cancelled"], "cx-sheet")
+        self.assertEqual(body["frames_done"], 0)
 
     def test_explicit_viewport_and_rotation(self):
         import handler_poly_sheet as mod

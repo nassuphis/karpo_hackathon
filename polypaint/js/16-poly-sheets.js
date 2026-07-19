@@ -61,6 +61,15 @@ function _sheetInheritedFrame() {
     };
 }
 
+const SHEET_MAX_WORKERS = 8;
+
+function _sheetFrameRanges(steps, workers) {
+    // contiguous, balanced: frame k goes to worker floor(k*W/steps)
+    const ranges = Array.from({ length: workers }, () => []);
+    for (let k = 0; k < steps; k++) ranges[Math.floor(k * workers / steps)].push(k);
+    return ranges.filter(r => r.length > 0);
+}
+
 async function runPolySheet() {
     const btn = document.getElementById('btn-sheet-run');
     const statusEl = document.getElementById('sheets-status');
@@ -85,7 +94,6 @@ async function runPolySheet() {
     }
 
     const payload = _attachProgramSourcePayload({
-        action: 'run',
         job_id: jobId,
         task_id: taskId,
         sheet_id: sheetId,
@@ -107,26 +115,51 @@ async function runPolySheet() {
         grid_cols: parseInt(_sheetVal('sheet-cols', 0), 10) || Math.ceil(Math.sqrt(steps)),
     });
 
+    const ranges = _sheetFrameRanges(steps, Math.min(SHEET_MAX_WORKERS, steps));
+    const workerJobs = ranges.map((indices, w) => ({
+        ...payload,
+        action: 'frames',
+        task_id: `sheet_tiles_${sheetId}_w${w}`,
+        frame_indices: indices,
+    }));
+
     const orig = btn ? btn.textContent : 'Run Sheet';
+    const startedAtS = Date.now() / 1000;
     if (btn) { btn.disabled = true; btn.textContent = 'Dispatching...'; }
-    if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: dispatching ${steps} frames...`; statusEl.className = 'status'; }
+    if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: dispatching ${steps} frames to ${workerJobs.length} workers...`; statusEl.className = 'status'; }
     try {
         const disp = await lambdaPost('dispatch', {
             target: 'poly_sheet',
-            jobs: [payload],
+            jobs: workerJobs,
             expected_keys: [],
         });
-        if ((disp.fired || 0) !== 1) throw new Error('poly-sheet dispatch failed');
+        if ((disp.fired || 0) !== workerJobs.length) throw new Error('poly-sheet worker dispatch failed');
         _activeSheetRun = { sheetId, jobId, taskId };
         _jobsRailUpsert({
             id: 'sheet:' + sheetId, kind: 'sheet',
             label: `Sheet ${steps}f N=${frame.n} · ${funcName}`,
             jobId, tab: 'sheets', state: 'running', startedAt: Date.now(),
-            detail: 'dispatched',
+            detail: `dispatched (${workerJobs.length} workers)`,
         });
         if (btn) btn.textContent = 'Rendering...';
-        await _pollSheetRun(sheetId, jobId, taskId, statusEl);
+        await _pollSheetWorkers(sheetId, jobId, steps, workerJobs.length, statusEl);
+
+        if (btn) btn.textContent = 'Stitching...';
+        const stitchTask = `sheet_stitch_${sheetId}`;
+        const stitch = await lambdaPost('dispatch', {
+            target: 'poly_sheet',
+            jobs: [{ ...payload, action: 'stitch', task_id: stitchTask,
+                     started_at_s: startedAtS }],
+            expected_keys: [],
+        });
+        if ((stitch.fired || 0) !== 1) throw new Error('poly-sheet stitch dispatch failed');
+        const doneRd = await _pollSheetTask(sheetId, jobId, stitchTask, statusEl, 'stitching');
+        _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'done', detail: `${doneRd.frames} frames` });
+        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: done (${doneRd.frames} frames, ${doneRd.elapsed_ms}ms) — generating DeepZoom...`; statusEl.className = 'status ok'; }
         if (btn) { btn.textContent = '✓ Done'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
+
+        // DeepZoom pyramid right away — the sheet viewer of choice
+        void _sheetGenerateDeepZoom(sheetId, statusEl).catch(() => {});
     } catch (e) {
         _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'error', detail: e.message });
         if (statusEl) { statusEl.textContent = 'Sheet failed: ' + e.message; statusEl.className = 'status error'; }
@@ -136,7 +169,27 @@ async function runPolySheet() {
     void loadSheetsTab();
 }
 
-async function _pollSheetRun(sheetId, jobId, taskId, statusEl) {
+async function _pollSheetWorkers(sheetId, jobId, steps, workers, statusEl) {
+    while (true) {
+        await new Promise(r => setTimeout(r, 3000));
+        const check = await lambdaPost('storage', {
+            job_id: jobId, task_prefix: `sheet_tiles_${sheetId}`, expected: workers,
+        }, '/check-status');
+        if (check.errors > 0) {
+            const detail = check.error_details?.[0] || {};
+            throw new Error(detail.error_msg || 'sheet worker failed');
+        }
+        const rows = check.results || [];
+        const doneFrames = rows.reduce((a, r) => a + (Number(r.frame) || 0), 0);
+        const doneRows = rows.filter(r => r.phase === 'done').length;
+        const label = `${doneFrames}/${steps} frames (${doneRows}/${workers} workers)`;
+        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: ${label}`; statusEl.className = 'status'; }
+        _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'running', detail: label });
+        if (doneRows >= workers) return;
+    }
+}
+
+async function _pollSheetTask(sheetId, jobId, taskId, statusEl, phaseLabel) {
     while (true) {
         await new Promise(r => setTimeout(r, 3000));
         const check = await lambdaPost('storage', {
@@ -144,18 +197,63 @@ async function _pollSheetRun(sheetId, jobId, taskId, statusEl) {
         }, '/check-status');
         if (check.errors > 0) {
             const detail = check.error_details?.[0] || {};
-            _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'error', detail: detail.error_msg || 'error' });
-            throw new Error(detail.error_msg || 'sheet failed');
+            throw new Error(detail.error_msg || `sheet ${phaseLabel} failed`);
         }
         const rd = check.results?.[0] || {};
-        const label = rd.phase_label || rd.phase || 'working';
+        const label = rd.phase_label || rd.phase || phaseLabel;
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: ${label}`; statusEl.className = 'status'; }
         _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'running', detail: label });
-        if (rd.phase === 'done') {
-            _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'done', detail: `${rd.frames} frames` });
-            if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: done (${rd.frames} frames, ${rd.elapsed_ms}ms)`; statusEl.className = 'status ok'; }
-            return;
+        if (rd.phase === 'done') return rd;
+    }
+}
+
+const _sheetDzUrls = {};   // sheet_id -> viewer share_url
+
+async function _sheetGenerateDeepZoom(sheetId, statusEl) {
+    const taskId = `sheet_dz_${sheetId}_${Date.now().toString(36)}`;
+    const disp = await lambdaPost('dispatch', {
+        target: 'deepzoom_export',
+        jobs: [{ action: 'sheet', sheet_id: sheetId, job_id: sheetId,
+                 export_id: 'dz_' + Date.now(), task_id: taskId }],
+        expected_keys: [],
+    });
+    if ((disp.fired || 0) !== 1) throw new Error('deepzoom dispatch failed');
+    const rd = await _pollSheetTask(sheetId, sheetId, taskId, statusEl, 'deepzoom');
+    if (rd.share_url) {
+        _sheetDzUrls[sheetId] = rd.share_url;
+        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: DeepZoom ready`; statusEl.className = 'status ok'; }
+    }
+    return rd.share_url;
+}
+
+async function _sheetFindDeepZoom(sheetId) {
+    if (_sheetDzUrls[sheetId]) return _sheetDzUrls[sheetId];
+    try {
+        const resp = await lambdaPost('storage', {}, '/list-deepzoom');
+        const hit = (resp.exports || []).find(e => e.job_id === sheetId && e.share_url);
+        if (hit) { _sheetDzUrls[sheetId] = hit.share_url; return hit.share_url; }
+    } catch (e) { /* listing failure -> treat as no export */ }
+    return null;
+}
+
+async function _sheetOpenDeepZoom(btn) {
+    if (!_sheetViewerId) return;
+    const sheetId = _sheetViewerId;
+    const statusEl = document.getElementById('sheets-status');
+    const orig = btn ? btn.textContent : 'DeepZoom';
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
+    try {
+        let url = await _sheetFindDeepZoom(sheetId);
+        if (!url) {
+            if (btn) btn.textContent = 'Generating...';
+            url = await _sheetGenerateDeepZoom(sheetId, statusEl);
         }
+        if (!url) throw new Error('no share URL');
+        window.open(url, '_blank');
+        if (btn) { btn.textContent = '✓ Open'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
+    } catch (e) {
+        if (btn) { btn.textContent = 'Failed'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000); }
+        if (statusEl) { statusEl.textContent = 'DeepZoom failed: ' + e.message; statusEl.className = 'status error'; }
     }
 }
 

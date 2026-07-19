@@ -153,7 +153,7 @@ async function runPolySheet() {
             expected_keys: [],
         });
         if ((stitch.fired || 0) !== 1) throw new Error('poly-sheet stitch dispatch failed');
-        const doneRd = await _pollSheetTask(sheetId, jobId, stitchTask, statusEl, 'stitching');
+        const doneRd = await _pollSheetTask(sheetId, jobId, stitchTask, statusEl, 'stitching', 'sheet:' + sheetId);
         _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'done', detail: `${doneRd.frames} frames` });
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: done (${doneRd.frames} frames, ${doneRd.elapsed_ms}ms) — generating DeepZoom...`; statusEl.className = 'status ok'; }
         if (btn) { btn.textContent = '✓ Done'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
@@ -189,7 +189,9 @@ async function _pollSheetWorkers(sheetId, jobId, steps, workers, statusEl) {
     }
 }
 
-async function _pollSheetTask(sheetId, jobId, taskId, statusEl, phaseLabel) {
+async function _pollSheetTask(sheetId, jobId, taskId, statusEl, phaseLabel, railId = null) {
+    // railId: rail card to keep updating, or null — the deepzoom poll must
+    // NOT touch the sheet's card (it would resurrect a done card to running)
     while (true) {
         await new Promise(r => setTimeout(r, 3000));
         const check = await lambdaPost('storage', {
@@ -202,7 +204,7 @@ async function _pollSheetTask(sheetId, jobId, taskId, statusEl, phaseLabel) {
         const rd = check.results?.[0] || {};
         const label = rd.phase_label || rd.phase || phaseLabel;
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: ${label}`; statusEl.className = 'status'; }
-        _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'running', detail: label });
+        if (railId) _jobsRailUpsert({ id: railId, state: 'running', detail: label });
         if (rd.phase === 'done') return rd;
     }
 }
@@ -221,19 +223,31 @@ function _sheetGenerateDeepZoom(sheetId, statusEl) {
 
 async function _sheetGenerateDeepZoomInner(sheetId, statusEl) {
     const taskId = `sheet_dz_${sheetId}_${Date.now().toString(36)}`;
-    const disp = await lambdaPost('dispatch', {
-        target: 'deepzoom_export',
-        jobs: [{ action: 'sheet', sheet_id: sheetId, job_id: sheetId,
-                 export_id: 'dz_' + Date.now(), task_id: taskId }],
-        expected_keys: [],
+    const railId = 'sheetdz:' + sheetId;
+    _jobsRailUpsert({
+        id: railId, kind: 'sheet', label: `DeepZoom ${sheetId}`,
+        jobId: sheetId, tab: 'sheets', state: 'running',
+        startedAt: Date.now(), detail: 'dispatched',
     });
-    if ((disp.fired || 0) !== 1) throw new Error('deepzoom dispatch failed');
-    const rd = await _pollSheetTask(sheetId, sheetId, taskId, statusEl, 'deepzoom');
-    if (rd.dzi_url) {
-        _sheetDzExports[sheetId] = { dzi_url: rd.dzi_url, share_url: rd.share_url };
-        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: DeepZoom ready`; statusEl.className = 'status ok'; }
+    try {
+        const disp = await lambdaPost('dispatch', {
+            target: 'deepzoom_export',
+            jobs: [{ action: 'sheet', sheet_id: sheetId, job_id: sheetId,
+                     export_id: 'dz_' + Date.now(), task_id: taskId }],
+            expected_keys: [],
+        });
+        if ((disp.fired || 0) !== 1) throw new Error('deepzoom dispatch failed');
+        const rd = await _pollSheetTask(sheetId, sheetId, taskId, statusEl, 'deepzoom', railId);
+        if (rd.dzi_url) {
+            _sheetDzExports[sheetId] = { dzi_url: rd.dzi_url, share_url: rd.share_url };
+            if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: DeepZoom ready`; statusEl.className = 'status ok'; }
+        }
+        _jobsRailUpsert({ id: railId, state: 'done', detail: 'ready' });
+        return _sheetDzExports[sheetId] || null;
+    } catch (e) {
+        _jobsRailUpsert({ id: railId, state: 'error', detail: e.message });
+        throw e;
     }
-    return _sheetDzExports[sheetId] || null;
 }
 
 async function _sheetFindDeepZoom(sheetId) {

@@ -76,12 +76,23 @@ class TestPolySheetUnits(unittest.TestCase):
         self.assertAlmostEqual(log[1], 10.0)
         with self.assertRaises(RuntimeError):
             mod.scan_values(0, 1, 3, "log")               # zero endpoint
+        # step spacing: arithmetic sequence, hi ignored, integers exact
+        self.assertEqual(mod.scan_values(2, 0, 4, "step", step=1),
+                         [2.0, 3.0, 4.0, 5.0])
+        self.assertEqual(mod.scan_values(1, 0, 3, "step", step=-0.5),
+                         [1.0, 0.5, 0.0])
+        with self.assertRaises(RuntimeError):
+            mod.scan_values(0, 0, 3, "step", step=0)      # zero step
 
     def test_value_literal_is_grammar_safe(self):
         import handler_poly_sheet as mod
 
         self.assertEqual(mod._value_literal(0.25), "0.25")
         self.assertEqual(mod._value_literal(-0.5), "(0-0.5)")
+        # integral values spell as integers (count positions: fill/scan
+        # lengths, degrees) — "5.0" would not compile there
+        self.assertEqual(mod._value_literal(5.0), "5")
+        self.assertEqual(mod._value_literal(-3.0), "(0-3)")
 
     def test_substitution_requires_a_hit(self):
         import handler_poly_sheet as mod
@@ -182,6 +193,51 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         self.assertEqual(body["cancelled"], "cancelled-sheet")
         self.assertEqual(body["frames_done"], 0)
         self.assertNotIn("sheets/cancelled-sheet/sheet.png", stub.objects)
+
+    def test_polarity_and_margin_geometry(self):
+        import handler_poly_sheet as mod
+
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            resp = mod.handle_run(_run_params("margin-sheet", extra={
+                "frame": {"n": 8, "tile_px": 32, "solver_mode": "jt64",
+                          "viewport": {"mode": "quantile", "quantile": 0.0,
+                                       "shim": 0.05},
+                          "rotate": 0, "polarity": "black_on_white",
+                          "margin_px": 4},
+            }))
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+        manifest = json.loads(resp["body"])
+        self.assertEqual(manifest["polarity"], "black_on_white")
+        self.assertEqual(manifest["margin_px"], 4)
+        png = stub.objects["sheets/margin-sheet/sheet.png"]
+        import struct as _s
+        w, h = _s.unpack(">II", png[16:24])
+        # 2x2 tiles of 32px + 3 gutters of 4px each way
+        self.assertEqual((w, h), (76, 76))
+
+    def test_step_spacing_scans_integers(self):
+        import handler_poly_sheet as mod
+
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            resp = mod.handle_run(_run_params("int-sheet", extra={
+                "scan": {"token": "$T", "from": 1, "steps": 4,
+                         "spacing": "step", "step": 1},
+            }))
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+        manifest = json.loads(resp["body"])
+        self.assertEqual([f["value"] for f in manifest["frame_records"]],
+                         [1.0, 2.0, 3.0, 4.0])
+        self.assertEqual(manifest["scan"]["spacing"], "step")
+        self.assertEqual(manifest["scan"]["step"], 1.0)
+        self.assertEqual(manifest["scan"]["values"], [1.0, 2.0, 3.0, 4.0])
 
     def test_explicit_viewport_and_rotation(self):
         import handler_poly_sheet as mod

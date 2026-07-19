@@ -1679,6 +1679,7 @@ button {
 
     <div class="tab-bar">
         <div class="tab-btn active" onclick="switchTab('compute')">Compute</div>
+        <div class="tab-btn" onclick="switchTab('sheets')">Sheets</div>
         <div class="tab-btn" onclick="switchTab('results')">Results</div>
         <div class="tab-btn" onclick="switchTab('palette')">Palette</div>
         <div class="tab-btn" onclick="switchTab('render')">Render</div>
@@ -1688,7 +1689,6 @@ button {
         <div class="tab-btn" onclick="switchTab('allcol')">AllCol</div>
         <div class="tab-btn" onclick="switchTab('allpal')">AllPal</div>
         <div class="tab-btn" onclick="switchTab('deepzoom')">DeepZoom</div>
-        <div class="tab-btn" onclick="switchTab('sheets')">Sheets</div>
     </div>
     <div class="panel" style="border-radius:0 0 8px 8px">
         <!-- Compute tab -->
@@ -2424,11 +2424,14 @@ button {
                 <input type="number" id="sheet-to" value="1" step="any" style="width:6em">
                 <label style="font-size:11px; color:#aaa">Steps</label>
                 <input type="number" id="sheet-steps" value="16" min="1" max="256" style="width:4.5em">
-                <select id="sheet-spacing" style="width:6em">
-                    <option value="linear">linear</option>
-                    <option value="log">log</option>
-                    <option value="angle">angle</option>
+                <select id="sheet-spacing" style="width:8em" onchange="_sheetSpacingChanged()">
+                    <option value="linear">linear from..to</option>
+                    <option value="step">from + k&middot;step</option>
+                    <option value="log">log from..to</option>
+                    <option value="angle">angle (end excl.)</option>
                 </select>
+                <label id="sheet-step-label" style="font-size:11px; color:#aaa; display:none">Step</label>
+                <input type="number" id="sheet-step" value="1" step="any" style="width:5em; display:none" title="Frame k gets from + k*step; use step=1 for integer scans (degrees, counts)">
             </div>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
                 <select id="sheet-solver" style="width:6em">
@@ -2442,6 +2445,12 @@ button {
                 </select>
                 <label style="font-size:11px; color:#aaa">Cols</label>
                 <input type="number" id="sheet-cols" value="0" min="0" max="32" style="width:4em" title="0 = auto (square-ish)">
+                <select id="sheet-polarity" style="width:9em" title="Tile polarity">
+                    <option value="white_on_black">white on black</option>
+                    <option value="black_on_white">black on white</option>
+                </select>
+                <label style="font-size:11px; color:#aaa">Margin</label>
+                <input type="number" id="sheet-margin" value="4" min="0" max="64" style="width:4em" title="Gutter between tiles (and around the border), in pixels">
                 <label style="font-size:11px; color:#aaa"><input type="checkbox" id="sheet-freeze"> freeze frame-0 viewport</label>
                 <span style="font-size:11px; color:#666">N, pixels, viewport (Q-shim/marquee/square) and rotation inherit from the Compute preview controls.</span>
             </div>

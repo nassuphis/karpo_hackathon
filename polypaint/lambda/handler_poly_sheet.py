@@ -49,7 +49,9 @@ TMP_ROOTS = "/tmp/sheet_roots.bin"
 
 FUSED_MODES = ("jt64", "cm64", "ae64")
 SOLVER_MODES = ("aberth_mt", "companion_matrix", "jenkins_traub", "newton") + FUSED_MODES
-SPACINGS = ("linear", "log", "angle")
+SPACINGS = ("linear", "log", "angle", "step")
+POLARITIES = ("white_on_black", "black_on_white")
+MAX_MARGIN = 64
 
 SHEET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$")
 TOKEN_RE = re.compile(r"^\$[A-Za-z][A-Za-z0-9_]*$")
@@ -98,14 +100,22 @@ def _cancel_requested(sheet_id):
         return False
 
 
-def scan_values(lo, hi, steps, spacing):
+def scan_values(lo, hi, steps, spacing, step=None):
     """The per-frame parameter values. linear/log include both ends;
-    angle excludes the upper end (periodic parameters: last != first)."""
-    lo, hi, steps = float(lo), float(hi), int(steps)
+    angle excludes the upper end (periodic parameters: last != first);
+    step is the arithmetic sequence lo + k*step — the discrete form
+    (step=1 walks integers: degrees, counts)."""
+    lo, steps = float(lo), int(steps)
     if steps < 1:
         raise RuntimeError(f"scan steps must be >= 1, got {steps}")
     if spacing not in SPACINGS:
         raise RuntimeError(f"scan spacing must be one of {SPACINGS}, got {spacing!r}")
+    if spacing == "step":
+        step = float(step if step is not None else 1.0)
+        if not math.isfinite(step) or step == 0:
+            raise RuntimeError(f"step spacing needs a nonzero finite step, got {step}")
+        return [lo + step * k for k in range(steps)]
+    hi = float(hi)
     if steps == 1:
         return [lo]
     if spacing == "linear":
@@ -120,10 +130,12 @@ def scan_values(lo, hi, steps, spacing):
 
 def _value_literal(value):
     """A grammar-safe literal: negatives spell as (0-x) — the source
-    language has no unary minus in every position."""
-    if value < 0:
-        return f"(0-{repr(abs(float(value)))})"
-    return repr(float(value))
+    language has no unary minus in every position. Integral values
+    spell as integers so the token works in count positions
+    (fill/scan lengths, degrees, poke indices)."""
+    v = float(value)
+    body = str(int(abs(v))) if v.is_integer() else repr(abs(v))
+    return f"(0-{body})" if v < 0 else body
 
 
 def substitute_token(params, token, value):
@@ -231,13 +243,14 @@ def _square_fit(bounds):
     return (cre - world / 2, cre + world / 2, cim - world / 2, cim + world / 2)
 
 
-def bin_bilevel_tile(roots_bytes, bounds, tile_px):
-    """Hit-mask: pixel black (0) iff >= 1 finite root lands in it;
-    white (255) background. Row 0 is the TOP of the imaginary axis."""
+def bin_bilevel_tile(roots_bytes, bounds, tile_px, fg=255, bg=0):
+    """Hit-mask: pixel fg iff >= 1 finite root lands in it; bg
+    elsewhere (default white-on-black, matching the compute preview).
+    Row 0 is the TOP of the imaginary axis."""
     xmin, xmax, ymin, ymax = bounds
     world_x = xmax - xmin
     world_y = ymax - ymin
-    tile = bytearray(b"\xff" * (tile_px * tile_px))
+    tile = bytearray(bytes([bg]) * (tile_px * tile_px))
     isfinite = math.isfinite
     usable = (len(roots_bytes) // 8) * 8
     for re_, im_ in struct.iter_unpack("<ff", roots_bytes[:usable]):
@@ -251,7 +264,7 @@ def bin_bilevel_tile(roots_bytes, bounds, tile_px):
             px = tile_px - 1
         if py >= tile_px:
             py = tile_px - 1
-        tile[py * tile_px + px] = 0
+        tile[py * tile_px + px] = fg
     return tile
 
 
@@ -282,7 +295,8 @@ def handle_run(params):
     if not 1 <= steps <= MAX_STEPS:
         raise RuntimeError(f"scan steps must be in 1..{MAX_STEPS}, got {steps}")
     spacing = str(scan.get("spacing") or "linear").strip().lower()
-    values = scan_values(scan.get("from"), scan.get("to"), steps, spacing)
+    values = scan_values(scan.get("from"), scan.get("to") or 0.0, steps, spacing,
+                         step=scan.get("step"))
 
     frame = params.get("frame") or {}
     n = int(frame.get("n") or 0)
@@ -297,6 +311,12 @@ def handle_run(params):
     rotate = int(frame.get("rotate") or 0)
     if rotate not in (0, 90, 180, 270):
         raise RuntimeError(f"rotate must be one of 0/90/180/270, got {rotate}")
+    polarity = str(frame.get("polarity") or "white_on_black").strip().lower()
+    if polarity not in POLARITIES:
+        raise RuntimeError(f"polarity must be one of {POLARITIES}, got {polarity!r}")
+    margin_px = int(frame.get("margin_px") or 0)
+    if not 0 <= margin_px <= MAX_MARGIN:
+        raise RuntimeError(f"margin_px must be in 0..{MAX_MARGIN}, got {margin_px}")
 
     viewport = frame.get("viewport") or {}
     vp_mode = str(viewport.get("mode") or "quantile").strip().lower()
@@ -317,10 +337,12 @@ def handle_run(params):
     if not 1 <= cols <= MAX_COLS:
         raise RuntimeError(f"grid_cols must be in 1..{MAX_COLS}, got {cols}")
     rows = math.ceil(steps / cols)
-    canvas_px = cols * tile_px * rows * tile_px
+    canvas_w = cols * tile_px + (cols + 1) * margin_px
+    canvas_h = rows * tile_px + (rows + 1) * margin_px
+    canvas_px = canvas_w * canvas_h
     if canvas_px > MAX_CANVAS_PX:
         raise RuntimeError(
-            f"mosaic too large: {cols * tile_px}x{rows * tile_px} = {canvas_px / 1e6:.0f}MP "
+            f"mosaic too large: {canvas_w}x{canvas_h} = {canvas_px / 1e6:.0f}MP "
             f"> {MAX_CANVAS_PX / 1e6:.0f}MP — reduce tile_px, frames, or columns")
 
     # budget guard: refuse sheets that cannot finish in one invocation
@@ -341,9 +363,8 @@ def handle_run(params):
         "sheet_id": sheet_id, "frames": steps, "frame": 0,
     })
 
-    canvas_w = cols * tile_px
-    canvas_h = rows * tile_px
-    canvas = bytearray(b"\xff" * (canvas_w * canvas_h))
+    fg, bg = (255, 0) if polarity == "white_on_black" else (0, 255)
+    canvas = bytearray(bytes([bg]) * (canvas_w * canvas_h))
     frozen_bounds = None
     frame_records = []
     degree = None
@@ -371,12 +392,13 @@ def handle_run(params):
                 bounds = _bounds_from_viewport(
                     compute_viewport_from_bin(roots, quantile=quantile, shim=shim))
 
-            tile = bin_bilevel_tile(roots, bounds, tile_px)
+            tile = bin_bilevel_tile(roots, bounds, tile_px, fg=fg, bg=bg)
             if rotate:
                 tile = rotate_tile(tile, tile_px, rotate)
 
             row, col = divmod(k, cols)
-            y0, x0 = row * tile_px, col * tile_px
+            y0 = margin_px + row * (tile_px + margin_px)
+            x0 = margin_px + col * (tile_px + margin_px)
             for y in range(tile_px):
                 start = (y0 + y) * canvas_w + x0
                 canvas[start:start + tile_px] = tile[y * tile_px:(y + 1) * tile_px]
@@ -402,8 +424,13 @@ def handle_run(params):
             "degree": degree,
             "solver_mode": solver_mode,
             "rotate": rotate,
+            "polarity": polarity,
+            "margin_px": margin_px,
             "scan": {"token": token, "from": float(scan.get("from")),
-                     "to": float(scan.get("to")), "steps": steps, "spacing": spacing},
+                     "to": float(scan.get("to") or 0.0),
+                     "step": float(scan.get("step") or 0.0) if spacing == "step" else None,
+                     "steps": steps, "spacing": spacing,
+                     "values": [round(v, 12) for v in values]},
             "viewport": {"mode": vp_mode, "quantile": quantile, "shim": shim,
                          "explicit": list(explicit_bounds) if explicit_bounds else None},
             "function": str(params.get("function") or ""),

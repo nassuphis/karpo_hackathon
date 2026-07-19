@@ -27,13 +27,16 @@ plus the sheet configuration:
 | knob | meaning |
 |---|---|
 | scan tag | which value varies, and how (see §3) |
+| spacing | linear/log (from..to), angle (end excluded), or STEP: from + k*step — the discrete form; step=1 walks integers (degrees, counts), and integral values substitute as integer literals so they compile in count positions |
 | frames | number of tiles (= scan steps) |
 | N | per-frame grid (preview-class, e.g. 64..192) |
 | solver | any of the 7 solver modes (fused trio preferred) |
 | viewport | ALL preview modes: per-frame quantile/q-shim (DEFAULT — each tile optimally framed, like the scrub popups) \| marquee (exact explicit bounds) \| square (side selector) \| frozen-from-first-frame |
 | rotate | 0/90/180/270 (quarter turns — lossless on bilevel) |
 | grid | mosaic columns (rows derived) |
-| bilevel rule | hit-mask (pixel black iff >=1 root) v1; count threshold later |
+| polarity | white-on-black (default, matches the compute preview) or black-on-white |
+| margin | 0..64px gutter between tiles and around the border, background-colored |
+| bilevel rule | hit-mask (pixel hit iff >=1 root) v1; count threshold later |
 
 ## 3. The scan tag
 

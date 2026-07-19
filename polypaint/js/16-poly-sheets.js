@@ -19,6 +19,16 @@ function _sheetVal(id, fallback) {
     return v === '' || v == null ? fallback : v;
 }
 
+function _sheetSpacingChanged() {
+    const isStep = String(_sheetVal('sheet-spacing', 'linear')) === 'step';
+    for (const id of ['sheet-step', 'sheet-step-label']) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = isStep ? '' : 'none';
+    }
+    const toEl = document.getElementById('sheet-to');
+    if (toEl) toEl.disabled = isStep;
+}
+
 function _sheetInheritedFrame() {
     /* N, pixels, viewport mode/bounds, and rotation all come from the
      * COMPUTE preview controls — the sheet renders what Preview shows.
@@ -44,7 +54,11 @@ function _sheetInheritedFrame() {
         }
         viewport = { mode: 'explicit', min_re: b.min_re, max_re: b.max_re, min_im: b.min_im, max_im: b.max_im };
     }
-    return { n, tile_px: tile, rotate, viewport };
+    return {
+        n, tile_px: tile, rotate, viewport,
+        polarity: String(_sheetVal('sheet-polarity', 'white_on_black')),
+        margin_px: Math.max(0, Math.min(64, parseInt(_sheetVal('sheet-margin', 4), 10) || 0)),
+    };
 }
 
 async function runPolySheet() {
@@ -85,6 +99,7 @@ async function runPolySheet() {
             token,
             from: parseFloat(_sheetVal('sheet-from', 0)),
             to: parseFloat(_sheetVal('sheet-to', 1)),
+            step: parseFloat(_sheetVal('sheet-step', 1)),
             steps,
             spacing: String(_sheetVal('sheet-spacing', 'linear')),
         },

@@ -489,7 +489,7 @@ configure_async_invoke_policies() {
     # No retries for most Lambdas (prevents retry storms), but bilevel gets
     # 2 retries / 1hr age to handle concurrency throttle drops.
     local fn
-    for fn in "$FINALIZE_MT_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
+    for fn in "$FINALIZE_MT_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME" "$POLY_SHEET_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -1236,6 +1236,24 @@ cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMPUTE_PREVIEW_DIR/"
 chmod +x "$COMPUTE_PREVIEW_DIR"/sweep_coeffgen "$COMPUTE_PREVIEW_DIR"/sweep_mt "$COMPUTE_PREVIEW_DIR"/sweep_cm
 cd "$COMPUTE_PREVIEW_DIR" && zip -FS -r9 /tmp/polypaint-compute-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  CPreview: $(du -h /tmp/polypaint-compute-preview.zip | cut -f1)  (sync coeffgen+solve preview)"
+
+# Poly-Sheet: handler_poly_sheet.py + the compute-preview compile stack
+# (it imports handler_compute_preview._compile_compute_inputs) +
+# compute_fused (budget estimator) + all three solve binaries
+POLY_SHEET_DIR=/tmp/polypaint-poly-sheet
+rm -rf "$POLY_SHEET_DIR"
+mkdir -p "$POLY_SHEET_DIR"
+cp lambda/handler_poly_sheet.py lambda/handler_compute_preview.py lambda/compute_fused.py lambda/shared.py \
+   lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
+   lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
+   lambda/program_source_core.py lambda/registry_common.py lambda/program_profiles.py lambda/program_profiles.json \
+   lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/program_compile_helpers.py \
+   lambda/root_program_source.py lambda/root_legacy_registry.json lambda/merged_opcodes.py \
+   lambda/solve_score_program_source.py lambda/solve_score_chain.py "$POLY_SHEET_DIR/"
+cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$POLY_SHEET_DIR/"
+chmod +x "$POLY_SHEET_DIR"/sweep_coeffgen "$POLY_SHEET_DIR"/sweep_mt "$POLY_SHEET_DIR"/sweep_cm
+cd "$POLY_SHEET_DIR" && zip -FS -r9 /tmp/polypaint-poly-sheet.zip . -q && cd "$SCRIPT_DIR"
+echo "  PSheet: $(du -h /tmp/polypaint-poly-sheet.zip | cut -f1)  (async parameter-scan sheet renderer)"
 
 # Bilevel: handler_bilevel.py + shared.py + sparse section/finalize helpers (needs libvips layer)
 BILEVEL_DIR=/tmp/polypaint-bilevel

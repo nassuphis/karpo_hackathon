@@ -71,6 +71,7 @@ function switchTab(name) {
     if (name === 'gallery') void loadGalleryTab();
     if (name === 'palette') loadPaletteInventory();
     if (name === 'deepzoom') loadDeepZoomInventory();
+    if (name === 'sheets') void loadSheetsTab();
     if (name === 'allcol') loadAllCol();
     if (name === 'allpal') loadAllPal();
 }

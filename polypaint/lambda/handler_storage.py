@@ -1661,6 +1661,8 @@ def handler(event, context):
         return _handle_storage_route(handle_delete_task, event)
     elif path.endswith("/delete-prefix"):
         return _handle_storage_route(handle_delete_prefix, event)
+    elif path.endswith("/list-sheets"):
+        return _handle_storage_route(handle_list_sheets, event)
     elif path.endswith("/list-deepzoom"):
         return _handle_storage_route(handle_list_deepzoom, event)
     return {
@@ -6623,6 +6625,31 @@ def handle_delete_prefix(event):
         total_deleted += len(resp.get("Deleted", []))
 
     return ok_response({"prefix": prefix, "deleted": total_deleted})
+
+
+def handle_list_sheets(event):
+    """List poly-sheet artifacts: every sheets/{id}/sheet.json manifest
+    key with its size and timestamp. The client fetches manifests and
+    PNGs directly from the public bucket (poly-sheet.md §5)."""
+    sheets = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix="sheets/"):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith("/sheet.json"):
+                continue
+            sheet_id = key[len("sheets/"):-len("/sheet.json")]
+            if "/" in sheet_id or not sheet_id:
+                continue
+            sheets.append({
+                "sheet_id": sheet_id,
+                "manifest_key": key,
+                "png_key": f"sheets/{sheet_id}/sheet.png",
+                "modified": obj["LastModified"].isoformat(),
+                "size": int(obj["Size"]),
+            })
+    sheets.sort(key=lambda r: r["modified"], reverse=True)
+    return ok_response({"sheets": sheets})
 
 
 def handle_list_deepzoom(event):

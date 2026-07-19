@@ -29,6 +29,7 @@ FUNCTIONS = {
     "solve_proximity": os.environ.get("SOLVE_PROXIMITY_FUNCTION", "polypaint-solve-proximity"),
     "render_orchestrator": os.environ.get("RENDER_ORCHESTRATOR_FUNCTION", "polypaint-render-orchestrator"),
     "compute_orchestrator": os.environ.get("COMPUTE_ORCHESTRATOR_FUNCTION", "polypaint-compute-orchestrator"),
+    "poly_sheet": os.environ.get("POLY_SHEET_FUNCTION", "polypaint-poly-sheet"),
     "palette_orchestrator": os.environ.get("PALETTE_ORCHESTRATOR_FUNCTION", "polypaint-palette-orchestrator"),
     "extract_palette_fused": os.environ.get("EXTRACT_PALETTE_FUSED_FUNCTION", "polypaint-extract-palette-fused"),
     "autolevels": os.environ.get("AUTOLEVELS_FUNCTION", "polypaint-autolevels"),

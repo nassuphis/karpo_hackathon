@@ -1688,6 +1688,7 @@ button {
         <div class="tab-btn" onclick="switchTab('allcol')">AllCol</div>
         <div class="tab-btn" onclick="switchTab('allpal')">AllPal</div>
         <div class="tab-btn" onclick="switchTab('deepzoom')">DeepZoom</div>
+        <div class="tab-btn" onclick="switchTab('sheets')">Sheets</div>
     </div>
     <div class="panel" style="border-radius:0 0 8px 8px">
         <!-- Compute tab -->
@@ -2406,6 +2407,76 @@ button {
             </div>
         </div>
         <!-- DeepZoom tab -->
+        <!-- Sheets tab: parameter-scan mosaics (poly-sheet.md) -->
+        <div id="tab-sheets" class="tab-content">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
+                <label style="font-size:11px; color:#aaa">Token</label>
+                <input type="text" id="sheet-token" value="$T" style="width:4em">
+                <label style="font-size:11px; color:#aaa">From</label>
+                <input type="number" id="sheet-from" value="0" step="any" style="width:6em">
+                <label style="font-size:11px; color:#aaa">To</label>
+                <input type="number" id="sheet-to" value="1" step="any" style="width:6em">
+                <label style="font-size:11px; color:#aaa">Steps</label>
+                <input type="number" id="sheet-steps" value="16" min="1" max="256" style="width:4.5em">
+                <select id="sheet-spacing" style="width:6em">
+                    <option value="linear">linear</option>
+                    <option value="log">log</option>
+                    <option value="angle">angle</option>
+                </select>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
+                <label style="font-size:11px; color:#aaa">N</label>
+                <input type="number" id="sheet-n" value="96" min="8" max="192" style="width:4.5em">
+                <label style="font-size:11px; color:#aaa">Tile px</label>
+                <input type="number" id="sheet-tile" value="256" min="32" max="512" step="32" style="width:4.5em">
+                <select id="sheet-solver" style="width:6em">
+                    <option value="ae64">AE64</option>
+                    <option value="jt64">JT64</option>
+                    <option value="cm64">CM64</option>
+                    <option value="aberth_mt">AE-MT</option>
+                    <option value="companion_matrix">CM</option>
+                    <option value="jenkins_traub">JT</option>
+                    <option value="newton">Newton</option>
+                </select>
+                <select id="sheet-viewport-mode" onchange="_sheetToggleViewportFields()" style="width:7em" title="quantile: each tile optimally framed; explicit: shared bounds; frozen: frame-0 quantile shared">
+                    <option value="quantile">quantile</option>
+                    <option value="explicit">explicit</option>
+                    <option value="frozen">frozen</option>
+                </select>
+                <label style="font-size:11px; color:#aaa">q%</label>
+                <input type="number" id="sheet-quantile" value="0" min="0" max="10" step="0.1" style="width:4em">
+                <label style="font-size:11px; color:#aaa">shim%</label>
+                <input type="number" id="sheet-shim" value="5" min="0" max="50" step="0.5" style="width:4em">
+                <select id="sheet-rotate" style="width:4.5em">
+                    <option value="0">0&deg;</option>
+                    <option value="90">90&deg;</option>
+                    <option value="180">180&deg;</option>
+                    <option value="270">270&deg;</option>
+                </select>
+                <label style="font-size:11px; color:#aaa">Cols</label>
+                <input type="number" id="sheet-cols" value="0" min="0" max="32" style="width:4em" title="0 = auto (square-ish)">
+            </div>
+            <div id="sheet-bounds-row" style="display:none; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
+                <label style="font-size:11px; color:#aaa">re</label>
+                <input type="number" id="sheet-min-re" value="-2" step="any" style="width:6em">
+                <input type="number" id="sheet-max-re" value="2" step="any" style="width:6em">
+                <label style="font-size:11px; color:#aaa">im</label>
+                <input type="number" id="sheet-min-im" value="-2" step="any" style="width:6em">
+                <input type="number" id="sheet-max-im" value="2" step="any" style="width:6em">
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px">
+                <button class="btn-primary" id="btn-sheet-run" onclick="runPolySheet()">Run Sheet</button>
+                <button class="btn-secondary btn-inline" onclick="cancelPolySheet()" style="padding:4px 12px; font-size:12px">Cancel</button>
+                <button class="btn-secondary btn-inline" onclick="loadSheetsTab()" style="padding:4px 12px; font-size:12px">Refresh</button>
+                <span style="font-size:11px; color:#666">Pipeline (function/programs) comes from the Render-tab selections; put the token (e.g. $T) in a program source.</span>
+            </div>
+            <div id="sheets-status" class="status" style="margin-bottom:6px"></div>
+            <div id="sheets-inventory" style="font-size:12px; color:#ccc; max-height:160px; overflow-y:auto; border:1px solid #333; border-radius:4px; margin-bottom:8px"></div>
+            <div id="sheet-viewer" style="display:none">
+                <div id="sheet-viewer-meta" style="font-size:11px; color:#aaa; margin-bottom:4px"></div>
+                <img id="sheet-viewer-img" style="max-width:100%; image-rendering:pixelated; border:1px solid #333" alt="sheet">
+            </div>
+        </div>
         <div id="tab-deepzoom" class="tab-content">
             <div id="deepzoom-viewer" style="width:min(100%, 70vh); aspect-ratio:1 / 1; margin:0 auto; background:#000; border:1px solid #333; display:none"></div>
             <div id="deepzoom-viewport-readout" style="margin-top:8px; padding:8px 10px; border:1px solid #333; border-radius:4px; background:#141424; color:#bbb; font-family:monospace; font-size:11px; white-space:pre-wrap">Visible world viewport unavailable</div>
@@ -3525,11 +3596,12 @@ button {
 <script src="js/13-artifact-mosaics.js"></script>
 <script src="js/14-book.js"></script>
 <script src="js/15-gallery.js"></script>
+<script src="js/16-poly-sheets.js"></script>
 <script>
 // Part-consistency check: every split file must have registered, in order.
 // Catches a partial upload or a cached/mixed set of js/ files immediately.
 (function () {
-    var expected = ['01-core-compute', '02-preview-solvescore', '03-program-modals', '04-palette-color', '05-render-popups', '06-popup-init', '07-transform-catalogs', '08-chip-editors', '09-render-orchestration', '10-status-results', '11-artifacts', '12-deepzoom-boot', '13-artifact-mosaics', '14-book', '15-gallery'];
+    var expected = ['01-core-compute', '02-preview-solvescore', '03-program-modals', '04-palette-color', '05-render-popups', '06-popup-init', '07-transform-catalogs', '08-chip-editors', '09-render-orchestration', '10-status-results', '11-artifacts', '12-deepzoom-boot', '13-artifact-mosaics', '14-book', '15-gallery', '16-poly-sheets'];
     var got = window.__ppParts || [];
     if (expected.length !== got.length || expected.some(function (n, i) { return got[i] !== n; })) {
         console.error('polypaint js parts mismatch — expected', expected, 'got', got,

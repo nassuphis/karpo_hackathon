@@ -30,7 +30,7 @@ plus the sheet configuration:
 | frames | number of tiles (= scan steps) |
 | N | per-frame grid (preview-class, e.g. 64..192) |
 | solver | any of the 7 solver modes (fused trio preferred) |
-| viewport | per-frame quantile (DEFAULT — each tile optimally framed, like the scrub popups) \| shared explicit bounds \| frozen-from-first-frame |
+| viewport | ALL preview modes: per-frame quantile/q-shim (DEFAULT — each tile optimally framed, like the scrub popups) \| marquee (exact explicit bounds) \| square (side selector) \| frozen-from-first-frame |
 | rotate | 0/90/180/270 (quarter turns — lossless on bilevel) |
 | grid | mosaic columns (rows derived) |
 | bilevel rule | hit-mask (pixel black iff >=1 root) v1; count threshold later |
@@ -78,14 +78,15 @@ upload sheets/{sheet_id}/sheet.png + sheet.json
   ~0.4s, JT64 ~1.4s, CM64 ~6s. A 64-frame AE64 sheet ~25s + raster;
   comfortably one invocation. Budget guard: estimated total must fit
   ~12 of the lambda's 15 minutes, else 400 with the math shown.
-- Viewport is a per-sheet knob, default PER-FRAME QUANTILE (each
-  tile optimally framed — the scrub-popup behavior). The trade-off is
-  comparability: per-frame framing hides the parameter's effect on
-  position/scale (a drifting, growing cloud renders as near-identical
-  centered tiles), so SHARED EXPLICIT bounds (marquee wave) and
-  FROZEN-FROM-FIRST-FRAME are offered for scans where the geometry
-  motion IS the point. All three paths already exist in the preview
-  handler.
+- Viewport is a per-sheet knob exposing the preview's full mode set:
+  per-frame QUANTILE/q-shim (default — each tile optimally framed,
+  the scrub-popup behavior), MARQUEE (exact explicit bounds, shared
+  by all frames), SQUARE (side selector, shared), and
+  FROZEN-FROM-FIRST-FRAME. The trade-off: per-frame framing hides
+  the parameter's effect on position/scale (a drifting, growing
+  cloud renders as near-identical centered tiles), so the shared
+  modes serve scans where the geometry motion IS the point. All
+  paths already exist in the preview handler.
 - Kill: no Step Functions here, so the rail's stop routes a cancel
   marker the loop checks between frames (seconds-level latency, good
   enough for a <=15min job).

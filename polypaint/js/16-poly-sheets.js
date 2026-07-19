@@ -19,26 +19,32 @@ function _sheetVal(id, fallback) {
     return v === '' || v == null ? fallback : v;
 }
 
-function _sheetViewportPayload() {
-    const mode = String(_sheetVal('sheet-viewport-mode', 'quantile'));
-    const payload = {
-        mode,
-        quantile: Math.max(0, Math.min(0.1, parseFloat(_sheetVal('sheet-quantile', 0)) / 100 || 0)),
-        shim: Math.max(0, Math.min(0.5, parseFloat(_sheetVal('sheet-shim', 5)) / 100 || 0.05)),
-    };
-    if (mode === 'explicit') {
-        payload.min_re = parseFloat(_sheetVal('sheet-min-re', -2));
-        payload.max_re = parseFloat(_sheetVal('sheet-max-re', 2));
-        payload.min_im = parseFloat(_sheetVal('sheet-min-im', -2));
-        payload.max_im = parseFloat(_sheetVal('sheet-max-im', 2));
+function _sheetInheritedFrame() {
+    /* N, pixels, viewport mode/bounds, and rotation all come from the
+     * COMPUTE preview controls — the sheet renders what Preview shows.
+     * Throws with a user-facing message when explicit bounds are missing. */
+    const n = Math.max(8, Math.min(256, parseInt(_sheetVal('compute-preview-n', 96), 10) || 96));
+    const tile = Math.max(32, Math.min(1024, parseInt(_sheetVal('compute-preview-size', 256), 10) || 256));
+    const rotate = parseInt(_sheetVal('compute-preview-rotate', 0), 10) || 0;
+    const previewMode = (typeof _computePreviewViewportMode !== 'undefined') ? _computePreviewViewportMode : 'quantile';
+    const freeze = !!document.getElementById('sheet-freeze')?.checked;
+    let viewport;
+    if (previewMode === 'quantile') {
+        viewport = {
+            mode: freeze ? 'frozen' : 'quantile',
+            quantile: Math.max(0, Math.min(0.1, (parseFloat(_sheetVal('compute-preview-quantile', 0)) || 0) / 100)),
+            shim: Math.max(0, Math.min(0.5, (parseFloat(_sheetVal('compute-preview-shim', 5)) || 5) / 100)),
+        };
+    } else {
+        const b = _computePreviewExplicitBounds();
+        if (!b) {
+            throw new Error(previewMode === 'marquee'
+                ? 'Marquee viewport: drag a rectangle on the Compute preview image first.'
+                : 'Square viewport: enter a positive side length on the Compute preview.');
+        }
+        viewport = { mode: 'explicit', min_re: b.min_re, max_re: b.max_re, min_im: b.min_im, max_im: b.max_im };
     }
-    return payload;
-}
-
-function _sheetToggleViewportFields() {
-    const mode = String(_sheetVal('sheet-viewport-mode', 'quantile'));
-    const boundsRow = document.getElementById('sheet-bounds-row');
-    if (boundsRow) boundsRow.style.display = mode === 'explicit' ? '' : 'none';
+    return { n, tile_px: tile, rotate, viewport };
 }
 
 async function runPolySheet() {
@@ -54,6 +60,15 @@ async function runPolySheet() {
     const sheetId = _sheetNewId();
     const jobId = sheetId;
     const taskId = 'sheet_run_' + sheetId;
+
+    let frame;
+    try {
+        frame = _sheetInheritedFrame();
+        frame.solver_mode = String(_sheetVal('sheet-solver', 'ae64'));
+    } catch (e) {
+        if (statusEl) { statusEl.textContent = e.message; statusEl.className = 'status error'; }
+        return;
+    }
 
     const payload = _attachProgramSourcePayload({
         action: 'run',
@@ -73,13 +88,7 @@ async function runPolySheet() {
             steps,
             spacing: String(_sheetVal('sheet-spacing', 'linear')),
         },
-        frame: {
-            n: Math.max(8, Math.min(192, parseInt(_sheetVal('sheet-n', 96), 10) || 96)),
-            tile_px: Math.max(32, Math.min(512, parseInt(_sheetVal('sheet-tile', 256), 10) || 256)),
-            solver_mode: String(_sheetVal('sheet-solver', 'ae64')),
-            rotate: parseInt(_sheetVal('sheet-rotate', 0), 10) || 0,
-            viewport: _sheetViewportPayload(),
-        },
+        frame,
         grid_cols: parseInt(_sheetVal('sheet-cols', 0), 10) || Math.ceil(Math.sqrt(steps)),
     });
 
@@ -96,7 +105,7 @@ async function runPolySheet() {
         _activeSheetRun = { sheetId, jobId, taskId };
         _jobsRailUpsert({
             id: 'sheet:' + sheetId, kind: 'sheet',
-            label: `Sheet ${steps}f N=${payload.frame.n} · ${funcName}`,
+            label: `Sheet ${steps}f N=${frame.n} · ${funcName}`,
             jobId, tab: 'sheets', state: 'running', startedAt: Date.now(),
             detail: 'dispatched',
         });
@@ -171,12 +180,55 @@ async function loadSheetsTab() {
     ).join('');
 }
 
+let _sheetViewerId = null;
+let _sheetViewerFit = true;
+
+function _sheetApplyFit() {
+    const img = document.getElementById('sheet-viewer-img');
+    const btn = document.getElementById('btn-sheet-fit');
+    if (img) img.style.maxWidth = _sheetViewerFit ? '100%' : 'none';
+    if (btn) btn.textContent = _sheetViewerFit ? '1:1' : 'Fit';
+}
+
+function _sheetToggleFit() {
+    _sheetViewerFit = !_sheetViewerFit;
+    _sheetApplyFit();
+}
+
+function _sheetOpenFull() {
+    if (_sheetViewerId) window.open(_publicStorageUrl(`sheets/${_sheetViewerId}/sheet.png`), '_blank');
+}
+
+async function _sheetDownload(btn) {
+    if (!_sheetViewerId) return;
+    const orig = btn ? btn.textContent : 'Download';
+    if (btn) { btn.disabled = true; btn.textContent = 'Fetching...'; }
+    try {
+        const resp = await fetch(_publicStorageUrl(`sheets/${_sheetViewerId}/sheet.png`));
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${_sheetViewerId}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
+    } catch (e) {
+        if (btn) { btn.textContent = 'Failed: ' + e.message; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2500); }
+    }
+}
+
 function _viewSheet(sheetId) {
     const viewer = document.getElementById('sheet-viewer');
     const img = document.getElementById('sheet-viewer-img');
     const meta = document.getElementById('sheet-viewer-meta');
     if (!viewer || !img) return;
+    _sheetViewerId = sheetId;
     viewer.style.display = '';
+    _sheetApplyFit();
     img.src = _publicStorageUrl(`sheets/${sheetId}/sheet.png`) + '?t=' + Date.now();
     if (meta) {
         meta.textContent = sheetId + ' (loading manifest...)';

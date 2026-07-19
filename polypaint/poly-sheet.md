@@ -110,15 +110,21 @@ walls.) One new tab:
 
 - pipeline pickers (reuse the existing program/function selectors);
 - scan tag row: token, from, to, steps, spacing;
-- frame row: N, solver select (7 modes), viewport (explicit fields +
-  "grab from compute preview" convenience), rotate;
-- grid row: columns;
+- frame row (v1.1): solver select (7 modes) + columns + a
+  freeze-frame-0 checkbox. N, pixel size, viewport mode/bounds
+  (Q-shim/marquee/square) and rotation are INHERITED from the Compute
+  preview controls — the sheet renders what Preview shows, no
+  duplicated knobs. Rotation is a new compute-preview select
+  (0/90CW/90CCW/180, CSS-rotates the preview display, quarter-turn
+  applied to sheet tiles server-side);
 - Execute (async button discipline: busy + lingering result), rail
   card with frame progress + kill;
-- gallery: list of sheets, click -> viewer. Small sheets pan/zoom a
-  plain img; big sheets feed the EXISTING DeepZoom pipeline
-  (generator + viewer.html + share links) for OpenSeadragon viewing —
-  no new viewer code.
+- gallery: list of sheets, click -> viewer. The viewer (v1.1) has a
+  1:1/Fit toggle (native pixels in a scrollable pane — a 5000px sheet
+  is unreadable squished to panel width), an Open button (full-res PNG
+  in a new tab) and a Download button (blob fetch -> save). Big sheets
+  could later feed the EXISTING DeepZoom pipeline for OpenSeadragon
+  viewing.
 
 ## 7. What already exists vs what is new
 

@@ -55,8 +55,9 @@ SHEET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$")
 TOKEN_RE = re.compile(r"^\$[A-Za-z][A-Za-z0-9_]*$")
 
 MAX_STEPS = 256
-MIN_N, MAX_N = 8, 192
-MIN_TILE, MAX_TILE = 32, 512
+MIN_N, MAX_N = 8, 256
+MIN_TILE, MAX_TILE = 32, 1024
+MAX_CANVAS_PX = 150_000_000   # stitched mosaic pixel cap (~150MB gray buffer)
 MAX_COLS = 32
 BUDGET_US = 720_000_000  # ~12 of the lambda's 15 minutes
 
@@ -316,6 +317,11 @@ def handle_run(params):
     if not 1 <= cols <= MAX_COLS:
         raise RuntimeError(f"grid_cols must be in 1..{MAX_COLS}, got {cols}")
     rows = math.ceil(steps / cols)
+    canvas_px = cols * tile_px * rows * tile_px
+    if canvas_px > MAX_CANVAS_PX:
+        raise RuntimeError(
+            f"mosaic too large: {cols * tile_px}x{rows * tile_px} = {canvas_px / 1e6:.0f}MP "
+            f"> {MAX_CANVAS_PX / 1e6:.0f}MP — reduce tile_px, frames, or columns")
 
     # budget guard: refuse sheets that cannot finish in one invocation
     spp = _solve_us_per_step(solver_mode=solver_mode, degree=40, fused_threads=2)

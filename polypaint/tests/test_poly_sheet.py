@@ -93,6 +93,24 @@ class TestPolySheetUnits(unittest.TestCase):
             mod.substitute_token(
                 {"coeff_program_source_text": "poly = fill(3, 1)\nemit"}, "$T", 0.5)
 
+    def test_canvas_pixel_cap(self):
+        import handler_poly_sheet as mod
+
+        orig = mod.report_status
+        mod.report_status = lambda *a, **k: None
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_run(_run_params(
+                    "toobig", steps=256, solver="ae64",
+                    extra={"grid_cols": 16,
+                           "frame": {"n": 8, "tile_px": 1024,
+                                     "solver_mode": "ae64",
+                                     "viewport": {"mode": "quantile"},
+                                     "rotate": 0}}))
+            self.assertIn("mosaic too large", str(ctx.exception))
+        finally:
+            mod.report_status = orig
+
     def test_budget_guard_rejects_oversized_sheets(self):
         import handler_poly_sheet as mod
 

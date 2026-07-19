@@ -37,6 +37,13 @@ function _computePreviewMarqueeToBounds(sel, viewport) {
     };
 }
 
+function _applyComputePreviewRotation() {
+    // CCW degrees from the control; CSS rotate() is clockwise-positive.
+    const deg = parseInt(document.getElementById('compute-preview-rotate')?.value, 10) || 0;
+    const img = document.querySelector('#compute-preview-box img');
+    if (img) img.style.transform = deg ? `rotate(${-deg}deg)` : '';
+}
+
 function _computePreviewExplicitBounds() {
     if (_computePreviewViewportMode === 'square') return _computePreviewSquareBounds();
     if (_computePreviewViewportMode === 'marquee') return _computePreviewMarqueeBounds;
@@ -228,6 +235,7 @@ function _applyComputePreviewResult(result) {
             };
         }
         _attachComputePreviewMarquee(img);
+        _applyComputePreviewRotation();
     }
     _computePreviewSignature = _computePreviewSignatureNow();
     _computePreviewIsStale = false;

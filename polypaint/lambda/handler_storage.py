@@ -6646,17 +6646,41 @@ def handle_list_sheets(event):
         sheet_id = prefix[len("sheets/"):].rstrip("/")
         if not sheet_id:
             return None
+        row = None
         try:
             head = s3.head_object(Bucket=BUCKET, Key=prefix + "sheet.json")
+            row = {
+                "sheet_id": sheet_id,
+                "manifest_key": prefix + "sheet.json",
+                "png_key": prefix + "sheet.png",
+                "modified": head["LastModified"].isoformat(),
+                "size": int(head["ContentLength"]),
+            }
         except ClientError:
-            return None
-        return {
-            "sheet_id": sheet_id,
-            "manifest_key": prefix + "sheet.json",
-            "png_key": prefix + "sheet.png",
-            "modified": head["LastModified"].isoformat(),
-            "size": int(head["ContentLength"]),
-        }
+            row = None
+        # round-3 finding 6: expose in-flight runs so a client that lost
+        # its local descriptor (crash before save, cleared storage) can
+        # DISCOVER and resume from the server record alone
+        try:
+            run_obj = s3.get_object(Bucket=BUCKET, Key=prefix + "run.json")
+            run = json.loads(run_obj["Body"].read())
+            if isinstance(run, dict) and run.get("status") == "running":
+                if row is None:
+                    row = {
+                        "sheet_id": sheet_id,
+                        "manifest_key": prefix + "sheet.json",
+                        "png_key": prefix + "sheet.png",
+                        "modified": run_obj["LastModified"].isoformat(),
+                        "size": 0,
+                    }
+                row["run_status"] = "running"
+                row["run_generation"] = str(run.get("generation") or "")
+                row["run_key"] = prefix + "run.json"
+        except ClientError:
+            pass
+        except (ValueError, TypeError):
+            pass
+        return row
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
         sheets = [row for row in pool.map(manifest_row, prefixes) if row]

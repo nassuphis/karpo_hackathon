@@ -105,12 +105,12 @@ def handler(event, context):
         return handle_frames(params)
     if action == "stitch":
         return handle_stitch(params)
-    if action == "run":
-        return handle_run(params)
-    # review round-2: the dispatch fan-out is a public entry point — an
-    # unknown or missing action must not silently run a full sheet
+    # round-3 finding 1: action="run" bypassed admission entirely — the
+    # single-shot path is a test/dev helper, NOT a public entry point.
+    # handle_run stays callable in-process (the byte-parity suite uses
+    # it); the dispatch surface only accepts admitted actions.
     raise RuntimeError(
-        f"poly-sheet action must be one of begin/frames/stitch/run/cancel, got {action!r}")
+        f"poly-sheet action must be one of begin/frames/stitch/cancel, got {action!r}")
 
 
 def _cancel_key(sheet_id, generation):
@@ -238,16 +238,33 @@ def substitute_token(params, token, value):
     return substitute_tokens(params, {token: value})
 
 
-def _run_binary(binary, out_path, spec, label, timeout_s=300):
-    proc = subprocess.run(
-        [binary, out_path], input=json.dumps(spec),
-        capture_output=True, text=True, timeout=timeout_s)
+def _run_binary(binary, out_path, spec, label, timeout_s=300, deadline_s=None):
+    """deadline_s (epoch seconds): a hard budget wall. The subprocess
+    timeout is clamped to the remaining budget so ONE oversized frame is
+    killed with a clear error instead of running until Lambda kills the
+    whole worker (round-3 finding 3: the loop-top check could admit a
+    degree-255 frame that then ran unbounded)."""
+    if deadline_s is not None:
+        remaining = deadline_s - time.time()
+        if remaining < 5:
+            raise RuntimeError(
+                f"{label} refused: {remaining:.0f}s left of the worker "
+                "budget — per-frame cost outgrew the admission estimate")
+        timeout_s = min(timeout_s, remaining)
+    try:
+        proc = subprocess.run(
+            [binary, out_path], input=json.dumps(spec),
+            capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"{label} exceeded its {timeout_s:.0f}s budget slice — the "
+            "frame's degree/cost is beyond this worker's remaining time")
     if proc.returncode != 0:
         raise RuntimeError(f"{label} failed: {proc.stderr.strip()[:400]}")
     return json.loads(proc.stdout)
 
 
-def _solve_frame(compiled, params, n, solver_mode, solver_iters=0):
+def _solve_frame(compiled, params, n, solver_mode, solver_iters=0, deadline_s=None):
     """One frame: grid coeffgen (+fused solve in-process) or the split
     solver from the f32 file. Returns (roots_bytes, degree).
     solver_iters mirrors the preview exactly: a cap for solve_mt and
@@ -268,7 +285,8 @@ def _solve_frame(compiled, params, n, solver_mode, solver_iters=0):
     if solver_mode in FUSED_MODES:
         coeff_spec["fused_solver"] = solver_mode
         coeff_spec["roots_file"] = TMP_ROOTS
-    meta = _run_binary(SWEEP_COEFFGEN, TMP_COEFFS, coeff_spec, "sheet coeffgen")
+    meta = _run_binary(SWEEP_COEFFGEN, TMP_COEFFS, coeff_spec, "sheet coeffgen",
+                       deadline_s=deadline_s)
     n_coeffs = int(meta["n_coeffs"])
     degree = int(meta["degree"])
     n_steps = n * n
@@ -300,7 +318,8 @@ def _solve_frame(compiled, params, n, solver_mode, solver_iters=0):
             if solver_iters:
                 solve_spec["max_iter"] = solver_iters
             binary = SWEEP_MT
-        _run_binary(binary, TMP_ROOTS, solve_spec, "sheet solve")
+        _run_binary(binary, TMP_ROOTS, solve_spec, "sheet solve",
+                     deadline_s=deadline_s)
 
     with open(TMP_ROOTS, "rb") as fh:
         roots = fh.read()
@@ -569,13 +588,14 @@ def _budget_check(cfg, n_frames, what, degree=40):
             f"reduce frames, N, or fan out wider")
 
 
-def _render_frame_tile(cfg, params, k, frozen_cache):
+def _render_frame_tile(cfg, params, k, frozen_cache, deadline_s=None):
     """Solve one frame and bin it. Returns (tile_bytes, record)."""
     values = _frame_values(cfg, k)
     frame_params = _substitute_frame(params, cfg, k)
     compiled = _compile_compute_inputs(frame_params)
     roots, degree = _solve_frame(compiled, frame_params, cfg["n"],
-                                 cfg["solver_mode"], cfg["solver_iters"])
+                                 cfg["solver_mode"], cfg["solver_iters"],
+                                 deadline_s=deadline_s)
     if cfg["vp_mode"] == "explicit":
         bounds = cfg["explicit_bounds"]
     elif cfg["vp_mode"] == "frozen":
@@ -590,7 +610,8 @@ def _render_frame_tile(cfg, params, k, frozen_cache):
                 fp0 = _substitute_frame(params, cfg, 0)
                 roots0, _ = _solve_frame(_compile_compute_inputs(fp0), fp0,
                                          cfg["n"], cfg["solver_mode"],
-                                         cfg["solver_iters"])
+                                         cfg["solver_iters"],
+                                         deadline_s=deadline_s)
                 frozen_cache["bounds"] = _bounds_from_viewport(
                     compute_viewport_from_bin(
                         roots0, quantile=cfg["quantile"], shim=cfg["shim"]))
@@ -610,7 +631,9 @@ def _render_frame_tile(cfg, params, k, frozen_cache):
     record = {"frame": k,
               "value": values[0] if len(values) == 1 else list(values),
               "values": list(values), "degree": degree,
-              "bounds": [round(b, 12) for b in bounds]}
+              # full binary64 precision: Populate Frame reconstructs the
+              # viewport from these (round-3 finding 8)
+              "bounds": [float(b) for b in bounds]}
     return tile, record
 
 
@@ -685,13 +708,62 @@ def _sheet_manifest(cfg, params, t0, degree, frame_records, render_mode):
     }
 
 
-def _upload_sheet(cfg, manifest, canvas):
+def _upload_sheet(cfg, manifest, canvas, *, key_prefix=None):
+    """Write the mosaic + manifest. key_prefix overrides the fixed
+    sheets/{id}/ location (the stitch publishes generation-scoped
+    artifacts first, then copies to the fixed keys after winning the
+    commit — round-3 finding 4)."""
+    prefix = key_prefix if key_prefix is not None else f"sheets/{cfg['sheet_id']}/"
     png = encode_png_gray(cfg["canvas_w"], cfg["canvas_h"], bytes(canvas))
-    s3.put_object(Bucket=BUCKET, Key=manifest["png_key"], Body=png,
+    s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.png", Body=png,
                   ContentType="image/png")
-    s3.put_object(Bucket=BUCKET, Key=f"sheets/{cfg['sheet_id']}/sheet.json",
+    s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.json",
                   Body=json.dumps(manifest, indent=1).encode("utf-8"),
                   ContentType="application/json")
+
+
+def _commit_run_publication(sheet_id, generation, manifest):
+    """Atomic-ish commit (round-3 finding 4): the run record is the
+    pointer. Read run.json WITH its ETag, verify the generation still
+    owns the run, then conditionally rewrite it (If-Match) marking the
+    publication. A newer begin replaces run.json (new ETag), so a stale
+    stitch loses the condition and never touches the fixed keys. On
+    runtimes without conditional-write support the fallback re-verifies
+    after writing — a documented, narrow window instead of a silent one."""
+    resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+    etag = resp.get("ETag")
+    run = json.loads(resp["Body"].read())
+    if run.get("generation") != generation:
+        raise RuntimeError(
+            f"publish refused: run superseded by {run.get('generation')}")
+    run["status"] = "done"
+    run["finished_at_s"] = time.time()
+    run["published_generation"] = generation
+    run["published_png_key"] = manifest["png_key"]
+    body = json.dumps(run, indent=1).encode("utf-8")
+    try:
+        s3.put_object(Bucket=BUCKET, Key=_run_json_key(sheet_id), Body=body,
+                      ContentType="application/json", IfMatch=etag)
+        return
+    except ClientError as exc:
+        code = (exc.response or {}).get("Error", {}).get("Code", "")
+        if code in ("PreconditionFailed", "412"):
+            raise RuntimeError(
+                "publish refused: the run record changed under this stitch "
+                "(a newer begin took over)")
+        raise
+    except Exception as exc:
+        # botocore without conditional-write support rejects the IfMatch
+        # kwarg (TypeError locally, ParamValidationError in old runtimes)
+        if not isinstance(exc, TypeError) and "IfMatch" not in str(exc):
+            raise
+        # botocore without conditional writes: write, then re-verify
+        s3.put_object(Bucket=BUCKET, Key=_run_json_key(sheet_id), Body=body,
+                      ContentType="application/json")
+        check = _load_run(sheet_id)
+        if not check or check.get("generation") != generation:
+            raise RuntimeError(
+                "publish refused: the run record changed under this stitch")
 
 
 # Fields that define the sheet's computation: the admission hash binds a
@@ -735,7 +807,15 @@ def _bind_to_run(params, sheet_id, generation, task_id, *, frame_indices=None,
         raise RuntimeError(
             f"generation {generation} is not the admitted run "
             f"({run.get('generation')}); superseded or forged request")
-    if run.get("params_hash") and _params_hash(params) != run.get("params_hash"):
+    # round-3 finding 7: job identity is part of the admission — a
+    # correctly-hashed payload must not redirect status writes to a
+    # different DDB partition, and the hash itself is mandatory
+    if str(params.get("job_id") or "") != str(run.get("job_id") or ""):
+        raise RuntimeError(
+            f"job_id {params.get('job_id')!r} does not match the admitted run")
+    if not run.get("params_hash"):
+        raise RuntimeError("admitted run carries no params_hash; re-run begin")
+    if _params_hash(params) != run.get("params_hash"):
         raise RuntimeError(
             "request payload does not match the admitted configuration")
     if stitch:
@@ -898,7 +978,8 @@ def handle_frames(params):
                     f"frame {k} ({done}/{len(indices)} done) — per-frame cost "
                     "grew beyond the admission estimate (scan tokens can "
                     "raise the degree); reduce frames or N")
-            tile, record = _render_frame_tile(cfg, params, k, frozen_cache)
+            tile, record = _render_frame_tile(cfg, params, k, frozen_cache,
+                                              deadline_s=worker_deadline_s)
             key = _tile_key(sheet_id, generation, k)
             s3.put_object(Bucket=BUCKET, Key=key,
                           Body=bytes(tile), ContentType="application/octet-stream")
@@ -991,15 +1072,14 @@ def handle_stitch(params):
         degree = max(degrees) if degrees else None
         manifest = _sheet_manifest(cfg, params, t0, degree, frame_records, "fanout")
         manifest["generation"] = generation
-        # publication ownership (review round-2 finding 7): re-check the
-        # run record immediately before publishing so an older stitch
-        # cannot overwrite a newer generation's sheet
-        current = _load_run(sheet_id)
-        if current is not None and current.get("generation") != generation:
-            raise RuntimeError(
-                f"publish refused: run superseded by {current.get('generation')}")
-        _upload_sheet(cfg, manifest, canvas)          # <- COMMIT POINT
-        _mark_run_done(sheet_id, generation)
+        # round-3 finding 4: publish to GENERATION-scoped keys first
+        # (collision-free), win the conditional commit on run.json, and
+        # only then copy to the fixed public keys — a superseded stitch
+        # fails the commit and never touches what viewers read
+        gen_prefix = f"sheets/{sheet_id}/{generation}/"
+        _upload_sheet(cfg, manifest, canvas, key_prefix=gen_prefix)
+        _commit_run_publication(sheet_id, generation, manifest)   # <- COMMIT
+        _upload_sheet(cfg, manifest, canvas)   # fixed keys = last committed
 
         cleanup_ok = True
         try:
@@ -1031,21 +1111,6 @@ def handle_stitch(params):
             "phase": "error", "phase_label": "Stitch failed",
         })
         raise
-
-
-def _mark_run_done(sheet_id, generation):
-    """Best-effort run.json completion marker (resume looks at it)."""
-    try:
-        body = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))["Body"].read()
-        run = json.loads(body)
-        if run.get("generation") == generation:
-            run["status"] = "done"
-            run["finished_at_s"] = time.time()
-            s3.put_object(Bucket=BUCKET, Key=_run_json_key(sheet_id),
-                          Body=json.dumps(run, indent=1).encode("utf-8"),
-                          ContentType="application/json")
-    except Exception:
-        pass
 
 
 def handle_run(params):

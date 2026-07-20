@@ -261,14 +261,16 @@ def handle_build_plan(params):
     probe = params.get("probe") or {}
     post_seed = None
     fused_estimate = None
-    if execution_method == "fused_chunk_pipeline":
-        fused_threads = validate_fused_threads(run_params.get("fused_threads", 4))
-        param_gen_threads = int(fused_threads)
-        coeffgen_threads = int(fused_threads)
-        probe_degree = _validate_positive_int(probe.get("degree"), "probe.degree", max_value=4096)
-        probe_n_coeffs = _validate_positive_int(probe.get("n_coeffs"), "probe.n_coeffs", max_value=4096)
+
+    def _validated_probe_contract(label):
+        """Shared probe contract (round-3 finding 5): stability, degree
+        and coefficient-count sanity, signature match against THIS
+        plan's pipeline, and spec version — identical for fused and
+        classic consumers."""
+        degree_v = _validate_positive_int(probe.get("degree"), "probe.degree", max_value=4096)
+        n_coeffs_v = _validate_positive_int(probe.get("n_coeffs"), "probe.n_coeffs", max_value=4096)
         if not bool(probe.get("probe_stable")):
-            raise RuntimeError("fused compute requires a stable degree probe")
+            raise RuntimeError(f"{label} requires a stable degree probe")
         expected_signature = build_probe_signature(
             function_name=function_name,
             param_transforms=param_transforms,
@@ -279,7 +281,7 @@ def handle_build_plan(params):
         )
         got_signature = str(probe.get("probe_signature") or "").strip()
         if not got_signature or got_signature != expected_signature:
-            raise RuntimeError("fused compute probe signature mismatch")
+            raise RuntimeError(f"{label} probe signature mismatch")
         probe_signature_spec_version = int(
             probe.get("probe_signature_spec_version", PROBE_SIGNATURE_SPEC_VERSION) or PROBE_SIGNATURE_SPEC_VERSION
         )
@@ -287,6 +289,13 @@ def handle_build_plan(params):
             raise RuntimeError(
                 f"unsupported probe_signature_spec_version {probe_signature_spec_version}"
             )
+        return degree_v, n_coeffs_v
+
+    if execution_method == "fused_chunk_pipeline":
+        fused_threads = validate_fused_threads(run_params.get("fused_threads", 4))
+        param_gen_threads = int(fused_threads)
+        coeffgen_threads = int(fused_threads)
+        probe_degree, probe_n_coeffs = _validated_probe_contract("fused compute")
         fused_estimate = estimate_fused_chunking(
             n=n,
             times=times,
@@ -319,9 +328,10 @@ def handle_build_plan(params):
             "aberth_mt": 9_000_000_000,          # 10240 MB lambda - margin
         }
         budget = SOLVER_BUDGET_BYTES.get(solver_mode)
-        probe_degree_hint = (params.get("probe") or {}).get("degree")
-        if budget and probe_degree_hint:
-            degree_i = int(probe_degree_hint)
+        if budget and probe.get("degree") is not None:
+            # same contract as fused (round-3 finding 5): an unstable or
+            # mismatched probe must not size the memory floor
+            degree_i, _ = _validated_probe_contract("classic compute")
             per_step_bytes = ((degree_i + 1) + degree_i) * 8   # coeffs + roots
             classic_min_memory_chunks = int(math.ceil(
                 total_steps * per_step_bytes / budget))

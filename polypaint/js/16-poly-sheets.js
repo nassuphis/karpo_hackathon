@@ -115,6 +115,17 @@ function _sheetFrameRanges(steps, workers) {
 async function runPolySheet() {
     const btn = document.getElementById('btn-sheet-run');
     const statusEl = document.getElementById('sheets-status');
+    const existing = _sheetRunLoad();
+    if (existing) {
+        // round-3 finding 6: a transient failure re-enabled Run, and a
+        // new run would overwrite the single resumable descriptor
+        if (statusEl) {
+            statusEl.textContent = `Sheet ${existing.sheetId} is still resumable — resuming it instead (Cancel it first to start fresh).`;
+            statusEl.className = 'status';
+        }
+        void resumeSheetRun();
+        return;
+    }
     const funcName = document.getElementById('render-function')?.value || '';
     if (!funcName) {
         if (statusEl) { statusEl.textContent = 'Select a function on the Render tab first.'; statusEl.className = 'status error'; }
@@ -272,12 +283,50 @@ async function _sheetTaskPhase(jobId, taskId) {
     return null;   // UNKNOWN after retries — caller must not guess
 }
 
+const SHEET_RESUME_MAX_ATTEMPTS = 5;
+const SHEET_RESUME_BACKOFF_MS = 30000;
+
+async function _sheetWorkersNeedingDispatch(desc) {
+    /* Round-3 finding 2: resume must not blindly relaunch every worker.
+     * Only workers whose status row is still 'accepted' (never started)
+     * are redispatched; running/done workers are left alone. */
+    const check = await lambdaPost('storage', {
+        job_id: desc.jobId,
+        task_prefix: `sheet_tiles_${desc.sheetId}_${desc.generation}`,
+        expected: desc.workers.length,
+    }, '/check-status');
+    if ((check.errors || 0) > 0) {
+        const detail = check.error_details?.[0] || {};
+        throw _sheetTerminalError(detail.error_msg || 'sheet worker failed');
+    }
+    const phases = {};
+    for (const r of check.results || []) {
+        if (r.task_id) phases[r.task_id] = r.phase || 'accepted';
+    }
+    return desc.workers.filter(w => (phases[w.task_id] || 'accepted') === 'accepted');
+}
+
 async function resumeSheetRun() {
-    /* Reload recovery (CR35-F4): if a persisted run descriptor exists,
-     * re-attach polling and drive the run to terminal — including
-     * dispatching the stitch a dead page never sent. */
+    /* Reload recovery (CR35-F4, hardened round-3): bounded attempts with
+     * backoff, no recursion into loadSheetsTab, and only never-started
+     * workers are redispatched. */
     const desc = _sheetRunLoad();
     if (!desc || _activeSheetRun) return;
+    const now = Date.now();
+    if (desc.nextResumeAt && now < desc.nextResumeAt) return;
+    if ((desc.resumeAttempts || 0) >= SHEET_RESUME_MAX_ATTEMPTS) {
+        const statusEl = document.getElementById('sheets-status');
+        if (statusEl) {
+            statusEl.textContent = `Sheet ${desc.sheetId}: resume gave up after ${desc.resumeAttempts} attempts — the run record is at sheets/${desc.sheetId}/run.json`;
+            statusEl.className = 'status error';
+        }
+        _sheetRunClear();
+        return;
+    }
+    desc.resumeAttempts = (desc.resumeAttempts || 0) + 1;
+    desc.nextResumeAt = now + SHEET_RESUME_BACKOFF_MS * desc.resumeAttempts;
+    _sheetRunSave(desc);
+
     const statusEl = document.getElementById('sheets-status');
     _activeSheetRun = { sheetId: desc.sheetId, jobId: desc.jobId, generation: desc.generation };
     _jobsRailUpsert({
@@ -286,23 +335,24 @@ async function resumeSheetRun() {
         jobId: desc.jobId, tab: 'sheets', state: 'running',
         startedAt: (desc.startedAtS || 0) * 1000 || Date.now(),
         generation: desc.generation,
-        detail: 'resumed after reload',
+        detail: `resume attempt ${desc.resumeAttempts}`,
     });
-    if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId}: resuming...`; statusEl.className = 'status'; }
+    if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId}: resuming (attempt ${desc.resumeAttempts})...`; statusEl.className = 'status'; }
     try {
-        // workers may never have been dispatched (crash between begin and
-        // dispatch): re-dispatch is idempotent per generation, so resume
-        // always dispatches — accepted rows tolerate the overlap
-        await _sheetDriveRun(desc, statusEl, { dispatchWorkers: true });
+        const pending = await _sheetWorkersNeedingDispatch(desc);
+        if (pending.length) {
+            await _sheetDispatchWorkers({ ...desc, workers: pending });
+        }
+        await _sheetDriveRun(desc, statusEl, { dispatchWorkers: false });
         _sheetRunClear();
+        void loadSheetsTab();
     } catch (e) {
         if (e && e.sheetTerminal) _sheetRunClear();
         _jobsRailUpsert({ id: 'sheet:' + desc.sheetId, state: 'error', detail: e.message });
-        if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId} resume failed: ${e.message}`; statusEl.className = 'status error'; }
+        if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId} resume failed: ${e.message}${e.sheetTerminal ? '' : ` — retrying in ${Math.round(SHEET_RESUME_BACKOFF_MS * ((desc.resumeAttempts || 1)) / 1000)}s`}`; statusEl.className = 'status error'; }
     } finally {
         _activeSheetRun = null;
     }
-    void loadSheetsTab();
 }
 
 const SHEET_POLL_MS = 3000;
@@ -477,12 +527,49 @@ async function cancelPolySheet() {
     if (statusEl) statusEl.textContent = `Sheet ${sheetId}: cancel requested (takes effect between frames).`;
 }
 
+async function _sheetDiscoverServerRun(rows) {
+    /* Round-3 finding 6: a crash between admission and _sheetRunSave (or
+     * cleared storage) loses the local descriptor, but run.json now
+     * carries the admitted payload — rebuild the descriptor from the
+     * server record and resume. */
+    if (_sheetRunLoad() || _activeSheetRun) return;
+    const running = (rows || []).find(r => r.run_status === 'running' && r.run_key);
+    if (!running) return;
+    try {
+        const resp = await fetch(_publicStorageUrl(running.run_key) + '?t=' + Date.now());
+        if (!resp.ok) return;
+        const run = await resp.json();
+        if (!run || run.status !== 'running' || !run.payload) return;
+        const desc = {
+            sheetId: run.sheet_id,
+            jobId: run.job_id,
+            generation: run.generation,
+            steps: run.steps,
+            funcName: run.payload.function || '',
+            n: run.payload.frame?.n || 0,
+            workers: run.workers,
+            stitchTask: run.stitch_task_id,
+            startedAtS: run.created_at_s || Date.now() / 1000,
+            payload: { ...run.payload, job_id: run.job_id, sheet_id: run.sheet_id,
+                       generation: run.generation },
+        };
+        _sheetRunSave(desc);
+        const statusEl = document.getElementById('sheets-status');
+        if (statusEl) {
+            statusEl.textContent = `Sheet ${run.sheet_id}: found an in-flight server run — resuming.`;
+            statusEl.className = 'status';
+        }
+        void resumeSheetRun();
+    } catch (e) { /* discovery is best-effort */ }
+}
+
 async function loadSheetsTab() {
     void resumeSheetRun();
     const invEl = document.getElementById('sheets-inventory');
     try {
         const resp = await lambdaPost('storage', {}, '/list-sheets');
         _sheetsInventory = resp.sheets || [];
+        void _sheetDiscoverServerRun(_sheetsInventory);
     } catch (e) {
         if (invEl) invEl.textContent = 'Failed to list sheets: ' + e.message;
         return;

@@ -1981,14 +1981,23 @@ async function _jobsRailKill(id) {
         job.killRequested = true;
         job.detail = 'cancel requested…';
         _renderJobsRail();
+        // round-12 finding 5: route through the DURABLE, identity-scoped
+        // cancellation command — it persists the cancel intent and retries
+        // the authoritative transition until run.json goes terminal, rather
+        // than a single fire-and-hope dispatch (async retries are disabled
+        // server-side, so a dropped enqueue would silently lose the cancel).
         try {
-            const resp = await lambdaPost('dispatch', {
-                target: 'poly_sheet',
-                jobs: [{ action: 'cancel', sheet_id: job.jobId,
-                         generation: job.generation }],
-                expected_keys: [],
-            });
-            if ((resp.fired || 0) !== 1) throw new Error('cancel dispatch failed');
+            if (typeof _cancelSheetRun === 'function') {
+                await _cancelSheetRun(job.jobId, job.generation);
+            } else {
+                const resp = await lambdaPost('dispatch', {
+                    target: 'poly_sheet',
+                    jobs: [{ action: 'cancel', sheet_id: job.jobId,
+                             generation: job.generation }],
+                    expected_keys: [],
+                });
+                if ((resp.fired || 0) !== 1) throw new Error('cancel dispatch failed');
+            }
         } catch (e) {
             job.killRequested = false;
             job.detail = `cancel failed: ${e.message}`;

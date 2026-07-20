@@ -736,6 +736,9 @@ async function _sheetResolveRunStatus(sheetId, generation) {
 }
 
 async function cancelPolySheet() {
+    // thin wrapper: resolve the CURRENT run's identity, then cancel THAT
+    // specific run. All real work is parameterized by (sheetId, generation)
+    // so a retry timer can never act on a different run (round-12 finding 3).
     const statusEl = document.getElementById('sheets-status');
     // a run mid-backoff has no _activeSheetRun but IS persisted — cancel
     // must reach it (round-3 finding 4)
@@ -744,14 +747,26 @@ async function cancelPolySheet() {
         if (statusEl) statusEl.textContent = 'No active sheet run.';
         return;
     }
-    const { sheetId, generation } = target;
+    return _cancelSheetRun(target.sheetId, target.generation);
+}
+
+async function _cancelSheetRun(sheetId, generation) {
+    /* Round-12 finding 3: cancellation is IDENTITY-SCOPED. A stale retry
+     * timer (or a second tab) must never cancel a NEWER run that replaced
+     * the descriptor — so every step is gated on the persisted descriptor
+     * still matching (sheetId, generation). */
+    const statusEl = document.getElementById('sheets-status');
+    const desc = _sheetRunLoad();
+    // if the persisted run is no longer THIS identity, the run we were
+    // cancelling is gone (superseded/cleared) — abort silently, do NOT
+    // cancel whatever run happens to be current now.
+    if (!desc || desc.sheetId !== sheetId || desc.generation !== generation) return;
     if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancelling...`; statusEl.className = 'status'; }
     // round-10 finding 3: PERSIST the cancellation intent so an inconclusive
     // attempt (or a page reload) keeps retrying the authoritative transition
     // until a terminal result wins — async retries are disabled server-side,
     // so a single fire-and-hope drops the cancel.
-    const desc = _sheetRunLoad();
-    if (desc && !desc.cancelRequested) { desc.cancelRequested = true; _sheetRunSave(desc); }
+    if (!desc.cancelRequested) { desc.cancelRequested = true; _sheetRunSave(desc); }
     // round-8/9 finding 5/1/2: do NOT hide the generation or clear local
     // state until the cancel is confirmed through the AUTHORITATIVE run.json
     // record (not the best-effort marker — a publish can win the run.json
@@ -760,7 +775,7 @@ async function cancelPolySheet() {
     const fired = await _sheetDispatchControl(sheetId, generation, 'cancel');
     if (!fired) {
         // not accepted — keep the intent and RETRY (round-10 finding 3)
-        _sheetScheduleCancelRetry();
+        _sheetScheduleCancelRetry(sheetId, generation);
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel not accepted — retrying...`; statusEl.className = 'status'; }
         return;
     }
@@ -769,16 +784,20 @@ async function cancelPolySheet() {
         // fired but run.json is still 'running' — the cancel takes effect
         // between frames; keep retrying the authoritative transition until
         // the run actually goes terminal (finding 3), don't just hope.
-        _sheetScheduleCancelRetry();
+        _sheetScheduleCancelRetry(sheetId, generation);
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel dispatched — taking effect between frames...`; statusEl.className = 'status'; }
         return;
     }
-    // the run is terminal — clear the intent + local state, report the TRUTH
-    // (a publish may have beaten the cancel).
-    if (_sheetCancelTimer) { clearTimeout(_sheetCancelTimer); _sheetCancelTimer = null; }
-    if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
-    _sheetAbandonedGenerations.add(generation);
-    _sheetRunClear();
+    // the run is terminal — clear the intent + local state ONLY if the
+    // persisted descriptor is still THIS run (a newer run may have taken
+    // over while we awaited); report the TRUTH (a publish may have won).
+    const still = _sheetRunLoad();
+    if (still && still.sheetId === sheetId && still.generation === generation) {
+        if (_sheetCancelTimer) { clearTimeout(_sheetCancelTimer); _sheetCancelTimer = null; }
+        if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
+        _sheetAbandonedGenerations.add(generation);
+        _sheetRunClear();
+    }
     if (statusEl) {
         if (status === 'cancelled') {
             statusEl.textContent = `Sheet ${sheetId}: cancelled.`;
@@ -793,13 +812,14 @@ async function cancelPolySheet() {
     }
 }
 
-function _sheetScheduleCancelRetry() {
-    /* Round-10 finding 3: keep re-issuing the authoritative cancel until the
-     * run reaches a terminal status. The run WILL terminate (workers finish
-     * or the cancel lands), so this converges; the persisted cancelRequested
-     * intent also survives a reload (resumeSheetRun re-invokes cancel). */
+function _sheetScheduleCancelRetry(sheetId, generation) {
+    /* Round-10 finding 3 + round-12 finding 3: keep re-issuing the
+     * authoritative cancel for THIS SPECIFIC run until it reaches a terminal
+     * status. The identity is captured, and _cancelSheetRun re-checks the
+     * persisted descriptor before acting — so a run that was superseded
+     * before the timer fires is never cancelled in place of its successor. */
     if (_sheetCancelTimer) clearTimeout(_sheetCancelTimer);
-    _sheetCancelTimer = setTimeout(() => { void cancelPolySheet(); },
+    _sheetCancelTimer = setTimeout(() => { void _cancelSheetRun(sheetId, generation); },
                                    SHEET_RESUME_BACKOFF_MS);
 }
 

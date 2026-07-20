@@ -667,3 +667,36 @@ test.describe('Round-10 cancellation durability', () => {
     expect(out.resolved).toBe(null);
   });
 });
+
+test.describe('Round-12 identity-scoped cancellation', () => {
+  test('a stale cancel does NOT cancel a newer run (finding 3)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      let dispatched = [];
+      window.lambdaPost = async (name, body) => {
+        const job = body && body.jobs && body.jobs[0];
+        if (job && job.action === 'cancel') dispatched.push(job);
+        return { fired: 1 };
+      };
+      // the OLD run whose cancel timer captured its identity
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'old', jobId: 'j', generation: 'gOLD', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      // a NEW run has since replaced the descriptor
+      _sheetRunSave({ sheetId: 'new', jobId: 'j', generation: 'gNEW', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      // the stale timer fires for the OLD identity — it must NOT act
+      await _cancelSheetRun('old', 'gOLD');
+      // and a cancel for the CURRENT run still works
+      await _cancelSheetRun('new', 'gNEW');
+      const desc = _sheetRunLoad();
+      const out = { dispatched: dispatched.map(d => d.generation),
+                    newIntent: !!(desc && desc.cancelRequested) };
+      if (_sheetCancelTimer) { clearTimeout(_sheetCancelTimer); _sheetCancelTimer = null; }
+      _sheetRunClear();
+      return out;
+    });
+    // ONLY the current run's cancel was dispatched — never the stale gOLD
+    expect(out.dispatched).toEqual(['gNEW']);
+    expect(out.newIntent).toBe(true);
+  });
+});

@@ -36,6 +36,7 @@ viewport under fan-out: every worker derives frame 0's bounds itself
 """
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -82,6 +83,7 @@ MAX_MARGIN = 64
 SHEET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$")
 TOKEN_RE = re.compile(r"^\$[A-Za-z][A-Za-z0-9_]*$")
 GENERATION_RE = re.compile(r"^g[0-9a-f]{12}$")
+ATTEMPT_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 COMMENT_RE = re.compile(r"#[^\n]*")
 
 MAX_STEPS = 256
@@ -98,8 +100,32 @@ SOURCE_FIELDS = ("coeff_program_source_text", "param_program_source_text")
 MAX_FANOUT = 16
 SHEET_WORKERS = 8
 
+RUN_ACTIVE = "active"
+RUN_INACTIVE = "inactive"
+RUN_UNKNOWN = "unknown"
+RUN_TERMINAL_STATUSES = frozenset(("done", "failed", "cancelled", "abandoned"))
+
+# SQS is the durable quiescence boundary for generation cleanup. Lambda's
+# longest invocation is 900 seconds; cleanup waits longer than that after a
+# terminal/superseding run.json write so no pre-transition writer can still be
+# alive. SQS delays top out at 900 seconds, so messages retain not_before_s and
+# requeue themselves for the remainder.
+POLY_SHEET_GC_QUEUE_URL = os.environ.get("POLY_SHEET_GC_QUEUE_URL", "")
+SHEET_GC_QUIESCENCE_S = 930
+SHEET_GC_MAX_DELAY_S = 900
+SHEET_GC_RUNNING_RECHECK_S = 120
+SHEET_GC_MESSAGE_TYPE = "poly-sheet-generation-gc-v1"
+_sqs = None
+
+logger = logging.getLogger(__name__)
+
 
 def handler(event, context):
+    if _is_sqs_gc_event(event):
+        for record in event["Records"]:
+            _handle_generation_gc_message(json.loads(record["body"]))
+        return {"processed": len(event["Records"])}
+
     params = parse_body(event)
     action = str(params.get("action") or "").strip().lower()
     if action == "begin":
@@ -156,17 +182,14 @@ def handle_cancel(params):
     # cancellation competes with publication through the SAME run.json CAS.
     # The returned status is the ACTUAL outcome: 'cancelled' if we won,
     # 'done' if a publish beat us (cancel came too late), etc.
-    final, _run = _mark_run_terminal(sheet_id, generation, "cancelled")
+    final, run = _mark_run_terminal(sheet_id, generation, "cancelled")
     if final is None:
         # round-9 finding 2: could NOT confirm the transition — fail loudly
         # (the async invocation errors, the client's run.json poll stays
         # 'running', and it retries) rather than reporting a false success.
         raise RuntimeError(
             "cancel could not be confirmed: run.json unreachable — retry")
-    # round-15 finding 2: reap the generation's scaffolding through the single
-    # owner (fail-closed; re-runnable, so the client's cancel-retry loop
-    # re-reaps stragglers written between frames).
-    _reap_terminal_generation(sheet_id, generation)
+    _schedule_terminal_gc_from_run(sheet_id, generation, run)
     return ok_response({"sheet_id": sheet_id, "generation": generation,
                         "status": final, "cancelled": final == "cancelled"})
 
@@ -177,11 +200,11 @@ def handle_abandon(params):
     so it cannot abandon a newer run that took over the id."""
     sheet_id = _validated_sheet_id(params)
     generation = _validated_generation(params)
-    final, _run = _mark_run_terminal(sheet_id, generation, "abandoned")
+    final, run = _mark_run_terminal(sheet_id, generation, "abandoned")
     if final is None:
         raise RuntimeError(
             "abandon could not be confirmed: run.json unreachable — retry")
-    _reap_terminal_generation(sheet_id, generation)   # round-15 finding 2
+    _schedule_terminal_gc_from_run(sheet_id, generation, run)
     return ok_response({"sheet_id": sheet_id, "generation": generation,
                         "status": final})
 
@@ -716,16 +739,196 @@ def _put_object_once(key, body, content_type):
     except ClientError as exc:
         code = (exc.response or {}).get("Error", {}).get("Code", "")
         if code in ("PreconditionFailed", "412", "ConditionalRequestConflict", "409"):
-            return                       # already written (deterministic == ours)
+            return False                 # already written by another attempt
         raise
     except (TypeError, ParamValidationError) as exc:
         raise RuntimeError(
             "write-once tile refused: this runtime lacks S3 conditional "
             f"writes, so a stale worker could overwrite a successor ({exc})")
+    return True
 
 
 def _run_json_key(sheet_id):
     return f"sheets/{sheet_id}/run.json"
+
+
+def _is_sqs_gc_event(event):
+    records = event.get("Records") if isinstance(event, dict) else None
+    return bool(records) and all(
+        isinstance(record, dict)
+        and record.get("eventSource") == "aws:sqs"
+        and isinstance(record.get("body"), str)
+        for record in records)
+
+
+def _get_sqs():
+    global _sqs
+    if _sqs is None:
+        _sqs = boto3.client("sqs")
+    return _sqs
+
+
+def _validated_gc_identity(message):
+    if not isinstance(message, dict) or message.get("type") != SHEET_GC_MESSAGE_TYPE:
+        raise RuntimeError("invalid poly-sheet GC message type")
+    sheet_id = str(message.get("sheet_id") or "").strip()
+    generation = str(message.get("generation") or "").strip()
+    if not SHEET_ID_RE.fullmatch(sheet_id):
+        raise RuntimeError("invalid poly-sheet GC sheet_id")
+    if not GENERATION_RE.fullmatch(generation):
+        raise RuntimeError("invalid poly-sheet GC generation")
+    try:
+        steps = int(message.get("steps"))
+        not_before_s = float(message.get("not_before_s"))
+    except (TypeError, ValueError):
+        raise RuntimeError("invalid poly-sheet GC steps/deadline")
+    if not 1 <= steps <= MAX_STEPS or not math.isfinite(not_before_s):
+        raise RuntimeError("invalid poly-sheet GC steps/deadline")
+    return sheet_id, generation, steps, not_before_s
+
+
+def _send_generation_gc(message):
+    if not POLY_SHEET_GC_QUEUE_URL:
+        # Local tests call admission directly without deployment resources.
+        # A deployed Lambda must never silently lose its crash-cleanup path.
+        if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+            raise RuntimeError("POLY_SHEET_GC_QUEUE_URL is not configured")
+        return False
+    _, _, _, not_before_s = _validated_gc_identity(message)
+    delay = max(0, min(SHEET_GC_MAX_DELAY_S,
+                       int(math.ceil(not_before_s - time.time()))))
+    _get_sqs().send_message(
+        QueueUrl=POLY_SHEET_GC_QUEUE_URL,
+        DelaySeconds=delay,
+        MessageBody=json.dumps(message, separators=(",", ":"), sort_keys=True),
+    )
+    return True
+
+
+def _schedule_generation_gc(sheet_id, generation, steps, *, not_before_s=None):
+    message = {
+        "type": SHEET_GC_MESSAGE_TYPE,
+        "sheet_id": sheet_id,
+        "generation": generation,
+        "steps": int(steps),
+        "not_before_s": (float(not_before_s) if not_before_s is not None
+                         else time.time() + SHEET_GC_QUIESCENCE_S),
+    }
+    _validated_gc_identity(message)
+    return _send_generation_gc(message)
+
+
+def _schedule_terminal_gc_from_run(sheet_id, generation, run):
+    if not isinstance(run, dict) or run.get("generation") != generation:
+        return False
+    try:
+        steps = int(run.get("steps"))
+    except (TypeError, ValueError):
+        return False
+    try:
+        finished_at_s = float(run.get("finished_at_s"))
+    except (TypeError, ValueError):
+        finished_at_s = time.time()
+    if not math.isfinite(finished_at_s):
+        finished_at_s = time.time()
+    return _schedule_generation_gc(
+        sheet_id, generation, steps,
+        not_before_s=finished_at_s + SHEET_GC_QUIESCENCE_S)
+
+
+def _gc_requeue(message, not_before_s):
+    message = dict(message)
+    message["not_before_s"] = float(not_before_s)
+    _send_generation_gc(message)
+    return {"state": "deferred", "not_before_s": float(not_before_s)}
+
+
+def _object_modified_s(response):
+    modified = response.get("LastModified") if isinstance(response, dict) else None
+    if modified is not None and hasattr(modified, "timestamp"):
+        try:
+            value = float(modified.timestamp())
+            if math.isfinite(value):
+                return value
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return None
+
+
+def _handle_generation_gc_message(message):
+    """Reap one generation only after all pre-terminal writers must be dead.
+
+    The durable run record decides whether the generation is active and which
+    attempt, if any, is still published. Any unreadable/malformed state raises
+    so SQS retries; destructive cleanup is never based on a guess.
+    """
+    sheet_id, generation, message_steps, not_before_s = _validated_gc_identity(message)
+    now = time.time()
+    if now < not_before_s:
+        return _gc_requeue(message, not_before_s)
+
+    response = None
+    run = None
+    try:
+        response = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+        run = json.loads(response["Body"].read())
+        if not isinstance(run, dict):
+            raise RuntimeError("run.json must contain an object")
+    except ClientError as exc:
+        if not is_missing_s3_error(exc):
+            raise
+
+    winner = None
+    steps = message_steps
+    inactive_at_s = None
+    if run is None:
+        # No admitted run can authorize a writer. The initial message already
+        # waited one complete Lambda lifetime from admission.
+        inactive_at_s = not_before_s - SHEET_GC_QUIESCENCE_S
+    elif run.get("generation") == generation:
+        status = run.get("status")
+        if status == "running":
+            return _gc_requeue(message, now + SHEET_GC_RUNNING_RECHECK_S)
+        if status not in RUN_TERMINAL_STATUSES:
+            raise RuntimeError(f"poly-sheet GC found unknown run status {status!r}")
+        try:
+            run_steps = int(run.get("steps"))
+        except (TypeError, ValueError):
+            raise RuntimeError("poly-sheet GC found invalid run steps")
+        if run_steps != message_steps:
+            raise RuntimeError("poly-sheet GC message/run step count mismatch")
+        steps = run_steps
+        try:
+            inactive_at_s = float(run.get("finished_at_s"))
+        except (TypeError, ValueError):
+            inactive_at_s = _object_modified_s(response)
+        if status == "done":
+            winner = _winner_prefix_from_run(run, sheet_id, generation)
+            if winner is None:
+                raise RuntimeError("poly-sheet GC cannot validate published winner")
+    else:
+        # The current record was written by the superseding begin. Its
+        # creation time (or S3 LastModified) is the earliest safe quiescence
+        # anchor for the old generation.
+        try:
+            inactive_at_s = float(run.get("created_at_s"))
+        except (TypeError, ValueError):
+            inactive_at_s = _object_modified_s(response)
+        if run.get("published_generation") == generation:
+            winner = _published_winner_prefix(run, sheet_id, generation)
+            if winner is None:
+                raise RuntimeError("poly-sheet GC found inconsistent carried winner")
+
+    if inactive_at_s is None or not math.isfinite(inactive_at_s):
+        raise RuntimeError("poly-sheet GC cannot establish the quiescence timestamp")
+    quiescent_at_s = inactive_at_s + SHEET_GC_QUIESCENCE_S
+    if now < quiescent_at_s:
+        return _gc_requeue(message, quiescent_at_s)
+
+    if not _reap_sheet_scaffolding(sheet_id, generation, steps, winner):
+        raise RuntimeError("poly-sheet generation GC was incomplete")
+    logger.info("poly-sheet GC reaped %s/%s", sheet_id, generation)
+    return {"state": "reaped", "sheet_id": sheet_id, "generation": generation}
 
 
 def _worker_task_id(sheet_id, generation, index):
@@ -795,7 +998,8 @@ def _attempt_prefix(sheet_id, generation, owner):
     return f"sheets/{sheet_id}/{generation}/{_attempt_token(owner)}/"
 
 
-def _write_generation_artifacts(cfg, generation, manifest, canvas, owner):
+def _write_generation_artifacts(cfg, generation, manifest, canvas, owner,
+                                *, prefix=None):
     """Write the mosaic + manifest to an ATTEMPT-scoped prefix
     (round-8 finding 2). Two stitchers of the SAME generation (the
     original plus a lease-expiry redispatch) each own a distinct random
@@ -805,13 +1009,20 @@ def _write_generation_artifacts(cfg, generation, manifest, canvas, owner):
     losing attempts leave orphaned objects that family-scoped GC reaps.
     (Round-3 finding 4 established generation scoping; attempt scoping
     closes the same-generation two-stitcher overwrite the reviewer found.)"""
-    prefix = _attempt_prefix(cfg["sheet_id"], generation, owner)
+    prefix = prefix or _attempt_prefix(cfg["sheet_id"], generation, owner)
     png = encode_png_gray(cfg["canvas_w"], cfg["canvas_h"], bytes(canvas))
-    s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.png", Body=png,
-                  ContentType="image/png")
-    s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.json",
-                  Body=json.dumps(manifest, indent=1).encode("utf-8"),
-                  ContentType="application/json")
+    try:
+        s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.png", Body=png,
+                      ContentType="image/png")
+        s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.json",
+                      Body=json.dumps(manifest, indent=1).encode("utf-8"),
+                      ContentType="application/json")
+    except Exception:
+        # The prefix is attempt-private and no publication CAS has run yet,
+        # so both keys are unambiguously ours. Clean a one-object partial
+        # write immediately; durable generation GC is the crash backstop.
+        _prune_own_attempt(cfg["sheet_id"], prefix)
+        raise
     return prefix
 
 
@@ -849,6 +1060,8 @@ def _prune_own_attempt_if_not_published(sheet_id, generation, gen_prefix):
         run = json.loads(resp["Body"].read())
     except Exception:
         return                                  # cannot confirm -> defer to GC
+    if not isinstance(run, dict):
+        return                                  # malformed -> never delete
     # round-16 finding 2 discipline: pointer-ours is checked against BOTH
     # published keys (OR = conservative KEEP) — if either key references our
     # prefix, deleting would break a live reference (possibly carried
@@ -866,19 +1079,49 @@ def _prune_own_attempt_if_not_published(sheet_id, generation, gen_prefix):
     # CAS could still publish -> leave the objects for the winner's sweep
 
 
-def _run_is_active(sheet_id, generation):
-    """The authoritative WRITE fence (round-16 finding 1): True only when
-    run.json is READABLE, owned by THIS generation, and status 'running'.
-    The DDB lease is ORTHOGONAL to cancellation/supersession — a cancelled
-    run's worker still holds a perfectly valid lease — so every shared S3
-    write must also be fenced against the run record itself. Fail closed:
-    unreadable / generation mismatch / terminal -> False (skip the write)."""
-    try:
-        resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
-        run = json.loads(resp["Body"].read())
-    except Exception:
-        return False
-    return run.get("generation") == generation and run.get("status") == "running"
+def _run_write_state(sheet_id, generation, attempts=3):
+    """Return (active|inactive|unknown, run) for a shared-write fence.
+
+    A confirmed terminal state or generation mismatch is INACTIVE. A
+    transient S3/decode failure is UNKNOWN, never terminal: callers must not
+    delete data or return a successful "run ended" response from an unknown
+    observation. Confirmed NoSuchKey is inactive because S3 is strongly
+    consistent and no admitted generation remains to authorize the write.
+    """
+    attempts = max(1, int(attempts))
+    for attempt in range(attempts):
+        try:
+            resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+            run = json.loads(resp["Body"].read())
+            if not isinstance(run, dict):
+                raise ValueError("run.json must contain an object")
+        except ClientError as exc:
+            if is_missing_s3_error(exc):
+                return RUN_INACTIVE, None
+            if attempt + 1 < attempts:
+                time.sleep(0.05 * (attempt + 1))
+            continue
+        except Exception:
+            if attempt + 1 < attempts:
+                time.sleep(0.05 * (attempt + 1))
+            continue
+
+        if run.get("generation") != generation:
+            return RUN_INACTIVE, run
+        status = run.get("status")
+        if status == "running":
+            return RUN_ACTIVE, run
+        if status in RUN_TERMINAL_STATUSES:
+            return RUN_INACTIVE, run
+        return RUN_UNKNOWN, run
+    return RUN_UNKNOWN, None
+
+
+def _confirmed_run_inactive_response(sheet_id, generation, run, **extra):
+    status = (run.get("status") if isinstance(run, dict)
+              and run.get("generation") == generation else SUPERSEDED)
+    return ok_response({"sheet_id": sheet_id, "generation": generation,
+                        "run_terminal": True, "status": status, **extra})
 
 
 def _delete_keys_best_effort(keys):
@@ -897,19 +1140,14 @@ def _delete_keys_best_effort(keys):
         pass
 
 
-def _reap_sheet_scaffolding(sheet_id, generation, steps, winner_prefix,
-                            keep_marker=False):
+def _reap_sheet_scaffolding(sheet_id, generation, steps, winner_prefix):
     """Cleanup for a generation: delete the frame tiles + cancel marker and
     prune attempt artifacts. winner_prefix=<prefix> keeps the winner and
     prunes the losers (post-publication); winner_prefix=None means NO winner
     (a failed/cancelled run) and prunes ALL attempts (round-14 finding 4).
-    keep_marker=True preserves the cancel marker (round-16 finding 1: on a
-    CANCELLED run the marker is the in-flight workers' fast stop signal —
-    deleting it before they quiesce made them miss the cancel entirely; it
-    is reaped later by the superseding begin's GC, once generation-fencing
-    has quiesced the old workers). Idempotent, so it is safe from BOTH the
-    normal winner path AND the reconciliation path. Returns True on a clean
-    sweep, False on any delete/list error."""
+    Callers must first establish quiescence unless publication proved all
+    workers complete. Idempotent; returns True on a clean sweep and False on
+    any delete/list error."""
     ok = True
     try:
         delete_keys = []
@@ -917,8 +1155,7 @@ def _reap_sheet_scaffolding(sheet_id, generation, steps, winner_prefix,
             key = _tile_key(sheet_id, generation, k)
             delete_keys.append({"Key": key})
             delete_keys.append({"Key": key.replace(".bin", ".json")})
-        if not keep_marker:
-            delete_keys.append({"Key": _cancel_key(sheet_id, generation)})
+        delete_keys.append({"Key": _cancel_key(sheet_id, generation)})
         for i in range(0, len(delete_keys), 1000):
             resp = s3.delete_objects(
                 Bucket=BUCKET,
@@ -934,88 +1171,6 @@ def _reap_sheet_scaffolding(sheet_id, generation, steps, winner_prefix,
     return ok
 
 
-def _reap_terminal_generation(sheet_id, generation):
-    """The SINGLE cleanup owner (round-15 findings 1/2). Idempotent and
-    re-runnable — so it doubles as a GC that catches stragglers written after
-    the terminal transition — and it keys EVERY decision off the CURRENT
-    run.json, FAILING CLOSED on anything but an explicit same-generation
-    terminal failure:
-
-      - generation MISMATCH (a newer begin owns run.json, possibly carrying
-        THIS generation's published pointer forward) -> SKIP. Reaping here is
-        the round-14/15 winner-deletion race; the new generation's cleanup
-        owns those objects now.
-      - status 'done' (same generation) -> winner sweep keyed on the
-        published pointer; SKIP if the winner is not definitively known.
-      - status 'failed'/'cancelled'/'abandoned' (same generation) -> no
-        winner exists -> reap tiles + marker + ALL attempts.
-      - status 'running', or unreadable/malformed -> SKIP (not terminal /
-        unconfirmed). Fail closed.
-
-    Best-effort; returns True on a clean sweep, False on a delete/list error,
-    None when nothing was reaped (skipped)."""
-    try:
-        resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
-        run = json.loads(resp["Body"].read())
-    except Exception:
-        return None                                   # unreadable -> fail closed
-    if run.get("generation") != generation:
-        return None                                   # superseded -> fail closed
-    status = run.get("status")
-    try:
-        steps = int(run.get("steps") or 0)
-    except (TypeError, ValueError):
-        return None
-    if status == "done":
-        winner = _winner_prefix_from_run(run, generation)
-        if winner is None:
-            return None                               # winner unknown -> skip
-        return _reap_sheet_scaffolding(sheet_id, generation, steps, winner)
-    if status in ("failed", "cancelled", "abandoned"):
-        # round-16 finding 1: KEEP the cancel marker — in-flight workers of
-        # this generation still poll it between frames; the run-active write
-        # fence stops their tile writes, and the marker lets them stop FAST
-        # instead of rendering to the fence. The superseding begin's GC
-        # deletes it once generation-fencing has quiesced them.
-        return _reap_sheet_scaffolding(sheet_id, generation, steps, None,
-                                       keep_marker=True)
-    return None                                       # running/unknown -> skip
-
-
-def _reap_superseded_generation(sheet_id, prior):
-    """Round-15 finding 2 (the delayed GC): when a new begin SUPERSEDES a
-    prior generation, reap that prior generation's scaffolding — tiles, cancel
-    marker, and non-winner attempts. By begin-time the prior generation can no
-    longer publish (its workers/stitch fail the generation-bound admission),
-    so this catches stragglers written after the prior run went terminal. The
-    carried-forward published winner is PRESERVED when it lives under the
-    prior generation's prefix (otherwise it lives under an even-older
-    generation and is untouched by reaping this one)."""
-    if not isinstance(prior, dict):
-        return
-    prior_gen = prior.get("generation")
-    if not prior_gen:
-        return
-    try:
-        steps = int(prior.get("steps") or 0)
-    except (TypeError, ValueError):
-        steps = 0
-    if prior.get("published_generation") == prior_gen:
-        # the carried winner lives UNDER prior_gen — round-16 finding 2: use
-        # the shared fail-closed validator (BOTH keys present, suffixed, and
-        # agreeing), not a png-only guess. An indeterminate winner on a
-        # published record means we cannot know what is referenced -> SKIP
-        # the whole destructive sweep rather than delete a referenced object.
-        winner = _winner_prefix_from_run(prior, prior_gen)
-        if winner is None:
-            return
-        _reap_sheet_scaffolding(sheet_id, prior_gen, steps, winner)
-        return
-    # the published pointer (if any) lives under an even-older generation,
-    # untouched by reaping THIS one -> reap-all of prior_gen is safe
-    _reap_sheet_scaffolding(sheet_id, prior_gen, steps, None)
-
-
 def _prune_losing_attempts(sheet_id, generation, winning_prefix):
     """Round-9 finding 8: reap the artifacts of LOSING same-generation
     stitch attempts. Each attempt writes under sheets/{id}/{gen}/{token}/
@@ -1026,6 +1181,16 @@ def _prune_losing_attempts(sheet_id, generation, winning_prefix):
     Best-effort (part of cleanup_ok): returns True on a clean sweep, False on
     any list/delete error."""
     gen_root = _gen_prefix(sheet_id, generation)     # sheets/{id}/{gen}/
+    legacy_winner_keys = ({gen_root + "sheet.png", gen_root + "sheet.json"}
+                          if winning_prefix == gen_root else set())
+
+    def is_winner(key):
+        if winning_prefix is None:
+            return False
+        if legacy_winner_keys:
+            return key in legacy_winner_keys
+        return key.startswith(winning_prefix)
+
     ok = True
     try:
         token = None
@@ -1035,8 +1200,7 @@ def _prune_losing_attempts(sheet_id, generation, winning_prefix):
                 kwargs["ContinuationToken"] = token
             resp = s3.list_objects_v2(**kwargs)
             victims = [{"Key": o["Key"]} for o in resp.get("Contents", [])
-                       if winning_prefix is None
-                       or not o["Key"].startswith(winning_prefix)]
+                       if not is_winner(o["Key"])]
             for i in range(0, len(victims), 1000):
                 d = s3.delete_objects(
                     Bucket=BUCKET,
@@ -1118,16 +1282,24 @@ def _commit_run_publication(sheet_id, generation, gen_prefix):
         resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
         etag = resp.get("ETag")
         run = json.loads(resp["Body"].read())
+        if not isinstance(run, dict):
+            raise RuntimeError("publish refused: run.json must contain an object")
         if run.get("generation") != generation:
             raise RuntimeError(
                 f"publish refused: run superseded by {run.get('generation')}")
         status = run.get("status")
         if status in ("cancelled", "abandoned", "failed"):
             return status, False             # a terminal decision won
-        if status == "done" and run.get("published_generation") == generation:
+        if status == "done":
             # idempotent 'done': won iff the pointer is OURS (an ambiguous
             # CAS that actually landed) — otherwise ANOTHER attempt published
+            if _winner_prefix_from_run(run, sheet_id, generation) is None:
+                raise RuntimeError(
+                    "publish refused: done run has no valid published pointer")
             return "done", _pointer_is_ours(run)
+        if status != "running":
+            raise RuntimeError(
+                f"publish refused: unknown run status {status!r}")
         run["status"] = "done"
         run["finished_at_s"] = time.time()
         run["published_generation"] = generation
@@ -1170,11 +1342,19 @@ def _mark_run_terminal(sheet_id, generation, status):
             resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
             etag = resp.get("ETag")
             run = json.loads(resp["Body"].read())
+            if not isinstance(run, dict):
+                return None, None
             if run.get("generation") != generation:
                 return SUPERSEDED, None    # a newer begin owns the record
             cur = run.get("status")
             if cur != "running":
-                return cur, run            # already terminal — record carries winner
+                if cur in RUN_TERMINAL_STATUSES:
+                    if (cur == "done"
+                            and _winner_prefix_from_run(
+                                run, sheet_id, generation) is None):
+                        return None, None      # done without a winner is corrupt
+                    return cur, run        # already terminal — record carries winner
+                return None, None          # malformed/unknown is not a decision
             run["status"] = status
             run["finished_at_s"] = time.time()
             _cas_put_run(sheet_id, etag, run)
@@ -1212,7 +1392,8 @@ def _task_status_for(resolved):
 
 
 def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
-                              exc, *, phase_label, own_attempt_prefix=None):
+                              exc, *, phase_label, own_attempt_prefix=None,
+                              own_written_keys=None):
     """Shared error path for the worker and the stitch. Ordered so no shared
     state is mutated on unconfirmed ownership, and the DDB task is finalized
     only AFTER the authoritative run.json transition is confirmed (round-8
@@ -1235,16 +1416,12 @@ def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
     final, run = _mark_run_terminal(sheet_id, generation, "failed")
     if final is None:
         raise exc                      # unconfirmed run -> don't finalize; raise
-    # round-15 findings 1/2: reconcile cleanup through the SINGLE owner, which
-    # keys off run.json and FAILS CLOSED on superseded/unknown (never
-    # reap-all a superseded generation whose winner a newer begin carried
-    # forward). Idempotent + re-runnable, so stragglers are caught later.
-    _reap_terminal_generation(sheet_id, generation)
-    # round-16 finding 3: a SUPERSEDED stitch's just-written attempt is
-    # invisible to both the owner above (fail-closed skip) and the begin-GC
-    # (which ran before the write) — the writer itself must clean it. The
-    # prune is pointer-guarded (keeps the attempt when run.json references
-    # it, e.g. our ambiguous CAS won and was carried forward).
+    # Never run a family-wide sweep here: other invocations can remain alive
+    # for a full Lambda lifetime after the terminal CAS. This invocation may
+    # clean only objects it knows it created; durable delayed GC owns the
+    # generation-wide sweep after quiescence.
+    _schedule_terminal_gc_from_run(sheet_id, generation, run)
+    _delete_keys_best_effort(own_written_keys)
     if own_attempt_prefix is not None:
         _prune_own_attempt_if_not_published(sheet_id, generation, own_attempt_prefix)
     # round-12 finding 4: record the DDB task at the ACTUAL resolved status.
@@ -1268,17 +1445,37 @@ def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
     raise exc
 
 
-def _published_keys(run):
-    """Resolve a run record to its current published (png_key, manifest_key),
-    or None when nothing is published yet."""
-    if not isinstance(run, dict):
+def _published_winner_prefix(run, sheet_id, generation):
+    """Validate and return a published attempt prefix for ``generation``.
+
+    The two pointer keys must agree and must resolve to exactly one attempt
+    segment below this sheet/generation. This validator is also used when a
+    newer run carries an older generation's winner forward.
+    """
+    if not isinstance(run, dict) or run.get("published_generation") != generation:
         return None
-    if run.get("published_png_key") and run.get("published_manifest_key"):
-        return run["published_png_key"], run["published_manifest_key"]
-    return None
+    png = run.get("published_png_key")
+    man = run.get("published_manifest_key")
+    if not (isinstance(png, str) and isinstance(man, str)):
+        return None
+    if not (png.endswith("/sheet.png") and man.endswith("/sheet.json")):
+        return None
+    p_prefix = png[:-len("sheet.png")]
+    m_prefix = man[:-len("sheet.json")]
+    if p_prefix != m_prefix:
+        return None
+    root = _gen_prefix(sheet_id, generation)
+    if p_prefix == root:
+        return root                 # legacy generation-scoped publication
+    if not p_prefix.startswith(root):
+        return None
+    attempt = p_prefix[len(root):].rstrip("/")
+    if not ATTEMPT_RE.fullmatch(attempt) or p_prefix != root + attempt + "/":
+        return None
+    return p_prefix
 
 
-def _winner_prefix_from_run(run, generation):
+def _winner_prefix_from_run(run, sheet_id, generation):
     """The WINNING attempt prefix (sheets/{id}/{gen}/{token}/) derived from a
     run RECORD — NOT a fresh read (round-14 finding 1: a second read can
     catch a concurrent new generation and mis-identify the winner). Requires:
@@ -1288,17 +1485,7 @@ def _winner_prefix_from_run(run, generation):
     rather than guess (never substitute the caller's own prefix)."""
     if not isinstance(run, dict) or run.get("generation") != generation:
         return None
-    png = run.get("published_png_key")
-    man = run.get("published_manifest_key")
-    if not (isinstance(png, str) and isinstance(man, str)):
-        return None
-    if not (png.endswith("sheet.png") and man.endswith("sheet.json")):
-        return None
-    p_prefix = png[:-len("sheet.png")]
-    m_prefix = man[:-len("sheet.json")]
-    if p_prefix != m_prefix:
-        return None                # inconsistent pointer -> winner not known
-    return p_prefix
+    return _published_winner_prefix(run, sheet_id, generation)
 
 
 # Fields that define the sheet's computation: the admission hash binds a
@@ -1481,6 +1668,11 @@ def handle_begin(params):
         "payload": {k: params.get(k) for k in _HASHED_PARAM_FIELDS
                     if params.get(k) is not None},
     }
+    # Schedule before publication of run.json. If admission later loses every
+    # CAS, this message finds no matching generation and reaps nothing; if the
+    # client or Lambda dies immediately after admission, crash cleanup is
+    # already durable and does not depend on another request reaching us.
+    _schedule_generation_gc(sheet_id, generation, steps)
     # round-5 finding 7 + round-6 finding 5: carry forward the PREVIOUS
     # publication pointer so the last-good sheet stays reachable until
     # this new generation commits, and do the read+write as a CAS loop —
@@ -1509,15 +1701,26 @@ def handle_begin(params):
             run.pop("published_png_key", None)
             run.pop("published_manifest_key", None)
         try:
+            # This timestamp is the supersession fence used by delayed GC;
+            # stamp it immediately before the CAS, not before potentially
+            # slow SQS/status work.
+            run["created_at_s"] = time.time()
             _cas_put_run(sheet_id, etag, run)
-            # round-15 finding 2 (delayed GC): the prior generation is now
-            # superseded and can never publish — reap its stragglers,
-            # preserving the winner we just carried forward. Guarded so a
-            # (degenerate) same-generation re-begin never reaps itself.
-            if isinstance(prior, dict) and prior.get("generation") not in (None, generation):
-                _reap_superseded_generation(sheet_id, prior)
+            # A pre-feature prior generation may not have its own queued GC.
+            # Enqueue one now, but never reap inline: an old worker can remain
+            # alive for a full Lambda lifetime after this superseding CAS.
+            prior_gen = prior.get("generation") if isinstance(prior, dict) else None
+            if (isinstance(prior_gen, str)
+                    and prior_gen != generation
+                    and GENERATION_RE.fullmatch(prior_gen)):
+                try:
+                    prior_steps = int(prior.get("steps"))
+                except (TypeError, ValueError):
+                    prior_steps = 0
+                if 1 <= prior_steps <= MAX_STEPS:
+                    _schedule_generation_gc(sheet_id, prior_gen, prior_steps)
             return ok_response(run)
-        except RuntimeError:
+        except _CASConflict:
             continue   # a concurrent commit changed run.json; re-read
     raise RuntimeError("begin could not admit the run (persistent write contention)")
 
@@ -1562,6 +1765,7 @@ def handle_frames(params):
     # the lease was taken over, hb.lost latches and we exit before writing
     # any tile a successor may also be writing.
     hb = LeaseHeartbeat(job_id, task_id, owner=owner).start()
+    written = []   # keys this invocation definitively created
     try:
         _budget_check(cfg, len(indices) + (1 if cfg["vp_mode"] == "frozen" else 0),
                       "worker share",
@@ -1571,18 +1775,19 @@ def handle_frames(params):
 
         frozen_cache = {}
         done = 0
-        written = []   # keys THIS invocation wrote (round-16 self-clean)
         for k in indices:
             if _cancel_requested(sheet_id, generation):
                 # round-10 finding 2: do NOT finalize the DDB task or report
                 # terminal success until the run.json CAS is CONFIRMED — an
                 # unconfirmable transition (None) must raise, not 200 with a
                 # null status while run.json stays 'running'.
-                final, _run = _mark_run_terminal(sheet_id, generation, "cancelled")
+                final, terminal_run = _mark_run_terminal(
+                    sheet_id, generation, "cancelled")
                 if final is None:
                     raise RuntimeError(
                         "cancel could not be confirmed: run.json unreachable")
-                _reap_terminal_generation(sheet_id, generation)   # round-15 finding 2
+                _schedule_terminal_gc_from_run(sheet_id, generation, terminal_run)
+                _delete_keys_best_effort(written)
                 # round-12 finding 4: record the DDB task at the ACTUAL
                 # resolved status — if a publish beat the cancel (final ==
                 # 'done') the task succeeded, not errored.
@@ -1631,11 +1836,14 @@ def handle_frames(params):
             # wrote (same-gen terminal is re-reaped by the owner; a
             # superseded gen's reap fails closed, so own-key deletion is the
             # only cleaner for that case). NOT on lost-lease exits.
-            if not _run_is_active(sheet_id, generation):
-                _reap_terminal_generation(sheet_id, generation)
+            run_state, fenced_run = _run_write_state(sheet_id, generation)
+            if run_state == RUN_UNKNOWN:
+                raise RuntimeError(
+                    "run.json state could not be confirmed before tile write")
+            if run_state == RUN_INACTIVE:
                 _delete_keys_best_effort(written)
-                return ok_response({"sheet_id": sheet_id, "generation": generation,
-                                    "frames_done": done, "run_terminal": True})
+                return _confirmed_run_inactive_response(
+                    sheet_id, generation, fenced_run, frames_done=done)
             # round-10 finding 4: WRITE-ONCE tiles (create-only). Even though
             # the fence proved ownership an instant ago, a sufficiently
             # delayed stale worker could still reach here after losing the
@@ -1643,20 +1851,25 @@ def handle_frames(params):
             # written, so a stale write is REJECTED (not an overwrite). The
             # render is deterministic, so an existing tile is byte-equivalent.
             key = _tile_key(sheet_id, generation, k)
-            _put_object_once(key, bytes(tile), "application/octet-stream")
-            _put_object_once(key.replace(".bin", ".json"),
-                             json.dumps(record).encode("utf-8"), "application/json")
-            written.extend([key, key.replace(".bin", ".json")])
+            record_key = key.replace(".bin", ".json")
+            if _put_object_once(key, bytes(tile), "application/octet-stream"):
+                written.append(key)
+            if _put_object_once(record_key, json.dumps(record).encode("utf-8"),
+                                "application/json"):
+                written.append(record_key)
             done = done_after
         # round-16 finding 1: final quiescence check — a cancel that lands
         # during the LAST frame's write window has no later loop iteration
         # to catch it; without this, that straggler tile would outlive the
         # terminal reap with the client no longer watching.
-        if not _run_is_active(sheet_id, generation):
-            _reap_terminal_generation(sheet_id, generation)
+        run_state, fenced_run = _run_write_state(sheet_id, generation)
+        if run_state == RUN_UNKNOWN:
+            raise RuntimeError(
+                "run.json state could not be confirmed after tile writes")
+        if run_state == RUN_INACTIVE:
             _delete_keys_best_effort(written)
-            return ok_response({"sheet_id": sheet_id, "generation": generation,
-                                "frames_done": done, "run_terminal": True})
+            return _confirmed_run_inactive_response(
+                sheet_id, generation, fenced_run, frames_done=done)
         # round-7 finding 2: the terminal 'done' is OWNER-CONDITIONAL and
         # best-effort — a lost lease means a successor owns it (don't
         # overwrite), and a transient DDB throttle on the done write must
@@ -1672,7 +1885,7 @@ def handle_frames(params):
     except Exception as e:
         return _finalize_failure_or_exit(
             job_id, task_id, owner, sheet_id, generation, e,
-            phase_label="Sheet worker failed")
+            phase_label="Sheet worker failed", own_written_keys=written)
     finally:
         hb.stop()
         for path in (TMP_COEFFS, TMP_ROOTS):
@@ -1704,7 +1917,9 @@ def handle_stitch(params):
     # long; the heartbeat keeps a live stitch's lease alive, and hb.lost
     # gates the artifact write so a reclaimed stitch never publishes.
     hb = LeaseHeartbeat(job_id, task_id, owner=owner).start()
-    gen_prefix = None   # set once this attempt's artifacts are written (finding 5)
+    # Establish identity before the first PUT so every exception path knows
+    # which attempt-private prefix may contain a partial upload.
+    gen_prefix = _attempt_prefix(sheet_id, generation, owner)
     try:
         t0 = float(params.get("started_at_s") or time.time())
 
@@ -1714,11 +1929,12 @@ def handle_stitch(params):
             # NOT report a false cancellation. round-10 finding 2: an
             # unconfirmable transition (None) RAISES — never a 200 with a
             # null status while run.json stays 'running'.
-            final, _run = _mark_run_terminal(sheet_id, generation, "cancelled")
+            final, terminal_run = _mark_run_terminal(
+                sheet_id, generation, "cancelled")
             if final is None:
                 raise RuntimeError(
                     "cancel could not be confirmed: run.json unreachable")
-            _reap_terminal_generation(sheet_id, generation)   # round-15 finding 2
+            _schedule_terminal_gc_from_run(sheet_id, generation, terminal_run)
             # round-12 finding 4: DDB task at the ACTUAL resolved status
             task_status = _task_status_for(final)
             try:
@@ -1788,16 +2004,17 @@ def handle_stitch(params):
         # round-16 finding 3: fence the artifact write against the RUN RECORD
         # too — a superseded/terminal run's stitch must not create attempt
         # artifacts that the begin-GC (which already ran) can never revisit.
-        if not _run_is_active(sheet_id, generation):
-            return ok_response({"sheet_id": sheet_id, "generation": generation,
-                                "run_terminal": True})
-        gen_prefix = _write_generation_artifacts(cfg, generation, manifest,
-                                                  canvas, owner)
+        run_state, fenced_run = _run_write_state(sheet_id, generation)
+        if run_state == RUN_UNKNOWN:
+            raise RuntimeError(
+                "run.json state could not be confirmed before publication")
+        if run_state == RUN_INACTIVE:
+            return _confirmed_run_inactive_response(
+                sheet_id, generation, fenced_run)
         manifest["png_key"] = gen_prefix + "sheet.png"
         manifest["manifest_key"] = gen_prefix + "sheet.json"
-        s3.put_object(Bucket=BUCKET, Key=gen_prefix + "sheet.json",
-                      Body=json.dumps(manifest, indent=1).encode("utf-8"),
-                      ContentType="application/json")
+        _write_generation_artifacts(cfg, generation, manifest, canvas, owner,
+                                    prefix=gen_prefix)
         # round-9 finding 3: FENCE AGAIN immediately before the commit — the
         # encode + three writes above are an unbounded section during which
         # the lease could have expired, so re-prove ownership so the only

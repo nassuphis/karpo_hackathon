@@ -32,6 +32,9 @@ BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
 JOBS_TABLE="polypaint-jobs"
+POLY_SHEET_GC_QUEUE_NAME="polypaint-poly-sheet-gc"
+POLY_SHEET_GC_QUEUE_URL=""
+POLY_SHEET_GC_QUEUE_ARN=""
 LAYER_PUBLISH_PREFIX="deploy/layers"
 LIBVIPS_LAYER_NAME="polypaint-libvips"
 LAPACK_LAYER_NAME="polypaint-lapack"
@@ -1975,6 +1978,74 @@ apply_s3_role_policy() {
         --policy-document "$S3_POLICY"
 }
 
+# Poly-Sheet generation cleanup is delayed past the maximum lifetime of any
+# worker/stitch. SQS supplies the durable timer and retries; inline cleanup
+# cannot cover a process that dies after its last S3 write.
+ensure_poly_sheet_gc_queue() {
+    POLY_SHEET_GC_QUEUE_URL=$(aws sqs get-queue-url \
+        --queue-name "$POLY_SHEET_GC_QUEUE_NAME" \
+        --region "$REGION" --query 'QueueUrl' --output text 2>/dev/null || true)
+    if [ -z "$POLY_SHEET_GC_QUEUE_URL" ] || [ "$POLY_SHEET_GC_QUEUE_URL" = "None" ]; then
+        echo "Creating Poly-Sheet GC queue..."
+        POLY_SHEET_GC_QUEUE_URL=$(aws sqs create-queue \
+            --queue-name "$POLY_SHEET_GC_QUEUE_NAME" \
+            --attributes '{"VisibilityTimeout":"6000","MessageRetentionPeriod":"345600"}' \
+            --region "$REGION" --query 'QueueUrl' --output text)
+    else
+        aws sqs set-queue-attributes \
+            --queue-url "$POLY_SHEET_GC_QUEUE_URL" \
+            --attributes '{"VisibilityTimeout":"6000","MessageRetentionPeriod":"345600"}' \
+            --region "$REGION"
+    fi
+    POLY_SHEET_GC_QUEUE_ARN=$(aws sqs get-queue-attributes \
+        --queue-url "$POLY_SHEET_GC_QUEUE_URL" --attribute-names QueueArn \
+        --region "$REGION" --query 'Attributes.QueueArn' --output text)
+    export POLY_SHEET_GC_QUEUE_URL POLY_SHEET_GC_QUEUE_ARN
+}
+
+apply_poly_sheet_gc_policy() {
+    aws iam put-role-policy --role-name "$ROLE_NAME" \
+        --policy-name polypaint-poly-sheet-gc \
+        --policy-document "{
+            \"Version\": \"2012-10-17\",
+            \"Statement\": [{
+                \"Effect\": \"Allow\",
+                \"Action\": [\"sqs:SendMessage\", \"sqs:ReceiveMessage\", \"sqs:DeleteMessage\", \"sqs:GetQueueAttributes\"],
+                \"Resource\": \"${POLY_SHEET_GC_QUEUE_ARN}\"
+            }]
+        }"
+}
+
+ensure_poly_sheet_gc_event_source() {
+    local UUID ATTEMPT
+    UUID=$(aws lambda list-event-source-mappings \
+        --function-name "$POLY_SHEET_NAME" \
+        --event-source-arn "$POLY_SHEET_GC_QUEUE_ARN" \
+        --region "$REGION" --query 'EventSourceMappings[0].UUID' --output text)
+    if [ -z "$UUID" ] || [ "$UUID" = "None" ]; then
+        # A just-updated inline IAM policy can take a few seconds to
+        # propagate; retry the mapping creation rather than making the first
+        # deployment nondeterministically fail with an SQS permission error.
+        for ATTEMPT in 1 2 3 4 5 6; do
+            if aws lambda create-event-source-mapping \
+                    --function-name "$POLY_SHEET_NAME" \
+                    --event-source-arn "$POLY_SHEET_GC_QUEUE_ARN" \
+                    --batch-size 1 --enabled --region "$REGION" >/dev/null 2>&1; then
+                break
+            fi
+            if [ "$ATTEMPT" = "6" ]; then
+                echo "FATAL: could not create Poly-Sheet GC event source" >&2
+                return 1
+            fi
+            sleep 5
+        done
+    else
+        aws lambda update-event-source-mapping --uuid "$UUID" \
+            --batch-size 1 --enabled --region "$REGION" >/dev/null
+    fi
+    echo "  Poly-Sheet GC queue: $POLY_SHEET_GC_QUEUE_NAME"
+}
+
 if [ "$ACTION" = "create" ]; then
     # --- Create IAM role ---
     echo "Creating IAM role..."
@@ -2004,6 +2075,8 @@ if [ "$ACTION" = "create" ]; then
 
     # Lambda invoke access (for dispatch Lambda to invoke render Lambdas)
     ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
+    ensure_poly_sheet_gc_queue
+    apply_poly_sheet_gc_policy
     LAMBDA_POLICY="{
         \"Version\": \"2012-10-17\",
         \"Statement\": [{
@@ -2054,6 +2127,7 @@ if [ "$ACTION" = "create" ]; then
     # --- Lambdas (single spec list shared with the update path) ---
     deploy_all_lambdas
     deploy_book_pdf_image
+    ensure_poly_sheet_gc_event_source
 
     # Step Functions state machines
     echo "Deploying Step Functions state machines..."
@@ -2103,11 +2177,14 @@ if [ "$ACTION" = "create" ]; then
     echo "  Bilevel:  $BILEVEL_NAME ($BILEVEL_MEMORY MB)"
     echo "  C2B:      $COLOR_TO_BILEVEL_NAME ($COLOR_TO_BILEVEL_MEMORY MB)"
 elif [ "$ACTION" = "update" ]; then
+    ensure_poly_sheet_gc_queue
+    apply_poly_sheet_gc_policy
     delete_removed_lambdas
 
     # --- Lambdas (single spec list shared with the create path) ---
     deploy_all_lambdas
     deploy_book_pdf_image
+    ensure_poly_sheet_gc_event_source
 
     # Step Functions state machines
     echo "Updating Step Functions state machines..."

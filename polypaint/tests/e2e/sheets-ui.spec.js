@@ -997,4 +997,48 @@ test.describe('Round-16 quiescence + wiring', () => {
     expect(out.text).toBe('live run message');
     expect(out.descSurvives).toBe(true);
   });
+
+  test('a cancel for a different sheet cannot overwrite the active sheet status', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      window.lambdaPost = async () => ({ fired: 1 });
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gA', status: 'cancelled' }) }
+        : realFetch(url));
+      _sheetRunSave({ sheetId: 'sheet-b', jobId: 'j', generation: 'gB', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      const statusEl = document.getElementById('sheets-status');
+      statusEl.textContent = 'Sheet B is rendering';
+      _sheetCancelIntents.add('sheet-a::gA');
+      await _cancelSheetRun('sheet-a', 'gA');
+      window.fetch = realFetch;
+      const result = { text: statusEl.textContent, descriptor: _sheetRunLoad() };
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
+      localStorage.removeItem('polypaint_sheet_cancel_intents_v1');
+      _sheetRunClear();
+      return result;
+    });
+    expect(out.text).toBe('Sheet B is rendering');
+    expect(out.descriptor.sheetId).toBe('sheet-b');
+    expect(out.descriptor.generation).toBe('gB');
+  });
+
+  test('a new rail generation does not inherit kill state from its predecessor', async ({ page }) => {
+    const out = await page.evaluate(() => {
+      _jobsRailJobs.length = 0;
+      _jobsRailJobs.push({ id: 'sheet:reuse', kind: 'sheet', jobId: 'reuse',
+                           generation: 'gOLD', state: 'running', killRequested: true,
+                           label: 'Sheet reuse', startedAt: 100, detail: 'cancelling' });
+      _jobsRailUpsert({ id: 'sheet:reuse', kind: 'sheet', jobId: 'reuse',
+                        generation: 'gNEW', state: 'running', label: 'Sheet reuse',
+                        startedAt: 200, detail: 'accepted' });
+      const job = { ..._jobsRailJobs[0] };
+      _jobsRailJobs.length = 0;
+      return job;
+    });
+    expect(out.generation).toBe('gNEW');
+    expect(out.killRequested).toBe(false);
+    expect(out.detail).toBe('accepted');
+  });
 });

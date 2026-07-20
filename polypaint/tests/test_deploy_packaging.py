@@ -111,6 +111,24 @@ class TestDeployPackaging(unittest.TestCase):
                          "Color2Bilevel Lambda memory should stay at 10240 MB for large raw-threshold derivations")
         self.assertIn("single-shot and CPU-bound", fn["memory_why"])
 
+    def test_poly_sheet_gc_queue_is_deployed_and_wired_on_both_paths(self):
+        fn = self._manifest_fn("poly_sheet")
+        self.assertIn("POLY_SHEET_GC_QUEUE_URL=$POLY_SHEET_GC_QUEUE_URL", fn["env"])
+        self.assertIn('POLY_SHEET_GC_QUEUE_NAME="polypaint-poly-sheet-gc"', DEPLOY_TEXT)
+        self.assertIn('"VisibilityTimeout":"6000"', DEPLOY_TEXT)
+        self.assertIn('"MessageRetentionPeriod":"345600"', DEPLOY_TEXT)
+        for action in ("sqs:SendMessage", "sqs:ReceiveMessage",
+                       "sqs:DeleteMessage", "sqs:GetQueueAttributes"):
+            self.assertIn(action, DEPLOY_TEXT)
+        self.assertIn("aws lambda create-event-source-mapping", DEPLOY_TEXT)
+        self.assertIn('--batch-size 1 --enabled', _joined_shell_lines(DEPLOY_TEXT))
+        self.assertEqual(len(re.findall(
+            r"(?m)^    ensure_poly_sheet_gc_queue$", DEPLOY_TEXT)), 2)
+        self.assertEqual(len(re.findall(
+            r"(?m)^    apply_poly_sheet_gc_policy$", DEPLOY_TEXT)), 2)
+        self.assertEqual(len(re.findall(
+            r"(?m)^    ensure_poly_sheet_gc_event_source$", DEPLOY_TEXT)), 2)
+
     def test_render_workflow_definition_uses_shared_renderer_in_deploy_and_tests(self):
         self.assertTrue(WORKFLOW_RENDERER_PATH.exists(), "workflow_template_render.py should exist")
         renderer_text = WORKFLOW_RENDERER_PATH.read_text()

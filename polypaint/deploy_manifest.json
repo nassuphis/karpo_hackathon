@@ -256,7 +256,7 @@
    "layers": [
     "lapack"
    ],
-   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,POLY_SHEET_GC_QUEUE_URL=$POLY_SHEET_GC_QUEUE_URL,LD_LIBRARY_PATH=/opt/lib",
    "group": "core",
    "memory_why": "async parameter-scan sheet renderer (frames solved in-process, needs LAPACK for cm64/roots_cm chains)",
    "tmp": "binary",

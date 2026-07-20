@@ -1903,7 +1903,16 @@ function _jobsRailUpsert(job) {
     }
     const idx = _jobsRailJobs.findIndex(j => j.id === job.id);
     const prev = idx >= 0 ? _jobsRailJobs[idx] : null;
-    const next = prev ? { ...prev } : { startedAt: Date.now() };
+    const generationChanged = !!(prev
+        && Object.prototype.hasOwnProperty.call(job, 'generation')
+        && job.generation !== prev.generation);
+    const startChanged = !!(prev && job.startedAt != null
+        && prev.startedAt != null && job.startedAt !== prev.startedAt);
+    const identityChanged = generationChanged || startChanged;
+    const next = prev && !identityChanged ? { ...prev } : {
+        startedAt: job.startedAt != null ? job.startedAt : Date.now(),
+        killRequested: false,
+    };
     for (const key of Object.keys(job)) {
         // Skip undefined so a sparse patch never clobbers known fields, and
         // keep the last progress line when a terminal patch has no message.

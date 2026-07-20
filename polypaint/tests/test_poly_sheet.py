@@ -13,6 +13,7 @@ import json
 import math
 import os
 import sys
+import time
 import unittest
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
@@ -116,6 +117,15 @@ class _S3Stub:
     def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None):
         keys = sorted(k for k in self.objects if k.startswith(Prefix))
         return {"Contents": [{"Key": k} for k in keys], "IsTruncated": False}
+
+
+class _SQSStub:
+    def __init__(self):
+        self.messages = []
+
+    def send_message(self, **kwargs):
+        self.messages.append(kwargs)
+        return {"MessageId": str(len(self.messages))}
 
 
 def _admit(mod, stub, params, gen, worker_frames):
@@ -1835,9 +1845,13 @@ class TestRound9CancelRace(_LeaseIsoTestCase):
         gen = "gd2d2d2d2d2d2"
         stub = _S3Stub()
         self._patch_s3(stub)
+        prefix = f"sheets/pw-sheet/{gen}/winnerwinner/"
         stub.put_object(Bucket="b", Key="sheets/pw-sheet/run.json",
                         Body=json.dumps({"generation": gen, "status": "done",
-                                         "published_generation": gen}).encode())
+                                         "published_generation": gen,
+                                         "published_png_key": prefix + "sheet.png",
+                                         "published_manifest_key":
+                                         prefix + "sheet.json"}).encode())
         resp = mod.handle_cancel({"action": "cancel", "sheet_id": "pw-sheet",
                                   "generation": gen})
         body = json.loads(resp["body"])
@@ -1858,6 +1872,18 @@ class TestRound9CancelRace(_LeaseIsoTestCase):
         self._patch_s3(stub)
         with self.assertRaises(RuntimeError):
             mod.handle_cancel({"action": "cancel", "sheet_id": "x-sheet",
+                               "generation": gen})
+
+    def test_cancel_does_not_accept_done_without_a_winner(self):
+        import handler_poly_sheet as mod
+        gen = "ge4e4e4e4e4e4"
+        stub = _S3Stub()
+        self._patch_s3(stub)
+        stub.put_object(Bucket="b", Key="sheets/corrupt-done/run.json",
+                        Body=json.dumps({"generation": gen, "status": "done",
+                                         "published_generation": gen}).encode())
+        with self.assertRaisesRegex(RuntimeError, "could not be confirmed"):
+            mod.handle_cancel({"action": "cancel", "sheet_id": "corrupt-done",
                                "generation": gen})
 
 
@@ -1887,7 +1913,9 @@ class TestRound10Fencing(_LeaseIsoTestCase):
         stub.put_object(Bucket="b", Key="sheets/win-sheet/run.json",
                         Body=json.dumps({"generation": gen, "status": "done",
                                          "published_generation": gen,
-                                         "published_png_key": a_prefix + "sheet.png"}).encode())
+                                         "published_png_key": a_prefix + "sheet.png",
+                                         "published_manifest_key":
+                                         a_prefix + "sheet.json"}).encode())
         b_prefix = f"sheets/win-sheet/{gen}/bbbbbbbbbbbb/"
         stub.put_object(Bucket="b", Key=b_prefix + "sheet.png", Body=b"loser")
         stub.put_object(Bucket="b", Key=b_prefix + "sheet.json", Body=b"{}")
@@ -1919,6 +1947,40 @@ class TestRound10Fencing(_LeaseIsoTestCase):
                                          "published_manifest_key": prefix + "sheet.json"}).encode())
         outcome, won = mod._commit_run_publication("amb-win", gen, prefix)
         self.assertEqual((outcome, won), ("done", True))   # OURS -> won
+
+    def test_commit_rejects_done_without_a_valid_winner_pointer(self):
+        """A malformed terminal record is not proof that publication won."""
+        import handler_poly_sheet as mod
+        gen = "gf3f3f3f3f3f3"
+        stub = _S3Stub()
+        self._patch_s3(stub)
+        key = "sheets/bad-done/run.json"
+        stub.put_object(Bucket="b", Key=key,
+                        Body=json.dumps({"generation": gen, "status": "done",
+                                         "published_generation": gen,
+                                         "published_png_key":
+                                         f"sheets/bad-done/{gen}/a/sheet.png"}).encode())
+        before = stub.objects[key]
+        with self.assertRaisesRegex(RuntimeError, "valid published pointer"):
+            mod._commit_run_publication(
+                "bad-done", gen, f"sheets/bad-done/{gen}/bbbbbbbbbbbb/")
+        self.assertEqual(stub.objects[key], before)
+
+    def test_commit_rejects_unknown_status_without_rewriting_it(self):
+        """Unknown durable state must never be promoted to done by default."""
+        import handler_poly_sheet as mod
+        gen = "gf4f4f4f4f4f4"
+        stub = _S3Stub()
+        self._patch_s3(stub)
+        key = "sheets/bad-status/run.json"
+        stub.put_object(Bucket="b", Key=key,
+                        Body=json.dumps({"generation": gen,
+                                         "status": "mystery"}).encode())
+        before = stub.objects[key]
+        with self.assertRaisesRegex(RuntimeError, "unknown run status"):
+            mod._commit_run_publication(
+                "bad-status", gen, f"sheets/bad-status/{gen}/bbbbbbbbbbbb/")
+        self.assertEqual(stub.objects[key], before)
 
     def test_tiles_are_write_once(self):
         """Finding 4: create-only tile writes reject a delayed stale worker's
@@ -2001,6 +2063,21 @@ class TestRound10Fencing(_LeaseIsoTestCase):
         # NOT deleted — the late CAS could still publish this prefix
         self.assertIn(prefix + "sheet.png", stub.objects)
 
+    def test_ambiguous_cleanup_defers_on_non_object_run_record(self):
+        """Malformed durable state must not authorize destructive cleanup."""
+        import handler_poly_sheet as mod
+        gen = "gf8f8f8f8f8f8"
+        stub = _S3Stub()
+        self._patch_s3(stub)
+        prefix = f"sheets/amb4-sheet/{gen}/vvvvvvvvvvvv/"
+        stub.put_object(Bucket="b", Key=prefix + "sheet.png", Body=b"pending")
+        stub.put_object(Bucket="b", Key=prefix + "sheet.json", Body=b"{}")
+        stub.put_object(Bucket="b", Key="sheets/amb4-sheet/run.json",
+                        Body=b"[]")
+        mod._prune_own_attempt_if_not_published("amb4-sheet", gen, prefix)
+        self.assertIn(prefix + "sheet.png", stub.objects)
+        self.assertIn(prefix + "sheet.json", stub.objects)
+
 
 class TestRound12TerminalStatusMapping(_LeaseIsoTestCase):
     """Round-12 finding 4: the DDB task is recorded at the ACTUAL resolved
@@ -2022,9 +2099,13 @@ class TestRound12TerminalStatusMapping(_LeaseIsoTestCase):
         stub = _S3Stub()
         self._patch(stub)
         # a concurrent attempt already published the run
+        prefix = f"sheets/pub-sheet/{gen}/winnerwinner/"
         stub.put_object(Bucket="b", Key="sheets/pub-sheet/run.json",
                         Body=json.dumps({"generation": gen, "status": "done",
-                                         "published_generation": gen}).encode())
+                                         "published_generation": gen,
+                                         "published_png_key": prefix + "sheet.png",
+                                         "published_manifest_key":
+                                         prefix + "sheet.json"}).encode())
         finals = []
         mod.renew_claim = lambda *a, **k: True   # we own the task
         mod.finalize_task = lambda *a, **k: finals.append(k.get("status")) or True
@@ -2058,9 +2139,7 @@ class TestRound12TerminalStatusMapping(_LeaseIsoTestCase):
                          "failed")
 
 
-class TestRound15Cleanup(_LeaseIsoTestCase):
-    """Round-15: ALL cleanup goes through the single _reap_terminal_generation
-    owner — keyed off run.json, FAIL-CLOSED on superseded/unknown/running."""
+class TestRound17DeferredCleanup(_LeaseIsoTestCase):
 
     def _patch(self, stub):
         import handler_poly_sheet as mod
@@ -2075,94 +2154,28 @@ class TestRound15Cleanup(_LeaseIsoTestCase):
         stub.put_object(Bucket="b", Key=f"sheets/{sheet}/run.json",
                         Body=json.dumps(run).encode())
 
-    def test_superseded_generation_is_never_reaped(self):
-        """Finding 1 (release blocker): run.json is a NEWER generation that
-        carried OUR generation's published winner forward. Reaping our (old)
-        generation would delete the still-referenced winner — so
-        _reap_terminal_generation for the old gen keyed off the NEW run.json
-        MUST fail closed (generation mismatch -> skip)."""
+    def test_begin_retries_only_a_real_cas_conflict(self):
+        """A fatal conditional-write failure keeps its actionable cause."""
         import handler_poly_sheet as mod
-        old, new = "ga1a1a1a1a1a1", "gb2b2b2b2b2b2"
         stub = _S3Stub(); self._patch(stub)
-        winner = f"sheets/sup/{old}/wwwwwwwwwwww/"   # winner under the OLD gen
-        stub.put_object(Bucket="b", Key=winner + "sheet.png", Body=b"WIN")
-        stub.put_object(Bucket="b", Key=winner + "sheet.json", Body=b"{}")
-        stub.put_object(Bucket="b", Key=mod._tile_key("sup", old, 0), Body=b"tile")
-        # run.json is the NEW generation, carrying the OLD winner forward
-        self._run(stub, "sup", {"generation": new, "status": "running", "steps": 1,
-                                "published_generation": old,
-                                "published_png_key": winner + "sheet.png",
-                                "published_manifest_key": winner + "sheet.json"})
-        result = mod._reap_terminal_generation("sup", old)
-        self.assertIsNone(result)                       # skipped (fail closed)
-        self.assertEqual(stub.objects[winner + "sheet.png"], b"WIN")   # SURVIVES
+        originals = (mod._probe_frame_cost, mod.report_status, mod._cas_put_run)
+        self.addCleanup(lambda: (setattr(mod, "_probe_frame_cost", originals[0]),
+                                 setattr(mod, "report_status", originals[1]),
+                                 setattr(mod, "_cas_put_run", originals[2])))
+        mod._probe_frame_cost = lambda *a, **k: (3, 0.0)
+        mod.report_status = lambda *a, **k: None
 
-    def test_failed_run_reaps_tiles_and_attempts_but_keeps_marker(self):
-        """Finding 2/4 + round-16 finding 1: a same-generation failure reaps
-        tiles + ALL attempts through the owner but KEEPS the cancel marker —
-        it is the in-flight workers' fast stop signal; deleting it before
-        they quiesce made them miss the cancel and re-render every frame."""
-        import handler_poly_sheet as mod
-        gen = "gc3c3c3c3c3c3"
-        stub = _S3Stub(); self._patch(stub)
-        att = f"sheets/failr/{gen}/tttttttttttt/"
-        stub.put_object(Bucket="b", Key=att + "sheet.png", Body=b"orphan")
-        stub.put_object(Bucket="b", Key=att + "sheet.json", Body=b"{}")
-        stub.put_object(Bucket="b", Key=mod._tile_key("failr", gen, 0), Body=b"tile")
-        stub.put_object(Bucket="b", Key=mod._cancel_key("failr", gen), Body=b"1")
-        self._run(stub, "failr", {"generation": gen, "status": "failed", "steps": 1})
-        mod._reap_terminal_generation("failr", gen)
-        self.assertNotIn(att + "sheet.png", stub.objects)
-        self.assertNotIn(mod._tile_key("failr", gen, 0), stub.objects)
-        # the marker SURVIVES the terminal reap (workers still poll it)
-        self.assertIn(mod._cancel_key("failr", gen), stub.objects)
+        def fatal_cas(*args, **kwargs):
+            raise RuntimeError("conditional writes unavailable")
 
-    def test_done_reaps_losers_keeps_winner(self):
-        import handler_poly_sheet as mod
-        gen = "gd4d4d4d4d4d4"
-        stub = _S3Stub(); self._patch(stub)
-        winner = f"sheets/donr/{gen}/wwwwwwwwwwww/"
-        loser = f"sheets/donr/{gen}/llllllllllll/"
-        for pfx, body in ((winner, b"WIN"), (loser, b"lose")):
-            stub.put_object(Bucket="b", Key=pfx + "sheet.png", Body=body)
-            stub.put_object(Bucket="b", Key=pfx + "sheet.json", Body=b"{}")
-        stub.put_object(Bucket="b", Key=mod._tile_key("donr", gen, 0), Body=b"tile")
-        self._run(stub, "donr", {"generation": gen, "status": "done", "steps": 1,
-                                 "published_generation": gen,
-                                 "published_png_key": winner + "sheet.png",
-                                 "published_manifest_key": winner + "sheet.json"})
-        mod._reap_terminal_generation("donr", gen)
-        self.assertEqual(stub.objects[winner + "sheet.png"], b"WIN")   # winner survives
-        self.assertNotIn(loser + "sheet.png", stub.objects)            # loser reaped
-        self.assertNotIn(mod._tile_key("donr", gen, 0), stub.objects)
+        mod._cas_put_run = fatal_cas
+        with self.assertRaisesRegex(RuntimeError, "conditional writes unavailable"):
+            mod.handle_begin({**_run_params("fatal-cas"), "action": "begin",
+                              "job_id": "sheet_job"})
 
-    def test_done_unknown_winner_skips(self):
-        import handler_poly_sheet as mod
-        gen = "ge5e5e5e5e5e5"
-        stub = _S3Stub(); self._patch(stub)
-        winner = f"sheets/unk/{gen}/wwwwwwwwwwww/"
-        stub.put_object(Bucket="b", Key=winner + "sheet.png", Body=b"WIN")
-        stub.put_object(Bucket="b", Key=winner + "sheet.json", Body=b"{}")
-        # only ONE published key -> winner not determinable
-        self._run(stub, "unk", {"generation": gen, "status": "done", "steps": 1,
-                                "published_generation": gen,
-                                "published_png_key": winner + "sheet.png"})
-        result = mod._reap_terminal_generation("unk", gen)
-        self.assertIsNone(result)
-        self.assertEqual(stub.objects[winner + "sheet.png"], b"WIN")   # SURVIVES
-
-    def test_running_generation_is_never_reaped(self):
-        import handler_poly_sheet as mod
-        gen = "gf6f6f6f6f6f6"
-        stub = _S3Stub(); self._patch(stub)
-        stub.put_object(Bucket="b", Key=mod._tile_key("run", gen, 0), Body=b"tile")
-        self._run(stub, "run", {"generation": gen, "status": "running", "steps": 1})
-        self.assertIsNone(mod._reap_terminal_generation("run", gen))
-        self.assertIn(mod._tile_key("run", gen, 0), stub.objects)      # kept
-
-    def test_finalize_failure_reaps_through_the_owner(self):
-        """End-to-end: _finalize_failure_or_exit marks the run failed and
-        reaps through _reap_terminal_generation (no test-local closure)."""
+    def test_finalize_failure_defers_family_reap_until_quiescence(self):
+        """Failure marks run.json now but shared cleanup waits one full
+        Lambda lifetime; the durable GC then removes every orphan."""
         import handler_poly_sheet as mod
         gen = "g707070707070"
         stub = _S3Stub(); self._patch(stub)
@@ -2178,31 +2191,19 @@ class TestRound15Cleanup(_LeaseIsoTestCase):
                 "j", "sheet_stitch_e2e", "A", "e2e", gen,
                 RuntimeError("stitch failed"), phase_label="Stitch failed")
         self.assertEqual(json.loads(stub.objects["sheets/e2e/run.json"])["status"], "failed")
-        self.assertNotIn(att + "sheet.png", stub.objects)              # reaped
+        self.assertIn(att + "sheet.png", stub.objects)                 # not raced
+        self.assertIn(mod._tile_key("e2e", gen, 0), stub.objects)
+        run = json.loads(stub.objects["sheets/e2e/run.json"])
+        run["finished_at_s"] = time.time() - mod.SHEET_GC_QUIESCENCE_S - 1
+        stub.put_object(Bucket="b", Key="sheets/e2e/run.json",
+                        Body=json.dumps(run).encode())
+        mod._handle_generation_gc_message({
+            "type": mod.SHEET_GC_MESSAGE_TYPE, "sheet_id": "e2e",
+            "generation": gen, "steps": 1,
+            "not_before_s": time.time() - 1,
+        })
+        self.assertNotIn(att + "sheet.png", stub.objects)
         self.assertNotIn(mod._tile_key("e2e", gen, 0), stub.objects)
-
-    def test_begin_supersede_reaps_prior_but_keeps_carried_winner(self):
-        """Finding 2 (delayed GC): a superseding begin reaps the prior
-        generation's stragglers but preserves the carried-forward winner."""
-        import handler_poly_sheet as mod
-        old = "g808080808080"
-        stub = _S3Stub(); self._patch(stub)
-        winner = f"sheets/gc/{old}/wwwwwwwwwwww/"
-        loser = f"sheets/gc/{old}/llllllllllll/"
-        for pfx, body in ((winner, b"WIN"), (loser, b"lose")):
-            stub.put_object(Bucket="b", Key=pfx + "sheet.png", Body=body)
-            stub.put_object(Bucket="b", Key=pfx + "sheet.json", Body=b"{}")
-        stub.put_object(Bucket="b", Key=mod._tile_key("gc", old, 0), Body=b"tile")
-        stub.put_object(Bucket="b", Key=mod._cancel_key("gc", old), Body=b"1")
-        prior = {"generation": old, "status": "done", "steps": 1,
-                 "published_generation": old,
-                 "published_png_key": winner + "sheet.png",
-                 "published_manifest_key": winner + "sheet.json"}
-        mod._reap_superseded_generation("gc", prior)
-        self.assertEqual(stub.objects[winner + "sheet.png"], b"WIN")   # carried winner survives
-        self.assertNotIn(loser + "sheet.png", stub.objects)            # loser reaped
-        self.assertNotIn(mod._tile_key("gc", old, 0), stub.objects)    # tile reaped
-        self.assertNotIn(mod._cancel_key("gc", old), stub.objects)     # marker reaped
 
 class TestRound16RunActiveFence(_LeaseIsoTestCase):
     """Round-16 finding 1/3: every shared S3 write is fenced against the
@@ -2219,25 +2220,27 @@ class TestRound16RunActiveFence(_LeaseIsoTestCase):
         self.addCleanup(lambda: setattr(mod, "finalize_task", _shared.finalize_task))
         mod.s3 = stub
 
-    def test_run_is_active_semantics(self):
+    def test_run_write_state_distinguishes_inactive_from_unknown(self):
         import handler_poly_sheet as mod
         gen = "g161616161616"
         stub = _S3Stub(); self._patch(stub)
         stub.put_object(Bucket="b", Key="sheets/act/run.json",
                         Body=json.dumps({"generation": gen, "status": "running"}).encode())
-        self.assertTrue(mod._run_is_active("act", gen))
+        self.assertEqual(mod._run_write_state("act", gen)[0], mod.RUN_ACTIVE)
         stub.put_object(Bucket="b", Key="sheets/act/run.json",
                         Body=json.dumps({"generation": gen, "status": "cancelled"}).encode())
-        self.assertFalse(mod._run_is_active("act", gen))          # terminal
+        self.assertEqual(mod._run_write_state("act", gen)[0], mod.RUN_INACTIVE)
         stub.put_object(Bucket="b", Key="sheets/act/run.json",
                         Body=json.dumps({"generation": "gbbbbbbbbbbbb",
                                          "status": "running"}).encode())
-        self.assertFalse(mod._run_is_active("act", gen))          # superseded
-        self.assertFalse(mod._run_is_active("absent", gen))       # unreadable
+        self.assertEqual(mod._run_write_state("act", gen)[0], mod.RUN_INACTIVE)
+        self.assertEqual(mod._run_write_state("absent", gen)[0], mod.RUN_INACTIVE)
+        stub.put_object(Bucket="b", Key="sheets/act/run.json", Body=b"not-json")
+        self.assertEqual(mod._run_write_state("act", gen)[0], mod.RUN_UNKNOWN)
 
     def test_cancel_keeps_marker_for_inflight_workers(self):
-        """The reviewer's finding-1 probe: marker_after_response must be True
-        — handle_cancel reaps tiles but KEEPS the workers' stop signal."""
+        """Cancel keeps all shared scaffolding until writers quiesce, then
+        durable GC removes both tiles and the fast-stop marker."""
         import handler_poly_sheet as mod
         gen = "g171717171717"
         stub = _S3Stub(); self._patch(stub)
@@ -2249,9 +2252,19 @@ class TestRound16RunActiveFence(_LeaseIsoTestCase):
                                   "generation": gen})
         body = json.loads(resp["body"])
         self.assertTrue(body["cancelled"])
-        self.assertNotIn(mod._tile_key("mkq", gen, 0), stub.objects)   # tiles reaped
-        # marker_after_response=True — in-flight workers can still see it
+        self.assertIn(mod._tile_key("mkq", gen, 0), stub.objects)
         self.assertIn(mod._cancel_key("mkq", gen), stub.objects)
+        run = json.loads(stub.objects["sheets/mkq/run.json"])
+        run["finished_at_s"] = time.time() - mod.SHEET_GC_QUIESCENCE_S - 1
+        stub.put_object(Bucket="b", Key="sheets/mkq/run.json",
+                        Body=json.dumps(run).encode())
+        mod._handle_generation_gc_message({
+            "type": mod.SHEET_GC_MESSAGE_TYPE, "sheet_id": "mkq",
+            "generation": gen, "steps": 1,
+            "not_before_s": time.time() - 1,
+        })
+        self.assertNotIn(mod._tile_key("mkq", gen, 0), stub.objects)
+        self.assertNotIn(mod._cancel_key("mkq", gen), stub.objects)
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
@@ -2319,12 +2332,13 @@ class TestRound16WorkerQuiescence(_LeaseIsoTestCase):
         self.addCleanup(lambda: setattr(mod, "_put_object_once", real_put))
 
         def flipping_put(key, body, content_type):
-            real_put(key, body, content_type)
+            created = real_put(key, body, content_type)
             if key.endswith("00001.json"):   # the LAST write of the last frame
                 run = json.loads(stub.objects["sheets/strag-sheet/run.json"])
                 run["status"] = "cancelled"
                 stub.put_object(Bucket="b", Key="sheets/strag-sheet/run.json",
                                 Body=json.dumps(run).encode())
+            return created
         mod._put_object_once = flipping_put
         resp = mod.handle_frames({**p, "action": "frames", "generation": gen,
                                   "task_id": f"sheet_tiles_strag-sheet_{gen}_w0",
@@ -2336,9 +2350,7 @@ class TestRound16WorkerQuiescence(_LeaseIsoTestCase):
                          "last-frame straggler tiles survived the cancel")
 
 
-class TestRound16SupersededGC(_LeaseIsoTestCase):
-    """Round-16 findings 2/3: the superseded GC uses the fail-closed winner
-    validator, and a superseded stitch self-cleans its own attempt."""
+class TestRound16SupersededAttemptCleanup(_LeaseIsoTestCase):
 
     def _patch(self, stub):
         import handler_poly_sheet as mod
@@ -2348,26 +2360,6 @@ class TestRound16SupersededGC(_LeaseIsoTestCase):
         self.addCleanup(lambda: setattr(mod, "renew_claim", _shared.renew_claim))
         self.addCleanup(lambda: setattr(mod, "finalize_task", _shared.finalize_task))
         mod.s3 = stub
-
-    def test_superseded_gc_skips_on_inconsistent_pointer(self):
-        """The reviewer's finding-2 probe: published_generation matches but
-        the manifest pointer is missing — the destructive sweep must be
-        SKIPPED entirely (both objects survive)."""
-        import handler_poly_sheet as mod
-        old = "g1a1a1a1a1a1a"
-        stub = _S3Stub(); self._patch(stub)
-        pfx = f"sheets/incon/{old}/wwwwwwwwwwww/"
-        stub.put_object(Bucket="b", Key=pfx + "sheet.png", Body=b"PNG")
-        stub.put_object(Bucket="b", Key=pfx + "sheet.json", Body=b"{}")
-        stub.put_object(Bucket="b", Key=mod._tile_key("incon", old, 0), Body=b"tile")
-        prior = {"generation": old, "status": "done", "steps": 1,
-                 "published_generation": old,
-                 "published_png_key": pfx + "sheet.png"}   # manifest key MISSING
-        mod._reap_superseded_generation("incon", prior)
-        # nothing was deleted — winner indeterminate -> fail closed
-        self.assertIn(pfx + "sheet.png", stub.objects)
-        self.assertIn(pfx + "sheet.json", stub.objects)
-        self.assertIn(mod._tile_key("incon", old, 0), stub.objects)
 
     def test_superseded_stitch_self_cleans_own_attempt(self):
         """Finding 3: a stitch superseded after writing its attempt cleans
@@ -2415,6 +2407,285 @@ class TestRound16SupersededGC(_LeaseIsoTestCase):
                 phase_label="Stitch failed", own_attempt_prefix=att)
         # the carried-forward winner SURVIVES the self-clean
         self.assertEqual(stub.objects[att + "sheet.png"], b"WINNER")
+
+
+class TestRound17DurableGenerationGC(_LeaseIsoTestCase):
+    def _patch(self, stub, queue=None):
+        import handler_poly_sheet as mod
+        real_s3 = mod.s3
+        real_sqs = mod._sqs
+        real_url = mod.POLY_SHEET_GC_QUEUE_URL
+        self.addCleanup(lambda: setattr(mod, "s3", real_s3))
+        self.addCleanup(lambda: setattr(mod, "_sqs", real_sqs))
+        self.addCleanup(lambda: setattr(mod, "POLY_SHEET_GC_QUEUE_URL", real_url))
+        mod.s3 = stub
+        mod._sqs = queue
+        mod.POLY_SHEET_GC_QUEUE_URL = "https://sqs.test/poly-sheet-gc" if queue else ""
+
+    def _message(self, mod, sheet, generation, steps=1, not_before_s=None):
+        return {
+            "type": mod.SHEET_GC_MESSAGE_TYPE,
+            "sheet_id": sheet,
+            "generation": generation,
+            "steps": steps,
+            "not_before_s": (time.time() - 1 if not_before_s is None
+                             else not_before_s),
+        }
+
+    def test_schedule_uses_sqs_max_delay_and_internal_event_dispatch(self):
+        import handler_poly_sheet as mod
+        gen = "g202020202020"
+        stub, queue = _S3Stub(), _SQSStub()
+        self._patch(stub, queue)
+        mod._schedule_generation_gc("gcq", gen, 1,
+                                    not_before_s=time.time() + 2000)
+        self.assertEqual(queue.messages[-1]["DelaySeconds"], 900)
+        body = json.loads(queue.messages[-1]["MessageBody"])
+        self.assertEqual(body["generation"], gen)
+
+        # A due failed run is dispatched through the actual SQS handler path.
+        orphan = mod._tile_key("gcq", gen, 0)
+        stub.put_object(Bucket="b", Key=orphan, Body=b"tile")
+        stub.put_object(Bucket="b", Key=mod._cancel_key("gcq", gen), Body=b"1")
+        stub.put_object(Bucket="b", Key="sheets/gcq/run.json", Body=json.dumps({
+            "generation": gen, "status": "failed", "steps": 1,
+            "finished_at_s": time.time() - mod.SHEET_GC_QUIESCENCE_S - 1,
+        }).encode())
+        due = self._message(mod, "gcq", gen)
+        result = mod.handler({"Records": [{"eventSource": "aws:sqs",
+                                           "body": json.dumps(due)}]}, None)
+        self.assertEqual(result, {"processed": 1})
+        self.assertNotIn(orphan, stub.objects)
+        self.assertNotIn(mod._cancel_key("gcq", gen), stub.objects)
+
+    def test_running_generation_requeues_instead_of_reaping(self):
+        import handler_poly_sheet as mod
+        gen = "g212121212121"
+        stub, queue = _S3Stub(), _SQSStub()
+        self._patch(stub, queue)
+        tile = mod._tile_key("gcr", gen, 0)
+        stub.put_object(Bucket="b", Key=tile, Body=b"tile")
+        stub.put_object(Bucket="b", Key="sheets/gcr/run.json", Body=json.dumps({
+            "generation": gen, "status": "running", "steps": 1,
+            "created_at_s": time.time() - 5000,
+        }).encode())
+        result = mod._handle_generation_gc_message(self._message(mod, "gcr", gen))
+        self.assertEqual(result["state"], "deferred")
+        self.assertIn(tile, stub.objects)
+        self.assertEqual(len(queue.messages), 1)
+        self.assertLessEqual(queue.messages[0]["DelaySeconds"],
+                             mod.SHEET_GC_RUNNING_RECHECK_S + 1)
+
+    def test_superseded_gc_preserves_only_the_carried_winner(self):
+        import handler_poly_sheet as mod
+        old, new = "g222222222222", "g232323232323"
+        stub = _S3Stub(); self._patch(stub)
+        winner = f"sheets/gcs/{old}/winner/"
+        loser = f"sheets/gcs/{old}/loser/"
+        for prefix in (winner, loser):
+            stub.put_object(Bucket="b", Key=prefix + "sheet.png", Body=b"png")
+            stub.put_object(Bucket="b", Key=prefix + "sheet.json", Body=b"{}")
+        tile = mod._tile_key("gcs", old, 0)
+        stub.put_object(Bucket="b", Key=tile, Body=b"tile")
+        stub.put_object(Bucket="b", Key="sheets/gcs/run.json", Body=json.dumps({
+            "generation": new, "status": "running", "steps": 1,
+            "created_at_s": time.time() - mod.SHEET_GC_QUIESCENCE_S - 1,
+            "published_generation": old,
+            "published_png_key": winner + "sheet.png",
+            "published_manifest_key": winner + "sheet.json",
+        }).encode())
+        mod._handle_generation_gc_message(self._message(mod, "gcs", old))
+        self.assertIn(winner + "sheet.png", stub.objects)
+        self.assertNotIn(loser + "sheet.png", stub.objects)
+        self.assertNotIn(tile, stub.objects)
+
+    def test_gc_fails_closed_on_inconsistent_carried_pointer(self):
+        import handler_poly_sheet as mod
+        old, new = "g282828282828", "g292929292929"
+        stub = _S3Stub(); self._patch(stub)
+        prefix = f"sheets/gci/{old}/winner/"
+        tile = mod._tile_key("gci", old, 0)
+        stub.put_object(Bucket="b", Key=prefix + "sheet.png", Body=b"png")
+        stub.put_object(Bucket="b", Key=prefix + "sheet.json", Body=b"{}")
+        stub.put_object(Bucket="b", Key=tile, Body=b"tile")
+        stub.put_object(Bucket="b", Key="sheets/gci/run.json", Body=json.dumps({
+            "generation": new, "status": "running", "steps": 1,
+            "created_at_s": time.time() - mod.SHEET_GC_QUIESCENCE_S - 1,
+            "published_generation": old,
+            "published_png_key": prefix + "sheet.png",
+        }).encode())
+        with self.assertRaisesRegex(RuntimeError, "inconsistent carried winner"):
+            mod._handle_generation_gc_message(self._message(mod, "gci", old))
+        self.assertIn(prefix + "sheet.png", stub.objects)
+        self.assertIn(prefix + "sheet.json", stub.objects)
+        self.assertIn(tile, stub.objects)
+
+    def test_gc_preserves_legacy_generation_scoped_winner(self):
+        import handler_poly_sheet as mod
+        gen = "g303030303030"
+        stub = _S3Stub(); self._patch(stub)
+        root = f"sheets/gcl/{gen}/"
+        loser = root + "loser/"
+        stub.put_object(Bucket="b", Key=root + "sheet.png", Body=b"WIN")
+        stub.put_object(Bucket="b", Key=root + "sheet.json", Body=b"{}")
+        stub.put_object(Bucket="b", Key=loser + "sheet.png", Body=b"lose")
+        stub.put_object(Bucket="b", Key=loser + "sheet.json", Body=b"{}")
+        stub.put_object(Bucket="b", Key="sheets/gcl/run.json", Body=json.dumps({
+            "generation": gen, "status": "done", "steps": 1,
+            "finished_at_s": time.time() - mod.SHEET_GC_QUIESCENCE_S - 1,
+            "published_generation": gen,
+            "published_png_key": root + "sheet.png",
+            "published_manifest_key": root + "sheet.json",
+        }).encode())
+        mod._handle_generation_gc_message(self._message(mod, "gcl", gen))
+        self.assertEqual(stub.objects[root + "sheet.png"], b"WIN")
+        self.assertNotIn(loser + "sheet.png", stub.objects)
+
+    def test_winner_validator_rejects_cross_sheet_pointer(self):
+        import handler_poly_sheet as mod
+        gen = "g242424242424"
+        run = {
+            "generation": gen, "published_generation": gen,
+            "published_png_key": f"sheets/other/{gen}/winner/sheet.png",
+            "published_manifest_key": f"sheets/other/{gen}/winner/sheet.json",
+        }
+        self.assertIsNone(mod._winner_prefix_from_run(run, "expected", gen))
+
+    def test_public_gc_action_is_not_exposed(self):
+        import handler_poly_sheet as mod
+        with self.assertRaises(RuntimeError):
+            mod.handler({"body": json.dumps({"action": "gc"})}, None)
+
+
+@unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+class TestRound17FenceAndPartialWrites(_LeaseIsoTestCase):
+    def _patched(self, mod, stub):
+        import shared as _shared
+        real_s3 = mod.s3
+        real_binary = mod.SWEEP_COEFFGEN
+        real_report = mod.report_status
+        self.addCleanup(lambda: setattr(mod, "s3", real_s3))
+        self.addCleanup(lambda: setattr(mod, "SWEEP_COEFFGEN", real_binary))
+        self.addCleanup(lambda: setattr(mod, "report_status", real_report))
+        self.addCleanup(lambda: (setattr(mod, "claim_task", _shared.claim_task),
+                                 setattr(mod, "renew_claim", _shared.renew_claim),
+                                 setattr(mod, "finalize_task", _shared.finalize_task)))
+        mod.s3 = stub
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.report_status = lambda *a, **k: None
+        mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
+
+    def test_transient_run_read_retries_and_does_not_fake_terminal(self):
+        import handler_poly_sheet as mod
+
+        class FlakyRunS3(_S3Stub):
+            def __init__(self):
+                super().__init__(); self.run_reads = 0
+
+            def get_object(self, Bucket, Key):
+                if Key.endswith("/run.json"):
+                    self.run_reads += 1
+                    if self.run_reads == 2:       # first fence read only
+                        raise RuntimeError("transient read timeout")
+                return super().get_object(Bucket, Key)
+
+        gen = "g252525252525"
+        stub = FlakyRunS3(); self._patched(mod, stub)
+        params = _run_params("flaky-read")
+        _admit(mod, stub, params, gen, [[0, 1], [2, 3]])
+        response = mod.handle_frames({
+            **params, "action": "frames", "generation": gen,
+            "task_id": f"sheet_tiles_flaky-read_{gen}_w0",
+            "frame_indices": [0, 1],
+        })
+        body = json.loads(response["body"])
+        self.assertFalse(body.get("run_terminal", False))
+        self.assertEqual(body["frames_done"], 2)
+        self.assertIn(mod._tile_key("flaky-read", gen, 0), stub.objects)
+
+    def test_unconfirmed_run_read_fails_loudly_without_terminal_success(self):
+        import handler_poly_sheet as mod
+
+        class UnconfirmedFenceS3(_S3Stub):
+            def __init__(self):
+                super().__init__(); self.run_reads = 0
+
+            def get_object(self, Bucket, Key):
+                if Key.endswith("/run.json"):
+                    self.run_reads += 1
+                    if self.run_reads in (2, 3, 4):
+                        raise RuntimeError("run read unavailable")
+                return super().get_object(Bucket, Key)
+
+        gen = "g313131313131"
+        stub = UnconfirmedFenceS3(); self._patched(mod, stub)
+        params = _run_params("unknown-read")
+        _admit(mod, stub, params, gen, [[0, 1], [2, 3]])
+        with self.assertRaisesRegex(RuntimeError, "could not be confirmed"):
+            mod.handle_frames({
+                **params, "action": "frames", "generation": gen,
+                "task_id": f"sheet_tiles_unknown-read_{gen}_w0",
+                "frame_indices": [0, 1],
+            })
+        run = json.loads(stub.objects["sheets/unknown-read/run.json"])
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse([key for key in stub.objects if "/tiles/" in key])
+
+    def test_partial_worker_pair_cleans_only_the_created_key(self):
+        import handler_poly_sheet as mod
+
+        class FailRecordPutS3(_S3Stub):
+            def put_object(self, *args, **kwargs):
+                key = kwargs.get("Key")
+                if key and "/tiles/" in key and key.endswith(".json"):
+                    raise RuntimeError("record upload failed")
+                return super().put_object(*args, **kwargs)
+
+        gen = "g262626262626"
+        stub = FailRecordPutS3(); self._patched(mod, stub)
+        params = _run_params("partial-worker")
+        _admit(mod, stub, params, gen, [[0, 1], [2, 3]])
+        with self.assertRaisesRegex(RuntimeError, "record upload failed"):
+            mod.handle_frames({
+                **params, "action": "frames", "generation": gen,
+                "task_id": f"sheet_tiles_partial-worker_{gen}_w0",
+                "frame_indices": [0, 1],
+            })
+        self.assertFalse([key for key in stub.objects if "/tiles/" in key])
+        run = json.loads(stub.objects["sheets/partial-worker/run.json"])
+        self.assertEqual(run["status"], "failed")
+
+    def test_partial_stitch_upload_cleans_attempt_prefix(self):
+        import handler_poly_sheet as mod
+
+        class FailManifestPutS3(_S3Stub):
+            def put_object(self, *args, **kwargs):
+                key = kwargs.get("Key")
+                if (key and key.startswith("sheets/partial-stitch/g272727272727/")
+                        and key.endswith("/sheet.json")):
+                    raise RuntimeError("manifest upload failed")
+                return super().put_object(*args, **kwargs)
+
+        gen = "g272727272727"
+        stub = FailManifestPutS3(); self._patched(mod, stub)
+        params = _run_params("partial-stitch")
+        _admit(mod, stub, params, gen, [[0, 1], [2, 3]])
+        for k in range(4):
+            key = mod._tile_key("partial-stitch", gen, k)
+            stub.put_object(Bucket="b", Key=key, Body=bytes(32 * 32))
+            stub.put_object(Bucket="b", Key=key.replace(".bin", ".json"),
+                            Body=json.dumps({"frame": k, "value": k,
+                                             "values": [k], "degree": 5,
+                                             "bounds": [-1, 1, -1, 1]}).encode())
+        with self.assertRaisesRegex(RuntimeError, "manifest upload failed"):
+            mod.handle_stitch({
+                **params, "action": "stitch", "generation": gen,
+                "task_id": f"sheet_stitch_partial-stitch_{gen}",
+            })
+        attempt_root = f"sheets/partial-stitch/{gen}/"
+        self.assertFalse([key for key in stub.objects if key.startswith(attempt_root)])
 
 
 # Defined LAST so pytest (file-definition order) runs it AFTER every other

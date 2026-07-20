@@ -830,7 +830,7 @@ async function _cancelSheetRun(sheetId, generation, opts) {
     // across the awaits below).
     const staleForStatus = () => {
         const cur = _sheetRunLoad();
-        return !!(cur && cur.sheetId === sheetId && cur.generation !== generation);
+        return !!(cur && (cur.sheetId !== sheetId || cur.generation !== generation));
     };
     if (statusEl && !staleForStatus()) { statusEl.textContent = `Sheet ${sheetId}: cancelling...`; statusEl.className = 'status'; }
     // round-8/9 finding 5/1/2: confirm through the AUTHORITATIVE run.json,

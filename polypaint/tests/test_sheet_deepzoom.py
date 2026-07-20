@@ -41,6 +41,8 @@ def _fake_dz_run(cmd, capture_output=True, text=True, timeout=600, env=None):
     """Stand-in for the linux dz_export binary: writes a minimal
     pyramid to the requested base path and reports NON-SQUARE dims."""
     dz_base = cmd[2]
+    if cmd[3:] != ["--bilevel"]:
+        raise AssertionError(f"sheet DeepZoom did not request bilevel output: {cmd}")
     os.makedirs(os.path.dirname(dz_base), exist_ok=True)
     with open(dz_base + ".dzi", "w") as fh:
         fh.write("<Image/>")
@@ -51,7 +53,7 @@ def _fake_dz_run(cmd, capture_output=True, text=True, timeout=600, env=None):
 
     class _R:
         returncode = 0
-        stdout = json.dumps({"width": 1044, "height": 528})
+        stdout = json.dumps({"width": 1044, "height": 528, "bitdepth": 1})
         stderr = ""
     return _R()
 
@@ -83,6 +85,7 @@ class TestSheetDeepZoom(unittest.TestCase):
         self.assertEqual(meta["sheet_id"], "sheet_abc")
         # non-square accepted (the render export path would refuse this)
         self.assertEqual((meta["width"], meta["height"]), (1044, 528))
+        self.assertEqual(meta["tile_bitdepth"], 1)
         self.assertIn("deepzoom/sheet_abc/dz_test/viewer.html", stub.objects)
         self.assertIn("deepzoom/sheet_abc/dz_test/image.dzi", stub.objects)
         self.assertIn("deepzoom/sheet_abc/dz_test/image_files/0/0_0.png", stub.objects)

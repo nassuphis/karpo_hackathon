@@ -156,6 +156,90 @@ function _sheetRunClear() {
 
 const SHEET_MAX_WORKERS = 8;
 
+function _sheetCanvasGeometry(scans, steps, frame, requestedCols) {
+    /* Mirror server geometry for a truthful pre-run size/layout summary.
+     * Admission remains server-authoritative. */
+    const twoDimensional = Array.isArray(scans) && scans.length === 2;
+    const cols = twoDimensional
+        ? Number(scans[0].steps)
+        : (Number(requestedCols) || Math.ceil(Math.sqrt(steps)));
+    const rows = twoDimensional ? Number(scans[1].steps) : Math.ceil(steps / cols);
+    const tilePx = Number(frame.tile_px);
+    const marginPx = Number(frame.margin_px);
+    const width = cols * tilePx + (cols + 1) * marginPx;
+    const height = rows * tilePx + (rows + 1) * marginPx;
+    return {
+        cols, rows, width, height, pixels: width * height,
+        tilePx, marginPx, twoDimensional,
+    };
+}
+
+function _sheetCanvasSummary(geometry, steps) {
+    return `${geometry.cols} columns x ${geometry.rows} rows = ${steps} frames; ` +
+        `${geometry.tilePx}px tiles + ${geometry.marginPx}px margins -> ` +
+        `${geometry.width}x${geometry.height}px ` +
+        `(${(geometry.pixels / 1e6).toFixed(1)}MP, ` +
+        `~${(geometry.pixels / (8 * 1024 * 1024)).toFixed(1)}MiB uncompressed at 1 bit; ` +
+        `streamed, no full canvas allocation)`;
+}
+
+function _sheetGeometryChanged() {
+    const summaryEl = document.getElementById('sheet-layout-summary');
+    const colsEl = document.getElementById('sheet-cols');
+    const scans = _sheetActiveScans();
+    const twoDimensional = scans.length === 2;
+    if (colsEl) {
+        colsEl.disabled = twoDimensional;
+        colsEl.title = twoDimensional
+            ? 'Ignored for a 2-D scan: line 1 Steps is columns and line 2 Steps is rows.'
+            : '0 = auto (square-ish)';
+    }
+    if (!summaryEl) return;
+    if (!scans.length) {
+        summaryEl.textContent = 'No active scan. Enter a token on at least one line.';
+        summaryEl.style.color = '#ff8a80';
+        return;
+    }
+    const steps = scans.reduce((total, scan) => total * scan.steps, 1);
+    if (steps > 256) {
+        summaryEl.textContent = `Invalid layout: ${steps} frames exceeds the 256-frame limit. ` +
+            (twoDimensional ? 'Reduce one or both Steps fields.' : 'Reduce Steps.');
+        summaryEl.style.color = '#ff8a80';
+        return;
+    }
+    const frame = {
+        tile_px: Math.max(32, Math.min(1024,
+            parseInt(_sheetVal('compute-preview-size', 256), 10) || 256)),
+        margin_px: Math.max(0, Math.min(64,
+            parseInt(_sheetVal('sheet-margin', 4), 10) || 0)),
+    };
+    const requestedCols = twoDimensional
+        ? undefined
+        : (parseInt(_sheetVal('sheet-cols', 0), 10) || Math.ceil(Math.sqrt(steps)));
+    const geometry = _sheetCanvasGeometry(scans, steps, frame, requestedCols);
+    const mode = twoDimensional
+        ? '2-D scan (the two Steps fields set columns and rows; Cols is ignored): '
+        : '1-D scan: ';
+    summaryEl.textContent = mode + _sheetCanvasSummary(geometry, steps) +
+        '. The 1-bit PNG is stitched by libvips.';
+    summaryEl.style.color = '#9aa0b4';
+}
+
+function _sheetBindGeometryControls() {
+    const ids = [
+        'sheet-token', 'sheet-token2', 'sheet-steps', 'sheet-steps2',
+        'sheet-cols', 'sheet-margin', 'compute-preview-size',
+    ];
+    for (const id of ids) {
+        const el = document.getElementById(id);
+        if (!el || el._sheetGeometryBound) continue;
+        el._sheetGeometryBound = true;
+        el.addEventListener('input', _sheetGeometryChanged);
+        el.addEventListener('change', _sheetGeometryChanged);
+    }
+    _sheetGeometryChanged();
+}
+
 function _sheetFrameRanges(steps, workers) {
     // contiguous, balanced: frame k goes to worker floor(k*W/steps)
     const ranges = Array.from({ length: workers }, () => []);
@@ -192,10 +276,6 @@ async function runPolySheet() {
         if (statusEl) { statusEl.textContent = `Total frames ${steps} > 256 — reduce steps (product of active lines).`; statusEl.className = 'status error'; }
         return;
     }
-    const sheetId = _sheetNewId();
-    const jobId = sheetId;
-    const taskId = 'sheet_run_' + sheetId;
-
     let frame;
     try {
         frame = _sheetInheritedFrame();
@@ -203,6 +283,15 @@ async function runPolySheet() {
         if (statusEl) { statusEl.textContent = e.message; statusEl.className = 'status error'; }
         return;
     }
+
+    const requestedCols = scans.length === 2
+        ? undefined
+        : (parseInt(_sheetVal('sheet-cols', 0), 10) || Math.ceil(Math.sqrt(steps)));
+    const geometry = _sheetCanvasGeometry(scans, steps, frame, requestedCols);
+
+    const sheetId = _sheetNewId();
+    const jobId = sheetId;
+    const taskId = 'sheet_run_' + sheetId;
 
     const payload = _attachProgramSourcePayload({
         job_id: jobId,
@@ -216,19 +305,28 @@ async function runPolySheet() {
         coeff_program_chain: _effectiveCoeffProgramChainForCompute(),
         scans,
         frame,
-        grid_cols: scans.length === 2
-            ? undefined   // cross product: the grid IS steps1 x steps2
-            : (parseInt(_sheetVal('sheet-cols', 0), 10) || Math.ceil(Math.sqrt(steps))),
+        // Cross product: the grid IS steps1 x steps2.
+        grid_cols: requestedCols,
     });
 
     const orig = btn ? btn.textContent : 'Run Sheet';
     if (btn) { btn.disabled = true; btn.textContent = 'Validating...'; }
-    if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: validating + probing frame 0...`; statusEl.className = 'status'; }
+    if (statusEl) {
+        statusEl.textContent = `Sheet ${sheetId}: validating ${_sheetCanvasSummary(geometry, steps)}; probing frame 0...`;
+        statusEl.className = 'status';
+    }
+    let admitted = false;
     try {
         // synchronous admission: the server validates everything, probes
         // frame 0 (real degree -> honest budget), mints the generation,
         // and pre-writes every status row BEFORE any async work
-        const run = await lambdaPost('poly_sheet', { ...payload, action: 'begin' }, '/sheet-begin');
+        const run = await lambdaPost(
+            'poly_sheet', { ...payload, action: 'begin' }, '/sheet-begin',
+            { idempotent: false });
+        if (!run || !run.generation || !Array.isArray(run.workers)) {
+            throw new Error('sheet-begin returned an invalid admission record');
+        }
+        admitted = true;
         const desc = {
             sheetId, jobId, generation: run.generation,
             steps, funcName, n: frame.n,
@@ -250,6 +348,18 @@ async function runPolySheet() {
         _sheetRunClear();                       // terminal success
         if (btn) { btn.textContent = '✓ Done'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
     } catch (e) {
+        if (!admitted) {
+            // No generation was returned, so there is nothing the resume
+            // machinery can safely redispatch or the rail can track. The old
+            // shared catch created a permanent running card and claimed it
+            // would retry even though no descriptor existed.
+            if (statusEl) {
+                statusEl.textContent = 'Sheet admission failed: ' + e.message;
+                statusEl.className = 'status error';
+            }
+            if (btn) { btn.textContent = orig; btn.disabled = false; }
+            return;
+        }
         // only a SERVER-reported terminal outcome retires the descriptor;
         // a transient drive failure (network, poll timeout) keeps it AND
         // schedules a retry — round-7 finding 4: the initial drive used to
@@ -936,6 +1046,7 @@ async function _sheetDiscoverServerRun(rows) {
 }
 
 async function loadSheetsTab() {
+    _sheetGeometryChanged();
     void resumeSheetRun();
     // round-14 finding 2: re-issue any cancellation intents that a reload
     // stripped of their in-memory retry timers (identity-scoped, safe).
@@ -1149,6 +1260,7 @@ async function populateSelectedSheet(btn) {
             if (radio) { radio.checked = true; _setComputePreviewViewportMode('quantile'); }
         }
         if (typeof _applyComputePreviewRotation === 'function') _applyComputePreviewRotation();
+        _sheetGeometryChanged();
 
         // pipeline (function + programs + cfpv) into the Compute tab
         _populateComputeFromDetail(sheetId, {

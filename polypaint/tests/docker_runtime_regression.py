@@ -175,6 +175,15 @@ def read_png_dims(path):
     return struct.unpack(">II", header[16:24])
 
 
+def read_png_ihdr(path):
+    with open(path, "rb") as f:
+        header = f.read(29)
+    assert header[:8] == b"\x89PNG\r\n\x1a\n", "PNG signature missing for %s" % path
+    assert header[12:16] == b"IHDR", "PNG IHDR missing for %s" % path
+    width, height = struct.unpack(">II", header[16:24])
+    return width, height, header[24], header[25]
+
+
 def read_jpeg_dims(path):
     with open(path, "rb") as f:
         assert f.read(2) == b"\xff\xd8", "JPEG SOI missing for %s" % path
@@ -2853,6 +2862,106 @@ def test_raw_to_bilevel_runtime():
     print("=== raw_to_bilevel runtime PASSED ===")
 
 
+def test_sheet_stitch_runtime():
+    print("\n--- sheet_stitch runtime ---")
+
+    bin_path = "/src/sheet_stitch"
+    assert os.path.exists(bin_path), "sheet_stitch not found at %s" % bin_path
+    env = {**os.environ, "LD_LIBRARY_PATH": "/opt/lib",
+           "PATH": "/opt/bin:" + os.environ.get("PATH", "")}
+
+    tile_paths = []
+    tiles = [bytearray(16), bytearray([255] * 16), bytearray(16)]
+    tiles[0][0] = 255
+    tiles[1][15] = 0
+    tiles[2][2 * 4 + 1] = 255
+    for i, tile in enumerate(tiles):
+        path = "/tmp/sheet_stitch_%d.raw" % i
+        with open(path, "wb") as f:
+            f.write(tile)
+        tile_paths.append(path)
+    list_path = "/tmp/sheet_stitch_tiles.txt"
+    out_png = "/tmp/sheet_stitch_out.png"
+    out_csv = "/tmp/sheet_stitch_out.csv"
+    with open(list_path, "w") as f:
+        f.write("\n".join(tile_paths) + "\n")
+
+    r = subprocess.run(
+        [bin_path, list_path, out_png, "4", "2", "2", "1", "0"],
+        capture_output=True, text=True, timeout=20, env=env)
+    assert r.returncode == 0, "sheet_stitch failed: " + r.stderr[:300]
+    meta = json.loads(r.stdout)
+    assert meta["width"] == 11 and meta["height"] == 11, meta
+    assert meta["tiles"] == 3 and meta["bitdepth"] == 1, meta
+    assert read_png_ihdr(out_png) == (11, 11, 1, 0), (
+        "sheet_stitch output is not 1-bit grayscale", read_png_ihdr(out_png))
+
+    r = subprocess.run(
+        ["/opt/bin/vips", "csvsave", out_png, out_csv],
+        capture_output=True, text=True, timeout=20, env=env)
+    assert r.returncode == 0, "vips csvsave sheet PNG failed: " + r.stderr[:200]
+    grid = read_csv_grid(out_csv)
+    assert len(grid) == 11 and all(len(row) == 11 for row in grid)
+    assert grid[1][1] > 0, "tile 0 marker missing"
+    assert grid[1][6] > 0, "tile 1 body missing"
+    assert grid[4][9] == 0, "tile 1 cleared marker missing"
+    assert grid[8][2] > 0, "tile 2 marker missing"
+    assert grid[6][6] == 0, "unfilled final cell must use background"
+    assert all(grid[0][x] == 0 for x in range(11)), "outer margin must use background"
+    assert all(grid[y][5] == 0 for y in range(11)), "inner gutter must use background"
+
+    cleanup(*(tile_paths + [list_path, out_png, out_csv]))
+    print("=== sheet_stitch runtime PASSED ===")
+
+
+def test_sheet_deepzoom_bilevel_runtime():
+    print("\n--- sheet DeepZoom bilevel runtime ---")
+
+    stitch = "/src/sheet_stitch"
+    dz_export = "/src/dz_export"
+    env = {**os.environ, "LD_LIBRARY_PATH": "/opt/lib",
+           "PATH": "/opt/bin:" + os.environ.get("PATH", "")}
+    raw_path = "/tmp/sheet_dz.raw"
+    list_path = "/tmp/sheet_dz_tiles.txt"
+    sheet_png = "/tmp/sheet_dz.png"
+    dz_base = "/tmp/sheet_dz/image"
+    tile = bytearray(64 * 64)
+    for y in range(64):
+        for x in range(64):
+            if (x // 8 + y // 8) % 2:
+                tile[y * 64 + x] = 255
+    with open(raw_path, "wb") as f:
+        f.write(tile)
+    with open(list_path, "w") as f:
+        f.write(raw_path + "\n")
+
+    r = subprocess.run(
+        [stitch, list_path, sheet_png, "64", "1", "1", "0", "0"],
+        capture_output=True, text=True, timeout=20, env=env)
+    assert r.returncode == 0, "sheet_stitch fixture failed: " + r.stderr[:300]
+    r = subprocess.run(
+        [dz_export, sheet_png, dz_base, "--bilevel"],
+        capture_output=True, text=True, timeout=20, env=env)
+    assert r.returncode == 0, "bilevel dz_export failed: " + r.stderr[:300]
+    meta = json.loads(r.stdout)
+    assert meta["bitdepth"] == 1, meta
+    tile_paths = []
+    for root, _dirs, files in os.walk(dz_base + "_files"):
+        tile_paths.extend(os.path.join(root, name) for name in files
+                          if name.endswith(".png"))
+    assert tile_paths, "bilevel dz_export produced no PNG tiles"
+    for path in tile_paths:
+        _w, _h, bitdepth, color_type = read_png_ihdr(path)
+        assert (bitdepth, color_type) == (1, 0), (
+            "DeepZoom tile is not 1-bit grayscale", path,
+            (bitdepth, color_type))
+
+    import shutil
+    cleanup(raw_path, list_path, sheet_png, dz_base + ".dzi")
+    shutil.rmtree(dz_base + "_files", ignore_errors=True)
+    print("=== sheet DeepZoom bilevel runtime PASSED ===")
+
+
 def test_color_to_bilevel_handler_runtime():
     print("\n--- Color2Bilevel handler runtime ---")
 
@@ -3700,6 +3809,7 @@ if __name__ == "__main__":
         "/src/coeffs_bilevel_raster",
         "/src/bilevel_merge",
         "/src/raw_to_bilevel",
+        "/src/sheet_stitch",
         "/src/assemble_greyscale",
     ]:
         magic = open(bin_path, "rb").read(4)
@@ -3732,6 +3842,8 @@ if __name__ == "__main__":
     test_coeffs_bilevel_raster_runtime()
     test_bilevel_merge_assemble_runtime()
     test_raw_to_bilevel_runtime()
+    test_sheet_stitch_runtime()
+    test_sheet_deepzoom_bilevel_runtime()
     test_color_to_bilevel_handler_runtime()
     test_bilevel_handler_sparse_finalize_runtime()
     test_solve_proximity_stats()

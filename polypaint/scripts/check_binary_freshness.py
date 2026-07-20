@@ -53,6 +53,7 @@ DEPLOY_BINARIES = {
     "png_export": ["png_export.c"],
     "dz_export": ["dz_export.c"],
     "wall_dz": ["wall_dz.c"],
+    "sheet_stitch": ["sheet_stitch.c"],
     "autolevels_render": ["autolevels_render.c"],
 }
 

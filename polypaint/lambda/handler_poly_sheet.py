@@ -40,8 +40,10 @@ import logging
 import math
 import os
 import re
+import shutil
 import struct
 import subprocess
+import tempfile
 import time
 
 import boto3
@@ -56,7 +58,7 @@ from shared import (
     REF_SIZE,
     _get_ddb,
     compute_viewport_from_bin,
-    encode_png_gray,
+    imgpipe_env,
     is_missing_s3_error,
     ok_response,
     parse_body,
@@ -72,6 +74,7 @@ s3 = boto3.client("s3")
 SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
 SWEEP_MT = os.path.join(os.path.dirname(__file__), "sweep_mt")
 SWEEP_CM = os.path.join(os.path.dirname(__file__), "sweep_cm")
+SHEET_STITCH = os.path.join(os.path.dirname(__file__), "sheet_stitch")
 
 TMP_COEFFS = "/tmp/sheet_coeffs.bin"
 TMP_ROOTS = "/tmp/sheet_roots.bin"
@@ -91,9 +94,9 @@ COMMENT_RE = re.compile(r"#[^\n]*")
 MAX_STEPS = 256
 MIN_N, MAX_N = 8, 256
 MIN_TILE, MAX_TILE = 32, 1024
-MAX_CANVAS_PX = 150_000_000   # stitched mosaic pixel cap (~150MB gray buffer)
 MAX_COLS = 32
 BUDGET_US = 720_000_000  # ~12 of the lambda's 15 minutes
+SHEET_STITCH_TIMEOUT_S = 600
 
 # fields the scan token may appear in (textual substitution BEFORE compile)
 SOURCE_FIELDS = ("coeff_program_source_text", "param_program_source_text")
@@ -140,6 +143,16 @@ class _RunStateUnconfirmed(RuntimeError):
     """
 
 
+class _SheetRequestError(RuntimeError):
+    """Deterministic sheet admission rejection caused by request values."""
+
+
+def _sheet_error_response(status_code, message):
+    response = ok_response({"error": str(message)})
+    response["statusCode"] = int(status_code)
+    return response
+
+
 def handler(event, context):
     if _is_sqs_gc_event(event):
         for record in event["Records"]:
@@ -158,7 +171,18 @@ def handler(event, context):
     params = parse_body(event)
     action = str(params.get("action") or "").strip().lower()
     if action == "begin":
-        return handle_begin(params)
+        try:
+            return handle_begin(params)
+        except _SheetRequestError as exc:
+            logger.warning("poly-sheet admission rejected: %s", exc)
+            return _sheet_error_response(400, exc)
+        except Exception as exc:
+            # API Gateway otherwise replaces an unhandled Lambda exception
+            # with the useless text "Internal Server Error". Preserve a
+            # structured 500 for the synchronous admission request while
+            # leaving async worker/stitch exceptions unhandled for retries.
+            logger.exception("poly-sheet admission failed")
+            return _sheet_error_response(500, f"sheet admission failed: {exc}")
     if action == "cancel":
         return handle_cancel(params)
     if action == "abandon":
@@ -606,11 +630,6 @@ def _parse_sheet_config(params):
         rows = math.ceil(steps / cols)
     canvas_w = cols * tile_px + (cols + 1) * margin_px
     canvas_h = rows * tile_px + (rows + 1) * margin_px
-    canvas_px = canvas_w * canvas_h
-    if canvas_px > MAX_CANVAS_PX:
-        raise RuntimeError(
-            f"mosaic too large: {canvas_w}x{canvas_h} = {canvas_px / 1e6:.0f}MP "
-            f"> {MAX_CANVAS_PX / 1e6:.0f}MP — reduce tile_px, frames, or columns")
 
     fg, bg = (255, 0) if polarity == "white_on_black" else (0, 255)
     return {
@@ -738,14 +757,108 @@ def _render_frame_tile(cfg, params, k, frozen_cache, deadline_s=None):
     return tile, record
 
 
-def _blit_tile(canvas, cfg, k, tile):
-    row, col = divmod(k, cfg["cols"])
-    tile_px, margin_px, canvas_w = cfg["tile_px"], cfg["margin_px"], cfg["canvas_w"]
-    y0 = margin_px + row * (tile_px + margin_px)
-    x0 = margin_px + col * (tile_px + margin_px)
-    for y in range(tile_px):
-        start = (y0 + y) * canvas_w + x0
-        canvas[start:start + tile_px] = tile[y * tile_px:(y + 1) * tile_px]
+def _write_raw_tile(path, tile, expected_bytes, label):
+    if len(tile) != expected_bytes:
+        raise RuntimeError(
+            f"{label} size mismatch: expected {expected_bytes}, got {len(tile)}")
+    with open(path, "wb") as fh:
+        fh.write(tile)
+    return path
+
+
+def _png_ihdr(path):
+    """Read enough PNG bytes to prove dimensions and true grayscale depth."""
+    with open(path, "rb") as fh:
+        header = fh.read(29)
+    if (len(header) < 29 or header[:8] != b"\x89PNG\r\n\x1a\n"
+            or header[12:16] != b"IHDR"
+            or struct.unpack(">I", header[8:12])[0] != 13):
+        raise RuntimeError("sheet_stitch produced an invalid PNG header")
+    width, height = struct.unpack(">II", header[16:24])
+    return {
+        "width": width,
+        "height": height,
+        "bitdepth": header[24],
+        "color_type": header[25],
+    }
+
+
+def _run_sheet_stitch(cfg, tile_paths, work_dir):
+    """Use libvips to lazily join raw tiles and stream a 1-bit PNG."""
+    if len(tile_paths) != cfg["steps"]:
+        raise RuntimeError(
+            f"sheet_stitch requires {cfg['steps']} tiles, got {len(tile_paths)}")
+    list_path = os.path.join(work_dir, "tiles.txt")
+    output_path = os.path.join(work_dir, "sheet.png")
+    with open(list_path, "w", encoding="utf-8") as fh:
+        for path in tile_paths:
+            if "\n" in path or "\r" in path:
+                raise RuntimeError("sheet tile path contains a newline")
+            fh.write(path + "\n")
+
+    try:
+        run = subprocess.run(
+            [SHEET_STITCH, list_path, output_path,
+             str(cfg["tile_px"]), str(cfg["cols"]), str(cfg["rows"]),
+             str(cfg["margin_px"]), str(cfg["bg"])],
+            capture_output=True, text=True,
+            timeout=SHEET_STITCH_TIMEOUT_S, env=imgpipe_env())
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"sheet_stitch exceeded its {SHEET_STITCH_TIMEOUT_S}s native encode budget"
+        ) from exc
+    except OSError as exc:
+        raise RuntimeError(f"sheet_stitch could not start: {exc}") from exc
+    if run.returncode != 0:
+        detail = (run.stderr or run.stdout or "unknown error").strip()[:1000]
+        raise RuntimeError(f"sheet_stitch failed: {detail}")
+    try:
+        native = json.loads(run.stdout)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"sheet_stitch returned invalid metadata: {run.stdout[:500]!r}") from exc
+    if not isinstance(native, dict):
+        raise RuntimeError(
+            f"sheet_stitch metadata must be an object, got {type(native).__name__}")
+
+    ihdr = _png_ihdr(output_path)
+    expected = (cfg["canvas_w"], cfg["canvas_h"])
+    actual = (ihdr["width"], ihdr["height"])
+    if actual != expected:
+        raise RuntimeError(
+            f"sheet_stitch geometry mismatch: expected {expected[0]}x{expected[1]}, "
+            f"got {actual[0]}x{actual[1]}")
+    if ihdr["bitdepth"] != 1 or ihdr["color_type"] != 0:
+        raise RuntimeError(
+            "sheet_stitch output must be 1-bit grayscale PNG, got "
+            f"bitdepth={ihdr['bitdepth']} color_type={ihdr['color_type']}")
+    expected_native = {
+        "width": cfg["canvas_w"],
+        "height": cfg["canvas_h"],
+        "tiles": len(tile_paths),
+        "cols": cfg["cols"],
+        "rows": cfg["rows"],
+        "bitdepth": 1,
+    }
+    try:
+        actual_native = {key: int(native[key]) for key in expected_native}
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"sheet_stitch metadata is incomplete or invalid: {native}") from exc
+    if actual_native != expected_native:
+        raise RuntimeError(
+            "sheet_stitch metadata disagrees with the requested sheet: "
+            f"expected {expected_native}, got {actual_native}")
+    png_bytes = os.path.getsize(output_path)
+    try:
+        reported_bytes = int(native["file_size"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"sheet_stitch metadata has no valid file_size: {native}") from exc
+    if png_bytes <= 0 or reported_bytes != png_bytes:
+        raise RuntimeError(
+            f"sheet_stitch file-size mismatch: metadata={reported_bytes}, file={png_bytes}")
+    return output_path, native
 
 
 def _tile_key(sheet_id, generation, k):
@@ -1162,7 +1275,11 @@ def _sheet_manifest(cfg, params, t0, degree, frame_records, render_mode):
         "png_key": f"sheets/{cfg['sheet_id']}/sheet.png",
         "frames": cfg["steps"],
         "grid": {"cols": cfg["cols"], "rows": cfg["rows"]},
+        "width": cfg["canvas_w"],
+        "height": cfg["canvas_h"],
         "tile_px": cfg["tile_px"],
+        "png_bitdepth": 1,
+        "stitcher": "libvips-sheet-stitch-v1",
         "n": cfg["n"],
         "degree": degree,
         "solver_mode": cfg["solver_mode"],
@@ -1202,7 +1319,7 @@ def _attempt_prefix(sheet_id, generation, owner):
     return f"sheets/{sheet_id}/{generation}/{_attempt_token(owner)}/"
 
 
-def _write_generation_artifacts(cfg, generation, manifest, canvas, owner,
+def _write_generation_artifacts(cfg, generation, manifest, png_path, owner,
                                 *, prefix=None):
     """Write the mosaic + manifest to an ATTEMPT-scoped prefix
     (round-8 finding 2). Two stitchers of the SAME generation (the
@@ -1214,10 +1331,10 @@ def _write_generation_artifacts(cfg, generation, manifest, canvas, owner,
     (Round-3 finding 4 established generation scoping; attempt scoping
     closes the same-generation two-stitcher overwrite the reviewer found.)"""
     prefix = prefix or _attempt_prefix(cfg["sheet_id"], generation, owner)
-    png = encode_png_gray(cfg["canvas_w"], cfg["canvas_h"], bytes(canvas))
     try:
-        s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.png", Body=png,
-                      ContentType="image/png")
+        with open(png_path, "rb") as png:
+            s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.png", Body=png,
+                          ContentType="image/png")
         s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.json",
                       Body=json.dumps(manifest, indent=1).encode("utf-8"),
                       ContentType="application/json")
@@ -1789,8 +1906,17 @@ def _probe_frame_cost(params, cfg):
     measured per-frame compile cost feed the budget (CR35-F6: the old
     estimate hardcoded degree 40 and ignored compile entirely)."""
     t0 = time.time()
-    frame_params = _substitute_frame(params, cfg, 0)
-    compiled = _compile_compute_inputs(frame_params)
+    try:
+        frame_params = _substitute_frame(params, cfg, 0)
+    except RuntimeError as exc:
+        raise _SheetRequestError(str(exc)) from exc
+    try:
+        compiled = _compile_compute_inputs(frame_params)
+    except ValueError as exc:
+        # Source syntax, arity, and token-limit failures are deterministic
+        # request errors, just as they are in Compute Preview. Keep native
+        # probe/subprocess failures outside this block as operational 500s.
+        raise _SheetRequestError(str(exc)) from exc
     compile_ms = (time.time() - t0) * 1000.0
     probe_spec = {
         "mode": "coeffgen",
@@ -1815,8 +1941,14 @@ def handle_begin(params):
     return the dispatch plan the client relays to the async workers."""
     job_id = str(params.get("job_id") or "").strip()
     if not job_id:
-        raise RuntimeError("poly-sheet begin requires job_id")
-    cfg = _parse_sheet_config(params)
+        raise _SheetRequestError("poly-sheet begin requires job_id")
+    try:
+        cfg = _parse_sheet_config(params)
+    except (RuntimeError, TypeError, ValueError, OverflowError) as exc:
+        # _parse_sheet_config is pure request validation. Classify its
+        # failures explicitly so API Gateway returns a useful 400 instead
+        # of converting them into a generic integration 500.
+        raise _SheetRequestError(str(exc)) from exc
     sheet_id = cfg["sheet_id"]
     steps = cfg["steps"]
 
@@ -1829,7 +1961,7 @@ def handle_begin(params):
     frames_per_worker = math.ceil(steps / workers)
     est_worker_us = int(frames_per_worker * frame_us * 1.4)
     if est_worker_us > BUDGET_US:
-        raise RuntimeError(
+        raise _SheetRequestError(
             f"sheet too large: {steps} frames at measured degree {degree} "
             f"({frames_per_worker} frames/worker x {frame_us / 1e6:.1f}s "
             f"estimated) exceeds the {BUDGET_US / 1e6:.0f}s worker budget — "
@@ -1927,7 +2059,18 @@ def handle_begin(params):
                 except (TypeError, ValueError):
                     prior_steps = 0
                 if 1 <= prior_steps <= MAX_STEPS:
-                    _schedule_generation_gc(sheet_id, prior_gen, prior_steps)
+                    try:
+                        _schedule_generation_gc(sheet_id, prior_gen, prior_steps)
+                    except Exception:
+                        # The current generation is already committed. Never
+                        # turn a best-effort compatibility cleanup enqueue
+                        # into an ambiguous admission failure that tempts the
+                        # client to create another generation. Feature-era
+                        # prior runs already carry their own admission GC.
+                        logger.exception(
+                            "poly-sheet prior-generation GC enqueue failed after admission sheet=%s prior_generation=%s",
+                            sheet_id, prior_gen,
+                        )
             return ok_response(run)
         except _CASConflict:
             continue   # a concurrent commit changed run.json; re-read
@@ -2139,6 +2282,7 @@ def handle_stitch(params):
     # Establish identity before the first PUT so every exception path knows
     # which attempt-private prefix may contain a partial upload.
     gen_prefix = _attempt_prefix(sheet_id, generation, owner)
+    work_dir = None
     try:
         t0 = float(params.get("started_at_s") or time.time())
 
@@ -2170,7 +2314,8 @@ def handle_stitch(params):
                                 "cancelled": final == "cancelled"})
 
         tile_bytes = cfg["tile_px"] * cfg["tile_px"]
-        canvas = bytearray(bytes([cfg["bg"]]) * (cfg["canvas_w"] * cfg["canvas_h"]))
+        work_dir = tempfile.mkdtemp(prefix="poly-sheet-stitch-", dir="/tmp")
+        tile_paths = []
         frame_records = []
         missing = []
         for k in range(cfg["steps"]):
@@ -2198,7 +2343,9 @@ def handle_stitch(params):
             if len(tile) != tile_bytes:
                 raise RuntimeError(
                     f"tile {k} size mismatch: expected {tile_bytes}, got {len(tile)}")
-            _blit_tile(canvas, cfg, k, tile)
+            tile_paths.append(_write_raw_tile(
+                os.path.join(work_dir, f"tile_{k:05d}.raw"),
+                tile, tile_bytes, f"tile {k}"))
             frame_records.append(record)
         if missing:
             raise RuntimeError(
@@ -2216,7 +2363,7 @@ def handle_stitch(params):
         # the expensive encode+upload — a reclaimed stitch produces no
         # artifacts. The heartbeat above was only a keep-alive.
         if not _owns_for_write(job_id, task_id, owner, result_data={
-                "phase": "stitch", "phase_label": "Publishing",
+                "phase": "stitch", "phase_label": "Encoding 1-bit PNG",
                 "sheet_id": sheet_id, "generation": generation,
                 "frames": cfg["steps"]}):
             return ok_response({"sheet_id": sheet_id, "lost_lease": True})
@@ -2230,9 +2377,30 @@ def handle_stitch(params):
         if run_state == RUN_INACTIVE:
             return _confirmed_run_inactive_response(
                 sheet_id, generation, fenced_run)
+
+        png_path, stitch_meta = _run_sheet_stitch(cfg, tile_paths, work_dir)
+        manifest["png_bytes"] = int(stitch_meta.get("file_size") or 0)
+        manifest["elapsed_ms"] = int((time.time() - t0) * 1000)
+
+        # Native encoding can be the longest local section. Re-prove both
+        # ownership and run activity before the first shared artifact PUT;
+        # a cancelled/superseded stitch then leaves only its private /tmp files.
+        if not _owns_for_write(job_id, task_id, owner, result_data={
+                "phase": "stitch", "phase_label": "Uploading 1-bit PNG",
+                "sheet_id": sheet_id, "generation": generation,
+                "frames": cfg["steps"]}):
+            return ok_response({"sheet_id": sheet_id, "lost_lease": True})
+        run_state, fenced_run = _run_write_state(sheet_id, generation)
+        if run_state == RUN_UNKNOWN:
+            raise _RunStateUnconfirmed(
+                "run.json state could not be confirmed after sheet encoding")
+        if run_state == RUN_INACTIVE:
+            return _confirmed_run_inactive_response(
+                sheet_id, generation, fenced_run)
+
         manifest["png_key"] = gen_prefix + "sheet.png"
         manifest["manifest_key"] = gen_prefix + "sheet.json"
-        _write_generation_artifacts(cfg, generation, manifest, canvas, owner,
+        _write_generation_artifacts(cfg, generation, manifest, png_path, owner,
                                     prefix=gen_prefix)
         # round-9 finding 3: FENCE AGAIN immediately before the commit — the
         # encode + three writes above are an unbounded section during which
@@ -2298,6 +2466,8 @@ def handle_stitch(params):
             phase_label="Stitch failed", own_attempt_prefix=gen_prefix)
     finally:
         hb.stop()
+        if work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
     # round-5 finding 2: past the commit the sheet IS published. Cleanup
     # and the done-report are best-effort — a failed DDB status write (or
@@ -2334,7 +2504,9 @@ def handle_run(params):
         "sheet_id": sheet_id, "frames": steps, "frame": 0,
     })
 
-    canvas = bytearray(bytes([cfg["bg"]]) * (cfg["canvas_w"] * cfg["canvas_h"]))
+    work_dir = tempfile.mkdtemp(prefix="poly-sheet-run-", dir="/tmp")
+    tile_paths = []
+    tile_bytes = cfg["tile_px"] * cfg["tile_px"]
     frozen_cache = {}
     frame_records = []
     degree = None
@@ -2349,7 +2521,9 @@ def handle_run(params):
 
             tile, record = _render_frame_tile(cfg, params, k, frozen_cache)
             degree = record["degree"]
-            _blit_tile(canvas, cfg, k, tile)
+            tile_paths.append(_write_raw_tile(
+                os.path.join(work_dir, f"tile_{k:05d}.raw"),
+                tile, tile_bytes, f"tile {k}"))
             frame_records.append(record)
             report_status(job_id, task_id, "running", result_data={
                 "phase": "sheet", "phase_label": f"Sheet frame {k + 1}/{steps}",
@@ -2359,9 +2533,12 @@ def handle_run(params):
         manifest = _sheet_manifest(cfg, params, t0, degree, frame_records, "single")
         # in-process single-shot path (test/dev only — not dispatchable):
         # writes the fixed keys directly, no pointer commit
-        png = encode_png_gray(cfg["canvas_w"], cfg["canvas_h"], bytes(canvas))
-        s3.put_object(Bucket=BUCKET, Key=f"sheets/{sheet_id}/sheet.png",
-                      Body=png, ContentType="image/png")
+        png_path, stitch_meta = _run_sheet_stitch(cfg, tile_paths, work_dir)
+        manifest["png_bytes"] = int(stitch_meta.get("file_size") or 0)
+        manifest["elapsed_ms"] = int((time.time() - t0) * 1000)
+        with open(png_path, "rb") as png:
+            s3.put_object(Bucket=BUCKET, Key=f"sheets/{sheet_id}/sheet.png",
+                          Body=png, ContentType="image/png")
         s3.put_object(Bucket=BUCKET, Key=f"sheets/{sheet_id}/sheet.json",
                       Body=json.dumps(manifest, indent=1).encode("utf-8"),
                       ContentType="application/json")
@@ -2377,6 +2554,7 @@ def handle_run(params):
         })
         raise
     finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
         for path in (TMP_COEFFS, TMP_ROOTS):
             try:
                 os.remove(path)

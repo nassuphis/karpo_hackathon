@@ -136,6 +136,22 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertEqual(len(re.findall(
             r"(?m)^    ensure_poly_sheet_gc_event_source$", DEPLOY_TEXT)), 2)
 
+    def test_poly_sheet_packages_libvips_stitcher_and_both_required_layers(self):
+        fn = self._manifest_fn("poly_sheet")
+        self.assertEqual(fn["layers"], ["lapack", "libvips"])
+        packaged = _packaged_handlers()
+        self.assertIn("sheet_stitch", packaged["handler_poly_sheet.py"])
+        self.assertIn(
+            'chmod +x "$POLY_SHEET_DIR"/sweep_coeffgen "$POLY_SHEET_DIR"/sweep_mt '
+            '"$POLY_SHEET_DIR"/sweep_cm "$POLY_SHEET_DIR"/sheet_stitch',
+            _joined_shell_lines(DEPLOY_TEXT),
+        )
+        self.assertIn(
+            '"$LAPACK_LAYER $LIBVIPS_LAYER" '
+            '"BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,POLY_SHEET_GC_QUEUE_URL=',
+            GEN_TEXT,
+        )
+
     def test_render_workflow_definition_uses_shared_renderer_in_deploy_and_tests(self):
         self.assertTrue(WORKFLOW_RENDERER_PATH.exists(), "workflow_template_render.py should exist")
         renderer_text = WORKFLOW_RENDERER_PATH.read_text()

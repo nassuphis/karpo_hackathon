@@ -978,6 +978,8 @@ docker run --rm --platform linux/arm64 \
         echo "  dz_export compiled: $(file /src/dz_export)"
         gcc -O3 -o /src/wall_dz /src/wall_dz.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  wall_dz compiled: $(file /src/wall_dz)"
+        gcc -O3 -o /src/sheet_stitch /src/sheet_stitch.c $VIPS_CFLAGS $VIPS_LIBS
+        echo "  sheet_stitch compiled: $(file /src/sheet_stitch)"
         gcc -O3 -o /src/autolevels_render /src/autolevels_render.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  autolevels_render compiled: $(file /src/autolevels_render)"
 
@@ -1047,6 +1049,18 @@ TIFTEST
         fi
         echo "  dz_export: .dzi + $TILE_COUNT tiles OK"
 
+        # Sheet mode must preserve the 1-bit contract through the pyramid,
+        # not merely make an 8-bit grayscale image that looks bilevel.
+        /src/dz_export /tmp/test_8x8.tif /tmp/dz_sheet_test/image --bilevel || \
+            { echo "FATAL: dz_export --bilevel failed on the smoke-test image"; exit 1; }
+        SHEET_DZ_TILE=$(find /tmp/dz_sheet_test/image_files -name "*.png" -print -quit)
+        [ -n "$SHEET_DZ_TILE" ] || { echo "FATAL: bilevel dz_export produced no tiles"; exit 1; }
+        [ "$(od -An -tu1 -j24 -N1 "$SHEET_DZ_TILE" | tr -d " ")" = "1" ] || \
+            { echo "FATAL: sheet DeepZoom tile IHDR is not 1-bit"; exit 1; }
+        [ "$(od -An -tu1 -j25 -N1 "$SHEET_DZ_TILE" | tr -d " ")" = "0" ] || \
+            { echo "FATAL: sheet DeepZoom tile is not grayscale"; exit 1; }
+        echo "  dz_export --bilevel: 1-bit grayscale tiles OK"
+
         # 3b. Smoke test wall_dz (composite wall pyramid, deepzoom-speed.md 7.1)
         printf "/tmp/test_8x8.tif\n/tmp/test_8x8.tif\n/tmp/test_8x8.tif\n" > /tmp/wall_list.txt
         mkdir -p /tmp/wall_test
@@ -1056,6 +1070,22 @@ TIFTEST
         WALL_TILES=$(find /tmp/wall_test/wall_files -name "*.jpg" 2>/dev/null | wc -l)
         [ "$WALL_TILES" -gt 0 ] || { echo "FATAL: wall_dz produced no jpg tiles"; exit 1; }
         echo "  wall_dz: .dzi + $WALL_TILES jpg tiles OK"
+
+        # 3c. Smoke test sheet_stitch (lazy raw-tile join + true 1-bit PNG)
+        dd if=/dev/zero of=/tmp/sheet_tile_0.raw bs=64 count=1 status=none
+        cp /tmp/sheet_tile_0.raw /tmp/sheet_tile_1.raw
+        cp /tmp/sheet_tile_0.raw /tmp/sheet_tile_2.raw
+        printf "/tmp/sheet_tile_0.raw\n/tmp/sheet_tile_1.raw\n/tmp/sheet_tile_2.raw\n" > /tmp/sheet_tiles.txt
+        SHEET_META=$(/src/sheet_stitch /tmp/sheet_tiles.txt /tmp/sheet_test.png 8 2 2 1 0) || \
+            { echo "FATAL: sheet_stitch failed on raw tiles"; exit 1; }
+        echo "$SHEET_META" | grep -q '"width":19' || { echo "FATAL: sheet_stitch width wrong: $SHEET_META"; exit 1; }
+        echo "$SHEET_META" | grep -q '"height":19' || { echo "FATAL: sheet_stitch height wrong: $SHEET_META"; exit 1; }
+        echo "$SHEET_META" | grep -q '"bitdepth":1' || { echo "FATAL: sheet_stitch did not report 1-bit output: $SHEET_META"; exit 1; }
+        [ "$(od -An -tu1 -j24 -N1 /tmp/sheet_test.png | tr -d " ")" = "1" ] || \
+            { echo "FATAL: sheet_stitch PNG IHDR is not 1-bit"; exit 1; }
+        [ "$(od -An -tu1 -j25 -N1 /tmp/sheet_test.png | tr -d " ")" = "0" ] || \
+            { echo "FATAL: sheet_stitch PNG is not grayscale"; exit 1; }
+        echo "  sheet_stitch: 19x19 1-bit grayscale PNG OK"
 
         # 4. Smoke test png_export
         /src/png_export /tmp/test_8x8.tif /tmp/test_out.png || \
@@ -1256,8 +1286,8 @@ cp lambda/handler_poly_sheet.py lambda/handler_compute_preview.py lambda/compute
    lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/program_compile_helpers.py \
    lambda/root_program_source.py lambda/root_legacy_registry.json lambda/merged_opcodes.py \
    lambda/solve_score_program_source.py lambda/solve_score_chain.py "$POLY_SHEET_DIR/"
-cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$POLY_SHEET_DIR/"
-chmod +x "$POLY_SHEET_DIR"/sweep_coeffgen "$POLY_SHEET_DIR"/sweep_mt "$POLY_SHEET_DIR"/sweep_cm
+cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm lambda/sheet_stitch "$POLY_SHEET_DIR/"
+chmod +x "$POLY_SHEET_DIR"/sweep_coeffgen "$POLY_SHEET_DIR"/sweep_mt "$POLY_SHEET_DIR"/sweep_cm "$POLY_SHEET_DIR"/sheet_stitch
 cd "$POLY_SHEET_DIR" && zip -FS -r9 /tmp/polypaint-poly-sheet.zip . -q && cd "$SCRIPT_DIR"
 echo "  PSheet: $(du -h /tmp/polypaint-poly-sheet.zip | cut -f1)  (async parameter-scan sheet renderer)"
 

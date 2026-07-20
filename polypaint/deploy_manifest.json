@@ -254,11 +254,12 @@
    "handler": "handler_poly_sheet.handler",
    "zip": "/tmp/polypaint-poly-sheet.zip",
    "layers": [
-    "lapack"
+    "lapack",
+    "libvips"
    ],
    "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,POLY_SHEET_GC_QUEUE_URL=$POLY_SHEET_GC_QUEUE_URL,LD_LIBRARY_PATH=/opt/lib",
    "group": "core",
-   "memory_why": "async parameter-scan sheet renderer (frames solved in-process, needs LAPACK for cm64/roots_cm chains)",
+   "memory_why": "async parameter-scan sheet renderer; LAPACK solves plus streaming libvips 1-bit sheet stitch",
    "tmp": "binary",
    "routes": [
     "/sheet-begin"

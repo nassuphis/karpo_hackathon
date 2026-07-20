@@ -22,6 +22,20 @@ if [ ! -x lambda/sweep_test ] || [ lambda/sweep_cli.c -nt lambda/sweep_test ]; t
     cc -O2 -pthread -o lambda/sweep_test lambda/sweep_cli.c -lm
 fi
 
+# Poly-sheet unit/lifecycle tests execute the real local libvips stitcher.
+# The deployed ARM64 binary is built later in Docker; this host build proves
+# the same C source emits a true 1-bit PNG during the ordinary predeploy gate.
+if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists vips; then
+    echo "FATAL: libvips development files are required to test sheet_stitch"
+    exit 1
+fi
+if [ ! -x lambda/sheet_stitch_local ] || [ lambda/sheet_stitch.c -nt lambda/sheet_stitch_local ]; then
+    echo "Rebuilding lambda/sheet_stitch_local (sheet_stitch.c is newer)..."
+    # shellcheck disable=SC2046
+    cc -O3 -o lambda/sheet_stitch_local lambda/sheet_stitch.c \
+        $(pkg-config --cflags --libs vips) -lm
+fi
+
 echo "Running predeploy contract gate..."
 
 # Native deploy binaries are built later by deploy.sh. Checking them here

@@ -1230,6 +1230,9 @@ window.addEventListener('load', function () {
     if (typeof _sheetResumePersistedCancels === 'function') {
         void _sheetResumePersistedCancels();
     }
+    if (typeof _sheetBindGeometryControls === 'function') {
+        _sheetBindGeometryControls();
+    }
 });
 
 document.addEventListener('visibilitychange', function() {

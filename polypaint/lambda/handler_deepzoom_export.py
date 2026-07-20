@@ -378,7 +378,7 @@ def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
         os.makedirs("/tmp/dz", exist_ok=True)
         t1 = time.time()
         result = subprocess.run(
-            [DZ_EXPORT, source_path, dz_base],
+            [DZ_EXPORT, source_path, dz_base, "--bilevel"],
             capture_output=True, text=True, timeout=600,
             env=imgpipe_env())
         if result.returncode != 0:
@@ -386,6 +386,8 @@ def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
         meta = json.loads(result.stdout)
         width = int(meta["width"])
         height = int(meta["height"])
+        if int(meta.get("bitdepth") or 0) != 1:
+            raise RuntimeError("sheet dz_export did not produce bilevel tiles")
         gen_ms = int((time.time() - t1) * 1000)
         os.remove(source_path)
         source_path = ""
@@ -440,6 +442,7 @@ def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
             "pix": max(width, height),
             "width": width,
             "height": height,
+            "tile_bitdepth": 1,
             "tiles_uploaded": uploaded,
         }
         s3.put_object(Bucket=BUCKET, Key=f"{s3_prefix}/meta.json",

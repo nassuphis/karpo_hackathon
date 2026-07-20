@@ -12,13 +12,18 @@ budget guard.
 import json
 import math
 import os
+import subprocess
 import sys
+import tempfile
 import time
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 LAMBDA_DIR = os.path.join(ROOT, "lambda")
 SWEEP_TEST = os.path.join(LAMBDA_DIR, "sweep_test")
+SHEET_STITCH_LOCAL = os.path.join(LAMBDA_DIR, "sheet_stitch_local")
 sys.path.insert(0, LAMBDA_DIR)
 
 SHEET_SRC = """poly = fill(6, 0)
@@ -53,6 +58,11 @@ class _LeaseIsoTestCase(unittest.TestCase):
         # A tearDown() check would run BEFORE those restores and see the
         # stubs still active.
         self.addCleanup(self._assert_no_lease_leak)
+        import handler_poly_sheet as mod
+        original_stitch = mod.SHEET_STITCH
+        self.addCleanup(lambda: setattr(mod, "SHEET_STITCH", original_stitch))
+        if os.path.exists(SHEET_STITCH_LOCAL):
+            mod.SHEET_STITCH = SHEET_STITCH_LOCAL
 
     def _assert_no_lease_leak(self):
         import handler_poly_sheet as _mod
@@ -89,6 +99,8 @@ class _S3Stub:
         if IfMatch is not None:
             if self.etags.get(Key) != IfMatch:
                 raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
+        if hasattr(Body, "read"):
+            Body = Body.read()
         self.objects[Key] = Body if isinstance(Body, (bytes, bytearray)) else Body.encode()
         self.etags[Key] = self._next_etag()
 
@@ -222,30 +234,145 @@ class TestPolySheetUnits(_LeaseIsoTestCase):
             mod.substitute_token(
                 {"coeff_program_source_text": "poly = fill(3, 1)\nemit"}, "$T", 0.5)
 
-    def test_canvas_pixel_cap(self):
+    def test_largest_legal_canvas_is_not_rejected_by_an_arbitrary_pixel_cap(self):
         import handler_poly_sheet as mod
 
-        orig = mod.report_status
-        _real = (mod.claim_task, mod.renew_claim, mod.finalize_task)
-        self.addCleanup(lambda: (setattr(mod, "claim_task", _real[0]),
-                                 setattr(mod, "renew_claim", _real[1]),
-                                 setattr(mod, "finalize_task", _real[2])))
-        mod.report_status = lambda *a, **k: None
-        mod.claim_task = lambda *a, **k: True
-        mod.renew_claim = lambda *a, **k: True
-        mod.finalize_task = lambda *a, **k: True
+        cfg = mod._parse_sheet_config(_run_params(
+            "largest-legal", steps=256, solver="ae64",
+            extra={"grid_cols": 28,
+                   "frame": {"n": 8, "tile_px": 1024, "margin_px": 64,
+                             "solver_mode": "ae64",
+                             "viewport": {"mode": "quantile"},
+                             "rotate": 0}}))
+        self.assertEqual((cfg["cols"], cfg["rows"]), (28, 10))
+        self.assertEqual((cfg["canvas_w"], cfg["canvas_h"]), (30528, 10944))
+        self.assertEqual(cfg["canvas_w"] * cfg["canvas_h"], 334_098_432)
+
+    def test_16x16_1000px_canvas_is_accepted(self):
+        import handler_poly_sheet as mod
+
+        params = _run_params("too-big-api", extra={
+            "action": "begin",
+            "scans": [
+                {"token": "$T", "from": 0, "to": 1, "steps": 16,
+                 "spacing": "linear"},
+                {"token": "$S", "from": 0, "to": 1, "steps": 16,
+                 "spacing": "linear"},
+            ],
+            "frame": {
+                "n": 8, "tile_px": 1000, "margin_px": 4,
+                "solver_mode": "ae64", "rotate": 0,
+                "viewport": {"mode": "quantile"},
+            },
+        })
+
+        cfg = mod._parse_sheet_config(params)
+        self.assertEqual((cfg["cols"], cfg["rows"], cfg["steps"]),
+                         (16, 16, 256))
+        self.assertEqual((cfg["canvas_w"], cfg["canvas_h"]), (16068, 16068))
+        self.assertEqual(cfg["canvas_w"] * cfg["canvas_h"], 258_180_624)
+
+    def test_8x8_1000px_canvas_is_accepted(self):
+        import handler_poly_sheet as mod
+
+        cfg = mod._parse_sheet_config(_run_params("eight-by-eight", extra={
+            "scans": [
+                {"token": "$T", "from": 0, "to": 1, "steps": 8,
+                 "spacing": "linear"},
+                {"token": "$S", "from": 0, "to": 1, "steps": 8,
+                 "spacing": "linear"},
+            ],
+            "frame": {
+                "n": 8, "tile_px": 1000, "margin_px": 4,
+                "solver_mode": "ae64", "rotate": 0,
+                "viewport": {"mode": "quantile"},
+            },
+        }))
+
+        self.assertEqual((cfg["cols"], cfg["rows"], cfg["steps"]),
+                         (8, 8, 64))
+        self.assertEqual((cfg["canvas_w"], cfg["canvas_h"]), (8036, 8036))
+        self.assertEqual(cfg["canvas_w"] * cfg["canvas_h"], 64_577_296)
+
+    def test_begin_source_compile_rejection_is_a_structured_400(self):
+        import handler_poly_sheet as mod
+
+        params = _run_params("bad-source-api", extra={
+            "action": "begin",
+            "coeff_program_source_text": "poly = not_a_function($T)\nemit",
+        })
+
+        response = mod.handler({"body": json.dumps(params)}, None)
+
+        self.assertEqual(response["statusCode"], 400)
+        body = json.loads(response["body"])
+        self.assertIn("not_a_function", body["error"])
+        self.assertNotIn("Internal Server Error", body["error"])
+
+    def test_begin_operational_failure_is_a_structured_500(self):
+        import handler_poly_sheet as mod
+
+        real_begin = mod.handle_begin
+        mod.handle_begin = lambda params: (_ for _ in ()).throw(
+            RuntimeError("SQS unavailable"))
         try:
-            with self.assertRaises(RuntimeError) as ctx:
-                mod.handle_run(_run_params(
-                    "toobig", steps=256, solver="ae64",
-                    extra={"grid_cols": 16,
-                           "frame": {"n": 8, "tile_px": 1024,
-                                     "solver_mode": "ae64",
-                                     "viewport": {"mode": "quantile"},
-                                     "rotate": 0}}))
-            self.assertIn("mosaic too large", str(ctx.exception))
+            with self.assertLogs(mod.logger, level="ERROR"):
+                response = mod.handler({"body": json.dumps({
+                    "action": "begin", "job_id": "j",
+                })}, None)
         finally:
-            mod.report_status = orig
+            mod.handle_begin = real_begin
+
+        self.assertEqual(response["statusCode"], 500)
+        self.assertIn("sheet admission failed: SQS unavailable",
+                      json.loads(response["body"])["error"])
+
+    def test_sheet_manifest_declares_libvips_one_bit_output(self):
+        import handler_poly_sheet as mod
+
+        cfg = mod._parse_sheet_config(_run_params("manifest-contract"))
+        manifest = mod._sheet_manifest(cfg, _run_params("manifest-contract"),
+                                       time.time(), 5, [], "fanout")
+        self.assertEqual(manifest["png_bitdepth"], 1)
+        self.assertEqual(manifest["stitcher"], "libvips-sheet-stitch-v1")
+        self.assertEqual((manifest["width"], manifest["height"]), (64, 64))
+
+    def test_sheet_stitch_timeout_has_a_specific_error(self):
+        import handler_poly_sheet as mod
+
+        cfg = mod._parse_sheet_config(_run_params("stitch-timeout"))
+        with tempfile.TemporaryDirectory() as work_dir, patch.object(
+                mod.subprocess, "run",
+                side_effect=subprocess.TimeoutExpired("sheet_stitch", 600)):
+            with self.assertRaisesRegex(RuntimeError, "600s native encode budget"):
+                mod._run_sheet_stitch(
+                    cfg, [f"/tmp/tile-{k}.raw" for k in range(cfg["steps"])],
+                    work_dir)
+
+    def test_sheet_stitch_metadata_must_match_the_request(self):
+        import handler_poly_sheet as mod
+
+        cfg = mod._parse_sheet_config(_run_params("stitch-meta"))
+        native = {
+            "width": cfg["canvas_w"], "height": cfg["canvas_h"],
+            "tiles": cfg["steps"] - 1,
+            "cols": cfg["cols"], "rows": cfg["rows"],
+            "bitdepth": 1, "file_size": 123,
+        }
+        completed = SimpleNamespace(
+            returncode=0, stdout=json.dumps(native), stderr="")
+        ihdr = {
+            "width": cfg["canvas_w"], "height": cfg["canvas_h"],
+            "bitdepth": 1, "color_type": 0,
+        }
+        with tempfile.TemporaryDirectory() as work_dir, \
+                patch.object(mod.subprocess, "run", return_value=completed), \
+                patch.object(mod, "_png_ihdr", return_value=ihdr), \
+                patch.object(mod.os.path, "getsize", return_value=123):
+            with self.assertRaisesRegex(RuntimeError, "metadata disagrees"):
+                mod._run_sheet_stitch(
+                    cfg, [f"/tmp/tile-{k}.raw" for k in range(cfg["steps"])],
+                    work_dir)
 
     def test_budget_guard_rejects_oversized_sheets(self):
         import handler_poly_sheet as mod
@@ -272,7 +399,8 @@ class TestPolySheetUnits(_LeaseIsoTestCase):
             mod.report_status = orig
 
 
-@unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+@unittest.skipUnless(os.path.exists(SWEEP_TEST) and os.path.exists(SHEET_STITCH_LOCAL),
+                     "sweep_test or sheet_stitch_local binary not built")
 class TestPolySheetEndToEnd(_LeaseIsoTestCase):
     def _patched(self, mod, s3stub):
         mod.s3 = s3stub
@@ -317,6 +445,9 @@ class TestPolySheetEndToEnd(_LeaseIsoTestCase):
         import struct as _s
         w, h = _s.unpack(">II", png[16:24])
         self.assertEqual((w, h), (64, 64))
+        self.assertEqual((png[24], png[25]), (1, 0))
+        self.assertEqual(manifest["png_bitdepth"], 1)
+        self.assertEqual(manifest["stitcher"], "libvips-sheet-stitch-v1")
 
         # per-frame variation: the scan actually changed the polynomial
         # (frames have different bounds records under per-frame quantile)
@@ -365,6 +496,7 @@ class TestPolySheetEndToEnd(_LeaseIsoTestCase):
         w, h = _s.unpack(">II", png[16:24])
         # 2x2 tiles of 32px + 3 gutters of 4px each way
         self.assertEqual((w, h), (76, 76))
+        self.assertEqual((png[24], png[25]), (1, 0))
 
     def test_step_spacing_scans_integers(self):
         import handler_poly_sheet as mod
@@ -2185,6 +2317,46 @@ class TestRound17DeferredCleanup(_LeaseIsoTestCase):
         with self.assertRaisesRegex(RuntimeError, "conditional writes unavailable"):
             mod.handle_begin({**_run_params("fatal-cas"), "action": "begin",
                               "job_id": "sheet_job"})
+
+    def test_post_commit_prior_gc_failure_does_not_hide_admission(self):
+        """Once run.json commits, optional prior-generation cleanup cannot
+        turn a successful admission into an ambiguous client-side failure."""
+        import handler_poly_sheet as mod
+
+        stub = _S3Stub(); self._patch(stub)
+        prior_gen = "gabababababab"
+        stub.put_object(Bucket="b", Key="sheets/post-commit/run.json",
+                        Body=json.dumps({
+                            "sheet_id": "post-commit", "generation": prior_gen,
+                            "status": "failed", "steps": 4,
+                        }).encode())
+        originals = (mod._probe_frame_cost, mod.report_status,
+                     mod._schedule_generation_gc)
+        self.addCleanup(lambda: (setattr(mod, "_probe_frame_cost", originals[0]),
+                                 setattr(mod, "report_status", originals[1]),
+                                 setattr(mod, "_schedule_generation_gc", originals[2])))
+        mod._probe_frame_cost = lambda *a, **k: (3, 0.0)
+        mod.report_status = lambda *a, **k: None
+        calls = []
+
+        def schedule(sheet_id, generation, steps, **kwargs):
+            calls.append(generation)
+            if generation == prior_gen:
+                raise RuntimeError("SQS unavailable after commit")
+            return True
+
+        mod._schedule_generation_gc = schedule
+        with self.assertLogs(mod.logger, level="ERROR"):
+            response = mod.handle_begin({
+                **_run_params("post-commit"), "action": "begin",
+                "job_id": "sheet_job",
+            })
+
+        admitted = json.loads(response["body"])
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(admitted["status"], "running")
+        self.assertNotEqual(admitted["generation"], prior_gen)
+        self.assertEqual(calls, [admitted["generation"], prior_gen])
 
     def test_finalize_failure_defers_family_reap_until_quiescence(self):
         """Failure marks run.json now but shared cleanup waits one full

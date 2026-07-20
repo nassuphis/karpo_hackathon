@@ -8,9 +8,10 @@ parameter varies (the persisted version of the UI scrub popups).
 
 Deliberately outside the compute->render workflow:
 
-- no compute_xxxx tree, no stored root lists, no chunk fan-out;
-- one async lambda renders every frame and uploads exactly TWO
-  objects: the mosaic PNG and a small manifest;
+- no compute_xxxx tree and no stored root lists;
+- server-admitted fan-out renders temporary raw bilevel tiles, then one
+  stitch task publishes an immutable mosaic PNG + manifest through the
+  generation's `run.json` pointer;
 - frames are preview-class (single-machine, compute-tab-preview
   sized), bilevel only.
 
@@ -79,9 +80,15 @@ client-driven fan-out (v2, the CR35 durability rework):
 2. The client dispatches up to 8 'frames' workers (idempotent per
    generation; partial dispatch retries once), each uploading
    sheets/{id}/tiles/{generation}/{k}.bin+.json.
-3. One 'stitch' job assembles the generation's tiles; PUBLICATION IS
-   THE COMMIT POINT — cleanup is best-effort GC that can never turn a
-   published sheet into an error.
+3. One 'stitch' job stages the generation's raw bilevel tiles on the
+   Lambda's 10 GB `/tmp`, then `sheet_stitch` uses libvips `rawload` +
+   lazy `arrayjoin` + `pngsave(bitdepth=1)` to stream the mosaic to a
+   true 1-bit grayscale PNG. It never allocates a full Python canvas.
+   The sheet-only `dz_export --bilevel` mode also writes every DeepZoom
+   PNG tile at grayscale bit depth 1; ordinary image/color DeepZoom
+   exports keep their existing format.
+   PUBLICATION IS THE COMMIT POINT — cleanup is best-effort GC that can
+   never turn a published sheet into an error.
 
 The dispatch payload is persisted in localStorage until terminal, so
 a reload resumes: re-attach polling, dispatch the stitch a dead page
@@ -102,8 +109,10 @@ for k in frames:
     bin roots -> N_px x N_px bilevel tile (shared explicit viewport)
     report_status(phase=f"frame {k}/{K}")     # jobs-rail progress
     check cancel marker in DDB                # cheap kill between frames
-stitch tiles (quarter-turn rotate applied per tile) -> 1 PNG
-upload sheets/{sheet_id}/sheet.png + sheet.json
+stage raw tiles -> libvips lazy join (quarter-turn already applied per tile)
+threshold -> 1-bit grayscale PNG
+upload sheets/{sheet_id}/{generation}/{attempt}/sheet.png + sheet.json
+CAS run.json to point at the winning attempt
 ```
 
 - Per-frame cost anchors (measured this week, deg-36): AE64 ~23us/row,
@@ -127,9 +136,14 @@ upload sheets/{sheet_id}/sheet.png + sheet.json
 ## 5. Storage + artifact surface
 
 ```
-sheets/{sheet_id}/sheet.png    # the mosaic (1-bit content, PNG)
-sheets/{sheet_id}/sheet.json   # inputs, scan spec, per-frame values,
-                               # viewport, timings, solver, versions
+sheets/{sheet_id}/run.json
+    # authoritative run state + winning immutable artifact pointers
+sheets/{sheet_id}/{generation}/{attempt}/sheet.png
+    # true 1-bit grayscale mosaic
+sheets/{sheet_id}/{generation}/{attempt}/sheet.json
+    # inputs, scan spec, per-frame values, viewport, timings, solver, versions
+sheets/{sheet_id}/tiles/{generation}/{frame}.bin + .json
+    # temporary fan-out scaffolding, removed by normal cleanup or durable GC
 ```
 
 Own routes (`/sheet` dispatch, `/list-sheets`, `/delete-sheet` or the
@@ -194,7 +208,7 @@ walls.) One new tab:
 | server-side source compile | EXISTS |
 | async dispatch + status polling + rail cards | EXISTS |
 | scan-tag substitution | NEW (small: string substitute + validate) |
-| bilevel binning + PNG stitcher | NEW (numpy binning; PNG encode as in the preview handler) |
+| bilevel binning + PNG stitcher | EXISTS (Python hit-mask tiles; native libvips lazy join; enforced 1-bit grayscale PNG) |
 | sheet routes + storage + listing | NEW (small, mirrors deepzoom share patterns) |
 | Sheets tab | NEW (largest single piece) |
 | cancel marker | NEW (small) |

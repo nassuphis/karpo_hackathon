@@ -1,10 +1,10 @@
 /*
- * dz_export: generate DeepZoom tile pyramid from a TIFF via libvips dzsave.
+ * dz_export: generate a DeepZoom tile pyramid from an image via libvips dzsave.
  *
- * Reads TIFF with sequential access, writes .dzi + tile directory.
+ * Reads the source with sequential access, writes .dzi + tile directory.
  * OpenSeadragon-compatible output.
  *
- * Usage: dz_export input.tif /tmp/dz/image
+ * Usage: dz_export input-image /tmp/dz/image [--bilevel]
  *
  * Output: {outBase}.dzi + {outBase}_files/level/col_row.png
  *
@@ -16,12 +16,21 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <vips/vips.h>
 
 int main(int argc, char **argv) {
-    if (argc < 3) {
-        fprintf(stderr, "Usage: dz_export input.tif outputBase\n");
+    if (argc < 3 || argc > 4) {
+        fprintf(stderr, "Usage: dz_export input-image outputBase [--bilevel]\n");
         return 1;
+    }
+    int bilevel = 0;
+    if (argc == 4) {
+        if (strcmp(argv[3], "--bilevel") != 0) {
+            fprintf(stderr, "Unknown option: %s\n", argv[3]);
+            return 1;
+        }
+        bilevel = 1;
     }
     if (VIPS_INIT(argv[0])) {
         fprintf(stderr, "vips_init failed\n");
@@ -40,9 +49,12 @@ int main(int argc, char **argv) {
 
     int w = img->Xsize, h = img->Ysize;
 
+    const char *suffix = bilevel
+        ? ".png[bitdepth=1,compression=6]"
+        : ".png";
     if (vips_dzsave(img, outBase,
                     "layout", VIPS_FOREIGN_DZ_LAYOUT_DZ,
-                    "suffix", ".png",
+                    "suffix", suffix,
                     "tile-size", 256,
                     "overlap", 0,
                     NULL)) {
@@ -54,7 +66,8 @@ int main(int argc, char **argv) {
 
     g_object_unref(img);
 
-    printf("{\"width\":%d,\"height\":%d}\n", w, h);
+    printf("{\"width\":%d,\"height\":%d,\"bitdepth\":%d}\n",
+           w, h, bilevel ? 1 : 8);
 
     vips_shutdown();
     return 0;

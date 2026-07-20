@@ -87,6 +87,7 @@ docker run --rm --platform linux/arm64 \
         gcc -O3 -o /src/png_export /src/png_export.c $VIPS_CFLAGS $VIPS_LIBS
         gcc -O3 -o /src/dz_export /src/dz_export.c $VIPS_CFLAGS $VIPS_LIBS
         gcc -O3 -o /src/wall_dz /src/wall_dz.c $VIPS_CFLAGS $VIPS_LIBS
+        gcc -O3 -o /src/sheet_stitch /src/sheet_stitch.c $VIPS_CFLAGS $VIPS_LIBS
         gcc -O3 -o /src/autolevels_render /src/autolevels_render.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  libvips set compiled"
     '

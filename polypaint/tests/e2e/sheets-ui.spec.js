@@ -78,6 +78,137 @@ test.describe('Sheets frame picking', () => {
   });
 });
 
+test.describe('Sheets admission boundary', () => {
+  test('a 16x16 1000px sheet reaches server admission and is described truthfully', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+      _sheetRunClear();
+      _jobsRailJobs.length = 0;
+      document.getElementById('render-function').value = 'const';
+      document.getElementById('sheet-token').value = '$T';
+      document.getElementById('sheet-token2').value = '$S';
+      document.getElementById('sheet-steps').value = '16';
+      document.getElementById('sheet-steps2').value = '16';
+      document.getElementById('compute-preview-size').value = '1000';
+      document.getElementById('sheet-margin').value = '4';
+      let posts = 0;
+      const realPost = window.lambdaPost;
+      window.lambdaPost = async () => { posts += 1; return {}; };
+
+      const geometry = _sheetCanvasGeometry(
+        [{ steps: 16 }, { steps: 16 }], 256,
+        { tile_px: 1000, margin_px: 4 }, undefined);
+      _sheetGeometryChanged();
+      const layout = document.getElementById('sheet-layout-summary').textContent;
+      await runPolySheet();
+
+      window.lambdaPost = realPost;
+      const out = {
+        geometry,
+        posts,
+        cards: _jobsRailJobs.length,
+        descriptor: _sheetRunLoad(),
+        status: document.getElementById('sheets-status').textContent,
+        layout,
+      };
+      _jobsRailJobs.length = 0;
+      document.getElementById('sheet-token2').value = '';
+      return out;
+    });
+
+    expect(result.geometry).toEqual({
+      cols: 16, rows: 16, width: 16068, height: 16068,
+      pixels: 258180624, tilePx: 1000, marginPx: 4,
+      twoDimensional: true,
+    });
+    expect(result.posts).toBe(1);
+    expect(result.cards).toBe(0);
+    expect(result.descriptor).toBeNull();
+    expect(result.layout).toContain('16 columns x 16 rows = 256 frames');
+    expect(result.layout).toContain('16068x16068px (258.2MP');
+    expect(result.layout).toContain('30.8MiB uncompressed at 1 bit');
+    expect(result.layout).toContain('no full canvas allocation');
+    expect(result.layout).not.toContain('raw canvas');
+    expect(result.layout).toContain('1-bit PNG is stitched by libvips');
+    expect(result.layout).not.toContain('OVER');
+    expect(result.status).toContain('invalid admission record');
+  });
+
+  test('an 8x8 wall of 1000px tiles is allowed and its controlling fields are explicit', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      document.getElementById('sheet-token').value = '$T';
+      document.getElementById('sheet-token2').value = '$S';
+      document.getElementById('sheet-steps').value = '8';
+      document.getElementById('sheet-steps2').value = '8';
+      document.getElementById('sheet-cols').value = '3';
+      document.getElementById('compute-preview-size').value = '1000';
+      document.getElementById('sheet-margin').value = '4';
+      _sheetGeometryChanged();
+      const scans = _sheetActiveScans();
+      const geometry = _sheetCanvasGeometry(
+        scans, 64, { tile_px: 1000, margin_px: 4 }, undefined);
+      const out = {
+        geometry,
+        colsDisabled: document.getElementById('sheet-cols').disabled,
+        summary: document.getElementById('sheet-layout-summary').textContent,
+      };
+      document.getElementById('sheet-token2').value = '';
+      _sheetGeometryChanged();
+      return out;
+    });
+
+    expect(result.geometry).toEqual({
+      cols: 8, rows: 8, width: 8036, height: 8036,
+      pixels: 64577296, tilePx: 1000, marginPx: 4,
+      twoDimensional: true,
+    });
+    expect(result.colsDisabled).toBe(true);
+    expect(result.summary).toContain('8 columns x 8 rows = 64 frames');
+    expect(result.summary).toContain('8036x8036px (64.6MP');
+    expect(result.summary).toContain('7.7MiB uncompressed at 1 bit');
+    expect(result.summary).toContain('no full canvas allocation');
+    expect(result.summary).toContain('Cols is ignored');
+    expect(result.summary).toContain('1-bit PNG is stitched by libvips');
+  });
+
+  test('server admission failure is terminal locally and creates no phantom job', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+      _sheetRunClear();
+      _jobsRailJobs.length = 0;
+      document.getElementById('render-function').value = 'const';
+      document.getElementById('sheet-token').value = '$T';
+      document.getElementById('sheet-token2').value = '';
+      document.getElementById('sheet-steps').value = '4';
+      document.getElementById('compute-preview-size').value = '32';
+      document.getElementById('sheet-margin').value = '4';
+      const realPost = window.lambdaPost;
+      window.lambdaPost = async () => {
+        throw new Error('poly_sheet/sheet-begin request failed: HTTP 400: mosaic too large');
+      };
+
+      await runPolySheet();
+
+      window.lambdaPost = realPost;
+      const out = {
+        cards: _jobsRailJobs.length,
+        descriptor: _sheetRunLoad(),
+        retryTimer: _sheetResumeTimer !== null,
+        status: document.getElementById('sheets-status').textContent,
+        mutationClassified: _lambdaEndpointIsMutation('poly_sheet', '/sheet-begin'),
+      };
+      if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
+      _jobsRailJobs.length = 0;
+      return out;
+    });
+
+    expect(result.cards).toBe(0);
+    expect(result.descriptor).toBeNull();
+    expect(result.retryTimer).toBe(false);
+    expect(result.status).toContain('Sheet admission failed:');
+    expect(result.status).not.toContain('will retry');
+    expect(result.mutationClassified).toBe(true);
+  });
+});
+
 test.describe('Sheets frame context menu', () => {
   test('menu renders frame values and Populate Frame substitutes tokens', async ({ page }) => {
     const result = await page.evaluate((m) => {

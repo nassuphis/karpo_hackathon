@@ -886,7 +886,7 @@ function _lambdaEndpointIsMutation(name, path) {
     // save-*, delete-*, cleanup, migrate-*, create-* (non-idempotent: each call
     // makes a NEW gallery/share), add-to-* (a retried add is misreported as a
     // duplicate). A retry on an ambiguous network failure would double-apply.
-    return /\/(save|delete|cleanup|migrate|create|add-to|describe)/i.test(p);
+    return /\/(save|delete|cleanup|migrate|create|add-to|describe|sheet-begin)/i.test(p);
 }
 
 // Helper: POST JSON to a Lambda and parse response.

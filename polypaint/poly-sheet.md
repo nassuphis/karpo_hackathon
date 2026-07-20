@@ -67,16 +67,32 @@ Cols ignored. Every active token must appear in a source; labels stamp
 
 ## 4. Execution model
 
-One async lambda (`polypaint-poly-sheet`) with client-orchestrated
-FAN-OUT (v1.3): the client splits the frames over up to 8 'frames'
-worker jobs via the dispatch lambda, each worker renders its
-contiguous share and uploads sheets/{id}/tiles/{k}.bin+.json, then a
-'stitch' job assembles the mosaic + manifest and deletes the tiles.
-Fan-out output is byte-identical to the single-shot 'run' action
-(test-pinned). Frozen-first-frame viewport under fan-out: every
-worker derives frame 0's bounds itself — the pipeline is
-deterministic, so no cross-worker coordination. Per-worker budget
-guard replaces the whole-sheet one. Single-frame flow:
+One async lambda (`polypaint-poly-sheet`) with a SERVER-ADMITTED,
+client-driven fan-out (v2, the CR35 durability rework):
+
+1. `begin` (synchronous /sheet-begin route): validates the whole
+   config, compiles + 1x1-probes frame 0 (REAL degree + measured
+   compile cost -> honest budget), mints the run GENERATION, splits
+   the worker ranges, pre-writes every worker/stitch status row, and
+   persists sheets/{id}/run.json. Nothing async exists before the
+   server has recorded it.
+2. The client dispatches up to 8 'frames' workers (idempotent per
+   generation; partial dispatch retries once), each uploading
+   sheets/{id}/tiles/{generation}/{k}.bin+.json.
+3. One 'stitch' job assembles the generation's tiles; PUBLICATION IS
+   THE COMMIT POINT — cleanup is best-effort GC that can never turn a
+   published sheet into an error.
+
+The dispatch payload is persisted in localStorage until terminal, so
+a reload resumes: re-attach polling, dispatch the stitch a dead page
+never sent. Polls tolerate transient /check-status failures (5x) and
+declare death on a 10-minute progress stall (an accepted row whose
+worker never reported can't poll forever). Cancel markers, tile keys,
+and status identities are generation-scoped. Fan-out output is
+byte-identical to the single-shot 'run' action (test-pinned).
+Frozen-first-frame viewport under fan-out: every worker derives
+frame 0's bounds itself — the pipeline is deterministic, so no
+cross-worker coordination. Single-frame flow:
 
 ```
 for k in frames:

@@ -61,8 +61,8 @@ function _sheetInheritedFrame() {
     if (previewMode === 'quantile') {
         viewport = {
             mode: freeze ? 'frozen' : 'quantile',
-            quantile: Math.max(0, Math.min(0.1, (parseFloat(_sheetVal('compute-preview-quantile', 0)) || 0) / 100)),
-            shim: Math.max(0, Math.min(0.5, (parseFloat(_sheetVal('compute-preview-shim', 5)) || 5) / 100)),
+            quantile: Math.max(0, Math.min(0.1, _numFieldOr('compute-preview-quantile', 0) / 100)),
+            shim: Math.max(0, Math.min(0.5, _numFieldOr('compute-preview-shim', 5) / 100)),
         };
     } else {
         const b = _computePreviewExplicitBounds();
@@ -76,10 +76,31 @@ function _sheetInheritedFrame() {
     return {
         n, tile_px: tile, rotate, viewport,
         solver_mode: String(_sheetVal('compute-preview-solver', 'ae64')),
+        solver_iters: Math.max(0, Math.min(64, parseInt(_sheetVal('compute-preview-iters', 0), 10) || 0)),
         polarity: String(_sheetVal('sheet-polarity', 'white_on_black')),
         margin_px: Math.max(0, Math.min(64, parseInt(_sheetVal('sheet-margin', 4), 10) || 0)),
         label: !!document.getElementById('sheet-label')?.checked,
     };
+}
+
+/* ---- durable run descriptor (CR35-F4): the browser can die at any
+ * point after `begin`; everything needed to resume — including the
+ * full dispatch payload — is persisted until the run is terminal. */
+const SHEET_RUN_STORAGE_KEY = 'polypaint_sheet_run_v1';
+
+function _sheetRunSave(desc) {
+    try { localStorage.setItem(SHEET_RUN_STORAGE_KEY, JSON.stringify(desc)); } catch (e) {}
+}
+
+function _sheetRunLoad() {
+    try {
+        const raw = localStorage.getItem(SHEET_RUN_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+}
+
+function _sheetRunClear() {
+    try { localStorage.removeItem(SHEET_RUN_STORAGE_KEY); } catch (e) {}
 }
 
 const SHEET_MAX_WORKERS = 8;
@@ -138,66 +159,160 @@ async function runPolySheet() {
             : (parseInt(_sheetVal('sheet-cols', 0), 10) || Math.ceil(Math.sqrt(steps))),
     });
 
-    const ranges = _sheetFrameRanges(steps, Math.min(SHEET_MAX_WORKERS, steps));
-    const workerJobs = ranges.map((indices, w) => ({
-        ...payload,
-        action: 'frames',
-        task_id: `sheet_tiles_${sheetId}_w${w}`,
-        frame_indices: indices,
-    }));
-
     const orig = btn ? btn.textContent : 'Run Sheet';
-    const startedAtS = Date.now() / 1000;
-    if (btn) { btn.disabled = true; btn.textContent = 'Dispatching...'; }
-    if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: dispatching ${steps} frames to ${workerJobs.length} workers...`; statusEl.className = 'status'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Validating...'; }
+    if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: validating + probing frame 0...`; statusEl.className = 'status'; }
     try {
-        const disp = await lambdaPost('dispatch', {
-            target: 'poly_sheet',
-            jobs: workerJobs,
-            expected_keys: [],
-        });
-        if ((disp.fired || 0) !== workerJobs.length) throw new Error('poly-sheet worker dispatch failed');
-        _activeSheetRun = { sheetId, jobId, taskId };
+        // synchronous admission: the server validates everything, probes
+        // frame 0 (real degree -> honest budget), mints the generation,
+        // and pre-writes every status row BEFORE any async work
+        const run = await lambdaPost('poly_sheet', { ...payload, action: 'begin' }, '/sheet-begin');
+        const desc = {
+            sheetId, jobId, generation: run.generation,
+            steps, funcName, n: frame.n,
+            workers: run.workers, stitchTask: run.stitch_task_id,
+            startedAtS: Date.now() / 1000,
+            payload: { ...payload, generation: run.generation },
+        };
+        _sheetRunSave(desc);
+        _activeSheetRun = { sheetId, jobId, generation: run.generation };
         _jobsRailUpsert({
             id: 'sheet:' + sheetId, kind: 'sheet',
             label: `Sheet ${steps}f N=${frame.n} · ${funcName}`,
             jobId, tab: 'sheets', state: 'running', startedAt: Date.now(),
-            detail: `dispatched (${workerJobs.length} workers)`,
+            detail: `accepted (${run.workers.length} workers)`,
         });
         if (btn) btn.textContent = 'Rendering...';
-        await _pollSheetWorkers(sheetId, jobId, steps, workerJobs.length, statusEl);
-
-        if (btn) btn.textContent = 'Stitching...';
-        const stitchTask = `sheet_stitch_${sheetId}`;
-        const stitch = await lambdaPost('dispatch', {
-            target: 'poly_sheet',
-            jobs: [{ ...payload, action: 'stitch', task_id: stitchTask,
-                     started_at_s: startedAtS }],
-            expected_keys: [],
-        });
-        if ((stitch.fired || 0) !== 1) throw new Error('poly-sheet stitch dispatch failed');
-        const doneRd = await _pollSheetTask(sheetId, jobId, stitchTask, statusEl, 'stitching', 'sheet:' + sheetId);
-        _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'done', detail: `${doneRd.frames} frames` });
-        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: done (${doneRd.frames} frames, ${doneRd.elapsed_ms}ms) — generating DeepZoom...`; statusEl.className = 'status ok'; }
+        await _sheetDriveRun(desc, statusEl, { dispatchWorkers: true });
         if (btn) { btn.textContent = '✓ Done'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
-
-        // DeepZoom pyramid right away — the sheet viewer of choice
-        void _sheetGenerateDeepZoom(sheetId, statusEl).catch(() => {});
     } catch (e) {
         _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'error', detail: e.message });
         if (statusEl) { statusEl.textContent = 'Sheet failed: ' + e.message; statusEl.className = 'status error'; }
         if (btn) { btn.textContent = orig; btn.disabled = false; }
         return;
+    } finally {
+        _activeSheetRun = null;
+        _sheetRunClear();
     }
     void loadSheetsTab();
 }
 
-async function _pollSheetWorkers(sheetId, jobId, steps, workers, statusEl) {
-    while (true) {
-        await new Promise(r => setTimeout(r, 3000));
+async function _sheetDispatchWorkers(desc) {
+    const jobs = desc.workers.map((w) => ({
+        ...desc.payload,
+        action: 'frames',
+        task_id: w.task_id,
+        frame_indices: w.frames,
+    }));
+    // one retry: workers are idempotent per generation, so re-dispatching
+    // every job after a partial acceptance cannot corrupt anything
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const disp = await lambdaPost('dispatch', {
+            target: 'poly_sheet', jobs, expected_keys: [],
+        });
+        if ((disp.fired || 0) === jobs.length) return;
+    }
+    throw new Error('poly-sheet worker dispatch failed after retry');
+}
+
+async function _sheetDriveRun(desc, statusEl, opts) {
+    /* Drive an admitted run to a terminal state. Resumable: everything
+     * it needs is in the persisted descriptor, and every step is
+     * idempotent per generation (CR35-F4). */
+    const { sheetId, jobId, steps } = desc;
+    if (opts && opts.dispatchWorkers) await _sheetDispatchWorkers(desc);
+    await _pollSheetWorkers(sheetId, jobId, steps, desc.workers.length, statusEl, desc.generation);
+
+    const stitchState = await _sheetTaskPhase(jobId, desc.stitchTask);
+    if (stitchState !== 'done') {
+        if (stitchState === 'accepted' || stitchState === null || stitchState === 'error_retryable') {
+            const stitch = await lambdaPost('dispatch', {
+                target: 'poly_sheet',
+                jobs: [{ ...desc.payload, action: 'stitch', task_id: desc.stitchTask,
+                         started_at_s: desc.startedAtS }],
+                expected_keys: [],
+            });
+            if ((stitch.fired || 0) !== 1) throw new Error('poly-sheet stitch dispatch failed');
+        }
+    }
+    const doneRd = await _pollSheetTask(sheetId, jobId, desc.stitchTask, statusEl, 'stitching', 'sheet:' + sheetId);
+    _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'done', detail: `${doneRd.frames} frames` });
+    if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: done (${doneRd.frames} frames, ${doneRd.elapsed_ms}ms) — generating DeepZoom...`; statusEl.className = 'status ok'; }
+    // DeepZoom pyramid right away — the sheet viewer of choice
+    void _sheetGenerateDeepZoom(sheetId, statusEl).catch(() => {});
+}
+
+async function _sheetTaskPhase(jobId, taskId) {
+    try {
         const check = await lambdaPost('storage', {
-            job_id: jobId, task_prefix: `sheet_tiles_${sheetId}`, expected: workers,
+            job_id: jobId, task_prefix: taskId, expected: 1,
         }, '/check-status');
+        if ((check.errors || 0) > 0) return 'error';
+        const rd = check.results?.[0];
+        return rd ? (rd.phase || 'accepted') : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function resumeSheetRun() {
+    /* Reload recovery (CR35-F4): if a persisted run descriptor exists,
+     * re-attach polling and drive the run to terminal — including
+     * dispatching the stitch a dead page never sent. */
+    const desc = _sheetRunLoad();
+    if (!desc || _activeSheetRun) return;
+    const statusEl = document.getElementById('sheets-status');
+    _activeSheetRun = { sheetId: desc.sheetId, jobId: desc.jobId, generation: desc.generation };
+    _jobsRailUpsert({
+        id: 'sheet:' + desc.sheetId, kind: 'sheet',
+        label: `Sheet ${desc.steps}f N=${desc.n} · ${desc.funcName}`,
+        jobId: desc.jobId, tab: 'sheets', state: 'running',
+        startedAt: (desc.startedAtS || 0) * 1000 || Date.now(),
+        detail: 'resumed after reload',
+    });
+    if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId}: resuming...`; statusEl.className = 'status'; }
+    try {
+        await _sheetDriveRun(desc, statusEl, { dispatchWorkers: false });
+    } catch (e) {
+        _jobsRailUpsert({ id: 'sheet:' + desc.sheetId, state: 'error', detail: e.message });
+        if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId} resume failed: ${e.message}`; statusEl.className = 'status error'; }
+    } finally {
+        _activeSheetRun = null;
+        _sheetRunClear();
+    }
+    void loadSheetsTab();
+}
+
+const SHEET_POLL_MS = 3000;
+const SHEET_POLL_MAX_CONSECUTIVE_FAILURES = 5;
+const SHEET_STALL_DEADLINE_MS = 10 * 60 * 1000;
+
+async function _pollSheetWorkers(sheetId, jobId, steps, workers, statusEl, generation) {
+    /* CR35-F4/F5 poll contract: transient /check-status failures are
+     * retried (a single network error must not abandon a healthy run);
+     * a run whose progress signature stalls past the deadline is
+     * declared dead (an accepted row whose worker never reported would
+     * otherwise poll forever). */
+    let failures = 0;
+    let lastSignature = '';
+    let lastProgressAt = Date.now();
+    while (true) {
+        await new Promise(r => setTimeout(r, SHEET_POLL_MS));
+        let check;
+        try {
+            check = await lambdaPost('storage', {
+                job_id: jobId,
+                task_prefix: `sheet_tiles_${sheetId}_${generation}`,
+                expected: workers,
+            }, '/check-status');
+            failures = 0;
+        } catch (e) {
+            failures += 1;
+            if (failures >= SHEET_POLL_MAX_CONSECUTIVE_FAILURES) {
+                throw new Error(`status polling failed ${failures}x: ${e.message}`);
+            }
+            continue;
+        }
         if (check.errors > 0) {
             const detail = check.error_details?.[0] || {};
             throw new Error(detail.error_msg || 'sheet worker failed');
@@ -205,6 +320,15 @@ async function _pollSheetWorkers(sheetId, jobId, steps, workers, statusEl) {
         const rows = check.results || [];
         const doneFrames = rows.reduce((a, r) => a + (Number(r.frame) || 0), 0);
         const doneRows = rows.filter(r => r.phase === 'done').length;
+        const signature = `${doneFrames}:${doneRows}:${rows.length}`;
+        if (signature !== lastSignature) {
+            lastSignature = signature;
+            lastProgressAt = Date.now();
+        } else if (Date.now() - lastProgressAt > SHEET_STALL_DEADLINE_MS) {
+            throw new Error(
+                `no worker progress for ${Math.round(SHEET_STALL_DEADLINE_MS / 60000)} minutes — ` +
+                'a worker likely died before reporting; re-run the sheet');
+        }
         const label = `${doneFrames}/${steps} frames (${doneRows}/${workers} workers)`;
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: ${label}`; statusEl.className = 'status'; }
         _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'running', detail: label });
@@ -215,17 +339,36 @@ async function _pollSheetWorkers(sheetId, jobId, steps, workers, statusEl) {
 async function _pollSheetTask(sheetId, jobId, taskId, statusEl, phaseLabel, railId = null) {
     // railId: rail card to keep updating, or null — the deepzoom poll must
     // NOT touch the sheet's card (it would resurrect a done card to running)
+    let failures = 0;
+    let lastLabel = '';
+    let lastProgressAt = Date.now();
     while (true) {
-        await new Promise(r => setTimeout(r, 3000));
-        const check = await lambdaPost('storage', {
-            job_id: jobId, task_prefix: taskId, expected: 1,
-        }, '/check-status');
+        await new Promise(r => setTimeout(r, SHEET_POLL_MS));
+        let check;
+        try {
+            check = await lambdaPost('storage', {
+                job_id: jobId, task_prefix: taskId, expected: 1,
+            }, '/check-status');
+            failures = 0;
+        } catch (e) {
+            failures += 1;
+            if (failures >= SHEET_POLL_MAX_CONSECUTIVE_FAILURES) {
+                throw new Error(`status polling failed ${failures}x: ${e.message}`);
+            }
+            continue;
+        }
         if (check.errors > 0) {
             const detail = check.error_details?.[0] || {};
             throw new Error(detail.error_msg || `sheet ${phaseLabel} failed`);
         }
         const rd = check.results?.[0] || {};
         const label = rd.phase_label || rd.phase || phaseLabel;
+        if (label !== lastLabel) {
+            lastLabel = label;
+            lastProgressAt = Date.now();
+        } else if (Date.now() - lastProgressAt > SHEET_STALL_DEADLINE_MS) {
+            throw new Error(`${phaseLabel} made no progress for ${Math.round(SHEET_STALL_DEADLINE_MS / 60000)} minutes`);
+        }
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: ${label}`; statusEl.className = 'status'; }
         if (railId) _jobsRailUpsert({ id: railId, state: 'running', detail: label });
         if (rd.phase === 'done') return rd;
@@ -274,16 +417,27 @@ async function _sheetGenerateDeepZoomInner(sheetId, statusEl) {
 }
 
 async function _sheetFindDeepZoom(sheetId) {
+    /* CR35-F21: a listing FAILURE is not a miss. Only a successful
+     * empty listing may trigger generation; transient failures retry
+     * with backoff and then THROW so the caller reports instead of
+     * launching a duplicate export. */
     if (_sheetDzExports[sheetId]) return _sheetDzExports[sheetId];
-    try {
-        const resp = await lambdaPost('storage', {}, '/list-deepzoom');
-        const hit = (resp.exports || []).find(e => e.job_id === sheetId && e.dzi_url);
-        if (hit) {
-            _sheetDzExports[sheetId] = { dzi_url: hit.dzi_url, share_url: hit.share_url };
-            return _sheetDzExports[sheetId];
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt) await new Promise(r => setTimeout(r, 1500 * attempt));
+        try {
+            const resp = await lambdaPost('storage', {}, '/list-deepzoom');
+            const hit = (resp.exports || []).find(e => e.job_id === sheetId && e.dzi_url);
+            if (hit) {
+                _sheetDzExports[sheetId] = { dzi_url: hit.dzi_url, share_url: hit.share_url };
+                return _sheetDzExports[sheetId];
+            }
+            return null;                     // authoritative miss
+        } catch (e) {
+            lastError = e;
         }
-    } catch (e) { /* listing failure -> treat as no export */ }
-    return null;
+    }
+    throw new Error(`DeepZoom listing failed: ${lastError && lastError.message}`);
 }
 
 async function cancelPolySheet() {
@@ -292,16 +446,17 @@ async function cancelPolySheet() {
         if (statusEl) statusEl.textContent = 'No active sheet run.';
         return;
     }
-    const { sheetId } = _activeSheetRun;
+    const { sheetId, generation } = _activeSheetRun;
     await lambdaPost('dispatch', {
         target: 'poly_sheet',
-        jobs: [{ action: 'cancel', sheet_id: sheetId }],
+        jobs: [{ action: 'cancel', sheet_id: sheetId, generation }],
         expected_keys: [],
     });
     if (statusEl) statusEl.textContent = `Sheet ${sheetId}: cancel requested (takes effect between frames).`;
 }
 
 async function loadSheetsTab() {
+    void resumeSheetRun();
     const invEl = document.getElementById('sheets-inventory');
     try {
         const resp = await lambdaPost('storage', {}, '/list-sheets');
@@ -480,16 +635,21 @@ async function populateSelectedSheet(btn) {
         const labelEl = document.getElementById('sheet-label');
         if (labelEl) labelEl.checked = !!m.label;
 
-        // the inherited compute-preview controls
+        // the inherited compute-preview controls (presence-aware: an
+        // explicit zero shim/quantile round-trips as zero, CR35-F15)
         _setInputValue('compute-preview-n', m.n);
         _setInputValue('compute-preview-size', m.tile_px);
         _setInputValue('compute-preview-rotate', m.rotate);
         _setInputValue('compute-preview-solver', m.solver_mode);
+        if (m.solver_iters != null) _setInputValue('compute-preview-iters', m.solver_iters);
         if (m.viewport) {
-            _setInputValue('compute-preview-quantile', (m.viewport.quantile || 0) * 100);
-            _setInputValue('compute-preview-shim', (m.viewport.shim || 0.05) * 100);
+            if (m.viewport.quantile != null) _setInputValue('compute-preview-quantile', m.viewport.quantile * 100);
+            if (m.viewport.shim != null) _setInputValue('compute-preview-shim', m.viewport.shim * 100);
         }
-        if (m.viewport?.mode !== 'explicit') {
+        if (m.viewport?.mode === 'explicit' && Array.isArray(m.viewport.explicit)) {
+            // full round-trip: stored numeric bounds seed the marquee
+            _seedComputePreviewMarquee(m.viewport.explicit);
+        } else if (m.viewport?.mode !== 'explicit') {
             const radio = document.querySelector('input[name="compute-preview-viewport-mode"][value="quantile"]');
             if (radio) { radio.checked = true; _setComputePreviewViewportMode('quantile'); }
         }
@@ -501,10 +661,7 @@ async function populateSelectedSheet(btn) {
             calc: { solver: m.solver_mode },
         });
         if (statusEl) {
-            const note = m.viewport?.mode === 'explicit'
-                ? ' (explicit viewport: re-drag the marquee on the preview)'
-                : '';
-            statusEl.textContent = `Populated Compute + Sheets controls from ${sheetId}${note}.`;
+            statusEl.textContent = `Populated Compute + Sheets controls from ${sheetId}.`;
             statusEl.className = 'status ok';
         }
         if (btn) { btn.textContent = '✓ Populated'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
@@ -675,10 +832,15 @@ function _sheetPopulateFrame() {
     _setInputValue('compute-preview-size', m.tile_px);
     _setInputValue('compute-preview-rotate', m.rotate);
     _setInputValue('compute-preview-solver', m.solver_mode);
+    if (m.solver_iters != null) _setInputValue('compute-preview-iters', m.solver_iters);
     if (m.viewport) {
-        _setInputValue('compute-preview-quantile', (m.viewport.quantile || 0) * 100);
-        _setInputValue('compute-preview-shim', (m.viewport.shim || 0.05) * 100);
+        if (m.viewport.quantile != null) _setInputValue('compute-preview-quantile', m.viewport.quantile * 100);
+        if (m.viewport.shim != null) _setInputValue('compute-preview-shim', m.viewport.shim * 100);
     }
+    // the clicked frame's ACTUAL bounds become the preview viewport —
+    // Populate Frame reconstructs the tile exactly, whatever mode
+    // framed it (CR35-F22)
+    if (Array.isArray(rec.bounds)) _seedComputePreviewMarquee(rec.bounds);
     if (typeof _applyComputePreviewRotation === 'function') _applyComputePreviewRotation();
 
     _populateComputeFromDetail(ctx.sheetId, {

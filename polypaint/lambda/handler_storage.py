@@ -6628,26 +6628,38 @@ def handle_delete_prefix(event):
 
 
 def handle_list_sheets(event):
-    """List poly-sheet artifacts: every sheets/{id}/sheet.json manifest
-    key with its size and timestamp. The client fetches manifests and
-    PNGs directly from the public bucket (poly-sheet.md §5)."""
-    sheets = []
+    """List poly-sheet artifacts. Delimiter listing (CR35-F20): the old
+    flat scan walked EVERY key under sheets/ — including up to 512
+    temporary frame tiles per stranded run — so refresh latency grew
+    with debris, not with sheets. Now: one delimiter pass enumerates
+    the sheet prefixes, then only each prefix's direct children are
+    listed (tiles live one level deeper and are never touched)."""
+    import concurrent.futures
+
     paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=BUCKET, Prefix="sheets/"):
-        for obj in page.get("Contents", []):
-            key = obj["Key"]
-            if not key.endswith("/sheet.json"):
-                continue
-            sheet_id = key[len("sheets/"):-len("/sheet.json")]
-            if "/" in sheet_id or not sheet_id:
-                continue
-            sheets.append({
-                "sheet_id": sheet_id,
-                "manifest_key": key,
-                "png_key": f"sheets/{sheet_id}/sheet.png",
-                "modified": obj["LastModified"].isoformat(),
-                "size": int(obj["Size"]),
-            })
+    prefixes = []
+    for page in paginator.paginate(Bucket=BUCKET, Prefix="sheets/",
+                                   Delimiter="/"):
+        prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
+
+    def manifest_row(prefix):
+        sheet_id = prefix[len("sheets/"):].rstrip("/")
+        if not sheet_id:
+            return None
+        try:
+            head = s3.head_object(Bucket=BUCKET, Key=prefix + "sheet.json")
+        except ClientError:
+            return None
+        return {
+            "sheet_id": sheet_id,
+            "manifest_key": prefix + "sheet.json",
+            "png_key": prefix + "sheet.png",
+            "modified": head["LastModified"].isoformat(),
+            "size": int(head["ContentLength"]),
+        }
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        sheets = [row for row in pool.map(manifest_row, prefixes) if row]
     sheets.sort(key=lambda r: r["modified"], reverse=True)
     return ok_response({"sheets": sheets})
 

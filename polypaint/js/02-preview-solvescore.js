@@ -9,7 +9,32 @@
 // translated to complex-plane bounds), square (centered side-S box).
 let _computePreviewViewportMode = 'quantile';
 let _computePreviewMarqueeBounds = null;   // {min_re,max_re,min_im,max_im}
+
+function _numFieldOr(id, fallback) {
+    // presence, not truthiness: an explicit 0 is a valid value
+    // (CR35-F15: `|| 5` silently turned a zero shim into 5 percent)
+    const parsed = parseFloat(document.getElementById(id)?.value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
 let _computePreviewLastViewport = null;    // bounds of the shown image
+
+function _seedComputePreviewMarquee(bounds) {
+    /* Programmatic explicit-viewport restore: inject stored numeric
+     * bounds into the marquee state and select marquee mode — the same
+     * state a drag would have produced (used by sheet Populate). */
+    if (!bounds || bounds.length !== 4) return false;
+    const [minRe, maxRe, minIm, maxIm] = bounds.map(Number);
+    if (![minRe, maxRe, minIm, maxIm].every(Number.isFinite)) return false;
+    _computePreviewMarqueeBounds = {
+        min_re: minRe, max_re: maxRe, min_im: minIm, max_im: maxIm,
+    };
+    const radio = document.querySelector(
+        'input[name="compute-preview-viewport-mode"][value="marquee"]');
+    if (radio) radio.checked = true;
+    _setComputePreviewViewportMode('marquee');
+    _updateComputePreviewMarqueeInfo();
+    return true;
+}
 
 function _setComputePreviewViewportMode(mode) {
     _computePreviewViewportMode = (mode === 'marquee' || mode === 'square') ? mode : 'quantile';
@@ -120,8 +145,8 @@ function _computePreviewSignatureNow() {
         solver_iters: Math.max(0, Math.min(64, parseInt(document.getElementById('compute-preview-iters')?.value, 10) || 0)),
         viewport_mode: _computePreviewViewportMode,
         viewport_bounds: _computePreviewExplicitBounds(),
-        quantile: (parseFloat(document.getElementById('compute-preview-quantile')?.value) || 0) / 100,
-        shim: (parseFloat(document.getElementById('compute-preview-shim')?.value) || 5) / 100,
+        quantile: _numFieldOr('compute-preview-quantile', 0) / 100,
+        shim: _numFieldOr('compute-preview-shim', 5) / 100,
         function: document.getElementById('render-function')?.value || '',
         cfpv: _cfpv.length ? [..._cfpv] : [],
         param_transforms: _effectiveParamTransformsForCompute(),
@@ -366,8 +391,8 @@ async function runComputePreview() {
     const previewSize = Math.max(64, parseInt(document.getElementById('compute-preview-size').value) || 1000);
     const solverMode = document.getElementById('compute-preview-solver').value || 'aberth_mt';
     const solverIters = Math.max(0, Math.min(64, parseInt(document.getElementById('compute-preview-iters')?.value, 10) || 0));
-    const quantile = Math.max(0, parseFloat(document.getElementById('compute-preview-quantile').value) || 0) / 100;
-    const shim = Math.max(0, parseFloat(document.getElementById('compute-preview-shim').value) || 5) / 100;
+    const quantile = Math.max(0, _numFieldOr('compute-preview-quantile', 0)) / 100;
+    const shim = Math.max(0, _numFieldOr('compute-preview-shim', 5)) / 100;
     const paramTransforms = _effectiveParamTransformsForCompute();
     const paramProgramChain = _effectiveParamProgramChainForCompute();
     const coeffTransforms = _effectiveCoeffTransformsForCompute();

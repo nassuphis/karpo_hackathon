@@ -200,12 +200,14 @@ class TestPolySheetEndToEnd(unittest.TestCase):
     def test_cancel_marker_stops_the_loop(self):
         import handler_poly_sheet as mod
 
+        gen = "g00000000cafe"
         stub = _S3Stub()
-        stub.objects[mod._cancel_key("cancelled-sheet")] = b"1"
+        stub.objects[mod._cancel_key("cancelled-sheet", gen)] = b"1"
         orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
         self._patched(mod, stub)
         try:
-            resp = mod.handle_run(_run_params("cancelled-sheet"))
+            resp = mod.handle_run({**_run_params("cancelled-sheet"),
+                                   "generation": gen})
         finally:
             (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
         body = json.loads(resp["body"])
@@ -261,6 +263,7 @@ class TestPolySheetEndToEnd(unittest.TestCase):
     def test_fanout_workers_and_stitch_match_single_run(self):
         import handler_poly_sheet as mod
 
+        gen = "gabcdef012345"
         # single-shot reference
         stub_single = _S3Stub()
         orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
@@ -276,19 +279,21 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         self._patched(mod, stub)
         try:
             p = _run_params("fan-sheet")
+            p["generation"] = gen
             mod.handle_frames({**p, "action": "frames",
-                               "task_id": "sheet_tiles_fan-sheet_w0",
+                               "task_id": f"sheet_tiles_fan-sheet_{gen}_w0",
                                "frame_indices": [0, 1]})
             mod.handle_frames({**p, "action": "frames",
-                               "task_id": "sheet_tiles_fan-sheet_w1",
+                               "task_id": f"sheet_tiles_fan-sheet_{gen}_w1",
                                "frame_indices": [2, 3]})
-            self.assertIn("sheets/fan-sheet/tiles/00000.bin", stub.objects)
+            self.assertIn(f"sheets/fan-sheet/tiles/{gen}/00000.bin", stub.objects)
             resp = mod.handle_stitch({**p, "action": "stitch",
-                                      "task_id": "sheet_stitch_fan-sheet"})
+                                      "task_id": f"sheet_stitch_fan-sheet_{gen}"})
         finally:
             (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
         manifest = json.loads(resp["body"])
         self.assertEqual(manifest["render_mode"], "fanout")
+        self.assertEqual(manifest["generation"], gen)
         self.assertEqual([f["value"] for f in manifest["frame_records"]],
                          [0.5, 1.0, 1.5, 2.0])
         self.assertEqual(manifest["degree"], 5)
@@ -300,17 +305,19 @@ class TestPolySheetEndToEnd(unittest.TestCase):
     def test_stitch_with_missing_tiles_errors(self):
         import handler_poly_sheet as mod
 
+        gen = "g0123456789ab"
         stub = _S3Stub()
         orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
         self._patched(mod, stub)
         try:
             p = _run_params("gap-sheet")
+            p["generation"] = gen
             mod.handle_frames({**p, "action": "frames",
-                               "task_id": "sheet_tiles_gap-sheet_w0",
+                               "task_id": f"sheet_tiles_gap-sheet_{gen}_w0",
                                "frame_indices": [0, 1]})   # frames 2,3 never rendered
             with self.assertRaises(RuntimeError) as ctx:
                 mod.handle_stitch({**p, "action": "stitch",
-                                   "task_id": "sheet_stitch_gap-sheet"})
+                                   "task_id": f"sheet_stitch_gap-sheet_{gen}"})
         finally:
             (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
         self.assertIn("missing 2 of 4 tiles", str(ctx.exception))
@@ -318,19 +325,106 @@ class TestPolySheetEndToEnd(unittest.TestCase):
     def test_worker_cancel_stops_between_frames(self):
         import handler_poly_sheet as mod
 
+        gen = "gfedcba987654"
         stub = _S3Stub()
-        stub.objects[mod._cancel_key("cx-sheet")] = b"1"
+        stub.objects[mod._cancel_key("cx-sheet", gen)] = b"1"
         orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
         self._patched(mod, stub)
         try:
             resp = mod.handle_frames({**_run_params("cx-sheet"), "action": "frames",
-                                      "task_id": "sheet_tiles_cx-sheet_w0",
+                                      "generation": gen,
+                                      "task_id": f"sheet_tiles_cx-sheet_{gen}_w0",
                                       "frame_indices": [0, 1]})
         finally:
             (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
         body = json.loads(resp["body"])
         self.assertEqual(body["cancelled"], "cx-sheet")
         self.assertEqual(body["frames_done"], 0)
+
+    def test_worker_without_generation_writes_terminal_error(self):
+        """CR35-F5: a worker that fails validation must still leave a
+        terminal error row (never a silent disappearance)."""
+        import handler_poly_sheet as mod
+
+        rows = []
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        mod.s3 = _S3Stub()
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.report_status = lambda job, task, status, *a, **k: rows.append(status)
+        try:
+            with self.assertRaises(RuntimeError):
+                mod.handle_frames({**_run_params("nogen-sheet"),
+                                   "action": "frames",
+                                   "task_id": "sheet_tiles_nogen_w0",
+                                   "frame_indices": [0]})
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+        self.assertIn("error", rows)
+
+    def test_begin_probes_validates_and_prewrites_rows(self):
+        """CR35-F4/F5/F6: begin measures the real degree, budgets from
+        it, mints the generation, and writes every status row before
+        any async dispatch."""
+        import handler_poly_sheet as mod
+
+        rows = []
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        mod.s3 = stub
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.report_status = lambda job, task, status, *a, **k: rows.append((task, status))
+        try:
+            resp = mod.handle_begin(_run_params("begin-sheet"))
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+        run = json.loads(resp["body"])
+        self.assertEqual(run["sheet_id"], "begin-sheet")
+        self.assertTrue(run["generation"].startswith("g"))
+        self.assertEqual(run["degree_probe"], 5)
+        self.assertEqual(run["steps"], 4)
+        self.assertEqual(sum(len(w["frames"]) for w in run["workers"]), 4)
+        # a status row per worker + the stitch row, all pre-written
+        self.assertEqual(len(rows), len(run["workers"]) + 1)
+        self.assertIn("sheets/begin-sheet/run.json", stub.objects)
+
+    def test_zero_shim_and_quantile_survive(self):
+        """CR35-F15: an explicit zero must stay zero end-to-end."""
+        import handler_poly_sheet as mod
+
+        cfg = mod._parse_sheet_config(_run_params("shim-sheet", extra={
+            "frame": {"n": 8, "tile_px": 32, "solver_mode": "jt64",
+                      "viewport": {"mode": "quantile", "quantile": 0,
+                                   "shim": 0},
+                      "rotate": 0},
+        }))
+        self.assertEqual(cfg["shim"], 0.0)
+        self.assertEqual(cfg["quantile"], 0.0)
+        # absent still defaults
+        cfg2 = mod._parse_sheet_config(_run_params("shim2-sheet"))
+        self.assertEqual(cfg2["shim"], 0.05)
+
+    def test_omitted_step_persists_as_executed(self):
+        """CR35-F16: values and stored step agree for an omitted step."""
+        import handler_poly_sheet as mod
+
+        axis = mod._parse_scan_axis({"token": "$T", "from": 2, "steps": 3,
+                                     "spacing": "step"})
+        self.assertEqual(axis["values"], [2.0, 3.0, 4.0])
+        self.assertEqual(axis["step"], 1.0)
+
+    def test_overlapping_tokens_substitute_lexically(self):
+        """CR35-F14: $T must not corrupt $T2; comment-only tokens are
+        not presence."""
+        import handler_poly_sheet as mod
+
+        p = {"coeff_program_source_text": "poly = fill($T2, $T)\nemit\n"}
+        out = mod.substitute_tokens(p, {"$T": 0.5, "$T2": 6})
+        self.assertEqual(out["coeff_program_source_text"],
+                         "poly = fill(6, 0.5)\nemit\n")
+        with self.assertRaises(RuntimeError):
+            mod.substitute_tokens(
+                {"coeff_program_source_text": "# $S\npoly = fill(3, 1)\nemit\n"},
+                {"$S": 1})
 
     def test_cross_product_two_tokens(self):
         import handler_poly_sheet as mod

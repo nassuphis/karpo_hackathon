@@ -1926,6 +1926,7 @@ setup_api_gateway() {
   "sweep-cm": "%s/sweep-cm",
   "solve_proximity": "%s/solve-proximity",
   "palette-debug": "%s/palette-debug",
+  "poly_sheet": "%s",
   "build": {
     "build_id": "%s",
     "deployed_at_utc": "%s",
@@ -1933,7 +1934,7 @@ setup_api_gateway() {
     "git_dirty": %s,
     "frontend_sha256": "%s"
   }
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" \
         --cache-control "no-cache" --region "$REGION"

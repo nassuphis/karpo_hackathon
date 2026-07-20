@@ -11,15 +11,26 @@ stitched into one PNG. Exactly two objects are uploaded:
     sheets/{sheet_id}/sheet.json    the manifest
 
 Actions:
-    run     — render every frame in one invocation (small sheets, tests)
+    begin   — SYNCHRONOUS admission (the /sheet-begin route): validate
+              the whole config, compile+probe frame 0 (real degree, real
+              per-frame cost -> honest budget), mint the server-owned
+              run GENERATION, pre-write every worker/stitch status row,
+              persist sheets/{id}/run.json, return the dispatch plan
     frames  — FAN-OUT worker: render an assigned subset of frames,
-              upload each as sheets/{id}/tiles/{k}.bin + .json
-    stitch  — assemble uploaded tiles into sheet.png + sheet.json,
-              then delete the tiles/ prefix
-    cancel  — write the cancel marker the frame loops check
+              upload each as sheets/{id}/tiles/{generation}/{k}.bin+.json
+    stitch  — assemble ONE generation's tiles into sheet.png+sheet.json
+              (publication is the commit point; cleanup is best-effort
+              garbage collection and can never turn a published sheet
+              into an error)
+    run     — single-invocation render (small sheets, tests)
+    cancel  — write the GENERATION-scoped cancel marker
 
-The client orchestrates the fan-out (dispatch W 'frames' jobs, poll,
-then one 'stitch' job) — no Step Functions, no stored roots. Frozen
+Durability contract (CR35-F4/F5/F19): the browser only relays an
+admission the server recorded first. Every status row exists BEFORE
+any async invocation, so a worker that dies pre-report leaves an
+'accepted' row a poll deadline can see — never an empty poll loop.
+All temporary keys, cancel markers, and status identities carry the
+generation, so replays and concurrent runs cannot mix state. Frozen
 viewport under fan-out: every worker derives frame 0's bounds itself
 (the pipeline is deterministic, so all workers agree exactly).
 """
@@ -42,6 +53,7 @@ from shared import (
     REF_SIZE,
     compute_viewport_from_bin,
     encode_png_gray,
+    is_missing_s3_error,
     ok_response,
     parse_body,
     report_status,
@@ -63,6 +75,8 @@ MAX_MARGIN = 64
 
 SHEET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$")
 TOKEN_RE = re.compile(r"^\$[A-Za-z][A-Za-z0-9_]*$")
+GENERATION_RE = re.compile(r"^g[0-9a-f]{12}$")
+COMMENT_RE = re.compile(r"#[^\n]*")
 
 MAX_STEPS = 256
 MIN_N, MAX_N = 8, 256
@@ -76,11 +90,14 @@ SOURCE_FIELDS = ("coeff_program_source_text", "param_program_source_text")
 
 
 MAX_FANOUT = 16
+SHEET_WORKERS = 8
 
 
 def handler(event, context):
     params = parse_body(event)
     action = str(params.get("action") or "run").strip().lower()
+    if action == "begin":
+        return handle_begin(params)
     if action == "cancel":
         return handle_cancel(params)
     if action == "frames":
@@ -90,8 +107,8 @@ def handler(event, context):
     return handle_run(params)
 
 
-def _cancel_key(sheet_id):
-    return f"sheets/{sheet_id}/cancel"
+def _cancel_key(sheet_id, generation):
+    return f"sheets/{sheet_id}/cancel_{generation}"
 
 
 def _validated_sheet_id(params):
@@ -101,18 +118,37 @@ def _validated_sheet_id(params):
     return sheet_id
 
 
+def _validated_generation(params):
+    generation = str(params.get("generation") or "").strip()
+    if not GENERATION_RE.match(generation):
+        raise RuntimeError(
+            f"generation must match {GENERATION_RE.pattern}, got {generation!r} "
+            "(obtain one from the begin action)")
+    return generation
+
+
 def handle_cancel(params):
     sheet_id = _validated_sheet_id(params)
-    s3.put_object(Bucket=BUCKET, Key=_cancel_key(sheet_id), Body=b"1")
-    return ok_response({"cancelled": sheet_id})
+    generation = _validated_generation(params)
+    s3.put_object(Bucket=BUCKET, Key=_cancel_key(sheet_id, generation), Body=b"1")
+    return ok_response({"cancelled": sheet_id, "generation": generation})
 
 
-def _cancel_requested(sheet_id):
-    try:
-        s3.head_object(Bucket=BUCKET, Key=_cancel_key(sheet_id))
-        return True
-    except ClientError:
-        return False
+def _cancel_requested(sheet_id, generation):
+    """Generation-scoped cancel check. Only a genuinely-absent marker
+    means 'not cancelled'; an operational S3 error (throttle, 5xx) is
+    retried once and then treated as not-cancelled — a transient blip
+    must not kill legitimate work, and the next frame re-checks
+    (CR35-F17: the old code swallowed EVERY ClientError as absence)."""
+    for _ in range(2):
+        try:
+            s3.head_object(Bucket=BUCKET, Key=_cancel_key(sheet_id, generation))
+            return True
+        except ClientError as exc:
+            if is_missing_s3_error(exc):
+                return False
+            time.sleep(0.2)
+    return False
 
 
 def scan_values(lo, hi, steps, spacing, step=None):
@@ -153,22 +189,43 @@ def _value_literal(value):
     return f"(0-{body})" if v < 0 else body
 
 
-def substitute_token(params, token, value):
-    """Textual substitution of the scan token in the source fields.
-    Returns a shallow-copied params dict; raises if the token appears
-    nowhere (a sheet whose frames are all identical is a mistake)."""
-    literal = _value_literal(value)
+def substitute_tokens(params, mapping):
+    """ONE lexical substitution pass for every scan token (CR35-F14).
+    Longest-match alternation, so $T never corrupts $T2; a token whose
+    only occurrences sit inside # comments does not count as present
+    (identical frames are a configuration mistake, not a sheet)."""
+    if not mapping:
+        raise RuntimeError("substitute_tokens requires at least one token")
+    ordered = sorted(mapping, key=len, reverse=True)
+    pattern = re.compile(
+        "|".join(re.escape(token) for token in ordered) + r"(?![A-Za-z0-9_])")
+    literals = {token: _value_literal(value) for token, value in mapping.items()}
     out = dict(params)
-    hits = 0
     for field in SOURCE_FIELDS:
         text = out.get(field)
-        if isinstance(text, str) and token in text:
-            hits += text.count(token)
-            out[field] = text.replace(token, literal)
-    if hits == 0:
-        raise RuntimeError(
-            f"scan token {token!r} does not appear in any of {SOURCE_FIELDS}")
+        if not isinstance(text, str) or not text:
+            continue
+        out[field] = pattern.sub(lambda m: literals[m.group(0)], text)
+    # presence: comment-stripped, boundary-aware, per token
+    for token in ordered:
+        present = 0
+        for field in SOURCE_FIELDS:
+            text = params.get(field)
+            if not isinstance(text, str) or not text:
+                continue
+            live = COMMENT_RE.sub("", text)
+            present += len(re.findall(
+                re.escape(token) + r"(?![A-Za-z0-9_])", live))
+        if present == 0:
+            raise RuntimeError(
+                f"scan token {token!r} does not appear (outside comments) "
+                f"in any of {SOURCE_FIELDS}")
     return out
+
+
+def substitute_token(params, token, value):
+    """Single-token compatibility wrapper over substitute_tokens."""
+    return substitute_tokens(params, {token: value})
 
 
 def _run_binary(binary, out_path, spec, label, timeout_s=300):
@@ -180,9 +237,11 @@ def _run_binary(binary, out_path, spec, label, timeout_s=300):
     return json.loads(proc.stdout)
 
 
-def _solve_frame(compiled, params, n, solver_mode):
+def _solve_frame(compiled, params, n, solver_mode, solver_iters=0):
     """One frame: grid coeffgen (+fused solve in-process) or the split
-    solver from the f32 file. Returns (roots_bytes, degree)."""
+    solver from the f32 file. Returns (roots_bytes, degree).
+    solver_iters mirrors the preview exactly: a cap for solve_mt and
+    solve_newton; jt/cm and the fused trio ignore it (CR35-F22)."""
     coeff_spec = {
         "mode": "coeffgen",
         "function": str(params["function"]),
@@ -215,6 +274,8 @@ def _solve_frame(compiled, params, n, solver_mode):
                 "n_steps": n_steps,
                 "n_threads": 2,
             }
+            if solver_mode == "newton" and solver_iters:
+                solve_spec["max_iter"] = solver_iters
             binary = SWEEP_CM
         else:
             solve_spec = {
@@ -226,6 +287,8 @@ def _solve_frame(compiled, params, n, solver_mode):
                 "i1_end": 1,
                 "match_roots": False,
             }
+            if solver_iters:
+                solve_spec["max_iter"] = solver_iters
             binary = SWEEP_MT
         _run_binary(binary, TMP_ROOTS, solve_spec, "sheet solve")
 
@@ -374,13 +437,18 @@ def _parse_sheet_config(params):
     margin_px = int(frame.get("margin_px") or 0)
     if not 0 <= margin_px <= MAX_MARGIN:
         raise RuntimeError(f"margin_px must be in 0..{MAX_MARGIN}, got {margin_px}")
+    solver_iters = int(frame.get("solver_iters") or 0)
+    if not 0 <= solver_iters <= 64:
+        raise RuntimeError(f"solver_iters must be in 0..64, got {solver_iters}")
 
     viewport = frame.get("viewport") or {}
     vp_mode = str(viewport.get("mode") or "quantile").strip().lower()
     if vp_mode not in ("quantile", "explicit", "frozen"):
         raise RuntimeError(f"viewport mode must be quantile/explicit/frozen, got {vp_mode!r}")
-    quantile = float(viewport.get("quantile") or 0.0)
-    shim = float(viewport.get("shim") or 0.05)
+    # presence, not truthiness: an explicit 0 is a valid shim/quantile
+    # (CR35-F15: `or 0.05` silently turned zero into 5 percent)
+    quantile = float(viewport["quantile"]) if viewport.get("quantile") is not None else 0.0
+    shim = float(viewport["shim"]) if viewport.get("shim") is not None else 0.05
     explicit_bounds = None
     if vp_mode == "explicit":
         try:
@@ -416,7 +484,8 @@ def _parse_sheet_config(params):
         "sheet_id": sheet_id, "axes": axes, "steps": steps,
         "n": n, "tile_px": tile_px,
         "solver_mode": solver_mode, "rotate": rotate, "polarity": polarity,
-        "margin_px": margin_px, "label": label, "vp_mode": vp_mode, "quantile": quantile,
+        "margin_px": margin_px, "label": label, "solver_iters": solver_iters,
+        "vp_mode": vp_mode, "quantile": quantile,
         "shim": shim, "explicit_bounds": explicit_bounds, "cols": cols,
         "rows": rows, "canvas_w": canvas_w, "canvas_h": canvas_h,
         "fg": fg, "bg": bg,
@@ -424,7 +493,10 @@ def _parse_sheet_config(params):
 
 
 def _parse_scan_axis(spec):
-    """One scan line -> validated axis with resolved per-frame values."""
+    """One scan line -> validated axis with resolved per-frame values.
+    The step is resolved ONCE and that same value is executed, stored in
+    the manifest, and therefore restored by Populate (CR35-F16: an
+    omitted step used to execute as 1 but persist as 0)."""
     if not isinstance(spec, dict):
         raise RuntimeError(f"scan spec must be an object, got {spec!r}")
     token = str(spec.get("token") or "").strip()
@@ -434,12 +506,15 @@ def _parse_scan_axis(spec):
     if not 1 <= steps <= MAX_STEPS:
         raise RuntimeError(f"scan steps must be in 1..{MAX_STEPS}, got {steps}")
     spacing = str(spec.get("spacing") or "linear").strip().lower()
+    step = None
+    if spacing == "step":
+        step = float(spec["step"]) if spec.get("step") is not None else 1.0
     values = scan_values(spec.get("from"), spec.get("to") or 0.0, steps, spacing,
-                         step=spec.get("step"))
+                         step=step)
     return {
         "token": token, "steps": steps, "spacing": spacing, "values": values,
         "from": float(spec.get("from")), "to": float(spec.get("to") or 0.0),
-        "step": (float(spec.get("step") or 0.0) if spacing == "step" else None),
+        "step": step,
     }
 
 
@@ -454,11 +529,11 @@ def _frame_values(cfg, k):
 
 
 def _substitute_frame(params, cfg, k):
-    """Substitute every axis token for frame k (each must hit)."""
-    out = params
-    for axis, value in zip(cfg["axes"], _frame_values(cfg, k)):
-        out = substitute_token(out, axis["token"], value)
-    return out
+    """Substitute every axis token for frame k in ONE lexical pass."""
+    values = _frame_values(cfg, k)
+    return substitute_tokens(
+        params, {axis["token"]: value
+                 for axis, value in zip(cfg["axes"], values)})
 
 
 def _require_job_task(params, action):
@@ -487,7 +562,7 @@ def _render_frame_tile(cfg, params, k, frozen_cache):
     frame_params = _substitute_frame(params, cfg, k)
     compiled = _compile_compute_inputs(frame_params)
     roots, degree = _solve_frame(compiled, frame_params, cfg["n"],
-                                 cfg["solver_mode"])
+                                 cfg["solver_mode"], cfg["solver_iters"])
     if cfg["vp_mode"] == "explicit":
         bounds = cfg["explicit_bounds"]
     elif cfg["vp_mode"] == "frozen":
@@ -501,7 +576,8 @@ def _render_frame_tile(cfg, params, k, frozen_cache):
                 # bounds identically, no cross-worker coordination
                 fp0 = _substitute_frame(params, cfg, 0)
                 roots0, _ = _solve_frame(_compile_compute_inputs(fp0), fp0,
-                                         cfg["n"], cfg["solver_mode"])
+                                         cfg["n"], cfg["solver_mode"],
+                                         cfg["solver_iters"])
                 frozen_cache["bounds"] = _bounds_from_viewport(
                     compute_viewport_from_bin(
                         roots0, quantile=cfg["quantile"], shim=cfg["shim"]))
@@ -535,8 +611,27 @@ def _blit_tile(canvas, cfg, k, tile):
         canvas[start:start + tile_px] = tile[y * tile_px:(y + 1) * tile_px]
 
 
-def _tile_key(sheet_id, k):
-    return f"sheets/{sheet_id}/tiles/{k:05d}.bin"
+def _tile_key(sheet_id, generation, k):
+    return f"sheets/{sheet_id}/tiles/{generation}/{k:05d}.bin"
+
+
+def _run_json_key(sheet_id):
+    return f"sheets/{sheet_id}/run.json"
+
+
+def _worker_task_id(sheet_id, generation, index):
+    return f"sheet_tiles_{sheet_id}_{generation}_w{index}"
+
+
+def _stitch_task_id(sheet_id, generation):
+    return f"sheet_stitch_{sheet_id}_{generation}"
+
+
+def _worker_ranges(steps, workers):
+    ranges = [[] for _ in range(workers)]
+    for k in range(steps):
+        ranges[k * workers // steps].append(k)
+    return [r for r in ranges if r]
 
 
 def _sheet_manifest(cfg, params, t0, degree, frame_records, render_mode):
@@ -559,6 +654,7 @@ def _sheet_manifest(cfg, params, t0, degree, frame_records, render_mode):
         "polarity": cfg["polarity"],
         "margin_px": cfg["margin_px"],
         "label": cfg["label"],
+        "solver_iters": cfg["solver_iters"],
         "render_mode": render_mode,
         "pipeline": {key: params[key] for key in (
             "function", "cfpv", "param_transforms", "coeff_transforms",
@@ -585,57 +681,156 @@ def _upload_sheet(cfg, manifest, canvas):
                   ContentType="application/json")
 
 
-def handle_frames(params):
-    """Fan-out worker: render the assigned frame subset, upload tiles."""
-    job_id, task_id = _require_job_task(params, "frames")
+def _probe_frame_cost(params, cfg):
+    """Compile + 1x1-coeffgen probe of frame 0: the REAL degree and the
+    measured per-frame compile cost feed the budget (CR35-F6: the old
+    estimate hardcoded degree 40 and ignored compile entirely)."""
+    t0 = time.time()
+    frame_params = _substitute_frame(params, cfg, 0)
+    compiled = _compile_compute_inputs(frame_params)
+    compile_ms = (time.time() - t0) * 1000.0
+    probe_spec = {
+        "mode": "coeffgen",
+        "function": str(frame_params["function"]),
+        "param_transforms": compiled["param_transforms"],
+        "coeff_transforms": compiled["coeff_transforms"],
+        "n1": 1, "n2": 1, "i1_start": 0, "i1_end": 1, "times": 1,
+    }
+    for key, src in (("param_program", "param_program"),
+                     ("coeff_program", "coeff_program"),
+                     ("cfpv", "cfpv")):
+        if compiled[src]:
+            probe_spec[key] = compiled[src]
+    meta = _run_binary(SWEEP_COEFFGEN, TMP_COEFFS, probe_spec, "sheet probe")
+    return int(meta["degree"]), compile_ms
+
+
+def handle_begin(params):
+    """Synchronous admission: validate everything, probe frame 0,
+    budget against the measured degree/compile cost, mint the run
+    generation, pre-write every status row, persist run.json, and
+    return the dispatch plan the client relays to the async workers."""
+    job_id = str(params.get("job_id") or "").strip()
+    if not job_id:
+        raise RuntimeError("poly-sheet begin requires job_id")
     cfg = _parse_sheet_config(params)
     sheet_id = cfg["sheet_id"]
-    indices = params.get("frame_indices")
-    if not isinstance(indices, list) or not indices:
-        raise RuntimeError("frames action requires a nonempty frame_indices list")
-    indices = sorted({int(k) for k in indices})
-    if indices[0] < 0 or indices[-1] >= cfg["steps"]:
-        raise RuntimeError(
-            f"frame_indices out of range 0..{cfg['steps'] - 1}: {indices}")
-    _budget_check(cfg, len(indices) + (1 if cfg["vp_mode"] == "frozen" else 0),
-                  "worker share")
-    _substitute_frame(params, cfg, indices[0])
+    steps = cfg["steps"]
 
-    report_status(job_id, task_id, "started", result_data={
-        "phase": "sheet", "phase_label": "Sheet frames",
-        "sheet_id": sheet_id, "frames": len(indices), "frame": 0,
+    degree, compile_ms = _probe_frame_cost(params, cfg)
+    spp = _solve_us_per_step(solver_mode=cfg["solver_mode"],
+                             degree=max(2, degree), fused_threads=2)
+    raster_us = cfg["tile_px"] * cfg["tile_px"] * 0.02 + degree * cfg["n"] * cfg["n"] * 0.05
+    frame_us = compile_ms * 1000.0 + cfg["n"] * cfg["n"] * (spp + 3.0) + raster_us
+    workers = min(SHEET_WORKERS, steps)
+    frames_per_worker = math.ceil(steps / workers)
+    est_worker_us = int(frames_per_worker * frame_us * 1.4)
+    if est_worker_us > BUDGET_US:
+        raise RuntimeError(
+            f"sheet too large: {steps} frames at measured degree {degree} "
+            f"({frames_per_worker} frames/worker x {frame_us / 1e6:.1f}s "
+            f"estimated) exceeds the {BUDGET_US / 1e6:.0f}s worker budget — "
+            "reduce frames or N, or switch solver")
+
+    generation = "g" + os.urandom(6).hex()
+    # stale-state hygiene: previous generations' tiles and markers can
+    # only waste listing space now (keys are generation-scoped)
+    ranges = _worker_ranges(steps, workers)
+    worker_tasks = [_worker_task_id(sheet_id, generation, i)
+                    for i in range(len(ranges))]
+    stitch_task = _stitch_task_id(sheet_id, generation)
+    # every status row exists BEFORE any async dispatch (CR35-F5): a
+    # worker that dies pre-report leaves this row for the poll deadline
+    for i, task in enumerate(worker_tasks):
+        report_status(job_id, task, "started", result_data={
+            "phase": "accepted", "phase_label": "Accepted",
+            "sheet_id": sheet_id, "generation": generation,
+            "frames": len(ranges[i]), "frame": 0,
+        })
+    report_status(job_id, stitch_task, "started", result_data={
+        "phase": "accepted", "phase_label": "Waiting for workers",
+        "sheet_id": sheet_id, "generation": generation,
     })
-    frozen_cache = {}
-    done = 0
+    run = {
+        "sheet_id": sheet_id,
+        "generation": generation,
+        "job_id": job_id,
+        "steps": steps,
+        "workers": [{"task_id": t, "frames": r}
+                    for t, r in zip(worker_tasks, ranges)],
+        "stitch_task_id": stitch_task,
+        "degree_probe": degree,
+        "compile_ms_probe": round(compile_ms, 3),
+        "est_worker_us": est_worker_us,
+        "created_at_s": time.time(),
+        "status": "running",
+    }
+    s3.put_object(Bucket=BUCKET, Key=_run_json_key(sheet_id),
+                  Body=json.dumps(run, indent=1).encode("utf-8"),
+                  ContentType="application/json")
+    return ok_response(run)
+
+
+def handle_frames(params):
+    """Fan-out worker: render the assigned frame subset, upload tiles.
+    EVERYTHING after identity extraction runs inside the status guard:
+    any failure — including config validation — writes a terminal error
+    row (CR35-F5; the begin action already wrote the accepted row)."""
+    job_id = str(params.get("job_id") or "").strip()
+    task_id = str(params.get("task_id") or "").strip()
+    if not job_id or not task_id:
+        raise RuntimeError("poly-sheet frames requires job_id and task_id")
     try:
+        generation = _validated_generation(params)
+        cfg = _parse_sheet_config(params)
+        sheet_id = cfg["sheet_id"]
+        indices = params.get("frame_indices")
+        if not isinstance(indices, list) or not indices:
+            raise RuntimeError("frames action requires a nonempty frame_indices list")
+        indices = sorted({int(k) for k in indices})
+        if indices[0] < 0 or indices[-1] >= cfg["steps"]:
+            raise RuntimeError(
+                f"frame_indices out of range 0..{cfg['steps'] - 1}: {indices}")
+        _budget_check(cfg, len(indices) + (1 if cfg["vp_mode"] == "frozen" else 0),
+                      "worker share")
+        _substitute_frame(params, cfg, indices[0])
+
+        report_status(job_id, task_id, "running", result_data={
+            "phase": "sheet", "phase_label": "Sheet frames",
+            "sheet_id": sheet_id, "generation": generation,
+            "frames": len(indices), "frame": 0,
+        })
+        frozen_cache = {}
+        done = 0
         for k in indices:
-            if _cancel_requested(sheet_id):
+            if _cancel_requested(sheet_id, generation):
                 report_status(job_id, task_id, "error", "Cancelled by user",
                               result_data={"phase": "error",
                                            "phase_label": "Cancelled",
                                            "sheet_id": sheet_id, "frame": done})
                 return ok_response({"cancelled": sheet_id, "frames_done": done})
             tile, record = _render_frame_tile(cfg, params, k, frozen_cache)
-            s3.put_object(Bucket=BUCKET, Key=_tile_key(sheet_id, k),
+            key = _tile_key(sheet_id, generation, k)
+            s3.put_object(Bucket=BUCKET, Key=key,
                           Body=bytes(tile), ContentType="application/octet-stream")
-            s3.put_object(Bucket=BUCKET,
-                          Key=_tile_key(sheet_id, k).replace(".bin", ".json"),
+            s3.put_object(Bucket=BUCKET, Key=key.replace(".bin", ".json"),
                           Body=json.dumps(record).encode("utf-8"),
                           ContentType="application/json")
             done += 1
             report_status(job_id, task_id, "running", result_data={
                 "phase": "sheet", "phase_label": f"{done}/{len(indices)} frames",
-                "sheet_id": sheet_id, "frames": len(indices), "frame": done,
+                "sheet_id": sheet_id, "generation": generation,
+                "frames": len(indices), "frame": done,
             })
         report_status(job_id, task_id, "done", result_data={
             "phase": "done", "phase_label": "Worker done",
-            "sheet_id": sheet_id, "frames": len(indices), "frame": done,
+            "sheet_id": sheet_id, "generation": generation,
+            "frames": len(indices), "frame": done,
         })
         return ok_response({"sheet_id": sheet_id, "frames_done": done})
     except Exception as e:
         report_status(job_id, task_id, "error", str(e), result_data={
             "phase": "error", "phase_label": "Sheet worker failed",
-            "sheet_id": sheet_id,
         })
         raise
     finally:
@@ -647,19 +842,27 @@ def handle_frames(params):
 
 
 def handle_stitch(params):
-    """Assemble the workers' tiles into the final mosaic + manifest,
-    then delete the tiles/ prefix."""
-    job_id, task_id = _require_job_task(params, "stitch")
-    cfg = _parse_sheet_config(params)
-    sheet_id = cfg["sheet_id"]
-    t0 = float(params.get("started_at_s") or time.time())
-
-    report_status(job_id, task_id, "started", result_data={
-        "phase": "stitch", "phase_label": "Stitching",
-        "sheet_id": sheet_id, "frames": cfg["steps"],
-    })
+    """Assemble ONE generation's tiles into the final mosaic + manifest.
+    PUBLICATION IS THE COMMIT POINT (CR35-F18): once sheet.png and
+    sheet.json are durably written the run is done — tile cleanup is
+    best-effort garbage collection whose failure is recorded, never an
+    error that contradicts the published artifact."""
+    job_id = str(params.get("job_id") or "").strip()
+    task_id = str(params.get("task_id") or "").strip()
+    if not job_id or not task_id:
+        raise RuntimeError("poly-sheet stitch requires job_id and task_id")
     try:
-        if _cancel_requested(sheet_id):
+        generation = _validated_generation(params)
+        cfg = _parse_sheet_config(params)
+        sheet_id = cfg["sheet_id"]
+        t0 = float(params.get("started_at_s") or time.time())
+
+        report_status(job_id, task_id, "running", result_data={
+            "phase": "stitch", "phase_label": "Stitching",
+            "sheet_id": sheet_id, "generation": generation,
+            "frames": cfg["steps"],
+        })
+        if _cancel_requested(sheet_id, generation):
             report_status(job_id, task_id, "error", "Cancelled by user",
                           result_data={"phase": "error", "phase_label": "Cancelled",
                                        "sheet_id": sheet_id})
@@ -670,15 +873,17 @@ def handle_stitch(params):
         frame_records = []
         missing = []
         for k in range(cfg["steps"]):
-            key = _tile_key(sheet_id, k)
+            key = _tile_key(sheet_id, generation, k)
             try:
                 tile = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
                 record = json.loads(
                     s3.get_object(Bucket=BUCKET,
                                   Key=key.replace(".bin", ".json"))["Body"].read())
-            except ClientError:
-                missing.append(k)
-                continue
+            except ClientError as exc:
+                if is_missing_s3_error(exc):
+                    missing.append(k)
+                    continue
+                raise
             if len(tile) != tile_bytes:
                 raise RuntimeError(
                     f"tile {k} size mismatch: expected {tile_bytes}, got {len(tile)}")
@@ -692,29 +897,55 @@ def handle_stitch(params):
 
         degree = frame_records[0].get("degree") if frame_records else None
         manifest = _sheet_manifest(cfg, params, t0, degree, frame_records, "fanout")
-        _upload_sheet(cfg, manifest, canvas)
+        manifest["generation"] = generation
+        _upload_sheet(cfg, manifest, canvas)          # <- COMMIT POINT
+        _mark_run_done(sheet_id, generation)
 
-        # tiles are scaffolding — remove them so /list-sheets stays lean
-        delete_keys = []
-        for k in range(cfg["steps"]):
-            delete_keys.append({"Key": _tile_key(sheet_id, k)})
-            delete_keys.append({"Key": _tile_key(sheet_id, k).replace(".bin", ".json")})
-        for i in range(0, len(delete_keys), 1000):
-            s3.delete_objects(Bucket=BUCKET,
-                              Delete={"Objects": delete_keys[i:i + 1000],
-                                      "Quiet": True})
+        cleanup_ok = True
+        try:
+            delete_keys = []
+            for k in range(cfg["steps"]):
+                key = _tile_key(sheet_id, generation, k)
+                delete_keys.append({"Key": key})
+                delete_keys.append({"Key": key.replace(".bin", ".json")})
+            delete_keys.append({"Key": _cancel_key(sheet_id, generation)})
+            for i in range(0, len(delete_keys), 1000):
+                resp = s3.delete_objects(
+                    Bucket=BUCKET,
+                    Delete={"Objects": delete_keys[i:i + 1000], "Quiet": True})
+                if resp.get("Errors"):
+                    cleanup_ok = False
+        except Exception:
+            cleanup_ok = False
 
         report_status(job_id, task_id, "done", result_data={
             "phase": "done", "phase_label": "Done",
-            "sheet_id": sheet_id, "png_key": manifest["png_key"],
+            "sheet_id": sheet_id, "generation": generation,
+            "png_key": manifest["png_key"],
             "frames": cfg["steps"], "elapsed_ms": manifest["elapsed_ms"],
+            "cleanup_ok": cleanup_ok,
         })
         return ok_response(manifest)
     except Exception as e:
         report_status(job_id, task_id, "error", str(e), result_data={
-            "phase": "error", "phase_label": "Stitch failed", "sheet_id": sheet_id,
+            "phase": "error", "phase_label": "Stitch failed",
         })
         raise
+
+
+def _mark_run_done(sheet_id, generation):
+    """Best-effort run.json completion marker (resume looks at it)."""
+    try:
+        body = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))["Body"].read()
+        run = json.loads(body)
+        if run.get("generation") == generation:
+            run["status"] = "done"
+            run["finished_at_s"] = time.time()
+            s3.put_object(Bucket=BUCKET, Key=_run_json_key(sheet_id),
+                          Body=json.dumps(run, indent=1).encode("utf-8"),
+                          ContentType="application/json")
+    except Exception:
+        pass
 
 
 def handle_run(params):
@@ -722,6 +953,7 @@ def handle_run(params):
     cfg = _parse_sheet_config(params)
     sheet_id = cfg["sheet_id"]
     steps = cfg["steps"]
+    generation = str(params.get("generation") or "").strip() or "g000000000000"
     _budget_check(cfg, steps, "sheet")
 
     # every token must hit at least once (validated on frame 0's values)
@@ -740,7 +972,7 @@ def handle_run(params):
 
     try:
         for k in range(steps):
-            if _cancel_requested(sheet_id):
+            if _cancel_requested(sheet_id, generation):
                 report_status(job_id, task_id, "error", "Cancelled by user",
                               result_data={"phase": "error", "phase_label": "Cancelled",
                                            "sheet_id": sheet_id, "frame": k})

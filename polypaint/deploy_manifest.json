@@ -260,7 +260,9 @@
    "group": "core",
    "memory_why": "async parameter-scan sheet renderer (frames solved in-process, needs LAPACK for cm64/roots_cm chains)",
    "tmp": "binary",
-   "routes": []
+   "routes": [
+    "/sheet-begin"
+   ]
   },
   {
    "key": "bilevel",

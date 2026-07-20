@@ -238,15 +238,13 @@ test.describe('CR35 wave D regressions', () => {
 });
 
 test.describe('Round-4 resume + publish regressions', () => {
-  test('targeted redispatch only relaunches accepted workers (finding 1)', async ({ page }) => {
+  test('redispatch relaunches every non-done worker; lease gates them (finding 1)', async ({ page }) => {
     const out = await page.evaluate(async () => {
-      // /check-status returns parsed result_data; the worker now embeds
-      // task_id there, so the phase map is keyable
       window.lambdaPost = async (name, body, path) => {
         if (path === '/check-status') {
           return { errors: 0, results: [
             { task_id: 'sheet_tiles_s_g_w0', phase: 'done', frame: 2 },
-            { task_id: 'sheet_tiles_s_g_w1', phase: 'sheet', frame: 1 },
+            { task_id: 'sheet_tiles_s_g_w1', phase: 'sheet', frame: 1 },   // running (maybe crashed)
             { task_id: 'sheet_tiles_s_g_w2', phase: 'accepted', frame: 0 },
           ] };
         }
@@ -263,8 +261,10 @@ test.describe('Round-4 resume + publish regressions', () => {
       const pending = await _sheetWorkersNeedingDispatch(desc);
       return pending.map(w => w.task_id);
     });
-    // only the still-'accepted' worker is redispatched; done/running left alone
-    expect(out).toEqual(['sheet_tiles_s_g_w2']);
+    // round-6: every NON-DONE worker is redispatched (the server lease
+    // claim no-ops a live one and reclaims a crashed one) — skipping
+    // 'running' stranded crashed workers forever
+    expect(out).toEqual(['sheet_tiles_s_g_w1', 'sheet_tiles_s_g_w2']);
   });
 
   test('unknown stitch state does not dispatch (finding 7)', async ({ page }) => {
@@ -352,6 +352,51 @@ test.describe('Round-5 resume hardening', () => {
     });
     expect(out.abandoned).toEqual({ action: 'abandon', sheet_id: 'gv', generation: 'gg' });
     expect(out.cleared).toBe(true);
+    expect(out.rediscovered).toBe(false);
+  });
+});
+
+test.describe('Round-6 lease + reconciliation', () => {
+  test('a published generation short-circuits the drive (finding 2)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      // run.json says THIS generation is published, but DDB has no done row
+      const realFetch = window.fetch;
+      window.fetch = async (url) => {
+        if (String(url).includes('run.json')) {
+          return { ok: true, json: async () => ({ published_generation: 'g6' }) };
+        }
+        return realFetch(url);
+      };
+      let generatedDeepZoom = false;
+      window._sheetGenerateDeepZoom = async () => { generatedDeepZoom = true; };
+      window.lambdaPost = async () => { throw new Error('DDB should not be polled'); };
+      const desc = { sheetId: 's6', jobId: 'j', generation: 'g6', steps: 4,
+                     workers: [], stitchTask: 't', payload: {} };
+      let threw = false;
+      try {
+        await _sheetDriveRun(desc, null, { dispatchWorkers: false });
+      } catch (e) { threw = true; }
+      window.fetch = realFetch;
+      return { threw, generatedDeepZoom };
+    });
+    // reconciled via run.json — no DDB poll, no throw, DeepZoom kicked off
+    expect(out.threw).toBe(false);
+    expect(out.generatedDeepZoom).toBe(true);
+  });
+
+  test('cancel guards the generation from rediscovery (finding 4)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'c6', jobId: 'j', generation: 'gc6', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      window.lambdaPost = async () => ({ fired: 1 });
+      await cancelPolySheet();
+      _sheetsInventory = [];
+      const before = _sheetRunLoad();
+      await _sheetDiscoverServerRun([{ sheet_id: 'c6', run_status: 'running',
+                                       run_generation: 'gc6', run_key: 'sheets/c6/run.json' }]);
+      return { rediscovered: _sheetRunLoad() !== before };
+    });
     expect(out.rediscovered).toBe(false);
   });
 });

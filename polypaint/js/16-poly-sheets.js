@@ -246,6 +246,17 @@ async function _sheetDriveRun(desc, statusEl, opts) {
      * it needs is in the persisted descriptor, and every step is
      * idempotent per generation (CR35-F4). */
     const { sheetId, jobId, steps } = desc;
+    // round-6 finding 2: run.json is the AUTHORITATIVE completion signal.
+    // The stitch's terminal DDB write is best-effort (it swallows a
+    // throttle after the pointer commit), so a published sheet can show
+    // no 'done' DDB row. Reconcile against run.json first — if this
+    // generation is already published, we're done regardless of DDB.
+    if (await _sheetGenerationPublished(sheetId, desc.generation)) {
+        _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'done', detail: 'published' });
+        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: published — generating DeepZoom...`; statusEl.className = 'status ok'; }
+        void _sheetGenerateDeepZoom(sheetId, statusEl).catch(() => {});
+        return;
+    }
     if (opts && opts.dispatchWorkers) await _sheetDispatchWorkers(desc);
     await _pollSheetWorkers(sheetId, jobId, steps, desc.workers.length, statusEl, desc.generation);
 
@@ -265,11 +276,23 @@ async function _sheetDriveRun(desc, statusEl, opts) {
         });
         if ((stitch.fired || 0) !== 1) throw new Error('poly-sheet stitch dispatch failed');
     }
-    const doneRd = await _pollSheetTask(sheetId, jobId, desc.stitchTask, statusEl, 'stitching', 'sheet:' + sheetId);
+    const doneRd = await _pollSheetTask(sheetId, jobId, desc.stitchTask, statusEl, 'stitching', 'sheet:' + sheetId, desc.generation);
     _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'done', detail: `${doneRd.frames} frames` });
     if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: done (${doneRd.frames} frames, ${doneRd.elapsed_ms}ms) — generating DeepZoom...`; statusEl.className = 'status ok'; }
     // DeepZoom pyramid right away — the sheet viewer of choice
     void _sheetGenerateDeepZoom(sheetId, statusEl).catch(() => {});
+}
+
+async function _sheetGenerationPublished(sheetId, generation) {
+    /* Authoritative completion (round-6 finding 2): fetch run.json and
+     * report whether THIS generation is the published pointer. Best-
+     * effort — a fetch failure just means "not confirmed here". */
+    try {
+        const resp = await fetch(_publicStorageUrl(`sheets/${sheetId}/run.json`) + '?t=' + Date.now());
+        if (!resp.ok) return false;
+        const run = await resp.json();
+        return !!run && run.published_generation === generation;
+    } catch (e) { return false; }
 }
 
 async function _sheetTaskPhase(jobId, taskId) {
@@ -291,9 +314,11 @@ const SHEET_RESUME_MAX_ATTEMPTS = 5;
 const SHEET_RESUME_BACKOFF_MS = 30000;
 
 async function _sheetWorkersNeedingDispatch(desc) {
-    /* Round-3 finding 2: resume must not blindly relaunch every worker.
-     * Only workers whose status row is still 'accepted' (never started)
-     * are redispatched; running/done workers are left alone. */
+    /* Round-6 finding 1: redispatch every NON-DONE worker. The server's
+     * lease claim is the gate — a redispatch of a live worker loses the
+     * claim and no-ops, while a CRASHED worker (running row, expired
+     * lease) is reclaimed by its redispatch. Blindly skipping 'running'
+     * (round-3) stranded crashed workers forever. */
     const check = await lambdaPost('storage', {
         job_id: desc.jobId,
         task_prefix: `sheet_tiles_${desc.sheetId}_${desc.generation}`,
@@ -307,7 +332,7 @@ async function _sheetWorkersNeedingDispatch(desc) {
     for (const r of check.results || []) {
         if (r.task_id) phases[r.task_id] = r.phase || 'accepted';
     }
-    return desc.workers.filter(w => (phases[w.task_id] || 'accepted') === 'accepted');
+    return desc.workers.filter(w => (phases[w.task_id] || 'accepted') !== 'done');
 }
 
 async function resumeSheetRun() {
@@ -443,7 +468,7 @@ async function _pollSheetWorkers(sheetId, jobId, steps, workers, statusEl, gener
     }
 }
 
-async function _pollSheetTask(sheetId, jobId, taskId, statusEl, phaseLabel, railId = null) {
+async function _pollSheetTask(sheetId, jobId, taskId, statusEl, phaseLabel, railId = null, publishedGeneration = null) {
     // railId: rail card to keep updating, or null — the deepzoom poll must
     // NOT touch the sheet's card (it would resurrect a done card to running)
     let failures = 0;
@@ -451,6 +476,12 @@ async function _pollSheetTask(sheetId, jobId, taskId, statusEl, phaseLabel, rail
     let lastProgressAt = Date.now();
     while (true) {
         await new Promise(r => setTimeout(r, SHEET_POLL_MS));
+        // round-6 finding 2: reconcile the STITCH poll against run.json —
+        // a swallowed terminal DDB write must not hang the poll on a sheet
+        // that is already published
+        if (publishedGeneration && await _sheetGenerationPublished(sheetId, publishedGeneration)) {
+            return { phase: 'done', frames: 0, elapsed_ms: 0, reconciled: true };
+        }
         let check;
         try {
             check = await lambdaPost('storage', {
@@ -558,6 +589,11 @@ async function cancelPolySheet() {
     }
     const { sheetId, generation } = target;
     if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
+    // round-6 finding 4: guard this generation locally (like abandon) so a
+    // /list-sheets load cannot rediscover it in the window before the
+    // server's cancel mark propagates. handle_cancel marks run.json
+    // terminal server-side, so discovery stops once that lands.
+    _sheetAbandonedGenerations.add(generation);
     await lambdaPost('dispatch', {
         target: 'poly_sheet',
         jobs: [{ action: 'cancel', sheet_id: sheetId, generation }],

@@ -59,6 +59,7 @@ from shared import (
     parse_body,
     claim_task,
     read_task_status,
+    renew_claim,
     report_status,
 )
 
@@ -848,6 +849,16 @@ def _worker_already_done(job_id, task_id):
         return False
 
 
+def _safe_status(job_id, task_id, status, error_msg=None, result_data=None):
+    """report_status that never raises (round-6 finding 3): a transient
+    DDB failure on an error/done write must not prevent the terminal
+    run-state mark that precedes it, nor mask the real exception."""
+    try:
+        report_status(job_id, task_id, status, error_msg, result_data)
+    except Exception:
+        pass
+
+
 def _load_run(sheet_id):
     try:
         body = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))["Body"].read()
@@ -995,20 +1006,39 @@ def handle_begin(params):
         "payload": {k: params.get(k) for k in _HASHED_PARAM_FIELDS
                     if params.get(k) is not None},
     }
-    # round-5 finding 7: carry forward the PREVIOUS publication pointer so
-    # the last-good sheet stays reachable until this new generation
-    # commits. Without this, /list-sheets would fabricate fixed keys that
-    # do not exist between begin and commit, and a failed new run would
-    # leave the prior valid sheet permanently unreachable.
-    prior = _load_run(sheet_id)
-    if isinstance(prior, dict) and prior.get("published_png_key"):
-        run["published_generation"] = prior.get("published_generation")
-        run["published_png_key"] = prior.get("published_png_key")
-        run["published_manifest_key"] = prior.get("published_manifest_key")
-    s3.put_object(Bucket=BUCKET, Key=_run_json_key(sheet_id),
-                  Body=json.dumps(run, indent=1).encode("utf-8"),
-                  ContentType="application/json")
-    return ok_response(run)
+    # round-5 finding 7 + round-6 finding 5: carry forward the PREVIOUS
+    # publication pointer so the last-good sheet stays reachable until
+    # this new generation commits, and do the read+write as a CAS loop —
+    # an unconditional put could erase a pointer another generation
+    # committed between the read and the write (lost update).
+    for _ in range(6):
+        resp = None
+        try:
+            resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+        except ClientError as exc:
+            if not is_missing_s3_error(exc):
+                raise
+        etag = resp.get("ETag") if resp else None
+        prior = None
+        if resp:
+            try:
+                prior = json.loads(resp["Body"].read())
+            except (ValueError, TypeError):
+                prior = None
+        if isinstance(prior, dict) and prior.get("published_png_key"):
+            run["published_generation"] = prior.get("published_generation")
+            run["published_png_key"] = prior.get("published_png_key")
+            run["published_manifest_key"] = prior.get("published_manifest_key")
+        else:
+            run.pop("published_generation", None)
+            run.pop("published_png_key", None)
+            run.pop("published_manifest_key", None)
+        try:
+            _cas_put_run(sheet_id, etag, run)
+            return ok_response(run)
+        except RuntimeError:
+            continue   # a concurrent commit changed run.json; re-read
+    raise RuntimeError("begin could not admit the run (persistent write contention)")
 
 
 def handle_frames(params):
@@ -1036,11 +1066,12 @@ def handle_frames(params):
             f"frame_indices out of range 0..{cfg['steps'] - 1}: {indices}")
     run = _bind_to_run(params, sheet_id, generation, task_id,
                        frame_indices=indices)
-    # round-5 finding 3: atomically CLAIM the task. Only one invocation
-    # wins the accepted->running transition; a concurrent duplicate or a
-    # redispatch of an already-running/done worker loses the claim and
-    # no-ops, so it can never overwrite a terminal row.
-    if not claim_task(job_id, task_id):
+    # round-6 finding 1: claim a LEASE, not a permanent flag. Only one
+    # invocation holds a live lease; a duplicate/redispatch of a live
+    # worker loses the claim and no-ops, but a CRASHED worker's lease
+    # expires so a later redispatch can reclaim (crash recovery).
+    owner = task_id + ":" + os.urandom(6).hex()
+    if not claim_task(job_id, task_id, owner=owner):
         return ok_response({"sheet_id": sheet_id, "frames_done": len(indices),
                             "not_claimed": True})
     try:
@@ -1050,20 +1081,14 @@ def handle_frames(params):
         _substitute_frame(params, cfg, indices[0])
         worker_deadline_s = time.time() + BUDGET_US / 1e6
 
-        report_status(job_id, task_id, "running", result_data={
-            "phase": "sheet", "phase_label": "Sheet frames", "task_id": task_id,
-            "sheet_id": sheet_id, "generation": generation,
-            "frames": len(indices), "frame": 0,
-        })
         frozen_cache = {}
         done = 0
         for k in indices:
             if _cancel_requested(sheet_id, generation):
-                report_status(job_id, task_id, "error", "Cancelled by user",
-                              result_data={"phase": "error",
-                                           "phase_label": "Cancelled", "task_id": task_id,
-                                           "sheet_id": sheet_id, "frame": done})
                 _mark_run_terminal(sheet_id, generation, "cancelled")
+                _safe_status(job_id, task_id, "error", "Cancelled by user",
+                             {"phase": "error", "phase_label": "Cancelled",
+                              "task_id": task_id, "sheet_id": sheet_id, "frame": done})
                 return ok_response({"cancelled": sheet_id, "frames_done": done})
             if time.time() > worker_deadline_s:
                 raise RuntimeError(
@@ -1080,11 +1105,14 @@ def handle_frames(params):
                           Body=json.dumps(record).encode("utf-8"),
                           ContentType="application/json")
             done += 1
-            report_status(job_id, task_id, "running", result_data={
-                "phase": "sheet", "phase_label": f"{done}/{len(indices)} frames",
-                "task_id": task_id, "sheet_id": sheet_id, "generation": generation,
-                "frames": len(indices), "frame": done,
-            })
+            # renew the lease AND publish progress in one owner-guarded
+            # write; if the lease was stolen (we ran too slow) abort so the
+            # new owner isn't fought
+            if not renew_claim(job_id, task_id, owner=owner, result_data={
+                    "phase": "sheet", "phase_label": f"{done}/{len(indices)} frames",
+                    "task_id": task_id, "sheet_id": sheet_id, "generation": generation,
+                    "frames": len(indices), "frame": done}):
+                raise RuntimeError("worker lost its lease (a takeover occurred)")
         report_status(job_id, task_id, "done", result_data={
             "phase": "done", "phase_label": "Worker done", "task_id": task_id,
             "sheet_id": sheet_id, "generation": generation,
@@ -1092,10 +1120,12 @@ def handle_frames(params):
         })
         return ok_response({"sheet_id": sheet_id, "frames_done": done})
     except Exception as e:
-        report_status(job_id, task_id, "error", str(e), result_data={
-            "phase": "error", "phase_label": "Sheet worker failed", "task_id": task_id,
-        })
+        # round-6 finding 3: mark the run terminal FIRST so a failed status
+        # write cannot leave the run stuck 'running' with a live claim
         _mark_run_terminal(sheet_id, generation, "failed")
+        _safe_status(job_id, task_id, "error", str(e),
+                     {"phase": "error", "phase_label": "Sheet worker failed",
+                      "task_id": task_id})
         raise
     finally:
         for path in (TMP_COEFFS, TMP_ROOTS):
@@ -1120,20 +1150,17 @@ def handle_stitch(params):
     cfg = _parse_sheet_config(params)
     sheet_id = cfg["sheet_id"]
     _bind_to_run(params, sheet_id, generation, task_id, stitch=True)
-    if not claim_task(job_id, task_id):
+    owner = task_id + ":" + os.urandom(6).hex()
+    if not claim_task(job_id, task_id, owner=owner):
         return ok_response({"sheet_id": sheet_id, "not_claimed": True})
     try:
         t0 = float(params.get("started_at_s") or time.time())
 
-        report_status(job_id, task_id, "running", result_data={
-            "phase": "stitch", "phase_label": "Stitching",
-            "sheet_id": sheet_id, "generation": generation,
-            "frames": cfg["steps"],
-        })
         if _cancel_requested(sheet_id, generation):
-            report_status(job_id, task_id, "error", "Cancelled by user",
-                          result_data={"phase": "error", "phase_label": "Cancelled",
-                                       "sheet_id": sheet_id})
+            _mark_run_terminal(sheet_id, generation, "cancelled")
+            _safe_status(job_id, task_id, "error", "Cancelled by user",
+                         {"phase": "error", "phase_label": "Cancelled",
+                          "sheet_id": sheet_id})
             return ok_response({"cancelled": sheet_id, "frames_done": 0})
 
         tile_bytes = cfg["tile_px"] * cfg["tile_px"]
@@ -1141,6 +1168,14 @@ def handle_stitch(params):
         frame_records = []
         missing = []
         for k in range(cfg["steps"]):
+            # renew the stitch lease every 32 tiles so a large sheet's read
+            # loop cannot let the lease lapse under a live stitch
+            if k and k % 32 == 0:
+                if not renew_claim(job_id, task_id, owner=owner, result_data={
+                        "phase": "stitch", "phase_label": f"Stitching {k}/{cfg['steps']}",
+                        "sheet_id": sheet_id, "generation": generation,
+                        "frames": cfg["steps"]}):
+                    raise RuntimeError("stitch lost its lease (a takeover occurred)")
             key = _tile_key(sheet_id, generation, k)
             try:
                 tile = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
@@ -1183,13 +1218,13 @@ def handle_stitch(params):
                       ContentType="application/json")
         _commit_run_publication(sheet_id, generation, gen_prefix)   # <- COMMIT
     except Exception as e:
-        # PRE-commit failures mark the task/run failed. The commit above
-        # is the only line that publishes; everything before it is safe
-        # to fail loudly.
-        report_status(job_id, task_id, "error", str(e), result_data={
-            "phase": "error", "phase_label": "Stitch failed", "task_id": task_id,
-        })
+        # PRE-commit failures mark the run failed. Round-6 finding 3: mark
+        # the run terminal FIRST so a failed status write cannot leave the
+        # run stuck 'running' with a live claim blocking recovery.
         _mark_run_terminal(sheet_id, generation, "failed")
+        _safe_status(job_id, task_id, "error", str(e),
+                     {"phase": "error", "phase_label": "Stitch failed",
+                      "task_id": task_id})
         raise
 
     # round-5 finding 2: past the commit the sheet IS published. Cleanup

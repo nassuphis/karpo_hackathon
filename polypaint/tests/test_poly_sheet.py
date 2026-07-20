@@ -175,6 +175,7 @@ class TestPolySheetUnits(unittest.TestCase):
         orig = mod.report_status
         mod.report_status = lambda *a, **k: None
         mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
         try:
             with self.assertRaises(RuntimeError) as ctx:
                 mod.handle_run(_run_params(
@@ -194,6 +195,7 @@ class TestPolySheetUnits(unittest.TestCase):
         orig = mod.report_status
         mod.report_status = lambda *a, **k: None
         mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
         try:
             with self.assertRaises(RuntimeError) as ctx:
                 mod.handle_run(_run_params(
@@ -213,9 +215,15 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         mod.s3 = s3stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda *a, **k: None
-        # atomic claim always wins in these S3-focused tests; claim
-        # semantics have their own DDB-backed test
+        # atomic claim always wins in these S3-focused tests; the lease
+        # semantics have their own DDB-backed test. Restore the reals
+        # after the test so stubs cannot leak (round-6 finding 6).
+        import shared as _shared
+        real_claim, real_renew = mod.claim_task, mod.renew_claim
+        self.addCleanup(lambda: setattr(mod, "claim_task", real_claim))
+        self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
         mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
 
     def test_run_renders_a_bilevel_mosaic(self):
         import handler_poly_sheet as mod
@@ -415,6 +423,7 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda job, task, status, *a, **k: rows.append(status)
         mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
         try:
             with self.assertRaises(RuntimeError):
                 mod.handle_frames({**_run_params("nogen-sheet"),
@@ -532,6 +541,7 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         orig = mod.report_status
         mod.report_status = lambda *a, **k: None
         mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
         try:
             p = _run_params("dup-sheet")
             del p["scan"]
@@ -650,9 +660,15 @@ class TestAdmissionEnforcement(unittest.TestCase):
         mod.s3 = s3stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda *a, **k: None
-        # atomic claim always wins in these S3-focused tests; claim
-        # semantics have their own DDB-backed test
+        # atomic claim always wins in these S3-focused tests; the lease
+        # semantics have their own DDB-backed test. Restore the reals
+        # after the test so stubs cannot leak (round-6 finding 6).
+        import shared as _shared
+        real_claim, real_renew = mod.claim_task, mod.renew_claim
+        self.addCleanup(lambda: setattr(mod, "claim_task", real_claim))
+        self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
         mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
 
     def test_unadmitted_and_mismatched_requests_are_refused(self):
         import handler_poly_sheet as mod
@@ -759,9 +775,15 @@ class TestRound4Lifecycle(unittest.TestCase):
         mod.s3 = s3stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda *a, **k: None
-        # atomic claim always wins in these S3-focused tests; claim
-        # semantics have their own DDB-backed test
+        # atomic claim always wins in these S3-focused tests; the lease
+        # semantics have their own DDB-backed test. Restore the reals
+        # after the test so stubs cannot leak (round-6 finding 6).
+        import shared as _shared
+        real_claim, real_renew = mod.claim_task, mod.renew_claim
+        self.addCleanup(lambda: setattr(mod, "claim_task", real_claim))
+        self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
         mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
 
     def _render_generation(self, mod, stub, sheet_id, gen):
         p = _run_params(sheet_id)
@@ -943,50 +965,103 @@ class TestRunBinaryDeadline(unittest.TestCase):
         self.assertIn("budget", str(ctx.exception))
 
 
-class TestClaimTask(unittest.TestCase):
-    """Round-5 finding 3: the atomic claim. A DDB-backed conditional
-    update — only one invocation transitions accepted->running."""
+class _LeaseDDB:
+    """A fake DDB that honours the claim/renew ConditionExpressions —
+    status, lease_expiry_ms, and claim_owner — so the lease semantics are
+    actually exercised (round-6)."""
 
-    def _fake_ddb(self):
-        class _FakeDDB:
-            def __init__(self):
-                self.items = {}   # (job, task) -> status
+    def __init__(self, clock):
+        self.rows = {}     # (job,task) -> {status, lease_expiry_ms, claim_owner}
+        self.clock = clock   # mutable [now_ms]
 
-            def _key(self, Key):
-                return (Key["job_id"]["S"], Key["task_id"]["S"])
+    def _k(self, Key):
+        return (Key["job_id"]["S"], Key["task_id"]["S"])
 
-            def update_item(self, TableName, Key, UpdateExpression,
-                            ConditionExpression, ExpressionAttributeValues):
-                from botocore.exceptions import ClientError
-                k = self._key(Key)
-                cur = self.items.get(k)
-                allowed = {v["S"] for name, v in ExpressionAttributeValues.items()
-                           if name.startswith(":s")}
-                if cur not in allowed:
-                    raise ClientError(
-                        {"Error": {"Code": "ConditionalCheckFailedException"}},
-                        "UpdateItem")
-                self.items[k] = "running"
-        return _FakeDDB()
+    def seed(self, job, task, **attrs):
+        self.rows[(job, task)] = dict(attrs)
 
-    def test_only_one_of_two_claims_wins(self):
+    def update_item(self, TableName, Key, UpdateExpression,
+                    ConditionExpression, ExpressionAttributeValues):
+        from botocore.exceptions import ClientError
+        k = self._k(Key)
+        row = self.rows.get(k, {})
+        v = ExpressionAttributeValues
+        now = int(v[":now"]["N"]) if ":now" in v else self.clock[0]
+        ok = False
+        if "claim_owner = :owner" in ConditionExpression and \
+                "task_status IN" not in ConditionExpression:
+            # renew: owner must match
+            ok = row.get("claim_owner") == v[":owner"]["S"]
+        else:
+            allowed = {vv["S"] for nm, vv in v.items() if nm.startswith(":s")}
+            status = row.get("task_status")
+            lease = row.get("lease_expiry_ms")
+            ok = (status in allowed
+                  or (status == "running" and (lease is None or lease < now))
+                  or row.get("claim_owner") == v[":owner"]["S"])
+        if not ok:
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem")
+        # apply the SET
+        row = dict(row)
+        if ":owner" in v:
+            row["claim_owner"] = v[":owner"]["S"]
+        if ":lease" in v:
+            row["lease_expiry_ms"] = int(v[":lease"]["N"])
+        if ":running" in v and "task_status = :running" in UpdateExpression:
+            row["task_status"] = "running"
+        self.rows[k] = row
+
+
+class TestClaimLease(unittest.TestCase):
+    """Round-6 finding 1: the claim is a LEASE — one live owner, but a
+    crashed owner's lease expires so a redispatch can reclaim."""
+
+    def _patch(self, ddb):
         import shared
-
-        ddb = self._fake_ddb()
-        ddb.items[("j", "t")] = "started"   # begin left it here
         orig = shared._ddb
         shared._ddb = ddb
-        try:
-            self.assertTrue(shared.claim_task("j", "t"))
-            # a concurrent/duplicate invocation now loses (status running)
-            self.assertFalse(shared.claim_task("j", "t"))
-            # a task already 'done' cannot be reclaimed
-            ddb.items[("j", "t2")] = "done"
-            self.assertFalse(shared.claim_task("j", "t2"))
-            # an absent row cannot be claimed
-            self.assertFalse(shared.claim_task("j", "missing"))
-        finally:
-            shared._ddb = orig
+        self.addCleanup(lambda: setattr(shared, "_ddb", orig))
+
+    def test_one_owner_wins_duplicate_loses(self):
+        import shared
+
+        clock = [1_000_000]
+        ddb = _LeaseDDB(clock)
+        ddb.seed("j", "t", task_status="started")
+        self._patch(ddb)
+        self.assertTrue(shared.claim_task("j", "t", owner="A", lease_seconds=120))
+        # a duplicate with a DIFFERENT owner loses while A's lease is live
+        self.assertFalse(shared.claim_task("j", "t", owner="B", lease_seconds=120))
+        # A can renew and re-enter idempotently
+        self.assertTrue(shared.renew_claim("j", "t", owner="A"))
+        self.assertTrue(shared.claim_task("j", "t", owner="A"))
+        # B still cannot
+        self.assertFalse(shared.claim_task("j", "t", owner="B"))
+
+    def test_expired_lease_allows_takeover(self):
+        import shared
+        import time as _t
+
+        ddb = _LeaseDDB([0])
+        ddb.seed("j", "t", task_status="started")
+        self._patch(ddb)
+        self.assertTrue(shared.claim_task("j", "t", owner="A", lease_seconds=0.001))
+        _t.sleep(0.01)   # A's lease expires (A 'crashed')
+        # a redispatched worker B reclaims the stale lease — crash recovery
+        self.assertTrue(shared.claim_task("j", "t", owner="B", lease_seconds=120))
+        # now A's renew fails: it lost the lease and must abort
+        self.assertFalse(shared.renew_claim("j", "t", owner="A"))
+        self.assertTrue(shared.renew_claim("j", "t", owner="B"))
+
+    def test_done_and_missing_never_claim(self):
+        import shared
+
+        ddb = _LeaseDDB([0])
+        ddb.seed("j", "done-task", task_status="done")
+        self._patch(ddb)
+        self.assertFalse(shared.claim_task("j", "done-task", owner="A"))
+        self.assertFalse(shared.claim_task("j", "absent", owner="A"))
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
@@ -996,6 +1071,7 @@ class TestRound5(unittest.TestCase):
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda *a, **k: None
         mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
 
     def test_terminal_run_refuses_late_work(self):
         """Finding 1: a cancelled/abandoned run must reject a late worker
@@ -1036,6 +1112,7 @@ class TestRound5(unittest.TestCase):
         mod.s3 = stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
 
         # fail ONLY the stitch's terminal 'done' write (post-commit),
         # not the workers' done reports
@@ -1092,3 +1169,60 @@ class TestRound5(unittest.TestCase):
                              f"sheets/carry-sheet/{gen_a}/sheet.png")
         finally:
             (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status, mod.claim_task) = orig
+
+
+@unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+class TestConcurrentCarryForward(unittest.TestCase):
+    """Round-6 finding 5: begin's carry-forward is a CAS loop. If another
+    generation commits between begin's read and its write, begin must
+    re-read and preserve the newer pointer instead of erasing it."""
+
+    def test_begin_reretries_and_keeps_a_concurrently_committed_pointer(self):
+        import handler_poly_sheet as mod
+
+        stub = _S3Stub()
+        # a sheet already published at gen A
+        run0 = {"sheet_id": "cc-sheet", "generation": "gaaaaaaaaaaaa",
+                "job_id": "sheet_job", "status": "done",
+                "published_generation": "gaaaaaaaaaaaa",
+                "published_png_key": "sheets/cc-sheet/gaaaaaaaaaaaa/sheet.png",
+                "published_manifest_key": "sheets/cc-sheet/gaaaaaaaaaaaa/sheet.json"}
+        stub.put_object(Bucket="b", Key="sheets/cc-sheet/run.json",
+                        Body=json.dumps(run0).encode())
+
+        # inject a concurrent commit (gen A2) after begin's FIRST read but
+        # before its first CAS write, so the first CAS loses and retries
+        real_get = stub.get_object
+        state = {"injected": False}
+
+        def get_with_injection(Bucket, Key):
+            result = real_get(Bucket=Bucket, Key=Key)
+            if Key == "sheets/cc-sheet/run.json" and not state["injected"]:
+                state["injected"] = True
+                run_a2 = dict(run0)
+                run_a2["generation"] = "ga2a2a2a2a2a"
+                run_a2["published_generation"] = "ga2a2a2a2a2a"
+                run_a2["published_png_key"] = "sheets/cc-sheet/ga2a2a2a2a2a/sheet.png"
+                run_a2["published_manifest_key"] = "sheets/cc-sheet/ga2a2a2a2a2a/sheet.json"
+                stub.put_object(Bucket="b", Key="sheets/cc-sheet/run.json",
+                                Body=json.dumps(run_a2).encode())
+            return result
+
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        mod.s3 = stub
+        stub.get_object = get_with_injection
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.report_status = lambda *a, **k: None
+        try:
+            p = _run_params("cc-sheet")
+            resp = mod.handle_begin({**p, "action": "begin", "job_id": "sheet_job"})
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+        run = json.loads(resp["body"])
+        # begin's first CAS lost to the injected A2 commit and retried,
+        # carrying A2's pointer forward — NOT erasing it back to A
+        self.assertTrue(state["injected"])
+        self.assertEqual(run["published_generation"], "ga2a2a2a2a2a")
+        self.assertEqual(run["published_png_key"],
+                         "sheets/cc-sheet/ga2a2a2a2a2a/sheet.png")
+        self.assertEqual(run["status"], "running")

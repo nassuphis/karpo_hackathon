@@ -107,36 +107,95 @@ def read_task_status(job_id, task_id):
     return item.get("task_status", {}).get("S")
 
 
-def claim_task(job_id, task_id, *, from_statuses=("started", "accepted")):
-    """Atomically claim a task for execution (CR35 round-5 finding 3).
-    A conditional UpdateItem transitions the row to 'running' ONLY when
-    its current status is one of from_statuses (the state begin left it
-    in). Concurrent or duplicate invocations of the same task see a
-    non-claimable status and lose the claim — the ONLY winner executes.
-    Returns True when claimed, False when the task is already running,
-    done, errored, or absent. Never raises on a lost claim."""
+CLAIM_LEASE_SECONDS = 120
+
+
+def _is_conditional_failure(exc):
+    code = ""
+    resp = getattr(exc, "response", None)
+    if isinstance(resp, dict):
+        code = resp.get("Error", {}).get("Code", "")
+    return (code == "ConditionalCheckFailedException"
+            or "ConditionalCheckFailed" in type(exc).__name__)
+
+
+def claim_task(job_id, task_id, *, owner, lease_seconds=CLAIM_LEASE_SECONDS,
+               from_statuses=("started", "accepted")):
+    """Atomically claim a task with a LEASE (CR35 round-6 finding 1). The
+    conditional UpdateItem claims when the task is claimable:
+      - status is one of from_statuses (fresh, never started), OR
+      - status is 'running' but the lease has EXPIRED (the previous owner
+        died without renewing — stale takeover), OR
+      - the caller already owns it (idempotent re-entry).
+    On success the row records this owner and a lease expiry now+lease. A
+    live owner keeps the lease fresh via renew_claim(); a crashed owner
+    lets it expire so a redispatched worker can reclaim after
+    lease_seconds instead of being blocked forever. Returns True on
+    claim, False when another owner holds a LIVE lease. Never raises on a
+    lost claim."""
     now_ms = int(time.time() * 1000)
+    lease_ms = now_ms + int(lease_seconds * 1000)
     placeholders = {f":s{i}": {"S": st} for i, st in enumerate(from_statuses)}
-    cond = "attribute_exists(task_status) AND task_status IN (" +         ",".join(placeholders) + ")"
+    cond = (
+        "attribute_exists(task_status) AND ("
+        "task_status IN (" + ",".join(placeholders) + ")"
+        " OR (task_status = :running AND (attribute_not_exists(lease_expiry_ms)"
+        " OR lease_expiry_ms < :now))"
+        " OR claim_owner = :owner)"
+    )
     try:
         _get_ddb().update_item(
             TableName=JOBS_TABLE,
             Key={"job_id": {"S": str(job_id)}, "task_id": {"S": str(task_id)}},
-            UpdateExpression="SET task_status = :running, updated_at_ms = :now",
+            UpdateExpression=("SET task_status = :running, claim_owner = :owner, "
+                              "lease_expiry_ms = :lease, updated_at_ms = :now"),
             ConditionExpression=cond,
             ExpressionAttributeValues={
                 ":running": {"S": "running"},
+                ":owner": {"S": str(owner)},
+                ":lease": {"N": str(lease_ms)},
                 ":now": {"N": str(now_ms)},
                 **placeholders,
             },
         )
         return True
     except Exception as exc:
-        code = ""
-        resp = getattr(exc, "response", None)
-        if isinstance(resp, dict):
-            code = resp.get("Error", {}).get("Code", "")
-        if code == "ConditionalCheckFailedException" or                 "ConditionalCheckFailed" in str(type(exc).__name__):
+        if _is_conditional_failure(exc):
+            return False
+        raise
+
+
+def renew_claim(job_id, task_id, *, owner, lease_seconds=CLAIM_LEASE_SECONDS,
+                result_data=None):
+    """Extend this owner's lease and optionally update result_data in one
+    conditional UpdateItem. Returns True while the caller still owns the
+    running task; False when the lease was taken over (the caller must
+    abort — a duplicate is now the owner). Progress writes go through
+    this instead of report_status so a full-item PutItem can never clobber
+    the owner/lease and let a duplicate steal a live task."""
+    now_ms = int(time.time() * 1000)
+    lease_ms = now_ms + int(lease_seconds * 1000)
+    values = {
+        ":owner": {"S": str(owner)},
+        ":lease": {"N": str(lease_ms)},
+        ":now": {"N": str(now_ms)},
+        ":running": {"S": "running"},
+    }
+    expr = "SET lease_expiry_ms = :lease, updated_at_ms = :now, task_status = :running"
+    if result_data is not None:
+        values[":rd"] = {"S": json.dumps(result_data)}
+        expr += ", result_data = :rd"
+    try:
+        _get_ddb().update_item(
+            TableName=JOBS_TABLE,
+            Key={"job_id": {"S": str(job_id)}, "task_id": {"S": str(task_id)}},
+            UpdateExpression=expr,
+            ConditionExpression="claim_owner = :owner",
+            ExpressionAttributeValues=values,
+        )
+        return True
+    except Exception as exc:
+        if _is_conditional_failure(exc):
             return False
         raise
 

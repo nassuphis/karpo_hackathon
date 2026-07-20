@@ -1981,14 +1981,16 @@ async function _jobsRailKill(id) {
         job.killRequested = true;
         job.detail = 'cancel requested…';
         _renderJobsRail();
-        // round-12 finding 5: route through the DURABLE, identity-scoped
-        // cancellation command — it persists the cancel intent and retries
-        // the authoritative transition until run.json goes terminal, rather
-        // than a single fire-and-hope dispatch (async retries are disabled
-        // server-side, so a dropped enqueue would silently lose the cancel).
+        // round-12 finding 5 + round-13 finding 2: route through the DURABLE,
+        // identity-scoped cancellation command as a DIRECT command — it
+        // ESTABLISHES the cancel intent for this run (even without a matching
+        // Sheets descriptor) and retries the authoritative transition until
+        // run.json goes terminal. Use its STRUCTURED result to update the
+        // card rather than leaving it stuck at "cancel requested…".
         try {
+            let result;
             if (typeof _cancelSheetRun === 'function') {
-                await _cancelSheetRun(job.jobId, job.generation);
+                result = await _cancelSheetRun(job.jobId, job.generation, { direct: true });
             } else {
                 const resp = await lambdaPost('dispatch', {
                     target: 'poly_sheet',
@@ -1997,7 +1999,19 @@ async function _jobsRailKill(id) {
                     expected_keys: [],
                 });
                 if ((resp.fired || 0) !== 1) throw new Error('cancel dispatch failed');
+                result = { ok: true, pending: true };
             }
+            if (result && result.ok === false && !result.pending) {
+                // not accepted at all — surface it so the user can retry
+                job.killRequested = false;
+                job.detail = `cancel failed: ${result.reason || 'not accepted'}`;
+            } else if (result && result.status && result.status !== 'running') {
+                job.detail = result.status === 'done'
+                    ? 'published before cancel' : `cancelled (${result.status})`;
+            } else {
+                job.detail = 'cancelling — takes effect between frames…';
+            }
+            _renderJobsRail();
         } catch (e) {
             job.killRequested = false;
             job.detail = `cancel failed: ${e.message}`;

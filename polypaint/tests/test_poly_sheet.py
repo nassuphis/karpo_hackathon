@@ -2054,6 +2054,80 @@ class TestRound12TerminalStatusMapping(_LeaseIsoTestCase):
                          "failed")
 
 
+class TestRound13Reconciliation(_LeaseIsoTestCase):
+    """Round-13 finding 3: cleanup is reconciled AFTER the terminal outcome
+    is known — a deferred orphan is not leaked, and an ambiguous publication
+    still runs the winner sweep."""
+
+    def _patch(self, stub):
+        import handler_poly_sheet as mod
+        import shared as _shared
+        real_s3 = mod.s3
+        self.addCleanup(lambda: setattr(mod, "s3", real_s3))
+        self.addCleanup(lambda: setattr(mod, "renew_claim", _shared.renew_claim))
+        self.addCleanup(lambda: setattr(mod, "finalize_task", _shared.finalize_task))
+        mod.s3 = stub
+
+    def test_deferred_orphan_is_pruned_once_run_is_terminal(self):
+        import handler_poly_sheet as mod
+        gen = "ga1a1a1a1a1a1"
+        stub = _S3Stub(); self._patch(stub)
+        prefix = f"sheets/orph-sheet/{gen}/tttttttttttt/"
+        stub.put_object(Bucket="b", Key=prefix + "sheet.png", Body=b"orphan")
+        stub.put_object(Bucket="b", Key=prefix + "sheet.json", Body=b"{}")
+        # at cleanup time the run was still 'running' -> the prune deferred
+        stub.put_object(Bucket="b", Key="sheets/orph-sheet/run.json",
+                        Body=json.dumps({"generation": gen, "status": "running"}).encode())
+        mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
+
+        def _reconcile(final_status):
+            if final_status != "done":
+                mod._prune_own_attempt_if_not_published("orph-sheet", gen, prefix)
+        with self.assertRaises(RuntimeError):
+            mod._finalize_failure_or_exit(
+                "j", "sheet_stitch_orph-sheet", "A", "orph-sheet", gen,
+                RuntimeError("ambiguous commit"), phase_label="Stitch failed",
+                on_terminal=_reconcile)
+        # run.json is now 'failed', and the orphan was pruned (NOT leaked)
+        self.assertEqual(json.loads(stub.objects["sheets/orph-sheet/run.json"])["status"],
+                         "failed")
+        self.assertNotIn(prefix + "sheet.png", stub.objects)
+
+    def test_ambiguous_publish_runs_winner_sweep(self):
+        import handler_poly_sheet as mod
+        gen = "gb2b2b2b2b2b2"
+        stub = _S3Stub(); self._patch(stub)
+        winner = f"sheets/amb-pub/{gen}/wwwwwwwwwwww/"
+        loser = f"sheets/amb-pub/{gen}/llllllllllll/"
+        for pfx, body in ((winner, b"win"), (loser, b"lose")):
+            stub.put_object(Bucket="b", Key=pfx + "sheet.png", Body=body)
+            stub.put_object(Bucket="b", Key=pfx + "sheet.json", Body=b"{}")
+        stub.put_object(Bucket="b", Key=mod._tile_key("amb-pub", gen, 0), Body=b"tile")
+        # the CAS actually landed (published to winner) but we took the except
+        # path — run.json is 'done'
+        stub.put_object(Bucket="b", Key="sheets/amb-pub/run.json",
+                        Body=json.dumps({"generation": gen, "status": "done",
+                                         "published_generation": gen,
+                                         "published_png_key": winner + "sheet.png"}).encode())
+        mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
+
+        def _reconcile(final_status):
+            if final_status == "done":
+                w = mod._published_prefix("amb-pub", gen)
+                mod._reap_sheet_scaffolding("amb-pub", gen, 1, w)
+        resp = mod._finalize_failure_or_exit(
+            "j", "sheet_stitch_amb-pub", "A", "amb-pub", gen,
+            RuntimeError("lost response"), phase_label="Stitch failed",
+            on_terminal=_reconcile)
+        self.assertEqual(json.loads(resp["body"])["status"], "done")
+        # winner SURVIVES; the tile + losing attempt are reaped (not leaked)
+        self.assertIn(winner + "sheet.png", stub.objects)
+        self.assertNotIn(loser + "sheet.png", stub.objects)
+        self.assertNotIn(mod._tile_key("amb-pub", gen, 0), stub.objects)
+
+
 # Defined LAST so pytest (file-definition order) runs it AFTER every other
 # test — round-9 finding 7: an empirical guard that NO test leaked a lease
 # stub into the handler module (exactly the check the reviewer ran by hand).

@@ -8,7 +8,19 @@
 let _sheetsInventory = [];
 let _activeSheetRun = null;   // {sheetId, jobId, taskId}
 let _sheetResumeTimer = null;
-let _sheetCancelTimer = null;
+// round-13 finding 1/2: cancellation is an IDENTITY-KEYED state machine.
+// The intent set is the authoritative "this run is being cancelled" record
+// (decoupled from the single descriptor, so a direct rail command can
+// establish intent for ANY run); the timer map gives each run its OWN retry
+// slot, so a stale retry can never clear or replace a newer run's timer.
+const _sheetCancelIntents = new Set();          // "sheetId::generation"
+const _sheetCancelTimers = new Map();           // "sheetId::generation" -> handle
+function _sheetCancelKey(sheetId, generation) { return sheetId + '::' + generation; }
+function _sheetClearCancelTimer(sheetId, generation) {
+    const key = _sheetCancelKey(sheetId, generation);
+    const h = _sheetCancelTimers.get(key);
+    if (h !== undefined) { clearTimeout(h); _sheetCancelTimers.delete(key); }
+}
 // round-10 finding 6: only these EXPLICIT statuses count as terminal — a
 // malformed/unknown run.status must not be mistaken for a confirmed end
 const SHEET_TERMINAL_STATUSES = new Set(
@@ -384,9 +396,13 @@ async function resumeSheetRun() {
     const desc = _sheetRunLoad();
     if (!desc || _activeSheetRun) return;
     // round-10 finding 3: a persisted cancellation intent (set before a
-    // reload lost the in-page retry timer) takes precedence — re-issue the
-    // authoritative cancel instead of driving the run forward.
-    if (desc.cancelRequested) { void cancelPolySheet(); return; }
+    // reload lost the in-page retry timer) takes precedence — re-establish
+    // the intent and re-issue the authoritative cancel (direct) instead of
+    // driving the run forward.
+    if (desc.cancelRequested) {
+        void _cancelSheetRun(desc.sheetId, desc.generation, { direct: true });
+        return;
+    }
     // anchor the lease clock on the first resume so give-up can require a
     // real post-lease-expiry dispatch (round-8 finding 4). Persisted, so
     // it survives reloads across the whole retry window.
@@ -736,64 +752,69 @@ async function _sheetResolveRunStatus(sheetId, generation) {
 }
 
 async function cancelPolySheet() {
-    // thin wrapper: resolve the CURRENT run's identity, then cancel THAT
-    // specific run. All real work is parameterized by (sheetId, generation)
-    // so a retry timer can never act on a different run (round-12 finding 3).
+    // thin wrapper: resolve the CURRENT run's identity, then issue a DIRECT
+    // cancel for THAT specific run (a user command establishes intent).
     const statusEl = document.getElementById('sheets-status');
     // a run mid-backoff has no _activeSheetRun but IS persisted — cancel
     // must reach it (round-3 finding 4)
     const target = _activeSheetRun || _sheetRunLoad();
     if (!target) {
         if (statusEl) statusEl.textContent = 'No active sheet run.';
-        return;
+        return { ok: false, reason: 'no-active-run' };
     }
-    return _cancelSheetRun(target.sheetId, target.generation);
+    return _cancelSheetRun(target.sheetId, target.generation, { direct: true });
 }
 
-async function _cancelSheetRun(sheetId, generation) {
-    /* Round-12 finding 3: cancellation is IDENTITY-SCOPED. A stale retry
-     * timer (or a second tab) must never cancel a NEWER run that replaced
-     * the descriptor — so every step is gated on the persisted descriptor
-     * still matching (sheetId, generation). */
+async function _cancelSheetRun(sheetId, generation, opts) {
+    /* Identity-keyed cancellation (round-13 findings 1/2). Returns a
+     * STRUCTURED result so callers (the rail) can react rather than trusting
+     * a silent undefined.
+     *   opts.direct === true  -> a USER command: ESTABLISH the cancel intent
+     *                            (even without a matching descriptor).
+     *   opts.direct falsy     -> a DEFERRED RETRY: proceed only while the
+     *                            intent is still active for this identity
+     *                            (a superseded/cleared run must not be
+     *                            re-cancelled). */
+    const direct = !!(opts && opts.direct);
+    const key = _sheetCancelKey(sheetId, generation);
     const statusEl = document.getElementById('sheets-status');
-    const desc = _sheetRunLoad();
-    // if the persisted run is no longer THIS identity, the run we were
-    // cancelling is gone (superseded/cleared) — abort silently, do NOT
-    // cancel whatever run happens to be current now.
-    if (!desc || desc.sheetId !== sheetId || desc.generation !== generation) return;
+    if (direct) {
+        _sheetCancelIntents.add(key);
+        // mirror on the descriptor if it IS this run, so a reload re-issues
+        // the cancel (the intent set is in-memory only)
+        const d = _sheetRunLoad();
+        if (d && d.sheetId === sheetId && d.generation === generation && !d.cancelRequested) {
+            d.cancelRequested = true; _sheetRunSave(d);
+        }
+    } else if (!_sheetCancelIntents.has(key)) {
+        // the run this retry targets is no longer being cancelled (cleared
+        // or superseded) — do nothing, and do NOT touch any other run.
+        return { ok: false, reason: 'intent-cleared' };
+    }
     if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancelling...`; statusEl.className = 'status'; }
-    // round-10 finding 3: PERSIST the cancellation intent so an inconclusive
-    // attempt (or a page reload) keeps retrying the authoritative transition
-    // until a terminal result wins — async retries are disabled server-side,
-    // so a single fire-and-hope drops the cancel.
-    if (!desc.cancelRequested) { desc.cancelRequested = true; _sheetRunSave(desc); }
-    // round-8/9 finding 5/1/2: do NOT hide the generation or clear local
-    // state until the cancel is confirmed through the AUTHORITATIVE run.json
-    // record (not the best-effort marker — a publish can win the run.json
-    // CAS, and confirming the marker would then wrongly clear a published
-    // run). Order: dispatch-until-fired -> resolve run.json status -> clear.
+    // round-8/9 finding 5/1/2: confirm through the AUTHORITATIVE run.json,
+    // not the best-effort marker. Order: dispatch-until-fired -> resolve
+    // run.json status -> clear.
     const fired = await _sheetDispatchControl(sheetId, generation, 'cancel');
     if (!fired) {
-        // not accepted — keep the intent and RETRY (round-10 finding 3)
         _sheetScheduleCancelRetry(sheetId, generation);
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel not accepted — retrying...`; statusEl.className = 'status'; }
-        return;
+        return { ok: false, dispatched: false, pending: true, reason: 'not-accepted' };
     }
     const status = await _sheetResolveRunStatus(sheetId, generation);
     if (status === null) {
-        // fired but run.json is still 'running' — the cancel takes effect
-        // between frames; keep retrying the authoritative transition until
-        // the run actually goes terminal (finding 3), don't just hope.
+        // fired but run.json is still 'running' — keep retrying until the
+        // run actually goes terminal (the cancel takes effect between frames)
         _sheetScheduleCancelRetry(sheetId, generation);
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel dispatched — taking effect between frames...`; statusEl.className = 'status'; }
-        return;
+        return { ok: true, dispatched: true, pending: true, status: null };
     }
-    // the run is terminal — clear the intent + local state ONLY if the
-    // persisted descriptor is still THIS run (a newer run may have taken
-    // over while we awaited); report the TRUTH (a publish may have won).
+    // TERMINAL: retire this identity's intent + its OWN timer (never another
+    // run's), and clear the descriptor only if it is still THIS run.
+    _sheetCancelIntents.delete(key);
+    _sheetClearCancelTimer(sheetId, generation);
     const still = _sheetRunLoad();
     if (still && still.sheetId === sheetId && still.generation === generation) {
-        if (_sheetCancelTimer) { clearTimeout(_sheetCancelTimer); _sheetCancelTimer = null; }
         if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
         _sheetAbandonedGenerations.add(generation);
         _sheetRunClear();
@@ -810,17 +831,19 @@ async function _cancelSheetRun(sheetId, generation) {
             statusEl.className = 'status';
         }
     }
+    return { ok: true, dispatched: true, status };
 }
 
 function _sheetScheduleCancelRetry(sheetId, generation) {
-    /* Round-10 finding 3 + round-12 finding 3: keep re-issuing the
-     * authoritative cancel for THIS SPECIFIC run until it reaches a terminal
-     * status. The identity is captured, and _cancelSheetRun re-checks the
-     * persisted descriptor before acting — so a run that was superseded
-     * before the timer fires is never cancelled in place of its successor. */
-    if (_sheetCancelTimer) clearTimeout(_sheetCancelTimer);
-    _sheetCancelTimer = setTimeout(() => { void _cancelSheetRun(sheetId, generation); },
-                                   SHEET_RESUME_BACKOFF_MS);
+    /* Round-13 finding 1: each run has its OWN timer slot (keyed by
+     * identity), so a stale retry can never clear or replace a NEWER run's
+     * timer. Only schedule while THIS identity's intent is still active. */
+    const key = _sheetCancelKey(sheetId, generation);
+    if (!_sheetCancelIntents.has(key)) return;
+    const existing = _sheetCancelTimers.get(key);
+    if (existing !== undefined) clearTimeout(existing);
+    _sheetCancelTimers.set(key, setTimeout(
+        () => { void _cancelSheetRun(sheetId, generation); }, SHEET_RESUME_BACKOFF_MS));
 }
 
 async function _sheetDiscoverServerRun(rows) {

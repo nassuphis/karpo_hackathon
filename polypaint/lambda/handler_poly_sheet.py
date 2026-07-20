@@ -856,6 +856,36 @@ def _prune_own_attempt_if_not_published(sheet_id, generation, gen_prefix):
     # CAS could still publish -> leave the objects for the winner's sweep
 
 
+def _reap_sheet_scaffolding(sheet_id, generation, steps, winner_prefix):
+    """Post-publication cleanup for a generation: delete the tiles + cancel
+    marker and prune every LOSING attempt's artifacts (keeping the winner
+    at winner_prefix). Idempotent, so it is safe to run from BOTH the normal
+    winner path AND the reconciliation path when a failure/ambiguous commit
+    later turns out to have published (round-13 finding 3). Returns True on
+    a clean sweep, False on any delete/list error."""
+    ok = True
+    try:
+        delete_keys = []
+        for k in range(steps):
+            key = _tile_key(sheet_id, generation, k)
+            delete_keys.append({"Key": key})
+            delete_keys.append({"Key": key.replace(".bin", ".json")})
+        delete_keys.append({"Key": _cancel_key(sheet_id, generation)})
+        for i in range(0, len(delete_keys), 1000):
+            resp = s3.delete_objects(
+                Bucket=BUCKET,
+                Delete={"Objects": delete_keys[i:i + 1000], "Quiet": True})
+            if resp.get("Errors"):
+                ok = False
+        # round-9 finding 8: reap the losing stitch attempts' orphaned
+        # png/manifest objects (the winner is winner_prefix)
+        if not _prune_losing_attempts(sheet_id, generation, winner_prefix):
+            ok = False
+    except Exception:
+        ok = False
+    return ok
+
+
 def _prune_losing_attempts(sheet_id, generation, winning_prefix):
     """Round-9 finding 8: reap the artifacts of LOSING same-generation
     stitch attempts. Each attempt writes under sheets/{id}/{gen}/{token}/
@@ -1046,7 +1076,7 @@ def _task_status_for(resolved):
 
 
 def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
-                              exc, *, phase_label):
+                              exc, *, phase_label, on_terminal=None):
     """Shared error path for the worker and the stitch. Ordered so no shared
     state is mutated on unconfirmed ownership, and the DDB task is finalized
     only AFTER the authoritative run.json transition is confirmed (round-8
@@ -1069,6 +1099,15 @@ def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
     final = _mark_run_terminal(sheet_id, generation, "failed")
     if final is None:
         raise exc                      # unconfirmed run -> don't finalize; raise
+    # round-13 finding 3: reconcile cleanup NOW that the terminal outcome is
+    # known. The ambiguous-commit cleanup deferred deletion while run.json
+    # was still 'running'; here the run is terminal, so the caller can safely
+    # prune its orphan (terminal) OR run the winner sweep (if it published).
+    if on_terminal is not None:
+        try:
+            on_terminal(final)
+        except Exception:
+            pass
     # round-12 finding 4: record the DDB task at the ACTUAL resolved status.
     # If a concurrent attempt published (final == 'done') the run SUCCEEDED,
     # so the task is 'done' — not a false 'error'.
@@ -1097,6 +1136,25 @@ def _published_keys(run):
         return None
     if run.get("published_png_key") and run.get("published_manifest_key"):
         return run["published_png_key"], run["published_manifest_key"]
+    return None
+
+
+def _published_prefix(sheet_id, generation):
+    """The WINNING attempt's prefix (sheets/{id}/{gen}/{token}/) read from
+    run.json's pointer, or None if this generation is not published. Used to
+    reconcile the winner sweep when a failure/ambiguous path later turns out
+    to have published (round-13 finding 3)."""
+    try:
+        resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+        run = json.loads(resp["Body"].read())
+    except Exception:
+        return None
+    if run.get("generation") != generation:
+        return None
+    png = run.get("published_png_key")
+    suffix = "sheet.png"
+    if isinstance(png, str) and png.endswith(suffix):
+        return png[:-len(suffix)]
     return None
 
 
@@ -1602,19 +1660,28 @@ def handle_stitch(params):
                                 "status": "done",
                                 "published_by_this_attempt": False})
     except Exception as e:
-        # round-10 finding 5: if we wrote attempt artifacts but the commit
-        # failed/was ambiguous, prune our own orphan — but RE-READ run.json
-        # first (a network-ambiguous CAS may have actually succeeded, in
-        # which case these ARE the winner's artifacts and must survive).
-        if gen_prefix is not None:
-            _prune_own_attempt_if_not_published(sheet_id, generation, gen_prefix)
         # PRE-commit failures mark the run failed — but only when ownership
         # is CONFIRMED (round-8 finding 3). A stale stitch that lost its
         # lease exits benignly; DDB-uncertain ownership never authorizes
-        # failing the successor's run.
+        # failing the successor's run. round-13 finding 3: cleanup is
+        # reconciled AFTER the terminal outcome is known (a single deferred
+        # prune while the run was still 'running' would otherwise leak the
+        # orphan forever, and an ambiguous publication would skip the
+        # winner sweep).
+        def _reconcile(final_status):
+            if final_status == "done":
+                # the run IS published (possibly by our own ambiguous CAS) —
+                # run the winner sweep keyed on the ACTUAL published prefix
+                winner = _published_prefix(sheet_id, generation) or gen_prefix
+                if winner is not None:
+                    _reap_sheet_scaffolding(sheet_id, generation, cfg["steps"], winner)
+            elif gen_prefix is not None:
+                # terminal non-done -> our attempt is now a safe-to-prune
+                # orphan (our conditional CAS can no longer land)
+                _prune_own_attempt_if_not_published(sheet_id, generation, gen_prefix)
         return _finalize_failure_or_exit(
             job_id, task_id, owner, sheet_id, generation, e,
-            phase_label="Stitch failed")
+            phase_label="Stitch failed", on_terminal=_reconcile)
     finally:
         hb.stop()
 
@@ -1622,26 +1689,7 @@ def handle_stitch(params):
     # and the done-report are best-effort — a failed DDB status write (or
     # a delete error) must NEVER mark a published sheet as failed. The
     # authoritative 'done' already lives in run.json.
-    cleanup_ok = True
-    try:
-        delete_keys = []
-        for k in range(cfg["steps"]):
-            key = _tile_key(sheet_id, generation, k)
-            delete_keys.append({"Key": key})
-            delete_keys.append({"Key": key.replace(".bin", ".json")})
-        delete_keys.append({"Key": _cancel_key(sheet_id, generation)})
-        for i in range(0, len(delete_keys), 1000):
-            resp = s3.delete_objects(
-                Bucket=BUCKET,
-                Delete={"Objects": delete_keys[i:i + 1000], "Quiet": True})
-            if resp.get("Errors"):
-                cleanup_ok = False
-        # round-9 finding 8: reap the losing stitch attempts' orphaned
-        # png/manifest objects (the winner is gen_prefix)
-        if not _prune_losing_attempts(sheet_id, generation, gen_prefix):
-            cleanup_ok = False
-    except Exception:
-        cleanup_ok = False
+    cleanup_ok = _reap_sheet_scaffolding(sheet_id, generation, cfg["steps"], gen_prefix)
     try:
         finalize_task(job_id, task_id, owner=owner, status="done", result_data={
             "phase": "done", "phase_label": "Done",

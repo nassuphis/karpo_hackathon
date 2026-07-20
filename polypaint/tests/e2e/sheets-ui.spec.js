@@ -639,9 +639,10 @@ test.describe('Round-10 cancellation durability', () => {
       window.fetch = realFetch;
       const desc = _sheetRunLoad();
       const out = { intent: !!(desc && desc.cancelRequested),
-                    retryScheduled: _sheetCancelTimer !== null,
+                    retryScheduled: _sheetCancelTimers.has('cd::gcd'),
                     survived: desc !== null };
-      if (_sheetCancelTimer) { clearTimeout(_sheetCancelTimer); _sheetCancelTimer = null; }
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
       _sheetRunClear();
       return out;
     });
@@ -677,26 +678,95 @@ test.describe('Round-12 identity-scoped cancellation', () => {
         if (job && job.action === 'cancel') dispatched.push(job);
         return { fired: 1 };
       };
-      // the OLD run whose cancel timer captured its identity
       _activeSheetRun = null;
-      _sheetRunSave({ sheetId: 'old', jobId: 'j', generation: 'gOLD', steps: 4,
-                      workers: [], stitchTask: 't', payload: {} });
-      // a NEW run has since replaced the descriptor
+      // a NEW run is the current descriptor
       _sheetRunSave({ sheetId: 'new', jobId: 'j', generation: 'gNEW', steps: 4,
                       workers: [], stitchTask: 't', payload: {} });
-      // the stale timer fires for the OLD identity — it must NOT act
+      // a stale RETRY for the OLD identity fires — no active intent exists
+      // for it, so it must abort without dispatching anything
       await _cancelSheetRun('old', 'gOLD');
-      // and a cancel for the CURRENT run still works
-      await _cancelSheetRun('new', 'gNEW');
+      // and the user's DIRECT cancel for the CURRENT run still works
+      await cancelPolySheet();
       const desc = _sheetRunLoad();
       const out = { dispatched: dispatched.map(d => d.generation),
                     newIntent: !!(desc && desc.cancelRequested) };
-      if (_sheetCancelTimer) { clearTimeout(_sheetCancelTimer); _sheetCancelTimer = null; }
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
       _sheetRunClear();
       return out;
     });
     // ONLY the current run's cancel was dispatched — never the stale gOLD
     expect(out.dispatched).toEqual(['gNEW']);
     expect(out.newIntent).toBe(true);
+  });
+});
+
+test.describe('Round-13 cancellation lifecycle', () => {
+  test('a stale retry never clears a newer run timer (finding 1)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      // a NEW run has an active cancel intent + its OWN scheduled timer
+      _sheetCancelIntents.add('new::gNEW');
+      _sheetCancelTimers.set('new::gNEW', setTimeout(() => {}, 100000));
+      // a STALE schedule + a STALE terminal-clear for an OLD identity that
+      // has no active intent — neither may touch the NEW run's timer slot
+      _sheetScheduleCancelRetry('old', 'gOLD');
+      _sheetClearCancelTimer('old', 'gOLD');
+      const out = { newTimerAlive: _sheetCancelTimers.has('new::gNEW'),
+                    oldScheduled: _sheetCancelTimers.has('old::gOLD') };
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
+      return out;
+    });
+    // the new run's timer survived; the stale identity (no intent) scheduled nothing
+    expect(out.newTimerAlive).toBe(true);
+    expect(out.oldScheduled).toBe(false);
+  });
+
+  test('rail direct cancel establishes intent without a matching descriptor (finding 2)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      let dispatched = [];
+      window.lambdaPost = async (name, body) => {
+        const job = body && body.jobs && body.jobs[0];
+        if (job && job.action === 'cancel') dispatched.push(job);
+        return { fired: 1 };
+      };
+      _sheetRunClear();   // NO matching descriptor
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gR', status: 'running' }) }
+        : realFetch(url));
+      // a DIRECT rail cancel for a run that is NOT the current descriptor
+      const result = await _cancelSheetRun('railsheet', 'gR', { direct: true });
+      window.fetch = realFetch;
+      const out = { dispatched: dispatched.map(d => d.generation),
+                    intentEstablished: _sheetCancelIntents.has('railsheet::gR'),
+                    resultDispatched: !!(result && result.dispatched) };
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
+      return out;
+    });
+    // the direct command dispatched AND established intent even with no descriptor
+    expect(out.dispatched).toEqual(['gR']);
+    expect(out.intentEstablished).toBe(true);
+    expect(out.resultDispatched).toBe(true);
+  });
+
+  test('a deferred retry with no active intent does nothing (finding 2)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      let dispatched = 0;
+      window.lambdaPost = async (name, body) => {
+        const job = body && body.jobs && body.jobs[0];
+        if (job && job.action === 'cancel') dispatched += 1;
+        return { fired: 1 };
+      };
+      _sheetCancelIntents.clear();
+      // a retry (non-direct) for an identity with no active intent
+      const result = await _cancelSheetRun('gone', 'gGONE');
+      return { dispatched, ok: result && result.ok, reason: result && result.reason };
+    });
+    // it must NOT dispatch, and returns a structured (not silent) result
+    expect(out.dispatched).toBe(0);
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('intent-cleared');
   });
 });

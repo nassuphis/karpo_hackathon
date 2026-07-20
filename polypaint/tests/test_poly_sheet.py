@@ -83,6 +83,12 @@ class _S3Stub:
     def delete_objects(self, Bucket, Delete):
         for entry in Delete["Objects"]:
             self.objects.pop(entry["Key"], None)
+            self.etags.pop(entry["Key"], None)
+        return {}
+
+    def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None):
+        keys = sorted(k for k in self.objects if k.startswith(Prefix))
+        return {"Contents": [{"Key": k} for k in keys], "IsTruncated": False}
 
 
 def _admit(mod, stub, params, gen, worker_frames):
@@ -229,16 +235,12 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         # semantics have their own DDB-backed test. Restore the reals
         # after the test so stubs cannot leak (round-6 finding 6).
         import shared as _shared
-        # round-8 finding 6: restore ALL THREE lease primitives. The old
-        # code stubbed finalize_task but only saved/restored claim_task and
-        # renew_claim, leaking the finalize stub into later handler tests so
-        # they never exercised the real finalizer.
-        real_claim = mod.claim_task
-        real_renew = mod.renew_claim
-        real_finalize = mod.finalize_task
-        self.addCleanup(lambda: setattr(mod, "claim_task", real_claim))
-        self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
-        self.addCleanup(lambda: setattr(mod, "finalize_task", real_finalize))
+        # round-8 finding 6 + round-9 finding 7: restore ALL THREE lease
+        # primitives to the KNOWN-REAL shared implementations — capturing
+        # the current value could re-save a stub a prior leak left behind.
+        self.addCleanup(lambda: setattr(mod, "claim_task", _shared.claim_task))
+        self.addCleanup(lambda: setattr(mod, "renew_claim", _shared.renew_claim))
+        self.addCleanup(lambda: setattr(mod, "finalize_task", _shared.finalize_task))
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
         mod.finalize_task = lambda *a, **k: True
@@ -699,16 +701,12 @@ class TestAdmissionEnforcement(unittest.TestCase):
         # semantics have their own DDB-backed test. Restore the reals
         # after the test so stubs cannot leak (round-6 finding 6).
         import shared as _shared
-        # round-8 finding 6: restore ALL THREE lease primitives. The old
-        # code stubbed finalize_task but only saved/restored claim_task and
-        # renew_claim, leaking the finalize stub into later handler tests so
-        # they never exercised the real finalizer.
-        real_claim = mod.claim_task
-        real_renew = mod.renew_claim
-        real_finalize = mod.finalize_task
-        self.addCleanup(lambda: setattr(mod, "claim_task", real_claim))
-        self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
-        self.addCleanup(lambda: setattr(mod, "finalize_task", real_finalize))
+        # round-8 finding 6 + round-9 finding 7: restore ALL THREE lease
+        # primitives to the KNOWN-REAL shared implementations — capturing
+        # the current value could re-save a stub a prior leak left behind.
+        self.addCleanup(lambda: setattr(mod, "claim_task", _shared.claim_task))
+        self.addCleanup(lambda: setattr(mod, "renew_claim", _shared.renew_claim))
+        self.addCleanup(lambda: setattr(mod, "finalize_task", _shared.finalize_task))
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
         mod.finalize_task = lambda *a, **k: True
@@ -822,16 +820,12 @@ class TestRound4Lifecycle(unittest.TestCase):
         # semantics have their own DDB-backed test. Restore the reals
         # after the test so stubs cannot leak (round-6 finding 6).
         import shared as _shared
-        # round-8 finding 6: restore ALL THREE lease primitives. The old
-        # code stubbed finalize_task but only saved/restored claim_task and
-        # renew_claim, leaking the finalize stub into later handler tests so
-        # they never exercised the real finalizer.
-        real_claim = mod.claim_task
-        real_renew = mod.renew_claim
-        real_finalize = mod.finalize_task
-        self.addCleanup(lambda: setattr(mod, "claim_task", real_claim))
-        self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
-        self.addCleanup(lambda: setattr(mod, "finalize_task", real_finalize))
+        # round-8 finding 6 + round-9 finding 7: restore ALL THREE lease
+        # primitives to the KNOWN-REAL shared implementations — capturing
+        # the current value could re-save a stub a prior leak left behind.
+        self.addCleanup(lambda: setattr(mod, "claim_task", _shared.claim_task))
+        self.addCleanup(lambda: setattr(mod, "renew_claim", _shared.renew_claim))
+        self.addCleanup(lambda: setattr(mod, "finalize_task", _shared.finalize_task))
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
         mod.finalize_task = lambda *a, **k: True
@@ -1149,9 +1143,20 @@ class TestClaimLease(unittest.TestCase):
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
 class TestRound5(unittest.TestCase):
     def _patched(self, mod, s3stub):
+        import shared as _shared
         mod.s3 = s3stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda *a, **k: None
+        # round-9 finding 7: this fixture used to stub all three lease
+        # primitives with NO cleanup, relying on each test's finally block
+        # which restored ONLY claim_task — so renew_claim and finalize_task
+        # leaked stubs into every later handler test. Restore all three to
+        # the KNOWN-REAL shared implementations (not a captured current
+        # value, which a prior leak could already have stubbed), leak-proof
+        # regardless of test order.
+        self.addCleanup(lambda: setattr(mod, "claim_task", _shared.claim_task))
+        self.addCleanup(lambda: setattr(mod, "renew_claim", _shared.renew_claim))
+        self.addCleanup(lambda: setattr(mod, "finalize_task", _shared.finalize_task))
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
         mod.finalize_task = lambda *a, **k: True
@@ -1355,10 +1360,12 @@ class TestRound7WorkerFencing(unittest.TestCase):
         mod.s3 = stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda *a, **k: None
-        real = (mod.claim_task, mod.renew_claim, mod.finalize_task)
-        self.addCleanup(lambda: (setattr(mod, "claim_task", real[0]),
-                                 setattr(mod, "renew_claim", real[1]),
-                                 setattr(mod, "finalize_task", real[2])))
+        # round-9 finding 7: restore to the KNOWN-REAL shared impls, never a
+        # captured current value (a prior leak could have stubbed it)
+        import shared as _shared
+        self.addCleanup(lambda: (setattr(mod, "claim_task", _shared.claim_task),
+                                 setattr(mod, "renew_claim", _shared.renew_claim),
+                                 setattr(mod, "finalize_task", _shared.finalize_task)))
 
     def test_worker_lost_lease_exits_benignly(self):
         """Finding 1: a worker whose renew fails mid-run must exit without
@@ -1495,7 +1502,12 @@ class TestRound8Heartbeat(unittest.TestCase):
         hb = shared.LeaseHeartbeat("j", "t", owner="A", interval_s=0.02).start()
         try:
             _t.sleep(0.08)
-            self.assertFalse(hb.lost)   # transient errors are retried, not fatal
+            # the heartbeat is a KEEP-ALIVE, not the write fence (round-9
+            # finding 1) — a transient renew error must not tear down the
+            # keep-alive. Ownership at a shared write is proved SEPARATELY
+            # by the synchronous fail-closed _owns_for_write (tested below),
+            # so a stale keep-alive can never authorize a write on its own.
+            self.assertFalse(hb.lost)
         finally:
             hb.stop()
 
@@ -1510,10 +1522,12 @@ class TestRound8Fencing(unittest.TestCase):
         mod.s3 = stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda *a, **k: None
-        real = (mod.claim_task, mod.renew_claim, mod.finalize_task)
-        self.addCleanup(lambda: (setattr(mod, "claim_task", real[0]),
-                                 setattr(mod, "renew_claim", real[1]),
-                                 setattr(mod, "finalize_task", real[2])))
+        # round-9 finding 7: restore to the KNOWN-REAL shared impls, never a
+        # captured current value (a prior leak could have stubbed it)
+        import shared as _shared
+        self.addCleanup(lambda: (setattr(mod, "claim_task", _shared.claim_task),
+                                 setattr(mod, "renew_claim", _shared.renew_claim),
+                                 setattr(mod, "finalize_task", _shared.finalize_task)))
 
     def test_stitch_artifacts_are_attempt_scoped(self):
         """Finding 2: the published png/manifest live under an owner-scoped
@@ -1573,3 +1587,173 @@ class TestRound8Fencing(unittest.TestCase):
         self.assertEqual(
             json.loads(stub.objects["sheets/uncertain-sheet/run.json"])["status"],
             "running")
+
+
+class TestRound9WriteFence(unittest.TestCase):
+    """Round-9 finding 1: the write fence is a SYNCHRONOUS fail-closed
+    owner renew, not an async heartbeat flag."""
+
+    def test_owns_for_write_fails_closed_on_ddb_error(self):
+        import handler_poly_sheet as mod
+        real = mod.renew_claim
+        self.addCleanup(lambda: setattr(mod, "renew_claim", real))
+        # lost lease -> False (renew returned False)
+        mod.renew_claim = lambda *a, **k: False
+        self.assertFalse(mod._owns_for_write("j", "t", "A"))
+        # DDB uncertainty (renew RAISED) -> False (fail closed), never True
+        def boom(*a, **k):
+            raise RuntimeError("DDB unreachable")
+        mod.renew_claim = boom
+        self.assertFalse(mod._owns_for_write("j", "t", "A"))
+        # confirmed ownership -> True
+        mod.renew_claim = lambda *a, **k: True
+        self.assertTrue(mod._owns_for_write("j", "t", "A"))
+
+
+@unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+class TestRound9Fencing(unittest.TestCase):
+    """Round-9 findings 1/3/8: fail-closed write fence in the worker, a
+    cancel that lands before commit blocks the publish, losing attempt
+    artifacts are reaped."""
+
+    def _patched(self, mod, stub):
+        import shared as _shared
+        mod.s3 = stub
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.report_status = lambda *a, **k: None
+        self.addCleanup(lambda: (setattr(mod, "claim_task", _shared.claim_task),
+                                 setattr(mod, "renew_claim", _shared.renew_claim),
+                                 setattr(mod, "finalize_task", _shared.finalize_task)))
+
+    def test_worker_skips_tile_write_when_fence_fails_closed(self):
+        """Finding 1: if the pre-write ownership renew RAISES (DDB
+        uncertain), the worker must NOT write the tile — it fails closed."""
+        import handler_poly_sheet as mod
+
+        gen = "g9a9a9a9a9a9a"
+        stub = _S3Stub()
+        self._patched(mod, stub)
+        mod.claim_task = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
+        def uncertain_renew(*a, **k):
+            raise RuntimeError("DDB throttled")
+        mod.renew_claim = uncertain_renew   # the FENCE cannot confirm
+        p = _run_params("fence-sheet")
+        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+        resp = mod.handle_frames({**p, "action": "frames", "generation": gen,
+                                  "task_id": f"sheet_tiles_fence-sheet_{gen}_w0",
+                                  "frame_indices": [0, 1]})
+        body = json.loads(resp["body"])
+        self.assertTrue(body.get("lost_lease"))
+        # NO tile was written — the fence failed closed before the S3 put
+        self.assertFalse([k for k in stub.objects if "/tiles/" in k],
+                         "a fence that could not confirm ownership still wrote a tile")
+
+    def test_cancel_before_commit_blocks_publish(self):
+        """Finding 3: a cancel marker that appears AFTER the stitch's
+        startup check but before the commit must block publication."""
+        import handler_poly_sheet as mod
+
+        gen = "g9c9c9c9c9c9c"
+        stub = _S3Stub()
+        self._patched(mod, stub)
+        mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
+        p = _run_params("cancelrace-sheet")
+        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+        for w, frames in ((0, [0, 1]), (1, [2, 3])):
+            mod.handle_frames({**p, "action": "frames", "generation": gen,
+                               "task_id": f"sheet_tiles_cancelrace-sheet_{gen}_w{w}",
+                               "frame_indices": frames})
+        # the cancel marker lands just before the stitch commits (the
+        # startup check already passed at admission time)
+        stub.put_object(Bucket="b", Key=mod._cancel_key("cancelrace-sheet", gen),
+                        Body=b"1")
+        resp = mod.handle_stitch({**p, "action": "stitch", "generation": gen,
+                                  "task_id": f"sheet_stitch_cancelrace-sheet_{gen}"})
+        body = json.loads(resp["body"])
+        # the stitch did NOT publish; it honored the cancel
+        self.assertTrue(body.get("cancelled"))
+        run = json.loads(stub.objects["sheets/cancelrace-sheet/run.json"])
+        self.assertEqual(run["status"], "cancelled")
+        self.assertNotEqual(run.get("published_generation"), gen)
+
+    def test_losing_attempt_artifacts_are_reaped(self):
+        """Finding 8: after a successful publish, orphaned objects of any
+        LOSING same-generation stitch attempt are pruned."""
+        import handler_poly_sheet as mod
+
+        gen = "g9d9d9d9d9d9d"
+        stub = _S3Stub()
+        self._patched(mod, stub)
+        mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
+        p = _run_params("gc-sheet")
+        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+        for w, frames in ((0, [0, 1]), (1, [2, 3])):
+            mod.handle_frames({**p, "action": "frames", "generation": gen,
+                               "task_id": f"sheet_tiles_gc-sheet_{gen}_w{w}",
+                               "frame_indices": frames})
+        # plant a LOSING attempt's orphaned artifacts under the same gen
+        loser = f"sheets/gc-sheet/{gen}/deadbeef0000/"
+        stub.put_object(Bucket="b", Key=loser + "sheet.png", Body=b"stale")
+        stub.put_object(Bucket="b", Key=loser + "sheet.json", Body=b"{}")
+        resp = mod.handle_stitch({**p, "action": "stitch", "generation": gen,
+                                  "task_id": f"sheet_stitch_gc-sheet_{gen}"})
+        run = json.loads(stub.objects["sheets/gc-sheet/run.json"])
+        winner = run["published_png_key"].rsplit("/", 1)[0] + "/"
+        self.assertNotEqual(winner, loser)
+        # the loser's objects are gone; the winner's survive
+        self.assertNotIn(loser + "sheet.png", stub.objects)
+        self.assertNotIn(loser + "sheet.json", stub.objects)
+        self.assertIn(run["published_png_key"], stub.objects)
+
+
+class TestRound9MarkTerminalRetry(unittest.TestCase):
+    """Round-9 finding 5: _mark_run_terminal RETRIES the CAS so the
+    terminal transition reliably lands (no ghost 'running' runs)."""
+
+    def test_mark_run_terminal_retries_cas_conflict(self):
+        import handler_poly_sheet as mod
+
+        gen = "g9e9e9e9e9e9e"
+        stub = _S3Stub()
+        real = mod.s3
+        self.addCleanup(lambda: setattr(mod, "s3", real))
+        # a run.json that a CONCURRENT writer bumps once (stale ETag on the
+        # first put), then the retry succeeds
+        stub.put_object(Bucket="b", Key="sheets/retry-sheet/run.json",
+                        Body=json.dumps({"generation": gen, "status": "running"}).encode())
+
+        class _ConflictOnce(_S3Stub):
+            def __init__(self, inner):
+                self.__dict__ = inner.__dict__
+                self._conflicts = 1
+            def put_object(self, **kw):
+                if "IfMatch" in kw and self._conflicts > 0:
+                    self._conflicts -= 1
+                    from botocore.exceptions import ClientError
+                    raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
+                return super().put_object(**kw)
+        mod.s3 = _ConflictOnce(stub)
+        ok = mod._mark_run_terminal("retry-sheet", gen, "failed")
+        self.assertTrue(ok)
+        self.assertEqual(json.loads(stub.objects["sheets/retry-sheet/run.json"])["status"],
+                         "failed")
+
+
+# Defined LAST so pytest (file-definition order) runs it AFTER every other
+# test — round-9 finding 7: an empirical guard that NO test leaked a lease
+# stub into the handler module (exactly the check the reviewer ran by hand).
+class TestZZLeaseIsolationNoLeak(unittest.TestCase):
+    def test_no_lease_stub_leaked_into_handler(self):
+        import handler_poly_sheet as mod
+        import shared
+        self.assertIs(mod.claim_task, shared.claim_task,
+                      "a test leaked a claim_task stub into handler_poly_sheet")
+        self.assertIs(mod.renew_claim, shared.renew_claim,
+                      "a test leaked a renew_claim stub into handler_poly_sheet")
+        self.assertIs(mod.finalize_task, shared.finalize_task,
+                      "a test leaked a finalize_task stub into handler_poly_sheet")

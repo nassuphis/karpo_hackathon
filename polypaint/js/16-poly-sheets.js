@@ -287,7 +287,12 @@ async function _sheetDriveRun(desc, statusEl, opts) {
         // survives and resume retries with a real answer
         throw new Error('could not determine stitch state; will retry on resume');
     }
-    if (stitchState !== 'done' && stitchState === 'accepted') {
+    // round-9 finding 2: redispatch the stitch in ANY non-terminal state,
+    // not just 'accepted'. A stitch that crashed after reporting 'stitch'
+    // or 'Publishing' would otherwise never be relaunched. claim_task
+    // gates duplicates — a live stitch's lease no-ops the redispatch, a
+    // crashed stitch's expired lease lets the redispatch reclaim it.
+    if (stitchState !== 'done' && stitchState !== 'error') {
         const stitch = await lambdaPost('dispatch', {
             target: 'poly_sheet',
             jobs: [{ ...desc.payload, action: 'stitch', task_id: desc.stitchTask,
@@ -400,12 +405,19 @@ async function resumeSheetRun() {
         // re-dispatches) so the server-side hide is not silently dropped.
         const abandoned = await _sheetDispatchControl(
             desc.sheetId, desc.generation, 'abandon');
-        if (!abandoned) {
+        // round-9 finding 5: clear local state ONLY once run.json is
+        // confirmed terminal — a bare 202 does not prove the server hide
+        // landed, and clearing on intent leaves a ghost 'running' run for
+        // discovery to resurrect. If unaccepted OR unconfirmed, keep the
+        // descriptor and reschedule so the hide is retried.
+        const confirmed = abandoned
+            && await _sheetConfirmRunTerminal(desc.sheetId, desc.generation);
+        if (!confirmed) {
             if (_sheetResumeTimer) clearTimeout(_sheetResumeTimer);
             _sheetResumeTimer = setTimeout(() => { void resumeSheetRun(); },
                                            SHEET_RESUME_BACKOFF_MS);
             if (statusEl) {
-                statusEl.textContent = `Sheet ${desc.sheetId}: abandoned locally; retrying the server hide...`;
+                statusEl.textContent = `Sheet ${desc.sheetId}: abandoned locally; confirming the server hide...`;
                 statusEl.className = 'status';
             }
             return;
@@ -425,11 +437,12 @@ async function resumeSheetRun() {
     }
     desc.resumeAttempts = (desc.resumeAttempts || 0) + 1;
     desc.nextResumeAt = now + SHEET_RESUME_BACKOFF_MS * desc.resumeAttempts;
-    // round-8 finding 4: record once we have committed to a dispatch that
-    // is past the lease horizon — this is the reclaim attempt a crashed
-    // worker needs, and the give-up gate above waits for it.
-    if (pastLeaseHorizon) desc.hadPostLeaseDispatch = true;
     _sheetRunSave(desc);
+    // NB: hadPostLeaseDispatch is deliberately NOT set here (round-9
+    // finding 4) — recording it before any dispatch let a single
+    // status-request failure satisfy the give-up gate without a recovery
+    // invocation ever being issued. It is set below, only after a real
+    // post-horizon dispatch/observation.
 
     const statusEl = document.getElementById('sheets-status');
     _activeSheetRun = { sheetId: desc.sheetId, jobId: desc.jobId, generation: desc.generation };
@@ -443,9 +456,19 @@ async function resumeSheetRun() {
     });
     if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId}: resuming (attempt ${desc.resumeAttempts})...`; statusEl.className = 'status'; }
     try {
+        // _sheetWorkersNeedingDispatch POLLS the workers' real DDB rows —
+        // reaching here past the lease horizon is an OBSERVED post-lease
+        // state read (finding 4), not mere intent, and it throws on a
+        // status-probe failure so a failed probe never satisfies give-up
         const pending = await _sheetWorkersNeedingDispatch(desc);
         if (pending.length) {
             await _sheetDispatchWorkers({ ...desc, workers: pending });
+        }
+        // record the observed post-horizon dispatch/observation only now,
+        // after the probe succeeded and any pending workers were redispatched
+        if (pastLeaseHorizon && !desc.hadPostLeaseDispatch) {
+            desc.hadPostLeaseDispatch = true;
+            _sheetRunSave(desc);
         }
         await _sheetDriveRun(desc, statusEl, { dispatchWorkers: false });
         _sheetRunClear();
@@ -469,7 +492,11 @@ async function resumeSheetRun() {
 
 const SHEET_POLL_MS = 3000;
 const SHEET_POLL_MAX_CONSECUTIVE_FAILURES = 5;
-const SHEET_STALL_DEADLINE_MS = 10 * 60 * 1000;
+// round-9 finding 6: the server allows one worker/frame up to 720s
+// (BUDGET_US) of native work between tile writes, so the client must not
+// declare a stall before that legal deadline plus margin — 600s wrongly
+// killed a healthy worker mid-frame. 15 min clears the 720s budget.
+const SHEET_STALL_DEADLINE_MS = 15 * 60 * 1000;
 
 async function _pollSheetWorkers(sheetId, jobId, steps, workers, statusEl, generation) {
     /* CR35-F4/F5 poll contract: transient /check-status failures are
@@ -646,6 +673,30 @@ async function _sheetDispatchControl(sheetId, generation, action) {
             });
             if ((resp.fired || 0) === 1) return true;
         } catch (e) { /* transient; retry */ }
+    }
+    return false;
+}
+
+async function _sheetConfirmRunTerminal(sheetId, generation) {
+    /* Round-9 finding 5: an async 202 only proves the control event was
+     * queued, not that run.json reached a terminal state. Confirm the run
+     * record actually left 'running' for THIS generation (bounded
+     * retries) before we clear local state — otherwise a discovery from
+     * this or another client resurrects a ghost 'running' run. */
+    for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt) await new Promise(r => setTimeout(r, 400 * attempt));
+        try {
+            const resp = await fetch(
+                _publicStorageUrl(`sheets/${sheetId}/run.json`) + '?t=' + Date.now(),
+                { cache: 'no-store' });
+            if (resp.ok) {
+                const run = await resp.json();
+                // a newer generation taking over, or any non-running status
+                // for ours, both mean this run is no longer live
+                if (!run || run.generation !== generation
+                        || run.status !== 'running') return true;
+            }
+        } catch (e) { /* transient */ }
     }
     return false;
 }

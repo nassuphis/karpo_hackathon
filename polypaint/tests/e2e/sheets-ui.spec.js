@@ -341,6 +341,12 @@ test.describe('Round-5 resume hardening', () => {
         }
         return { fired: 1 };
       };
+      // round-9 finding 5: abandon clears local state only once run.json is
+      // CONFIRMED terminal — serve it as abandoned so the confirm succeeds
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gg', status: 'abandoned' }) }
+        : realFetch(url));
       _activeSheetRun = null;
       // round-8 finding 4: give-up now requires BOTH the attempt ceiling
       // AND a dispatch past the lease horizon — set the post-lease-
@@ -351,7 +357,8 @@ test.describe('Round-5 resume hardening', () => {
                       resumeAttempts: 6, firstResumeAt: Date.now() - 500000,
                       hadPostLeaseDispatch: true });
       await resumeSheetRun();
-      // the run is now abandoned locally + server dispatch sent
+      window.fetch = realFetch;
+      // the run is now abandoned locally + server dispatch sent + confirmed
       const cleared = _sheetRunLoad() === null;
       // discovery must skip a row for the just-abandoned generation
       _sheetsInventory = [];
@@ -521,6 +528,70 @@ test.describe('Round-8 fencing', () => {
     });
     // an abandon the server never accepted must not silently drop — the
     // descriptor stays and a retry is scheduled
+    expect(out.survived).toBe(true);
+    expect(out.rescheduled).toBe(true);
+  });
+});
+
+test.describe('Round-9 fencing', () => {
+  test('a crashed stitch that reported progress is redispatched (finding 2)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      // the stitch phase is 'stitch' (it crashed mid-run AFTER reporting
+      // progress, not 'accepted') — it must still be redispatched
+      let stitchDispatched = false;
+      window.lambdaPost = async (name, body, path) => {
+        const job = body && body.jobs && body.jobs[0];
+        if (path === '/check-status') {
+          // workers all done; stitch task is mid-progress ('stitch')
+          if (String(body.task_prefix || '').includes('stitch')) {
+            return { errors: 0, results: [{ task_id: body.task_prefix, phase: 'stitch' }] };
+          }
+          return { errors: 0, results: [] };
+        }
+        if (job && job.action === 'stitch') { stitchDispatched = true; return { fired: 1 }; }
+        return { fired: 1 };
+      };
+      // short-circuit the terminal poll so the test returns fast
+      const realPoll = window._pollSheetTask;
+      window._pollSheetTask = async () => ({ frames: 4, elapsed_ms: 1 });
+      window._sheetGenerateDeepZoom = async () => {};
+      const realPollWorkers = window._pollSheetWorkers;
+      window._pollSheetWorkers = async () => {};
+      const desc = { sheetId: 'st9', jobId: 'j', generation: 'gst9', steps: 4,
+                     workers: [{ task_id: 'sheet_tiles_st9_gst9_w0', frames: [0, 1, 2, 3] }],
+                     stitchTask: 'sheet_stitch_st9_gst9', payload: {}, startedAtS: 1 };
+      await _sheetDriveRun(desc, null, { dispatchWorkers: false });
+      window._pollSheetTask = realPoll;
+      window._pollSheetWorkers = realPollWorkers;
+      return { stitchDispatched };
+    });
+    // a non-'accepted' but non-terminal stitch state must be redispatched
+    expect(out.stitchDispatched).toBe(true);
+  });
+
+  test('abandon fired but run.json not yet terminal keeps the descriptor (finding 5)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      window.lambdaPost = async () => ({ fired: 1 });   // abandon accepted...
+      // ...but run.json still reads 'running' (the hide has not landed)
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gnt', status: 'running' }) }
+        : realFetch(url));
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'nt', jobId: 'j', generation: 'gnt', steps: 4,
+                      workers: [], stitchTask: 't', payload: {},
+                      resumeAttempts: 6, firstResumeAt: Date.now() - 500000,
+                      hadPostLeaseDispatch: true });
+      await resumeSheetRun();
+      window.fetch = realFetch;
+      const survived = _sheetRunLoad() !== null;
+      const rescheduled = _sheetResumeTimer !== null;
+      if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
+      _sheetRunClear();
+      return { survived, rescheduled };
+    });
+    // an unconfirmed hide must not clear the run (a ghost would be
+    // rediscovered) — it stays and retries
     expect(out.survived).toBe(true);
     expect(out.rescheduled).toBe(true);
   });

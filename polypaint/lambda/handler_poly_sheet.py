@@ -760,6 +760,38 @@ def _write_generation_artifacts(cfg, generation, manifest, canvas, owner):
     return prefix
 
 
+def _prune_losing_attempts(sheet_id, generation, winning_prefix):
+    """Round-9 finding 8: reap the artifacts of LOSING same-generation
+    stitch attempts. Each attempt writes under sheets/{id}/{gen}/{token}/
+    and exactly one token wins the run.json CAS; the others are orphans.
+    After a successful publish, delete every object under the generation
+    prefix that is NOT the winner's. Best-effort (part of cleanup_ok):
+    returns True on a clean sweep, False on any list/delete error."""
+    gen_root = _gen_prefix(sheet_id, generation)     # sheets/{id}/{gen}/
+    ok = True
+    try:
+        token = None
+        while True:
+            kwargs = {"Bucket": BUCKET, "Prefix": gen_root}
+            if token:
+                kwargs["ContinuationToken"] = token
+            resp = s3.list_objects_v2(**kwargs)
+            victims = [{"Key": o["Key"]} for o in resp.get("Contents", [])
+                       if not o["Key"].startswith(winning_prefix)]
+            for i in range(0, len(victims), 1000):
+                d = s3.delete_objects(
+                    Bucket=BUCKET,
+                    Delete={"Objects": victims[i:i + 1000], "Quiet": True})
+                if d.get("Errors"):
+                    ok = False
+            if not resp.get("IsTruncated"):
+                break
+            token = resp.get("NextContinuationToken")
+    except Exception:
+        ok = False
+    return ok
+
+
 def _cas_put_run(sheet_id, expected_etag, run):
     """Conditional run.json write (round-3 findings 2/3). The If-Match on
     the ETag captured in the SAME read is the atomic commit; there is NO
@@ -812,6 +844,13 @@ def _commit_run_publication(sheet_id, generation, gen_prefix):
     if run.get("status") == "done" and run.get("published_generation") == generation:
         raise RuntimeError(
             "publish refused: this generation is already published")
+    # round-9 finding 3: the cancel marker is checked INSIDE the commit's
+    # critical section (as close to the CAS as an S3 object allows), so a
+    # cancel that raced ahead of its own run.json transition still blocks
+    # the publish. Combined with the recheck just before this call, the
+    # window where a confirmed cancel could publish 'done' is closed.
+    if _cancel_requested(sheet_id, generation):
+        raise RuntimeError("publish refused: run was cancelled")
     run["status"] = "done"
     run["finished_at_s"] = time.time()
     run["published_generation"] = generation
@@ -821,21 +860,51 @@ def _commit_run_publication(sheet_id, generation, gen_prefix):
 
 
 def _mark_run_terminal(sheet_id, generation, status):
-    """Best-effort CAS to move run.json to a terminal state on worker
-    error / cancel (round-3 finding 5: terminal runs stayed 'running'
-    and were rediscovered forever). Generation-guarded; a lost race
-    against a newer begin is fine — that newer run owns the record."""
+    """CAS run.json to a terminal state on worker error / cancel (round-3
+    finding 5: terminal runs stayed 'running' and were rediscovered
+    forever). Generation-guarded; a lost race against a newer begin is
+    fine — that newer run owns the record. Round-9 finding 5: RETRY the
+    CAS on conflict so the terminal transition reliably LANDS — a
+    swallowed one-shot failure left run.json 'running' (a ghost) while the
+    client cleared its descriptor off the DDB write, so discovery
+    resurrected the dead run. Returns True when run.json is terminal for
+    this generation (either we set it, or a concurrent writer already
+    made it terminal), False only if it could not be confirmed."""
+    for _ in range(5):
+        try:
+            resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+            etag = resp.get("ETag")
+            run = json.loads(resp["Body"].read())
+            if run.get("generation") != generation:
+                return True          # a newer begin owns the record
+            if run.get("status") != "running":
+                return True          # already terminal (someone else won)
+            run["status"] = status
+            run["finished_at_s"] = time.time()
+            _cas_put_run(sheet_id, etag, run)
+            return True
+        except RuntimeError:
+            continue                 # CAS conflict (superseded) — re-read + retry
+        except ClientError:
+            continue                 # transient S3 error — retry
+    return False
+
+
+def _owns_for_write(job_id, task_id, owner, *, result_data=None):
+    """Fail-closed ownership proof for the instant before a shared S3 write
+    (round-9 finding 1). A write fence must be a synchronous check-then-
+    write: an async heartbeat flag can lag reality (a persistent DDB outage
+    never latches `lost` yet the real lease still expires and a successor
+    reclaims). This does an owner-conditional renew RIGHT HERE and returns
+    True ONLY when ownership is freshly CONFIRMED. A lost lease (renew
+    False) OR any DDB uncertainty (renew raises) returns False, so the
+    caller SKIPS the shared write — the only safe action when we cannot
+    prove we still hold the lease."""
     try:
-        resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
-        etag = resp.get("ETag")
-        run = json.loads(resp["Body"].read())
-        if run.get("generation") != generation or run.get("status") != "running":
-            return
-        run["status"] = status
-        run["finished_at_s"] = time.time()
-        _cas_put_run(sheet_id, etag, run)
-    except (ClientError, RuntimeError):
-        pass
+        return bool(renew_claim(job_id, task_id, owner=owner,
+                                result_data=result_data))
+    except Exception:
+        return False
 
 
 def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
@@ -1157,11 +1226,19 @@ def handle_frames(params):
                     "raise the degree); reduce frames or N")
             tile, record = _render_frame_tile(cfg, params, k, frozen_cache,
                                               deadline_s=worker_deadline_s)
-            # round-8 finding 1: revalidate ownership (via the heartbeat's
-            # latch) IMMEDIATELY before the shared write. If the lease was
-            # taken over during this frame's native ops, do not overwrite
-            # the successor's tile keys — exit benignly.
-            if hb.lost:
+            done_after = done + 1
+            # round-9 finding 1: the FENCE is a synchronous owner-conditional
+            # renew IMMEDIATELY before the shared write, not the async
+            # heartbeat's `lost` flag (which a persistent DDB outage never
+            # latches even after the lease has really expired). This proves
+            # ownership NOW and fails CLOSED on any uncertainty — a lost
+            # lease OR a DDB error both skip the write, so a reclaimed worker
+            # can never overwrite a successor's tile keys. The heartbeat is
+            # only a keep-alive so a healthy long frame's fence still passes.
+            if not _owns_for_write(job_id, task_id, owner, result_data={
+                    "phase": "sheet", "phase_label": f"{done_after}/{len(indices)} frames",
+                    "task_id": task_id, "sheet_id": sheet_id, "generation": generation,
+                    "frames": len(indices), "frame": done_after}):
                 return ok_response({"sheet_id": sheet_id, "frames_done": done,
                                     "lost_lease": True})
             key = _tile_key(sheet_id, generation, k)
@@ -1170,17 +1247,7 @@ def handle_frames(params):
             s3.put_object(Bucket=BUCKET, Key=key.replace(".bin", ".json"),
                           Body=json.dumps(record).encode("utf-8"),
                           ContentType="application/json")
-            done += 1
-            # renew the lease AND publish progress in one owner-guarded
-            # write. Round-7 finding 1: a LOST lease means a successor took
-            # over — exit BENIGNLY (do NOT raise into the failure path,
-            # which would fail the run and overwrite the successor).
-            if not renew_claim(job_id, task_id, owner=owner, result_data={
-                    "phase": "sheet", "phase_label": f"{done}/{len(indices)} frames",
-                    "task_id": task_id, "sheet_id": sheet_id, "generation": generation,
-                    "frames": len(indices), "frame": done}):
-                return ok_response({"sheet_id": sheet_id, "frames_done": done,
-                                    "lost_lease": True})
+            done = done_after
         # round-7 finding 2: the terminal 'done' is OWNER-CONDITIONAL and
         # best-effort — a lost lease means a successor owns it (don't
         # overwrite), and a transient DDB throttle on the done write must
@@ -1283,28 +1350,33 @@ def handle_stitch(params):
         # change the degree per frame (review round-2 finding 5)
         degrees = [int(r.get("degree") or 0) for r in frame_records]
         degree = max(degrees) if degrees else None
-        # round-7 finding 3: renew the lease right before the unprotected
-        # final section (manifest build, PNG encode, uploads, commit). If
-        # a successor already took over, exit benignly so two stitchers do
-        # not both write this generation's keys.
-        if not renew_claim(job_id, task_id, owner=owner, result_data={
+        manifest = _sheet_manifest(cfg, params, t0, degree, frame_records, "fanout")
+        manifest["generation"] = generation
+        # round-9 finding 1: the FENCE is a synchronous owner-conditional
+        # renew (fail-closed) right before the encode+upload, NOT the async
+        # heartbeat's stale `lost` flag — a reclaimed stitch must produce no
+        # artifacts. The heartbeat above was only a keep-alive across the
+        # (possibly long) tile-read loop.
+        if not _owns_for_write(job_id, task_id, owner, result_data={
                 "phase": "stitch", "phase_label": "Publishing",
                 "sheet_id": sheet_id, "generation": generation,
                 "frames": cfg["steps"]}):
             return ok_response({"sheet_id": sheet_id, "lost_lease": True})
-
-        degrees = [int(r.get("degree") or 0) for r in frame_records]
-        degree = max(degrees) if degrees else None
-        manifest = _sheet_manifest(cfg, params, t0, degree, frame_records, "fanout")
-        manifest["generation"] = generation
-        # round-8 finding 2: write to an ATTEMPT-scoped prefix (owner
-        # token), so even two stitchers of the SAME generation never
-        # overwrite each other's PNG/manifest. round-8 finding 1: the
-        # heartbeat may have found the lease taken over during the read
-        # loop above — re-check right before the encode+upload so a
-        # reclaimed stitch produces no artifacts at all.
-        if hb.lost:
-            return ok_response({"sheet_id": sheet_id, "lost_lease": True})
+        # round-9 finding 3: RE-CHECK the cancel marker immediately before
+        # the commit. The startup check is far in the past; a cancel that
+        # landed during the read/encode must block the publish. Marker
+        # visibility is the durable cancel signal — honor it as late as
+        # possible so a confirmed cancel cannot still publish 'done'.
+        if _cancel_requested(sheet_id, generation):
+            _mark_run_terminal(sheet_id, generation, "cancelled")
+            try:
+                finalize_task(job_id, task_id, owner=owner, status="error",
+                              error_msg="Cancelled by user",
+                              result_data={"phase": "error", "phase_label": "Cancelled",
+                                           "sheet_id": sheet_id})
+            except Exception:
+                pass
+            return ok_response({"cancelled": sheet_id, "frames_done": cfg["steps"]})
         gen_prefix = _write_generation_artifacts(cfg, generation, manifest,
                                                   canvas, owner)
         manifest["png_key"] = gen_prefix + "sheet.png"
@@ -1347,6 +1419,10 @@ def handle_stitch(params):
                 Delete={"Objects": delete_keys[i:i + 1000], "Quiet": True})
             if resp.get("Errors"):
                 cleanup_ok = False
+        # round-9 finding 8: reap the losing stitch attempts' orphaned
+        # png/manifest objects (the winner is gen_prefix)
+        if not _prune_losing_attempts(sheet_id, generation, gen_prefix):
+            cleanup_ok = False
     except Exception:
         cleanup_ok = False
     try:

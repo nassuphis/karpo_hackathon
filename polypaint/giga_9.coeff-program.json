@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_9",
+  "chain": [],
+  "source_text": "poly = scan(20, 0, cos(6.283185307179586*t1), (cos(6.283185307179586*t1)+(cos(6.283185307179586*t2)-cos(6.283185307179586*t1))*k/19))\npoly\npoly = multiply(poly, poly)\npoly = multiply(poly, poly)\npoly = multiply(poly, poly)\npoly = multiply(poly, pop)\npoly = multiply(poly, 100)\npoly\npoly = scan(20, 0, sin(6.283185307179586*t1), (sin(6.283185307179586*t1)+(sin(6.283185307179586*t2)-sin(6.283185307179586*t1))*k/19))\npoly\npoly = multiply(poly, poly)\npoly = multiply(poly, poly)\npoly = multiply(poly, poly)\npoly = multiply(poly, pop)\npoly = multiply(poly, 100i)\npoly = add(poly, pop)\npoly = rev(poly)\nemit\n"
+}

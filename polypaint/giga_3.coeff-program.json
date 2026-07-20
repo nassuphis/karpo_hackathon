@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_3",
+  "chain": [],
+  "source_text": "poly = fill(25, 0)\npoly[0] = 1\npoly[14] = exp(exp(6.283185307179586i*t1)-exp(6.283185307179586i*t2))\npoly[16] = exp(1i*exp(6.283185307179586i*t1))\npoly[17] = exp(exp(6.283185307179586i*t1))\npoly[18] = exp(-exp(6.283185307179586i*t1))\npoly[19] = exp(-1i*exp(6.283185307179586i*t1))\npoly[23] = exp(1i*exp(6.283185307179586i*t2))\npoly[24] = 1+1i\npoly = rev(poly)\nemit\n"
+}

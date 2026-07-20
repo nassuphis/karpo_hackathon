@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_19",
+  "chain": [],
+  "source_text": "poly = scan(90, 0, t1-t2, 1i*(sin((k+1)*prev)+cos((k+1)*t1))/abs(sin((k+1)*prev)+cos((k+1)*t1)))\npoly = rev(poly)\nemit\n"
+}

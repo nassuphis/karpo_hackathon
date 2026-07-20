@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_10",
+  "chain": [],
+  "source_text": "poly = fill(4, 0)\npoly[0] = cos(6.283185307179586*t1)\npoly[1] = sin(6.283185307179586*t1)\npoly[2] = cos(6.283185307179586*t2)\npoly[3] = sin(6.283185307179586*t2)\npoly\npoly = scan(120, 0, (100*(tos[0]+tos[3])*((1)/10)**2)*exp(1i*(tos[2]*(1)/20))+(50*(tos[1]-tos[2])*sin((1)*0.1*tos[3]))*exp(-1i*(1)*0.05*tos[0]), (100*(tos[0]+tos[3])*((k+1)/10)**2)*exp(1i*(tos[2]*(k+1)/20))+(50*(tos[1]-tos[2])*sin((k+1)*0.1*tos[3]))*exp(-1i*(k+1)*0.05*tos[0]))\npoly[29] = (100*(tos[0]+tos[3])*((30)/10)**2)*exp(1i*(tos[2]*(30)/20))+(50*(tos[1]-tos[2])*sin((30)*0.1*tos[3]))*exp(-1i*(30)*0.05*tos[0])+1000i\npoly[59] = (100*(tos[0]+tos[3])*((60)/10)**2)*exp(1i*(tos[2]*(60)/20))+(50*(tos[1]-tos[2])*sin((60)*0.1*tos[3]))*exp(-1i*(60)*0.05*tos[0])-500\npoly[89] = (100*(tos[0]+tos[3])*((90)/10)**2)*exp(1i*(tos[2]*(90)/20))+(50*(tos[1]-tos[2])*sin((90)*0.1*tos[3]))*exp(-1i*(90)*0.05*tos[0])+250*exp(1i*exp(6.283185307179586i*(t1+t2)))\ndrop\npoly = rev(poly)\nemit\n"
+}

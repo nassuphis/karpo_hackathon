@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_27",
+  "chain": [],
+  "source_text": "poly = fill(4, 0)\npoly[0] = exp(6.283185307179586i*t1)\npoly[1] = exp(6.283185307179586i*t2)\npoly[2] = exp(6.283185307179586i*t1)\npoly[3] = 1\npoly = roots_cm(poly, lo, exact)\npoly = poly[0:3]\npoly = multiply(poly, 100)\npoly\npoly = fill(4, 0)\npoly[0] = exp(6.283185307179586i*t2)\npoly[1] = exp(6.283185307179586i*t1)\npoly[2] = exp(6.283185307179586i*t2)\npoly[3] = 10i\npoly = roots_cm(poly, lo, exact)\npoly = poly[0:3]\npoly = multiply(poly, 100)\npoly\npoly = fill(12, 0)\npoly[0] = -100i\npoly[1] = -100i\npoly[2] = -100i\npoly[11] = tos[0]\npoly[10] = tos[1]\npoly[9] = tos[2]\ndrop\npoly[4] = tos[0]\npoly[5] = tos[1]\npoly[6] = tos[2]\ndrop\nemit\n"
+}

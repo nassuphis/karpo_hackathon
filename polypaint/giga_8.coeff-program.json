@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_8",
+  "chain": [],
+  "source_text": "poly = fill(4, 0)\npoly[0] = 10i\npoly[1] = 100*exp(6.283185307179586i*t1)\npoly[2] = -50*exp(6.283185307179586i*t2)\npoly[3] = exp(6.283185307179586i*3*t1)\npoly = roots_jt(poly, lo, exact)\npoly = poly[0:3]\npoly\npoly = fill(4, 0)\npoly[0] = imag(tos[2])\npoly[1] = -real(tos[1])\npoly[2] = tos[0]\npoly[3] = 1\npoly = roots_jt(poly, lo, exact)\npoly = poly[0:3]\npoly\npoly = fill(35, 0)\npoly[9] = tos[0]\npoly[10] = tos[1]\npoly[11] = tos[2]\npoly[12] = tos[0]\npoly[19] = 50*exp(6.283185307179586i*(t1+t2))+real(tos[0])\ndrop\npoly[0] = tos[0]\npoly[1] = tos[1]\npoly[2] = tos[2]\npoly[3] = tos[0]\ndrop\npoly[29] = exp(1i*exp(6.283185307179586i*t1))+50*exp(6.283185307179586i*3*t2)\npoly[34] = 200*exp(1i*exp(6.283185307179586i*3*t1))-exp(-1i*exp(6.283185307179586i*2*t2))\npoly = rev(poly)\nemit\n"
+}

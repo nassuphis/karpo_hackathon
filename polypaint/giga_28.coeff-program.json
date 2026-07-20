@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_28",
+  "chain": [],
+  "source_text": "poly = fill(6, 0)\npoly[0] = 100*exp(6.283185307179586i*3*t2)+100i*exp(6.283185307179586i*3*t1)\npoly[2] = 150\npoly[5] = 40i\nemit\n"
+}

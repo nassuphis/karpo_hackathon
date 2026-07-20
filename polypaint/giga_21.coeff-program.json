@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_21",
+  "chain": [],
+  "source_text": "poly = vector_literal(4+2i, 5+3i, 6+4i, 7+5i, 8+6i, 9+7i, 0+8i, 1+9i, 2, 3+1i, 4+2i, 5+3i, 6+4i, 7+5i, 8+6i, 9+7i, 0+8i, 1+9i, 2, 3+1i, 4+2i, 5+3i, 6+4i, 7+5i, 8+6i, 9+7i, 0+8i, 1+9i, 2, 3+1i, 4+2i, 5+3i, 6+4i, 7+5i, 8+6i, 9+7i, 0+8i, 1+9i, 2, 3+1i, 4+2i, 5+3i, 6+4i, 7+5i, 8+6i, 9+7i, 0+8i, 1+9i, 2, 3+1i)\npoly\npoly = scan(50, 0, exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2), (sin(real(tos[k])*prev)+cos(imag(tos[k])*exp(6.283185307179586i*t1)))/abs(sin(real(tos[k])*prev)+cos(imag(tos[k])*exp(6.283185307179586i*t1))))\ndrop\npoly = rev(poly)\nemit\n"
+}

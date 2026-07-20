@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_17",
+  "chain": [],
+  "source_text": "poly = fill(3, 0)\npoly[0] = angle(exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2))\npoly[1] = abs(exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2))\npoly[2] = 6.283185307179586*((t1+t2)-floor(t1+t2+0.5))\npoly\npoly = scan(9, 0, log(tos[1]+2)*exp(1i*(tos[0]*sin(1)+tos[2]*cos(1))), log(tos[1]+1+(k+1))*(k+1)**2*exp(1i*(tos[0]*sin(k+1)+tos[2]*cos(k+1))))\ndrop\npoly = rev(poly)\nemit\n"
+}

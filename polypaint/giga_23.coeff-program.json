@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_23",
+  "chain": [],
+  "source_text": "poly = fill(26, 0)\npoly[0] = 1\npoly[4] = 4\npoly[6] = 100*(exp(6.283185307179586i*3*t2)+exp(6.283185307179586i*2*t2)-exp(6.283185307179586i*t2)-1)\npoly[8] = 100*(exp(6.283185307179586i*3*t1)+exp(6.283185307179586i*2*t1)+exp(6.283185307179586i*t2)-1)\npoly[12] = 4\npoly[14] = 100*(exp(6.283185307179586i*3*t2)-exp(6.283185307179586i*2*t2)+exp(6.283185307179586i*t2)-1)\npoly[19] = -9\npoly[20] = -1.9\npoly[24] = 0.2\npoly = rev(poly)\nemit\n"
+}

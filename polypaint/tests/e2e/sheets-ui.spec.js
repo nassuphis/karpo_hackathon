@@ -236,3 +236,72 @@ test.describe('CR35 wave D regressions', () => {
     });
   });
 });
+
+test.describe('Round-4 resume + publish regressions', () => {
+  test('targeted redispatch only relaunches accepted workers (finding 1)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      // /check-status returns parsed result_data; the worker now embeds
+      // task_id there, so the phase map is keyable
+      window.lambdaPost = async (name, body, path) => {
+        if (path === '/check-status') {
+          return { errors: 0, results: [
+            { task_id: 'sheet_tiles_s_g_w0', phase: 'done', frame: 2 },
+            { task_id: 'sheet_tiles_s_g_w1', phase: 'sheet', frame: 1 },
+            { task_id: 'sheet_tiles_s_g_w2', phase: 'accepted', frame: 0 },
+          ] };
+        }
+        return { fired: 1 };
+      };
+      const desc = {
+        sheetId: 's', jobId: 'j', generation: 'g',
+        workers: [
+          { task_id: 'sheet_tiles_s_g_w0', frames: [0] },
+          { task_id: 'sheet_tiles_s_g_w1', frames: [1] },
+          { task_id: 'sheet_tiles_s_g_w2', frames: [2] },
+        ],
+      };
+      const pending = await _sheetWorkersNeedingDispatch(desc);
+      return pending.map(w => w.task_id);
+    });
+    // only the still-'accepted' worker is redispatched; done/running left alone
+    expect(out).toEqual(['sheet_tiles_s_g_w2']);
+  });
+
+  test('unknown stitch state does not dispatch (finding 7)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      let stitchDispatches = 0;
+      window.lambdaPost = async (name, body, path) => {
+        if (path === '/check-status') throw new Error('network down');
+        if (body && body.jobs && body.jobs[0] && body.jobs[0].action === 'stitch') {
+          stitchDispatches += 1;
+        }
+        return { fired: 1 };
+      };
+      const phase = await _sheetTaskPhase('j', 'stitch_task');
+      return { phase, stitchDispatches };
+    });
+    // 3 failed polls -> null (unknown); the caller must not guess/dispatch
+    expect(out.phase).toBe(null);
+    expect(out.stitchDispatches).toBe(0);
+  });
+
+  test('cancel reaches a persisted-but-inactive run (finding 4)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'ps', jobId: 'j', generation: 'gp', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      let cancelled = null;
+      window.lambdaPost = async (name, body) => {
+        if (body.jobs && body.jobs[0] && body.jobs[0].action === 'cancel') {
+          cancelled = body.jobs[0];
+        }
+        return { fired: 1 };
+      };
+      await cancelPolySheet();
+      const cleared = _sheetRunLoad() === null;
+      return { cancelled, cleared };
+    });
+    expect(out.cancelled).toEqual({ action: 'cancel', sheet_id: 'ps', generation: 'gp' });
+    expect(out.cleared).toBe(true);
+  });
+});

@@ -38,24 +38,47 @@ emit
 
 
 class _S3Stub:
-    def __init__(self):
-        self.objects = {}
+    """ETag-aware S3 fake with real conditional-write semantics — the
+    round-3 review flagged that the old stub had no ETags and silently
+    exercised the (unsafe) fallback. IfMatch / IfNoneMatch here behave
+    like S3's conditional PUT."""
 
-    def put_object(self, Bucket, Key, Body, ContentType=None, CacheControl=None):
+    def __init__(self):
+        self.objects = {}      # key -> bytes
+        self.etags = {}        # key -> etag string
+        self._seq = 0
+
+    def _next_etag(self):
+        self._seq += 1
+        return f'"etag{self._seq}"'
+
+    def put_object(self, Bucket, Key, Body, ContentType=None, CacheControl=None,
+                   IfMatch=None, IfNoneMatch=None):
+        from botocore.exceptions import ClientError
+        if IfNoneMatch is not None:
+            if Key in self.objects:
+                raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
+        if IfMatch is not None:
+            if self.etags.get(Key) != IfMatch:
+                raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         self.objects[Key] = Body if isinstance(Body, (bytes, bytearray)) else Body.encode()
+        self.etags[Key] = self._next_etag()
 
     def head_object(self, Bucket, Key):
         if Key not in self.objects:
             from botocore.exceptions import ClientError
             raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
-        return {"ContentLength": len(self.objects[Key])}
+        return {"ContentLength": len(self.objects[Key]),
+                "ETag": self.etags.get(Key)}
 
     def get_object(self, Bucket, Key):
         import io
         if Key not in self.objects:
             from botocore.exceptions import ClientError
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
-        return {"Body": io.BytesIO(bytes(self.objects[Key]))}
+        return {"Body": io.BytesIO(bytes(self.objects[Key])),
+                "ETag": self.etags.get(Key),
+                "LastModified": __import__("datetime").datetime(2026, 7, 20)}
 
     def delete_objects(self, Bucket, Delete):
         for entry in Delete["Objects"]:
@@ -80,7 +103,8 @@ def _admit(mod, stub, params, gen, worker_frames):
         "params_hash": mod._params_hash(params),
         "status": "running",
     }
-    stub.objects[f"sheets/{sheet_id}/run.json"] = json.dumps(run).encode()
+    stub.put_object(Bucket="b", Key=f"sheets/{sheet_id}/run.json",
+                    Body=json.dumps(run).encode())
     return run
 
 
@@ -320,8 +344,15 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         self.assertEqual([f["value"] for f in manifest["frame_records"]],
                          [0.5, 1.0, 1.5, 2.0])
         self.assertEqual(manifest["degree"], 5)
-        # the stitched mosaic is byte-identical to the single-shot render
-        self.assertEqual(stub.objects["sheets/fan-sheet/sheet.png"], ref_png)
+        # publication is a pointer: run.json names the generation's
+        # immutable png, which is byte-identical to the single-shot render
+        run = json.loads(stub.objects["sheets/fan-sheet/run.json"])
+        self.assertEqual(run["published_generation"], gen)
+        self.assertEqual(run["status"], "done")
+        self.assertEqual(stub.objects[run["published_png_key"]], ref_png)
+        self.assertEqual(run["published_png_key"], f"sheets/fan-sheet/{gen}/sheet.png")
+        # no mutable fixed keys are written by the fan-out path
+        self.assertNotIn("sheets/fan-sheet/sheet.png", stub.objects)
         # scaffolding tiles are removed after the stitch
         self.assertFalse([k for k in stub.objects if "/tiles/" in k])
 
@@ -367,9 +398,10 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         self.assertEqual(body["cancelled"], "cx-sheet")
         self.assertEqual(body["frames_done"], 0)
 
-    def test_worker_without_generation_writes_terminal_error(self):
-        """CR35-F5: a worker that fails validation must still leave a
-        terminal error row (never a silent disappearance)."""
+    def test_unbound_worker_raises_without_poisoning_status(self):
+        """Round-3 finding 7: a request that fails admission (here: no
+        run.json to bind to) must RAISE without writing any status row —
+        it must not be able to poison a legitimate task's row."""
         import handler_poly_sheet as mod
 
         rows = []
@@ -381,11 +413,12 @@ class TestPolySheetEndToEnd(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 mod.handle_frames({**_run_params("nogen-sheet"),
                                    "action": "frames",
+                                   "generation": "g000000000000",
                                    "task_id": "sheet_tiles_nogen_w0",
                                    "frame_indices": [0]})
         finally:
             (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
-        self.assertIn("error", rows)
+        self.assertEqual(rows, [])
 
     def test_begin_probes_validates_and_prewrites_rows(self):
         """CR35-F4/F5/F6: begin measures the real degree, budgets from
@@ -704,3 +737,194 @@ class TestAdmissionEnforcement(unittest.TestCase):
             self.assertTrue(mod._cancel_requested("any-sheet", "g0123456789ab"))
         finally:
             mod.s3 = orig
+
+
+@unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+class TestRound4Lifecycle(unittest.TestCase):
+    """Round-4 regressions: the lifecycle code the earlier rounds changed
+    without tests — CAS interleaving, fail-closed publish, terminal run
+    state, idempotent replay, the runtime deadline, and action gating."""
+
+    def _patched(self, mod, s3stub):
+        mod.s3 = s3stub
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.report_status = lambda *a, **k: None
+
+    def _render_generation(self, mod, stub, sheet_id, gen):
+        p = _run_params(sheet_id)
+        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+        for w, frames in ((0, [0, 1]), (1, [2, 3])):
+            mod.handle_frames({**p, "action": "frames", "generation": gen,
+                               "task_id": f"sheet_tiles_{sheet_id}_{gen}_w{w}",
+                               "frame_indices": frames})
+        return p
+
+    def test_interleaved_commit_pointer_follows_the_winner(self):
+        """The reviewer's exact race: A stitches, then B begins+commits,
+        then A's stitch runs. A must LOSE the commit (run.json already B),
+        and each generation's immutable bytes stay distinct — the pointer
+        never shows A's content while marked B."""
+        import handler_poly_sheet as mod
+
+        gen_a, gen_b = "gaaaaaaaaaaaa", "gbbbbbbbbbbbb"
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            # A renders and COMMITS first (pointer -> A)
+            pa = self._render_generation(mod, stub, "race-sheet", gen_a)
+            mod.handle_stitch({**pa, "action": "stitch", "generation": gen_a,
+                               "task_id": f"sheet_stitch_race-sheet_{gen_a}"})
+            self.assertEqual(json.loads(stub.objects["sheets/race-sheet/run.json"])
+                             ["published_generation"], gen_a)
+            a_png = stub.objects[f"sheets/race-sheet/{gen_a}/sheet.png"]
+            # B supersedes: fresh begin overwrites run.json, renders, commits
+            _admit(mod, stub, pa, gen_b, [[0, 1], [2, 3]])
+            for w, frames in ((0, [0, 1]), (1, [2, 3])):
+                mod.handle_frames({**pa, "action": "frames", "generation": gen_b,
+                                   "task_id": f"sheet_tiles_race-sheet_{gen_b}_w{w}",
+                                   "frame_indices": frames})
+            mod.handle_stitch({**pa, "action": "stitch", "generation": gen_b,
+                               "task_id": f"sheet_stitch_race-sheet_{gen_b}"})
+            # a stale REPLAY of A's stitch now runs and MUST be refused —
+            # it can never overwrite B's pointer or B's bytes
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_stitch({**pa, "action": "stitch", "generation": gen_a,
+                                   "task_id": f"sheet_stitch_race-sheet_{gen_a}_replay"})
+            self.assertIn("superseded", str(ctx.exception))
+            run = json.loads(stub.objects["sheets/race-sheet/run.json"])
+            self.assertEqual(run["published_generation"], gen_b)
+            self.assertEqual(run["published_png_key"],
+                             f"sheets/race-sheet/{gen_b}/sheet.png")
+            # both generations' immutable artifacts survive, distinct and
+            # unmodified — the pointer is the only thing that moved
+            self.assertEqual(stub.objects[f"sheets/race-sheet/{gen_a}/sheet.png"], a_png)
+            self.assertIn(f"sheets/race-sheet/{gen_b}/sheet.png", stub.objects)
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+
+    def test_publish_fails_closed_without_conditional_writes(self):
+        """If the runtime lacks S3 conditional writes, the commit must
+        REFUSE rather than clobber — no silent unconditional fallback."""
+        import handler_poly_sheet as mod
+
+        class _NoCAS(_S3Stub):
+            def put_object(self, **kw):
+                if "IfMatch" in kw or "IfNoneMatch" in kw:
+                    raise TypeError("put_object() got an unexpected keyword 'IfMatch'")
+                return super().put_object(**kw)
+
+        stub = _NoCAS()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            gen = "gcccccccccccc"
+            p = _run_params("noCAS-sheet")
+            # begin's run.json write also uses IfNoneMatch -> emulate admit
+            stub.objects["sheets/noCAS-sheet/run.json"] = json.dumps({
+                "sheet_id": "noCAS-sheet", "generation": gen, "job_id": "sheet_job",
+                "steps": 4, "workers": [
+                    {"task_id": f"sheet_tiles_noCAS-sheet_{gen}_w0", "frames": [0, 1]},
+                    {"task_id": f"sheet_tiles_noCAS-sheet_{gen}_w1", "frames": [2, 3]}],
+                "stitch_task_id": f"sheet_stitch_noCAS-sheet_{gen}",
+                "degree_probe": 5, "params_hash": mod._params_hash(p),
+                "status": "running"}).encode()
+            stub.etags["sheets/noCAS-sheet/run.json"] = '"e0"'
+            for w, frames in ((0, [0, 1]), (1, [2, 3])):
+                mod.handle_frames({**p, "action": "frames", "generation": gen,
+                                   "task_id": f"sheet_tiles_noCAS-sheet_{gen}_w{w}",
+                                   "frame_indices": frames})
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_stitch({**p, "action": "stitch", "generation": gen,
+                                   "task_id": f"sheet_stitch_noCAS-sheet_{gen}"})
+            self.assertIn("conditional writes", str(ctx.exception))
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+
+    def test_worker_failure_marks_run_terminal(self):
+        """A worker error moves run.json off 'running' (round-3 f5) so
+        /list-sheets discovery stops rediscovering a dead run."""
+        import handler_poly_sheet as mod
+
+        gen = "gdddddddddddd"
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            p = _run_params("fail-sheet")
+            _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+            # break the binary so the render raises
+            mod.SWEEP_COEFFGEN = "/nonexistent/binary"
+            with self.assertRaises(Exception):
+                mod.handle_frames({**p, "action": "frames", "generation": gen,
+                                   "task_id": f"sheet_tiles_fail-sheet_{gen}_w0",
+                                   "frame_indices": [0, 1]})
+            run = json.loads(stub.objects["sheets/fail-sheet/run.json"])
+            self.assertEqual(run["status"], "failed")
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+
+    def test_abandon_and_cancel_mark_run_terminal(self):
+        import handler_poly_sheet as mod
+
+        gen = "geeeeeeeeeeee"
+        stub = _S3Stub()
+        orig = mod.s3
+        mod.s3 = stub
+        try:
+            p = _run_params("term-sheet")
+            _admit(mod, stub, p, gen, [[0, 1]])
+            mod.handle_abandon({"action": "abandon", "sheet_id": "term-sheet",
+                                "generation": gen})
+            self.assertEqual(json.loads(stub.objects["sheets/term-sheet/run.json"])["status"],
+                             "abandoned")
+            # re-admit and cancel
+            _admit(mod, stub, p, gen, [[0, 1]])
+            mod.report_status = lambda *a, **k: None
+            mod.handle_cancel({"action": "cancel", "sheet_id": "term-sheet",
+                               "generation": gen})
+            self.assertEqual(json.loads(stub.objects["sheets/term-sheet/run.json"])["status"],
+                             "cancelled")
+        finally:
+            mod.s3 = orig
+
+    def test_action_run_is_not_dispatchable(self):
+        import handler_poly_sheet as mod
+
+        for action in ("run", "evil", ""):
+            with self.assertRaises(RuntimeError):
+                mod.handler({"body": json.dumps({"action": action, "sheet_id": "x"})}, None)
+
+    def test_frame_bounds_keep_full_precision(self):
+        """Round-3 finding 8: bounds must not be rounded to 12 decimals."""
+        import handler_poly_sheet as mod
+
+        stub = _S3Stub()
+        gen = "gffffffffffff"
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            p = _run_params("prec-sheet", extra={
+                "frame": {"n": 8, "tile_px": 32, "solver_mode": "jt64",
+                          "viewport": {"mode": "explicit", "min_re": -1.234567890123456,
+                                       "max_re": 2.0, "min_im": -2.0, "max_im": 2.0},
+                          "rotate": 0}})
+            resp = mod.handle_run({**p, "generation": gen})
+            manifest = json.loads(resp["body"])
+            b = manifest["frame_records"][0]["bounds"]
+            # the square-fit preserves full binary64 in at least one edge
+            self.assertTrue(any(len(repr(x)) > 14 for x in b))
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+
+
+class TestRunBinaryDeadline(unittest.TestCase):
+    def test_past_deadline_refuses_before_spawning(self):
+        """Round-3 finding 3: the native-invocation deadline is a real
+        budget wall, checked at the wrapper (not just the loop top)."""
+        import handler_poly_sheet as mod
+
+        with self.assertRaises(RuntimeError) as ctx:
+            mod._run_binary("/bin/true", "/tmp/x", {}, "probe",
+                            deadline_s=__import__("time").time() - 1)
+        self.assertIn("budget", str(ctx.exception))

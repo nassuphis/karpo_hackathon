@@ -92,6 +92,21 @@ def resolve_bound_execution_arn(ddb_client, jobs_table, *, job_id, task_id,
     return stored
 
 
+def read_task_status(job_id, task_id):
+    """Return the current task_status string for (job_id, task_id), or
+    None when no row exists. Used to make a replayed worker idempotent
+    (a duplicate must not regress a 'done' row)."""
+    resp = _get_ddb().get_item(
+        TableName=JOBS_TABLE,
+        Key={"job_id": {"S": str(job_id)}, "task_id": {"S": str(task_id)}},
+        ConsistentRead=True,
+    )
+    item = resp.get("Item")
+    if not item:
+        return None
+    return item.get("task_status", {}).get("S")
+
+
 def report_status(job_id, task_id, status, error_msg=None, result_data=None):
     """Write task completion status to DynamoDB. TTL = 24h auto-cleanup.
     Optional result_data dict is stored as JSON string for later retrieval."""

@@ -97,6 +97,8 @@
                   "param_program_source_text.$": "$.params.param_program_source_text",
                   "coeff_program_chain.$": "$.params.coeff_program_chain",
                   "coeff_program_source_text.$": "$.params.coeff_program_source_text",
+                  "param_transforms.$": "$.params.param_transforms",
+                  "coeff_transforms.$": "$.params.coeff_transforms",
                   "cfpv.$": "$.params.cfpv"
                 }
               },
@@ -208,6 +210,8 @@
                   "param_program_source_text.$": "$.params.param_program_source_text",
                   "coeff_program_chain.$": "$.params.coeff_program_chain",
                   "coeff_program_source_text.$": "$.params.coeff_program_source_text",
+                  "param_transforms.$": "$.params.param_transforms",
+                  "coeff_transforms.$": "$.params.coeff_transforms",
                   "cfpv.$": "$.params.cfpv",
                   "solver_mode.$": "$.params.solver_mode",
                   "N.$": "$.params.N",

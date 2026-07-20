@@ -7,6 +7,7 @@
 
 let _sheetsInventory = [];
 let _activeSheetRun = null;   // {sheetId, jobId, taskId}
+let _sheetResumeTimer = null;
 
 function _sheetNewId() {
     return 'sheet_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
@@ -317,9 +318,19 @@ async function resumeSheetRun() {
     if ((desc.resumeAttempts || 0) >= SHEET_RESUME_MAX_ATTEMPTS) {
         const statusEl = document.getElementById('sheets-status');
         if (statusEl) {
-            statusEl.textContent = `Sheet ${desc.sheetId}: resume gave up after ${desc.resumeAttempts} attempts — the run record is at sheets/${desc.sheetId}/run.json`;
+            statusEl.textContent = `Sheet ${desc.sheetId}: resume gave up after ${desc.resumeAttempts} attempts — abandoning the run`;
             statusEl.className = 'status error';
         }
+        // finding 5: tell the server so /list-sheets discovery stops
+        // rediscovering this run and restarting it with a fresh counter
+        try {
+            await lambdaPost('dispatch', {
+                target: 'poly_sheet',
+                jobs: [{ action: 'abandon', sheet_id: desc.sheetId,
+                         generation: desc.generation }],
+                expected_keys: [],
+            });
+        } catch (e) { /* best-effort */ }
         _sheetRunClear();
         return;
     }
@@ -347,9 +358,17 @@ async function resumeSheetRun() {
         _sheetRunClear();
         void loadSheetsTab();
     } catch (e) {
-        if (e && e.sheetTerminal) _sheetRunClear();
-        _jobsRailUpsert({ id: 'sheet:' + desc.sheetId, state: 'error', detail: e.message });
-        if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId} resume failed: ${e.message}${e.sheetTerminal ? '' : ` — retrying in ${Math.round(SHEET_RESUME_BACKOFF_MS * ((desc.resumeAttempts || 1)) / 1000)}s`}`; statusEl.className = 'status error'; }
+        if (e && e.sheetTerminal) {
+            _sheetRunClear();
+        } else {
+            // finding 4: actually SCHEDULE the next attempt — reopening
+            // the tab was the only retry before
+            const backoff = SHEET_RESUME_BACKOFF_MS * (desc.resumeAttempts || 1);
+            if (_sheetResumeTimer) clearTimeout(_sheetResumeTimer);
+            _sheetResumeTimer = setTimeout(() => { void resumeSheetRun(); }, backoff);
+            if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId} resume failed: ${e.message} — retrying in ${Math.round(backoff / 1000)}s`; statusEl.className = 'status error'; }
+        }
+        _jobsRailUpsert({ id: 'sheet:' + desc.sheetId, state: e && e.sheetTerminal ? 'error' : 'running', detail: e.message });
     } finally {
         _activeSheetRun = null;
     }
@@ -514,16 +533,21 @@ async function _sheetFindDeepZoom(sheetId) {
 
 async function cancelPolySheet() {
     const statusEl = document.getElementById('sheets-status');
-    if (!_activeSheetRun) {
+    // a run mid-backoff has no _activeSheetRun but IS persisted — cancel
+    // must reach it (round-3 finding 4)
+    const target = _activeSheetRun || _sheetRunLoad();
+    if (!target) {
         if (statusEl) statusEl.textContent = 'No active sheet run.';
         return;
     }
-    const { sheetId, generation } = _activeSheetRun;
+    const { sheetId, generation } = target;
+    if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
     await lambdaPost('dispatch', {
         target: 'poly_sheet',
         jobs: [{ action: 'cancel', sheet_id: sheetId, generation }],
         expected_keys: [],
     });
+    _sheetRunClear();
     if (statusEl) statusEl.textContent = `Sheet ${sheetId}: cancel requested (takes effect between frames).`;
 }
 
@@ -632,7 +656,7 @@ async function _sheetDownload(btn) {
     const orig = btn ? btn.textContent : 'Download';
     if (btn) { btn.disabled = true; btn.textContent = 'Fetching...'; }
     try {
-        const resp = await fetch(_publicStorageUrl(`sheets/${_sheetViewerId}/sheet.png`));
+        const resp = await fetch(_publicStorageUrl(_sheetResolvedKeys(_sheetViewerId).pngKey));
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
@@ -649,6 +673,16 @@ async function _sheetDownload(btn) {
     }
 }
 
+function _sheetResolvedKeys(sheetId) {
+    // the inventory row carries the pointer-resolved keys (list-sheets
+    // follows run.json.published_*); legacy sheets fall back to fixed keys
+    const row = (_sheetsInventory || []).find(r => r.sheet_id === sheetId);
+    return {
+        pngKey: (row && row.png_key) || `sheets/${sheetId}/sheet.png`,
+        manifestKey: (row && row.manifest_key) || `sheets/${sheetId}/sheet.json`,
+    };
+}
+
 function _viewSheet(sheetId) {
     const viewer = document.getElementById('sheet-viewer');
     const meta = document.getElementById('sheet-viewer-meta');
@@ -659,9 +693,10 @@ function _viewSheet(sheetId) {
     _sheetContextClose();
     _sheetMarkSelectedRow();
     viewer.style.display = '';
+    const keys = _sheetResolvedKeys(sheetId);
     if (meta) {
         meta.textContent = sheetId + ' (loading manifest...)';
-        fetch(_publicStorageUrl(`sheets/${sheetId}/sheet.json`) + '?t=' + Date.now())
+        fetch(_publicStorageUrl(keys.manifestKey) + '?t=' + Date.now())
             .then(r => r.json())
             .then(m => {
                 if (seq !== _sheetViewSeq) return;
@@ -715,7 +750,7 @@ async function populateSelectedSheet(btn) {
     const orig = btn ? btn.textContent : 'Populate';
     if (btn) { btn.disabled = true; btn.textContent = 'Populating...'; }
     try {
-        const resp = await fetch(_publicStorageUrl(`sheets/${sheetId}/sheet.json`) + '?t=' + Date.now());
+        const resp = await fetch(_publicStorageUrl(_sheetResolvedKeys(sheetId).manifestKey) + '?t=' + Date.now());
         if (!resp.ok) throw new Error('manifest HTTP ' + resp.status);
         const m = await resp.json();
 

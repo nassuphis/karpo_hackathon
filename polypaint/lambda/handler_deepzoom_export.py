@@ -343,7 +343,16 @@ def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
     job_id = assert_safe_id(str(params.get("job_id") or sheet_id), "job_id")
     export_id = assert_safe_id(
         params.get("export_id", f"dz_{int(time.time())}"), "export_id")
+    # round-3 finding 2: follow the publication pointer to the current
+    # generation's immutable PNG (fall back to the legacy fixed key)
     source_key = f"sheets/{sheet_id}/sheet.png"
+    try:
+        run = json.loads(s3.get_object(
+            Bucket=BUCKET, Key=f"sheets/{sheet_id}/run.json")["Body"].read())
+        if isinstance(run, dict) and run.get("published_png_key"):
+            source_key = run["published_png_key"]
+    except Exception:
+        pass
     source_path = ""
     try:
         report_status(job_id, task_id, "started")

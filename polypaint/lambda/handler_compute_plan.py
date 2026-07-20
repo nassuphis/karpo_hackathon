@@ -51,6 +51,7 @@ TARGET_PREVIEW_ROOTS = 250000
 MAX_N = 50000
 MAX_TIMES = 1000
 MAX_CHUNKS = 5000
+MAX_PROBE_DEGREE = 4096  # conservative floor sizing when no probe (round-4 F6)
 MAX_PLAN_BYTES = 200 * 1024  # Fail fast before the 256 KB Step Functions state limit.
 MAX_TOTAL_STEPS = 2_500_000_000
 MAX_PARAM_GEN_THREADS = 64
@@ -328,10 +329,18 @@ def handle_build_plan(params):
             "aberth_mt": 9_000_000_000,          # 10240 MB lambda - margin
         }
         budget = SOLVER_BUDGET_BYTES.get(solver_mode)
-        if budget and probe.get("degree") is not None:
-            # same contract as fused (round-3 finding 5): an unstable or
-            # mismatched probe must not size the memory floor
-            degree_i, _ = _validated_probe_contract("classic compute")
+        if budget:
+            # round-4 finding 6: NEVER trust degree 0. When a probe is
+            # present it is validated through the same contract as fused
+            # (stability + signature + spec + degree); when ABSENT the
+            # floor is sized with the conservative MAX degree so a
+            # missing/forged probe can only over-chunk (fail-safe), never
+            # under-chunk to an OOM. The classic ASL route always probes,
+            # so production takes the validated branch.
+            if probe.get("degree") is not None:
+                degree_i, _ = _validated_probe_contract("classic compute")
+            else:
+                degree_i = MAX_PROBE_DEGREE
             per_step_bytes = ((degree_i + 1) + degree_i) * 8   # coeffs + roots
             classic_min_memory_chunks = int(math.ceil(
                 total_steps * per_step_bytes / budget))

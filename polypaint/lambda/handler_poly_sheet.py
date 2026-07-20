@@ -44,7 +44,7 @@ import subprocess
 import time
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ParamValidationError
 
 from compute_fused import _solve_us_per_step
 from cp437_font import FONT_ROWS
@@ -57,6 +57,7 @@ from shared import (
     is_missing_s3_error,
     ok_response,
     parse_body,
+    read_task_status,
     report_status,
 )
 
@@ -101,6 +102,8 @@ def handler(event, context):
         return handle_begin(params)
     if action == "cancel":
         return handle_cancel(params)
+    if action == "abandon":
+        return handle_abandon(params)
     if action == "frames":
         return handle_frames(params)
     if action == "stitch":
@@ -110,7 +113,7 @@ def handler(event, context):
     # handle_run stays callable in-process (the byte-parity suite uses
     # it); the dispatch surface only accepts admitted actions.
     raise RuntimeError(
-        f"poly-sheet action must be one of begin/frames/stitch/cancel, got {action!r}")
+        f"poly-sheet action must be one of begin/frames/stitch/cancel/abandon, got {action!r}")
 
 
 def _cancel_key(sheet_id, generation):
@@ -137,7 +140,18 @@ def handle_cancel(params):
     sheet_id = _validated_sheet_id(params)
     generation = _validated_generation(params)
     s3.put_object(Bucket=BUCKET, Key=_cancel_key(sheet_id, generation), Body=b"1")
+    _mark_run_terminal(sheet_id, generation, "cancelled")
     return ok_response({"cancelled": sheet_id, "generation": generation})
+
+
+def handle_abandon(params):
+    """Client gave up resuming (round-3 finding 5): mark the run terminal
+    so /list-sheets discovery stops rediscovering it. Generation-guarded,
+    so it cannot abandon a newer run that took over the id."""
+    sheet_id = _validated_sheet_id(params)
+    generation = _validated_generation(params)
+    _mark_run_terminal(sheet_id, generation, "abandoned")
+    return ok_response({"abandoned": sheet_id, "generation": generation})
 
 
 def _cancel_requested(sheet_id, generation):
@@ -708,28 +722,60 @@ def _sheet_manifest(cfg, params, t0, degree, frame_records, render_mode):
     }
 
 
-def _upload_sheet(cfg, manifest, canvas, *, key_prefix=None):
-    """Write the mosaic + manifest. key_prefix overrides the fixed
-    sheets/{id}/ location (the stitch publishes generation-scoped
-    artifacts first, then copies to the fixed keys after winning the
-    commit — round-3 finding 4)."""
-    prefix = key_prefix if key_prefix is not None else f"sheets/{cfg['sheet_id']}/"
+def _gen_prefix(sheet_id, generation):
+    return f"sheets/{sheet_id}/{generation}/"
+
+
+def _write_generation_artifacts(cfg, generation, manifest, canvas):
+    """Write the IMMUTABLE, generation-scoped mosaic + manifest. These
+    keys are never overwritten by another generation, so any interleaving
+    of stitches leaves each generation's bytes intact (round-3 finding 4:
+    two mutable fixed writes could not be made atomic)."""
+    prefix = _gen_prefix(cfg["sheet_id"], generation)
     png = encode_png_gray(cfg["canvas_w"], cfg["canvas_h"], bytes(canvas))
     s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.png", Body=png,
                   ContentType="image/png")
     s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.json",
                   Body=json.dumps(manifest, indent=1).encode("utf-8"),
                   ContentType="application/json")
+    return prefix
 
 
-def _commit_run_publication(sheet_id, generation, manifest):
-    """Atomic-ish commit (round-3 finding 4): the run record is the
-    pointer. Read run.json WITH its ETag, verify the generation still
-    owns the run, then conditionally rewrite it (If-Match) marking the
-    publication. A newer begin replaces run.json (new ETag), so a stale
-    stitch loses the condition and never touches the fixed keys. On
-    runtimes without conditional-write support the fallback re-verifies
-    after writing — a documented, narrow window instead of a silent one."""
+def _cas_put_run(sheet_id, expected_etag, run):
+    """Conditional run.json write (round-3 findings 2/3). The If-Match on
+    the ETag captured in the SAME read is the atomic commit; there is NO
+    unconditional fallback — an environment without S3 conditional writes
+    FAILS CLOSED rather than silently clobbering a newer begin. Returns
+    True on commit; raises 'superseded' when the precondition fails."""
+    body = json.dumps(run, indent=1).encode("utf-8")
+    kwargs = {"Bucket": BUCKET, "Key": _run_json_key(sheet_id), "Body": body,
+              "ContentType": "application/json"}
+    if expected_etag is None:
+        kwargs["IfNoneMatch"] = "*"          # create-only
+    else:
+        kwargs["IfMatch"] = expected_etag
+    try:
+        s3.put_object(**kwargs)
+        return True
+    except ClientError as exc:
+        code = (exc.response or {}).get("Error", {}).get("Code", "")
+        if code in ("PreconditionFailed", "412", "ConditionalRequestConflict", "409"):
+            raise RuntimeError(
+                "publish refused: the run record changed under this stitch "
+                "(a newer begin took over)")
+        raise
+    except (TypeError, ParamValidationError) as exc:
+        raise RuntimeError(
+            "publish refused: this runtime lacks S3 conditional writes, so a "
+            "race-free commit is impossible — refusing to publish rather than "
+            f"risk clobbering a newer run ({exc})")
+
+
+def _commit_run_publication(sheet_id, generation, gen_prefix):
+    """CAS run.json to point at the generation's immutable artifacts. The
+    pointer is the ONLY authoritative publish; consumers resolve the
+    current sheet through it (never the mutable fixed keys, which no
+    longer exist for pointer-published sheets)."""
     resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
     etag = resp.get("ETag")
     run = json.loads(resp["Body"].read())
@@ -739,31 +785,37 @@ def _commit_run_publication(sheet_id, generation, manifest):
     run["status"] = "done"
     run["finished_at_s"] = time.time()
     run["published_generation"] = generation
-    run["published_png_key"] = manifest["png_key"]
-    body = json.dumps(run, indent=1).encode("utf-8")
+    run["published_png_key"] = gen_prefix + "sheet.png"
+    run["published_manifest_key"] = gen_prefix + "sheet.json"
+    _cas_put_run(sheet_id, etag, run)
+
+
+def _mark_run_terminal(sheet_id, generation, status):
+    """Best-effort CAS to move run.json to a terminal state on worker
+    error / cancel (round-3 finding 5: terminal runs stayed 'running'
+    and were rediscovered forever). Generation-guarded; a lost race
+    against a newer begin is fine — that newer run owns the record."""
     try:
-        s3.put_object(Bucket=BUCKET, Key=_run_json_key(sheet_id), Body=body,
-                      ContentType="application/json", IfMatch=etag)
-        return
-    except ClientError as exc:
-        code = (exc.response or {}).get("Error", {}).get("Code", "")
-        if code in ("PreconditionFailed", "412"):
-            raise RuntimeError(
-                "publish refused: the run record changed under this stitch "
-                "(a newer begin took over)")
-        raise
-    except Exception as exc:
-        # botocore without conditional-write support rejects the IfMatch
-        # kwarg (TypeError locally, ParamValidationError in old runtimes)
-        if not isinstance(exc, TypeError) and "IfMatch" not in str(exc):
-            raise
-        # botocore without conditional writes: write, then re-verify
-        s3.put_object(Bucket=BUCKET, Key=_run_json_key(sheet_id), Body=body,
-                      ContentType="application/json")
-        check = _load_run(sheet_id)
-        if not check or check.get("generation") != generation:
-            raise RuntimeError(
-                "publish refused: the run record changed under this stitch")
+        resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+        etag = resp.get("ETag")
+        run = json.loads(resp["Body"].read())
+        if run.get("generation") != generation or run.get("status") != "running":
+            return
+        run["status"] = status
+        run["finished_at_s"] = time.time()
+        _cas_put_run(sheet_id, etag, run)
+    except (ClientError, RuntimeError):
+        pass
+
+
+def _published_keys(run):
+    """Resolve a run record to its current published (png_key, manifest_key),
+    or None when nothing is published yet."""
+    if not isinstance(run, dict):
+        return None
+    if run.get("published_png_key") and run.get("published_manifest_key"):
+        return run["published_png_key"], run["published_manifest_key"]
+    return None
 
 
 # Fields that define the sheet's computation: the admission hash binds a
@@ -780,6 +832,13 @@ def _params_hash(params):
     payload = {k: params.get(k) for k in _HASHED_PARAM_FIELDS if params.get(k) is not None}
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _worker_already_done(job_id, task_id):
+    try:
+        return read_task_status(job_id, task_id) == "done"
+    except Exception:
+        return False
 
 
 def _load_run(sheet_id):
@@ -936,22 +995,28 @@ def handle_frames(params):
     task_id = str(params.get("task_id") or "").strip()
     if not job_id or not task_id:
         raise RuntimeError("poly-sheet frames requires job_id and task_id")
+    # round-3 finding 7: bind BEFORE any status write. A rejected
+    # (unauthenticated / mismatched) request must not be able to poison
+    # a legitimate task's status row — validation failures here raise
+    # without touching DDB.
+    generation = _validated_generation(params)
+    cfg = _parse_sheet_config(params)
+    sheet_id = cfg["sheet_id"]
+    indices = params.get("frame_indices")
+    if not isinstance(indices, list) or not indices:
+        raise RuntimeError("frames action requires a nonempty frame_indices list")
+    indices = sorted({int(k) for k in indices})
+    if indices[0] < 0 or indices[-1] >= cfg["steps"]:
+        raise RuntimeError(
+            f"frame_indices out of range 0..{cfg['steps'] - 1}: {indices}")
+    run = _bind_to_run(params, sheet_id, generation, task_id,
+                       frame_indices=indices)
+    # duplicate/replayed worker: if this exact task already finished this
+    # generation, do not regress its row (round-3 finding 7 secondary)
+    if _worker_already_done(job_id, task_id):
+        return ok_response({"sheet_id": sheet_id, "frames_done": len(indices),
+                            "already_done": True})
     try:
-        generation = _validated_generation(params)
-        cfg = _parse_sheet_config(params)
-        sheet_id = cfg["sheet_id"]
-        indices = params.get("frame_indices")
-        if not isinstance(indices, list) or not indices:
-            raise RuntimeError("frames action requires a nonempty frame_indices list")
-        indices = sorted({int(k) for k in indices})
-        if indices[0] < 0 or indices[-1] >= cfg["steps"]:
-            raise RuntimeError(
-                f"frame_indices out of range 0..{cfg['steps'] - 1}: {indices}")
-        run = _bind_to_run(params, sheet_id, generation, task_id,
-                           frame_indices=indices)
-        # budget with the ADMITTED degree, not a constant (review round-2
-        # finding 5); the runtime check below is the true enforcement —
-        # scan tokens can change the degree per frame
         _budget_check(cfg, len(indices) + (1 if cfg["vp_mode"] == "frozen" else 0),
                       "worker share",
                       degree=max(2, int(run.get("degree_probe") or 40)))
@@ -959,7 +1024,7 @@ def handle_frames(params):
         worker_deadline_s = time.time() + BUDGET_US / 1e6
 
         report_status(job_id, task_id, "running", result_data={
-            "phase": "sheet", "phase_label": "Sheet frames",
+            "phase": "sheet", "phase_label": "Sheet frames", "task_id": task_id,
             "sheet_id": sheet_id, "generation": generation,
             "frames": len(indices), "frame": 0,
         })
@@ -969,8 +1034,9 @@ def handle_frames(params):
             if _cancel_requested(sheet_id, generation):
                 report_status(job_id, task_id, "error", "Cancelled by user",
                               result_data={"phase": "error",
-                                           "phase_label": "Cancelled",
+                                           "phase_label": "Cancelled", "task_id": task_id,
                                            "sheet_id": sheet_id, "frame": done})
+                _mark_run_terminal(sheet_id, generation, "cancelled")
                 return ok_response({"cancelled": sheet_id, "frames_done": done})
             if time.time() > worker_deadline_s:
                 raise RuntimeError(
@@ -989,19 +1055,20 @@ def handle_frames(params):
             done += 1
             report_status(job_id, task_id, "running", result_data={
                 "phase": "sheet", "phase_label": f"{done}/{len(indices)} frames",
-                "sheet_id": sheet_id, "generation": generation,
+                "task_id": task_id, "sheet_id": sheet_id, "generation": generation,
                 "frames": len(indices), "frame": done,
             })
         report_status(job_id, task_id, "done", result_data={
-            "phase": "done", "phase_label": "Worker done",
+            "phase": "done", "phase_label": "Worker done", "task_id": task_id,
             "sheet_id": sheet_id, "generation": generation,
             "frames": len(indices), "frame": done,
         })
         return ok_response({"sheet_id": sheet_id, "frames_done": done})
     except Exception as e:
         report_status(job_id, task_id, "error", str(e), result_data={
-            "phase": "error", "phase_label": "Sheet worker failed",
+            "phase": "error", "phase_label": "Sheet worker failed", "task_id": task_id,
         })
+        _mark_run_terminal(sheet_id, generation, "failed")
         raise
     finally:
         for path in (TMP_COEFFS, TMP_ROOTS):
@@ -1021,11 +1088,14 @@ def handle_stitch(params):
     task_id = str(params.get("task_id") or "").strip()
     if not job_id or not task_id:
         raise RuntimeError("poly-sheet stitch requires job_id and task_id")
+    # bind before any status write (round-3 finding 7)
+    generation = _validated_generation(params)
+    cfg = _parse_sheet_config(params)
+    sheet_id = cfg["sheet_id"]
+    _bind_to_run(params, sheet_id, generation, task_id, stitch=True)
+    if _worker_already_done(job_id, task_id):
+        return ok_response({"sheet_id": sheet_id, "already_done": True})
     try:
-        generation = _validated_generation(params)
-        cfg = _parse_sheet_config(params)
-        sheet_id = cfg["sheet_id"]
-        _bind_to_run(params, sheet_id, generation, task_id, stitch=True)
         t0 = float(params.get("started_at_s") or time.time())
 
         report_status(job_id, task_id, "running", result_data={
@@ -1076,10 +1146,15 @@ def handle_stitch(params):
         # (collision-free), win the conditional commit on run.json, and
         # only then copy to the fixed public keys — a superseded stitch
         # fails the commit and never touches what viewers read
-        gen_prefix = f"sheets/{sheet_id}/{generation}/"
-        _upload_sheet(cfg, manifest, canvas, key_prefix=gen_prefix)
-        _commit_run_publication(sheet_id, generation, manifest)   # <- COMMIT
-        _upload_sheet(cfg, manifest, canvas)   # fixed keys = last committed
+        gen_prefix = _write_generation_artifacts(cfg, generation, manifest, canvas)
+        manifest["png_key"] = gen_prefix + "sheet.png"
+        manifest["manifest_key"] = gen_prefix + "sheet.json"
+        # re-write the manifest now that it carries its own final keys,
+        # then the pointer commit makes it authoritative (round-3 f4)
+        s3.put_object(Bucket=BUCKET, Key=gen_prefix + "sheet.json",
+                      Body=json.dumps(manifest, indent=1).encode("utf-8"),
+                      ContentType="application/json")
+        _commit_run_publication(sheet_id, generation, gen_prefix)   # <- COMMIT
 
         cleanup_ok = True
         try:
@@ -1108,8 +1183,9 @@ def handle_stitch(params):
         return ok_response(manifest)
     except Exception as e:
         report_status(job_id, task_id, "error", str(e), result_data={
-            "phase": "error", "phase_label": "Stitch failed",
+            "phase": "error", "phase_label": "Stitch failed", "task_id": task_id,
         })
+        _mark_run_terminal(sheet_id, generation, "failed")
         raise
 
 
@@ -1153,7 +1229,14 @@ def handle_run(params):
             })
 
         manifest = _sheet_manifest(cfg, params, t0, degree, frame_records, "single")
-        _upload_sheet(cfg, manifest, canvas)
+        # in-process single-shot path (test/dev only — not dispatchable):
+        # writes the fixed keys directly, no pointer commit
+        png = encode_png_gray(cfg["canvas_w"], cfg["canvas_h"], bytes(canvas))
+        s3.put_object(Bucket=BUCKET, Key=f"sheets/{sheet_id}/sheet.png",
+                      Body=png, ContentType="image/png")
+        s3.put_object(Bucket=BUCKET, Key=f"sheets/{sheet_id}/sheet.json",
+                      Body=json.dumps(manifest, indent=1).encode("utf-8"),
+                      ContentType="application/json")
         report_status(job_id, task_id, "done", result_data={
             "phase": "done", "phase_label": "Done",
             "sheet_id": sheet_id, "png_key": manifest["png_key"],

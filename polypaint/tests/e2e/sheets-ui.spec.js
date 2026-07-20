@@ -400,3 +400,31 @@ test.describe('Round-6 lease + reconciliation', () => {
     expect(out.rediscovered).toBe(false);
   });
 });
+
+test.describe('Round-7 cancel confirmation', () => {
+  test('cancel that is not accepted keeps the descriptor (finding 5)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'nc', jobId: 'j', generation: 'gnc', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      // dispatch returns fired:0 (not accepted)
+      window.lambdaPost = async () => ({ fired: 0 });
+      await cancelPolySheet();
+      // the run descriptor MUST survive an unaccepted cancel
+      return { survived: _sheetRunLoad() !== null };
+    });
+    expect(out.survived).toBe(true);
+  });
+
+  test('accepted cancel clears the descriptor', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'ok', jobId: 'j', generation: 'gok', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      window.lambdaPost = async () => ({ fired: 1 });
+      await cancelPolySheet();
+      return { cleared: _sheetRunLoad() === null };
+    });
+    expect(out.cleared).toBe(true);
+  });
+});

@@ -107,7 +107,11 @@ def read_task_status(job_id, task_id):
     return item.get("task_status", {}).get("S")
 
 
-CLAIM_LEASE_SECONDS = 120
+# The lease must comfortably exceed the longest single native operation a
+# worker can run between renewals (one _run_binary call caps at 300s), or
+# a live worker mid-render would lose its lease to a redispatch. 420s
+# leaves margin above the 300s op while still bounding crash recovery.
+CLAIM_LEASE_SECONDS = 420
 
 
 def _is_conditional_failure(exc):
@@ -185,6 +189,47 @@ def renew_claim(job_id, task_id, *, owner, lease_seconds=CLAIM_LEASE_SECONDS,
     if result_data is not None:
         values[":rd"] = {"S": json.dumps(result_data)}
         expr += ", result_data = :rd"
+    try:
+        _get_ddb().update_item(
+            TableName=JOBS_TABLE,
+            Key={"job_id": {"S": str(job_id)}, "task_id": {"S": str(task_id)}},
+            UpdateExpression=expr,
+            ConditionExpression="claim_owner = :owner",
+            ExpressionAttributeValues=values,
+        )
+        return True
+    except Exception as exc:
+        if _is_conditional_failure(exc):
+            return False
+        raise
+
+
+def finalize_task(job_id, task_id, *, owner, status, error_msg=None,
+                  result_data=None):
+    """OWNER-CONDITIONAL terminal write (CR35 round-7 findings 1/2). Set
+    the task's terminal status (done/error) ONLY while this caller still
+    owns the lease. Returns True when the terminal status was written
+    (the caller is still the owner), False when the lease was taken over
+    (a successor owns the task — the caller MUST exit without touching
+    any shared state, so a stale owner cannot overwrite its successor's
+    done row or fail a run the successor is completing). Clears the lease
+    on a terminal write so the row is not reclaimable."""
+    now_ms = int(time.time() * 1000)
+    values = {
+        ":owner": {"S": str(owner)},
+        ":status": {"S": str(status)},
+        ":now": {"N": str(now_ms)},
+    }
+    expr = ("SET task_status = :status, updated_at_ms = :now "
+            "REMOVE lease_expiry_ms")
+    if error_msg:
+        values[":em"] = {"S": str(error_msg)[:1000]}
+        expr = ("SET task_status = :status, updated_at_ms = :now, "
+                "error_msg = :em REMOVE lease_expiry_ms")
+    if result_data is not None:
+        values[":rd"] = {"S": json.dumps(result_data)}
+        set_part, remove_part = expr.split(" REMOVE ")
+        expr = set_part + ", result_data = :rd REMOVE " + remove_part
     try:
         _get_ddb().update_item(
             TableName=JOBS_TABLE,

@@ -204,17 +204,37 @@ async function runPolySheet() {
         if (btn) { btn.textContent = '✓ Done'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
     } catch (e) {
         // only a SERVER-reported terminal outcome retires the descriptor;
-        // a transient drive failure (network, poll timeout) must keep it
-        // so a reload can resume the run (the review's crash window)
-        if (e && e.sheetTerminal) _sheetRunClear();
-        _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'error', detail: e.message });
-        if (statusEl) { statusEl.textContent = 'Sheet failed: ' + e.message; statusEl.className = 'status error'; }
+        // a transient drive failure (network, poll timeout) keeps it AND
+        // schedules a retry — round-7 finding 4: the initial drive used to
+        // preserve the descriptor but never re-attempt, so recovery needed
+        // a manual reload. Resume shares this backoff/give-up machinery.
+        if (e && e.sheetTerminal) {
+            _sheetRunClear();
+        } else {
+            _sheetScheduleResume(1);
+        }
+        _jobsRailUpsert({ id: 'sheet:' + sheetId, state: e && e.sheetTerminal ? 'error' : 'running', detail: e.message });
+        if (statusEl) { statusEl.textContent = 'Sheet failed: ' + e.message + (e && e.sheetTerminal ? '' : ' — will retry'); statusEl.className = 'status error'; }
         if (btn) { btn.textContent = orig; btn.disabled = false; }
         return;
     } finally {
         _activeSheetRun = null;
     }
     void loadSheetsTab();
+}
+
+function _sheetScheduleResume(attemptHint) {
+    /* Schedule the next resume attempt after a backoff proportional to
+     * the lease (round-7 finding 4). Shared by the initial drive failure
+     * and resume so a lost/expired lease is actually retried. */
+    const desc = _sheetRunLoad();
+    if (!desc) return;
+    desc.resumeAttempts = desc.resumeAttempts || attemptHint || 1;
+    const backoff = SHEET_RESUME_BACKOFF_MS * desc.resumeAttempts;
+    desc.nextResumeAt = Date.now() + backoff;
+    _sheetRunSave(desc);
+    if (_sheetResumeTimer) clearTimeout(_sheetResumeTimer);
+    _sheetResumeTimer = setTimeout(() => { void resumeSheetRun(); }, backoff);
 }
 
 function _sheetTerminalError(message) {
@@ -591,14 +611,26 @@ async function cancelPolySheet() {
     if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
     // round-6 finding 4: guard this generation locally (like abandon) so a
     // /list-sheets load cannot rediscover it in the window before the
-    // server's cancel mark propagates. handle_cancel marks run.json
-    // terminal server-side, so discovery stops once that lands.
+    // server's cancel mark propagates.
     _sheetAbandonedGenerations.add(generation);
-    await lambdaPost('dispatch', {
-        target: 'poly_sheet',
-        jobs: [{ action: 'cancel', sheet_id: sheetId, generation }],
-        expected_keys: [],
-    });
+    // round-7 finding 5: confirm the dispatch was ACCEPTED (fired) before
+    // clearing local state; a dropped enqueue (async retries are disabled
+    // server-side) must not silently lose the cancel.
+    let resp;
+    try {
+        resp = await lambdaPost('dispatch', {
+            target: 'poly_sheet',
+            jobs: [{ action: 'cancel', sheet_id: sheetId, generation }],
+            expected_keys: [],
+        });
+    } catch (e) {
+        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel failed to dispatch (${e.message}) — try again.`; statusEl.className = 'status error'; }
+        return;
+    }
+    if ((resp.fired || 0) !== 1) {
+        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel was not accepted — try again.`; statusEl.className = 'status error'; }
+        return;
+    }
     _sheetRunClear();
     if (statusEl) statusEl.textContent = `Sheet ${sheetId}: cancel requested (takes effect between frames).`;
 }

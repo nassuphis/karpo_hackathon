@@ -173,9 +173,14 @@ class TestPolySheetUnits(unittest.TestCase):
         import handler_poly_sheet as mod
 
         orig = mod.report_status
+        _real = (mod.claim_task, mod.renew_claim, mod.finalize_task)
+        self.addCleanup(lambda: (setattr(mod, "claim_task", _real[0]),
+                                 setattr(mod, "renew_claim", _real[1]),
+                                 setattr(mod, "finalize_task", _real[2])))
         mod.report_status = lambda *a, **k: None
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
         try:
             with self.assertRaises(RuntimeError) as ctx:
                 mod.handle_run(_run_params(
@@ -193,9 +198,14 @@ class TestPolySheetUnits(unittest.TestCase):
         import handler_poly_sheet as mod
 
         orig = mod.report_status
+        _real = (mod.claim_task, mod.renew_claim, mod.finalize_task)
+        self.addCleanup(lambda: (setattr(mod, "claim_task", _real[0]),
+                                 setattr(mod, "renew_claim", _real[1]),
+                                 setattr(mod, "finalize_task", _real[2])))
         mod.report_status = lambda *a, **k: None
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
         try:
             with self.assertRaises(RuntimeError) as ctx:
                 mod.handle_run(_run_params(
@@ -224,6 +234,7 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
 
     def test_run_renders_a_bilevel_mosaic(self):
         import handler_poly_sheet as mod
@@ -424,6 +435,7 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         mod.report_status = lambda job, task, status, *a, **k: rows.append(status)
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
         try:
             with self.assertRaises(RuntimeError):
                 mod.handle_frames({**_run_params("nogen-sheet"),
@@ -539,9 +551,14 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         import handler_poly_sheet as mod
 
         orig = mod.report_status
+        _real = (mod.claim_task, mod.renew_claim, mod.finalize_task)
+        self.addCleanup(lambda: (setattr(mod, "claim_task", _real[0]),
+                                 setattr(mod, "renew_claim", _real[1]),
+                                 setattr(mod, "finalize_task", _real[2])))
         mod.report_status = lambda *a, **k: None
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
         try:
             p = _run_params("dup-sheet")
             del p["scan"]
@@ -669,6 +686,7 @@ class TestAdmissionEnforcement(unittest.TestCase):
         self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
 
     def test_unadmitted_and_mismatched_requests_are_refused(self):
         import handler_poly_sheet as mod
@@ -784,6 +802,7 @@ class TestRound4Lifecycle(unittest.TestCase):
         self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
 
     def _render_generation(self, mod, stub, sheet_id, gen):
         p = _run_params(sheet_id)
@@ -1002,7 +1021,7 @@ class _LeaseDDB:
         if not ok:
             raise ClientError(
                 {"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem")
-        # apply the SET
+        # apply the SET / REMOVE
         row = dict(row)
         if ":owner" in v:
             row["claim_owner"] = v[":owner"]["S"]
@@ -1010,6 +1029,10 @@ class _LeaseDDB:
             row["lease_expiry_ms"] = int(v[":lease"]["N"])
         if ":running" in v and "task_status = :running" in UpdateExpression:
             row["task_status"] = "running"
+        if ":status" in v and "task_status = :status" in UpdateExpression:
+            row["task_status"] = v[":status"]["S"]
+        if "REMOVE lease_expiry_ms" in UpdateExpression:
+            row.pop("lease_expiry_ms", None)
         self.rows[k] = row
 
 
@@ -1072,6 +1095,7 @@ class TestRound5(unittest.TestCase):
         mod.report_status = lambda *a, **k: None
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
 
     def test_terminal_run_refuses_late_work(self):
         """Finding 1: a cancelled/abandoned run must reject a late worker
@@ -1113,13 +1137,16 @@ class TestRound5(unittest.TestCase):
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
-
-        # fail ONLY the stitch's terminal 'done' write (post-commit),
-        # not the workers' done reports
-        def flaky_status(job, task, status, *a, **k):
-            if status == "done" and "stitch" in task:
+        real_fin = mod.finalize_task
+        self.addCleanup(lambda: setattr(mod, "finalize_task", real_fin))
+        # fail ONLY the stitch's terminal 'done' finalize (post-commit) —
+        # its failure must not turn the published sheet into a failure
+        def flaky_finalize(job, task, *a, **k):
+            if k.get("status") == "done" and "stitch" in task:
                 raise RuntimeError("DDB throttled")
-        mod.report_status = flaky_status
+            return True
+        mod.finalize_task = flaky_finalize
+        mod.report_status = lambda *a, **k: None
         try:
             p = _run_params("commit-sheet")
             _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
@@ -1226,3 +1253,128 @@ class TestConcurrentCarryForward(unittest.TestCase):
         self.assertEqual(run["published_png_key"],
                          "sheets/cc-sheet/ga2a2a2a2a2a/sheet.png")
         self.assertEqual(run["status"], "running")
+
+
+class TestFinalizeTaskFencing(unittest.TestCase):
+    """Round-7 findings 1/2/6: the terminal write is OWNER-CONDITIONAL —
+    a stale owner that lost its lease cannot overwrite its successor."""
+
+    def _patch(self, ddb):
+        import shared
+        orig = shared._ddb
+        shared._ddb = ddb
+        self.addCleanup(lambda: setattr(shared, "_ddb", orig))
+
+    def test_stale_owner_cannot_finalize_over_successor(self):
+        import shared
+
+        ddb = _LeaseDDB([0])
+        ddb.seed("j", "t", task_status="started")
+        self._patch(ddb)
+        # A claims, then A's lease expires and B takes it over
+        self.assertTrue(shared.claim_task("j", "t", owner="A", lease_seconds=0.001))
+        import time as _t
+        _t.sleep(0.01)
+        self.assertTrue(shared.claim_task("j", "t", owner="B", lease_seconds=120))
+        # the stale owner A's terminal write is REFUSED (owner mismatch)
+        self.assertFalse(shared.finalize_task("j", "t", owner="A", status="error",
+                                              error_msg="A crashed late"))
+        self.assertEqual(ddb.rows[("j", "t")]["task_status"], "running")
+        self.assertEqual(ddb.rows[("j", "t")]["claim_owner"], "B")
+        # the live owner B CAN finalize
+        self.assertTrue(shared.finalize_task("j", "t", owner="B", status="done"))
+        self.assertEqual(ddb.rows[("j", "t")]["task_status"], "done")
+        # the terminal write clears the lease so the row is not reclaimable
+        self.assertNotIn("lease_expiry_ms", ddb.rows[("j", "t")])
+
+
+@unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+class TestRound7WorkerFencing(unittest.TestCase):
+    def _patched(self, mod, stub):
+        mod.s3 = stub
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.report_status = lambda *a, **k: None
+        real = (mod.claim_task, mod.renew_claim, mod.finalize_task)
+        self.addCleanup(lambda: (setattr(mod, "claim_task", real[0]),
+                                 setattr(mod, "renew_claim", real[1]),
+                                 setattr(mod, "finalize_task", real[2])))
+
+    def test_worker_lost_lease_exits_benignly(self):
+        """Finding 1: a worker whose renew fails mid-run must exit without
+        failing the run (a successor owns it)."""
+        import handler_poly_sheet as mod
+
+        gen = "g7a7a7a7a7a7a"
+        stub = _S3Stub()
+        self._patched(mod, stub)
+        mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: False   # the lease was stolen
+        finals = []
+        mod.finalize_task = lambda *a, **k: finals.append(k.get("status")) or True
+        p = _run_params("lost-sheet")
+        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+        resp = mod.handle_frames({**p, "action": "frames", "generation": gen,
+                                  "task_id": f"sheet_tiles_lost-sheet_{gen}_w0",
+                                  "frame_indices": [0, 1]})
+        body = json.loads(resp["body"])
+        self.assertTrue(body.get("lost_lease"))
+        # the run was NOT marked failed, and no terminal error was written
+        self.assertEqual(json.loads(stub.objects["sheets/lost-sheet/run.json"])["status"],
+                         "running")
+        self.assertNotIn("error", finals)
+
+    def test_worker_failure_without_ownership_does_not_fail_run(self):
+        """Finding 1: on a genuine render failure, if the owner-conditional
+        error write shows we lost the lease, the run is NOT failed."""
+        import handler_poly_sheet as mod
+
+        gen = "g7b7b7b7b7b7b"
+        stub = _S3Stub()
+        self._patched(mod, stub)
+        mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: False   # we no longer own it
+        mod.SWEEP_COEFFGEN = "/nonexistent/binary"   # force a render failure
+        p = _run_params("lostfail-sheet")
+        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+        resp = mod.handle_frames({**p, "action": "frames", "generation": gen,
+                                  "task_id": f"sheet_tiles_lostfail-sheet_{gen}_w0",
+                                  "frame_indices": [0, 1]})
+        self.assertTrue(json.loads(resp["body"]).get("lost_lease"))
+        self.assertEqual(json.loads(stub.objects["sheets/lostfail-sheet/run.json"])["status"],
+                         "running")
+
+    def test_second_stitch_of_same_generation_is_rejected(self):
+        """Finding 3: a second stitcher of an already-published generation
+        must not re-publish."""
+        import handler_poly_sheet as mod
+
+        gen = "g7c7c7c7c7c7c"
+        stub = _S3Stub()
+        self._patched(mod, stub)
+        mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
+        p = _run_params("dbl-sheet")
+        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+        for w, frames in ((0, [0, 1]), (1, [2, 3])):
+            mod.handle_frames({**p, "action": "frames", "generation": gen,
+                               "task_id": f"sheet_tiles_dbl-sheet_{gen}_w{w}",
+                               "frame_indices": frames})
+        mod.handle_stitch({**p, "action": "stitch", "generation": gen,
+                           "task_id": f"sheet_stitch_dbl-sheet_{gen}"})
+        # a second stitch of the SAME generation is refused — the bind
+        # terminal check catches the sequential case; the commit
+        # already-published check (asserted directly below) is the
+        # concurrent-race backstop
+        with self.assertRaises(RuntimeError) as ctx:
+            mod.handle_stitch({**p, "action": "stitch", "generation": gen,
+                               "task_id": f"sheet_stitch_dbl-sheet_{gen}"})
+        msg = str(ctx.exception)
+        self.assertTrue("terminal" in msg or "already published" in msg, msg)
+        # the commit-level backstop, exercised directly (both stitchers
+        # bound while running, then race to publish)
+        with self.assertRaises(RuntimeError) as ctx2:
+            mod._commit_run_publication("dbl-sheet", gen,
+                                        f"sheets/dbl-sheet/{gen}/")
+        self.assertIn("already published", str(ctx2.exception))

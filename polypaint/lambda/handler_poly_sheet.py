@@ -58,6 +58,7 @@ from shared import (
     ok_response,
     parse_body,
     claim_task,
+    finalize_task,
     read_task_status,
     renew_claim,
     report_status,
@@ -784,12 +785,17 @@ def _commit_run_publication(sheet_id, generation, gen_prefix):
     if run.get("generation") != generation:
         raise RuntimeError(
             f"publish refused: run superseded by {run.get('generation')}")
-    # round-5 finding 1: re-check the terminal state at commit time — a
-    # cancel/abandon that landed AFTER _bind_to_run (a TOCTOU window) must
-    # still block the publish so a straggler cannot resurrect a killed run
+    # round-5 finding 1 + round-7 finding 3: re-check terminal state at
+    # commit time — a cancel/abandon/failure that landed AFTER _bind_to_run
+    # (a TOCTOU window) must block the publish, and an already-'done' run
+    # of THIS generation must be rejected so a second stitcher cannot
+    # re-publish over a committed sheet.
     if run.get("status") in ("cancelled", "abandoned", "failed"):
         raise RuntimeError(
             f"publish refused: run is {run.get('status')}")
+    if run.get("status") == "done" and run.get("published_generation") == generation:
+        raise RuntimeError(
+            "publish refused: this generation is already published")
     run["status"] = "done"
     run["finished_at_s"] = time.time()
     run["published_generation"] = generation
@@ -1086,9 +1092,11 @@ def handle_frames(params):
         for k in indices:
             if _cancel_requested(sheet_id, generation):
                 _mark_run_terminal(sheet_id, generation, "cancelled")
-                _safe_status(job_id, task_id, "error", "Cancelled by user",
-                             {"phase": "error", "phase_label": "Cancelled",
-                              "task_id": task_id, "sheet_id": sheet_id, "frame": done})
+                finalize_task(job_id, task_id, owner=owner, status="error",
+                              error_msg="Cancelled by user",
+                              result_data={"phase": "error", "phase_label": "Cancelled",
+                                           "task_id": task_id, "sheet_id": sheet_id,
+                                           "frame": done})
                 return ok_response({"cancelled": sheet_id, "frames_done": done})
             if time.time() > worker_deadline_s:
                 raise RuntimeError(
@@ -1106,26 +1114,42 @@ def handle_frames(params):
                           ContentType="application/json")
             done += 1
             # renew the lease AND publish progress in one owner-guarded
-            # write; if the lease was stolen (we ran too slow) abort so the
-            # new owner isn't fought
+            # write. Round-7 finding 1: a LOST lease means a successor took
+            # over — exit BENIGNLY (do NOT raise into the failure path,
+            # which would fail the run and overwrite the successor).
             if not renew_claim(job_id, task_id, owner=owner, result_data={
                     "phase": "sheet", "phase_label": f"{done}/{len(indices)} frames",
                     "task_id": task_id, "sheet_id": sheet_id, "generation": generation,
                     "frames": len(indices), "frame": done}):
-                raise RuntimeError("worker lost its lease (a takeover occurred)")
-        report_status(job_id, task_id, "done", result_data={
-            "phase": "done", "phase_label": "Worker done", "task_id": task_id,
-            "sheet_id": sheet_id, "generation": generation,
-            "frames": len(indices), "frame": done,
-        })
+                return ok_response({"sheet_id": sheet_id, "frames_done": done,
+                                    "lost_lease": True})
+        # round-7 finding 2: the terminal 'done' is OWNER-CONDITIONAL and
+        # best-effort — a lost lease means a successor owns it (don't
+        # overwrite), and a transient DDB throttle on the done write must
+        # not fail a run whose tiles are already durably written.
+        try:
+            finalize_task(job_id, task_id, owner=owner, status="done", result_data={
+                "phase": "done", "phase_label": "Worker done", "task_id": task_id,
+                "sheet_id": sheet_id, "generation": generation,
+                "frames": len(indices), "frame": done})
+        except Exception:
+            pass
         return ok_response({"sheet_id": sheet_id, "frames_done": done})
     except Exception as e:
-        # round-6 finding 3: mark the run terminal FIRST so a failed status
-        # write cannot leave the run stuck 'running' with a live claim
+        # round-7 finding 1: the terminal write is OWNER-CONDITIONAL. Only
+        # if we STILL own the task do we fail the run — a stale owner that
+        # lost the lease must exit silently, never marking the successor's
+        # run failed.
+        try:
+            still_owner = finalize_task(
+                job_id, task_id, owner=owner, status="error", error_msg=str(e),
+                result_data={"phase": "error", "phase_label": "Sheet worker failed",
+                             "task_id": task_id})
+        except Exception:
+            still_owner = True   # DDB unreachable: fall back to failing loudly
+        if not still_owner:
+            return ok_response({"sheet_id": sheet_id, "lost_lease": True})
         _mark_run_terminal(sheet_id, generation, "failed")
-        _safe_status(job_id, task_id, "error", str(e),
-                     {"phase": "error", "phase_label": "Sheet worker failed",
-                      "task_id": task_id})
         raise
     finally:
         for path in (TMP_COEFFS, TMP_ROOTS):
@@ -1158,9 +1182,13 @@ def handle_stitch(params):
 
         if _cancel_requested(sheet_id, generation):
             _mark_run_terminal(sheet_id, generation, "cancelled")
-            _safe_status(job_id, task_id, "error", "Cancelled by user",
-                         {"phase": "error", "phase_label": "Cancelled",
-                          "sheet_id": sheet_id})
+            try:
+                finalize_task(job_id, task_id, owner=owner, status="error",
+                              error_msg="Cancelled by user",
+                              result_data={"phase": "error", "phase_label": "Cancelled",
+                                           "sheet_id": sheet_id})
+            except Exception:
+                pass
             return ok_response({"cancelled": sheet_id, "frames_done": 0})
 
         tile_bytes = cfg["tile_px"] * cfg["tile_px"]
@@ -1175,7 +1203,9 @@ def handle_stitch(params):
                         "phase": "stitch", "phase_label": f"Stitching {k}/{cfg['steps']}",
                         "sheet_id": sheet_id, "generation": generation,
                         "frames": cfg["steps"]}):
-                    raise RuntimeError("stitch lost its lease (a takeover occurred)")
+                    # round-7 finding 1: lost lease -> a successor stitch
+                    # owns it; exit benignly rather than failing the run
+                    return ok_response({"sheet_id": sheet_id, "lost_lease": True})
             key = _tile_key(sheet_id, generation, k)
             try:
                 tile = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
@@ -1202,6 +1232,18 @@ def handle_stitch(params):
         # change the degree per frame (review round-2 finding 5)
         degrees = [int(r.get("degree") or 0) for r in frame_records]
         degree = max(degrees) if degrees else None
+        # round-7 finding 3: renew the lease right before the unprotected
+        # final section (manifest build, PNG encode, uploads, commit). If
+        # a successor already took over, exit benignly so two stitchers do
+        # not both write this generation's keys.
+        if not renew_claim(job_id, task_id, owner=owner, result_data={
+                "phase": "stitch", "phase_label": "Publishing",
+                "sheet_id": sheet_id, "generation": generation,
+                "frames": cfg["steps"]}):
+            return ok_response({"sheet_id": sheet_id, "lost_lease": True})
+
+        degrees = [int(r.get("degree") or 0) for r in frame_records]
+        degree = max(degrees) if degrees else None
         manifest = _sheet_manifest(cfg, params, t0, degree, frame_records, "fanout")
         manifest["generation"] = generation
         # round-3 finding 4: publish to GENERATION-scoped keys first
@@ -1218,13 +1260,19 @@ def handle_stitch(params):
                       ContentType="application/json")
         _commit_run_publication(sheet_id, generation, gen_prefix)   # <- COMMIT
     except Exception as e:
-        # PRE-commit failures mark the run failed. Round-6 finding 3: mark
-        # the run terminal FIRST so a failed status write cannot leave the
-        # run stuck 'running' with a live claim blocking recovery.
+        # PRE-commit failures mark the run failed. Round-7 finding 1: the
+        # terminal write is OWNER-CONDITIONAL — a stale stitch that lost
+        # its lease exits silently instead of failing the successor's run.
+        try:
+            still_owner = finalize_task(
+                job_id, task_id, owner=owner, status="error", error_msg=str(e),
+                result_data={"phase": "error", "phase_label": "Stitch failed",
+                             "task_id": task_id})
+        except Exception:
+            still_owner = True
+        if not still_owner:
+            return ok_response({"sheet_id": sheet_id, "lost_lease": True})
         _mark_run_terminal(sheet_id, generation, "failed")
-        _safe_status(job_id, task_id, "error", str(e),
-                     {"phase": "error", "phase_label": "Stitch failed",
-                      "task_id": task_id})
         raise
 
     # round-5 finding 2: past the commit the sheet IS published. Cleanup
@@ -1248,7 +1296,7 @@ def handle_stitch(params):
     except Exception:
         cleanup_ok = False
     try:
-        report_status(job_id, task_id, "done", result_data={
+        finalize_task(job_id, task_id, owner=owner, status="done", result_data={
             "phase": "done", "phase_label": "Done",
             "sheet_id": sheet_id, "generation": generation,
             "png_key": manifest["png_key"],

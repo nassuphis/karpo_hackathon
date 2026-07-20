@@ -59,6 +59,7 @@ from shared import (
     parse_body,
     claim_task,
     finalize_task,
+    LeaseHeartbeat,
     read_task_status,
     renew_claim,
     report_status,
@@ -729,12 +730,27 @@ def _gen_prefix(sheet_id, generation):
     return f"sheets/{sheet_id}/{generation}/"
 
 
-def _write_generation_artifacts(cfg, generation, manifest, canvas):
-    """Write the IMMUTABLE, generation-scoped mosaic + manifest. These
-    keys are never overwritten by another generation, so any interleaving
-    of stitches leaves each generation's bytes intact (round-3 finding 4:
-    two mutable fixed writes could not be made atomic)."""
-    prefix = _gen_prefix(cfg["sheet_id"], generation)
+def _attempt_token(owner):
+    """The per-claim random suffix of an owner id (owner = task_id ':' hex),
+    used as a filesystem-safe, collision-free attempt prefix segment."""
+    return str(owner).rsplit(":", 1)[-1] or "a"
+
+
+def _attempt_prefix(sheet_id, generation, owner):
+    return f"sheets/{sheet_id}/{generation}/{_attempt_token(owner)}/"
+
+
+def _write_generation_artifacts(cfg, generation, manifest, canvas, owner):
+    """Write the mosaic + manifest to an ATTEMPT-scoped prefix
+    (round-8 finding 2). Two stitchers of the SAME generation (the
+    original plus a lease-expiry redispatch) each own a distinct random
+    attempt segment, so a stale stitch writes ONLY under its own prefix
+    and can never overwrite the winner's supposedly-immutable PNG or
+    manifest. The winning attempt is the one whose CAS on run.json lands;
+    losing attempts leave orphaned objects that family-scoped GC reaps.
+    (Round-3 finding 4 established generation scoping; attempt scoping
+    closes the same-generation two-stitcher overwrite the reviewer found.)"""
+    prefix = _attempt_prefix(cfg["sheet_id"], generation, owner)
     png = encode_png_gray(cfg["canvas_w"], cfg["canvas_h"], bytes(canvas))
     s3.put_object(Bucket=BUCKET, Key=prefix + "sheet.png", Body=png,
                   ContentType="image/png")
@@ -820,6 +836,34 @@ def _mark_run_terminal(sheet_id, generation, status):
         _cas_put_run(sheet_id, etag, run)
     except (ClientError, RuntimeError):
         pass
+
+
+def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
+                              exc, *, phase_label):
+    """Shared error path for the worker and the stitch. Fail the run ONLY
+    when ownership is CONFIRMED (round-8 finding 3 — an indeterminate
+    ownership check must never authorize a shared-state mutation):
+
+      - finalize_task returns True  -> we still own the task: mark the run
+        failed and re-raise so the invocation fails loudly.
+      - finalize_task returns False -> a successor owns it: exit benignly
+        (round-7) so a stale owner never fails its successor's run.
+      - finalize_task RAISES (DDB throttle/outage: ownership UNKNOWN) ->
+        do NOT mark the run failed. The old code set still_owner=True here
+        and a throttled stale owner could fail a run its successor owned.
+        Re-raise the ORIGINAL error for logging; recovery comes from lease
+        expiry + redispatch, never from a guessed terminal write."""
+    try:
+        still_owner = finalize_task(
+            job_id, task_id, owner=owner, status="error", error_msg=str(exc),
+            result_data={"phase": "error", "phase_label": phase_label,
+                         "task_id": task_id})
+    except Exception:
+        raise exc
+    if not still_owner:
+        return ok_response({"sheet_id": sheet_id, "lost_lease": True})
+    _mark_run_terminal(sheet_id, generation, "failed")
+    raise exc
 
 
 def _published_keys(run):
@@ -1080,6 +1124,13 @@ def handle_frames(params):
     if not claim_task(job_id, task_id, owner=owner):
         return ok_response({"sheet_id": sheet_id, "frames_done": len(indices),
                             "not_claimed": True})
+    # round-8 finding 1: a single frame chains coeffgen + solve (+ a frozen
+    # solve), up to ~900s of native ops between the inline per-tile renews —
+    # longer than the 420s lease. The heartbeat renews in the background so
+    # a HEALTHY worker keeps its lease across those ops; if a renewal shows
+    # the lease was taken over, hb.lost latches and we exit before writing
+    # any tile a successor may also be writing.
+    hb = LeaseHeartbeat(job_id, task_id, owner=owner).start()
     try:
         _budget_check(cfg, len(indices) + (1 if cfg["vp_mode"] == "frozen" else 0),
                       "worker share",
@@ -1106,6 +1157,13 @@ def handle_frames(params):
                     "raise the degree); reduce frames or N")
             tile, record = _render_frame_tile(cfg, params, k, frozen_cache,
                                               deadline_s=worker_deadline_s)
+            # round-8 finding 1: revalidate ownership (via the heartbeat's
+            # latch) IMMEDIATELY before the shared write. If the lease was
+            # taken over during this frame's native ops, do not overwrite
+            # the successor's tile keys — exit benignly.
+            if hb.lost:
+                return ok_response({"sheet_id": sheet_id, "frames_done": done,
+                                    "lost_lease": True})
             key = _tile_key(sheet_id, generation, k)
             s3.put_object(Bucket=BUCKET, Key=key,
                           Body=bytes(tile), ContentType="application/octet-stream")
@@ -1136,22 +1194,11 @@ def handle_frames(params):
             pass
         return ok_response({"sheet_id": sheet_id, "frames_done": done})
     except Exception as e:
-        # round-7 finding 1: the terminal write is OWNER-CONDITIONAL. Only
-        # if we STILL own the task do we fail the run — a stale owner that
-        # lost the lease must exit silently, never marking the successor's
-        # run failed.
-        try:
-            still_owner = finalize_task(
-                job_id, task_id, owner=owner, status="error", error_msg=str(e),
-                result_data={"phase": "error", "phase_label": "Sheet worker failed",
-                             "task_id": task_id})
-        except Exception:
-            still_owner = True   # DDB unreachable: fall back to failing loudly
-        if not still_owner:
-            return ok_response({"sheet_id": sheet_id, "lost_lease": True})
-        _mark_run_terminal(sheet_id, generation, "failed")
-        raise
+        return _finalize_failure_or_exit(
+            job_id, task_id, owner, sheet_id, generation, e,
+            phase_label="Sheet worker failed")
     finally:
+        hb.stop()
         for path in (TMP_COEFFS, TMP_ROOTS):
             try:
                 os.remove(path)
@@ -1177,6 +1224,10 @@ def handle_stitch(params):
     owner = task_id + ":" + os.urandom(6).hex()
     if not claim_task(job_id, task_id, owner=owner):
         return ok_response({"sheet_id": sheet_id, "not_claimed": True})
+    # round-8 finding 1/2: the final section (PNG encode + uploads) can run
+    # long; the heartbeat keeps a live stitch's lease alive, and hb.lost
+    # gates the artifact write so a reclaimed stitch never publishes.
+    hb = LeaseHeartbeat(job_id, task_id, owner=owner).start()
     try:
         t0 = float(params.get("started_at_s") or time.time())
 
@@ -1246,34 +1297,37 @@ def handle_stitch(params):
         degree = max(degrees) if degrees else None
         manifest = _sheet_manifest(cfg, params, t0, degree, frame_records, "fanout")
         manifest["generation"] = generation
-        # round-3 finding 4: publish to GENERATION-scoped keys first
-        # (collision-free), win the conditional commit on run.json, and
-        # only then copy to the fixed public keys — a superseded stitch
-        # fails the commit and never touches what viewers read
-        gen_prefix = _write_generation_artifacts(cfg, generation, manifest, canvas)
+        # round-8 finding 2: write to an ATTEMPT-scoped prefix (owner
+        # token), so even two stitchers of the SAME generation never
+        # overwrite each other's PNG/manifest. round-8 finding 1: the
+        # heartbeat may have found the lease taken over during the read
+        # loop above — re-check right before the encode+upload so a
+        # reclaimed stitch produces no artifacts at all.
+        if hb.lost:
+            return ok_response({"sheet_id": sheet_id, "lost_lease": True})
+        gen_prefix = _write_generation_artifacts(cfg, generation, manifest,
+                                                  canvas, owner)
         manifest["png_key"] = gen_prefix + "sheet.png"
         manifest["manifest_key"] = gen_prefix + "sheet.json"
         # re-write the manifest now that it carries its own final keys,
-        # then the pointer commit makes it authoritative (round-3 f4)
+        # then the pointer commit makes it authoritative. The CAS on
+        # run.json selects the ONE winning attempt; a superseded attempt
+        # fails the commit and its orphaned objects are GC'd (round-3 f4 +
+        # round-8 f2).
         s3.put_object(Bucket=BUCKET, Key=gen_prefix + "sheet.json",
                       Body=json.dumps(manifest, indent=1).encode("utf-8"),
                       ContentType="application/json")
         _commit_run_publication(sheet_id, generation, gen_prefix)   # <- COMMIT
     except Exception as e:
-        # PRE-commit failures mark the run failed. Round-7 finding 1: the
-        # terminal write is OWNER-CONDITIONAL — a stale stitch that lost
-        # its lease exits silently instead of failing the successor's run.
-        try:
-            still_owner = finalize_task(
-                job_id, task_id, owner=owner, status="error", error_msg=str(e),
-                result_data={"phase": "error", "phase_label": "Stitch failed",
-                             "task_id": task_id})
-        except Exception:
-            still_owner = True
-        if not still_owner:
-            return ok_response({"sheet_id": sheet_id, "lost_lease": True})
-        _mark_run_terminal(sheet_id, generation, "failed")
-        raise
+        # PRE-commit failures mark the run failed — but only when ownership
+        # is CONFIRMED (round-8 finding 3). A stale stitch that lost its
+        # lease exits benignly; DDB-uncertain ownership never authorizes
+        # failing the successor's run.
+        return _finalize_failure_or_exit(
+            job_id, task_id, owner, sheet_id, generation, e,
+            phase_label="Stitch failed")
+    finally:
+        hb.stop()
 
     # round-5 finding 2: past the commit the sheet IS published. Cleanup
     # and the done-report are best-effort — a failed DDB status write (or

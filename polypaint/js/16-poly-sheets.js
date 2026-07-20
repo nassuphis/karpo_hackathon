@@ -330,8 +330,14 @@ async function _sheetTaskPhase(jobId, taskId) {
     return null;   // UNKNOWN after retries — caller must not guess
 }
 
-const SHEET_RESUME_MAX_ATTEMPTS = 5;
+const SHEET_RESUME_MAX_ATTEMPTS = 6;
 const SHEET_RESUME_BACKOFF_MS = 30000;
+// Must track the server's CLAIM_LEASE_SECONDS (shared.py). A crashed
+// worker is only reclaimable AFTER its lease expires, so the resume loop
+// must not abandon a run until it has actually redispatched at least once
+// past this horizon — otherwise every retry races a still-live lease and
+// the crashed worker is never recovered (round-8 finding 4).
+const SHEET_LEASE_MS = 420000;
 
 async function _sheetWorkersNeedingDispatch(desc) {
     /* Round-6 finding 1: redispatch every NON-DONE worker. The server's
@@ -361,10 +367,22 @@ async function resumeSheetRun() {
      * workers are redispatched. */
     const desc = _sheetRunLoad();
     if (!desc || _activeSheetRun) return;
+    // anchor the lease clock on the first resume so give-up can require a
+    // real post-lease-expiry dispatch (round-8 finding 4). Persisted, so
+    // it survives reloads across the whole retry window.
+    const nowAnchor = Date.now();
+    if (!desc.firstResumeAt) { desc.firstResumeAt = nowAnchor; _sheetRunSave(desc); }
+    const pastLeaseHorizon =
+        (nowAnchor - desc.firstResumeAt) >= SHEET_LEASE_MS;
     // give-up check FIRST (round-5 finding 4: the max-attempt gate must
     // not sit behind the backoff early-return, or a stranded run never
-    // reaches it)
-    if ((desc.resumeAttempts || 0) >= SHEET_RESUME_MAX_ATTEMPTS) {
+    // reaches it). Round-8 finding 4: give up ONLY once we have both
+    // exhausted the attempt ceiling AND made a dispatch past the lease
+    // horizon (desc.hadPostLeaseDispatch) — abandoning before the lease
+    // could expire strands a crashed worker that was never actually
+    // reclaim-attempted.
+    if ((desc.resumeAttempts || 0) >= SHEET_RESUME_MAX_ATTEMPTS
+            && desc.hadPostLeaseDispatch) {
         const statusEl = document.getElementById('sheets-status');
         if (statusEl) {
             statusEl.textContent = `Sheet ${desc.sheetId}: resume gave up after ${desc.resumeAttempts} attempts — abandoning the run`;
@@ -372,16 +390,26 @@ async function resumeSheetRun() {
         }
         // finding 5: tell the server so /list-sheets discovery stops
         // rediscovering this run, plus a local guard for the propagation
-        // window (the mark is async and may not have landed yet)
+        // window (the mark is async and may not have landed yet). The
+        // local guard is added regardless so THIS client stops
+        // rediscovering immediately.
         _sheetAbandonedGenerations.add(desc.generation);
-        try {
-            await lambdaPost('dispatch', {
-                target: 'poly_sheet',
-                jobs: [{ action: 'abandon', sheet_id: desc.sheetId,
-                         generation: desc.generation }],
-                expected_keys: [],
-            });
-        } catch (e) { /* best-effort */ }
+        // round-8 finding 5: dispatch the abandon until ACCEPTED, don't
+        // just fire-and-swallow. If it is never accepted, keep the
+        // descriptor and schedule a retry (the give-up branch re-runs and
+        // re-dispatches) so the server-side hide is not silently dropped.
+        const abandoned = await _sheetDispatchControl(
+            desc.sheetId, desc.generation, 'abandon');
+        if (!abandoned) {
+            if (_sheetResumeTimer) clearTimeout(_sheetResumeTimer);
+            _sheetResumeTimer = setTimeout(() => { void resumeSheetRun(); },
+                                           SHEET_RESUME_BACKOFF_MS);
+            if (statusEl) {
+                statusEl.textContent = `Sheet ${desc.sheetId}: abandoned locally; retrying the server hide...`;
+                statusEl.className = 'status';
+            }
+            return;
+        }
         _sheetRunClear();
         return;
     }
@@ -397,6 +425,10 @@ async function resumeSheetRun() {
     }
     desc.resumeAttempts = (desc.resumeAttempts || 0) + 1;
     desc.nextResumeAt = now + SHEET_RESUME_BACKOFF_MS * desc.resumeAttempts;
+    // round-8 finding 4: record once we have committed to a dispatch that
+    // is past the lease horizon — this is the reclaim attempt a crashed
+    // worker needs, and the give-up gate above waits for it.
+    if (pastLeaseHorizon) desc.hadPostLeaseDispatch = true;
     _sheetRunSave(desc);
 
     const statusEl = document.getElementById('sheets-status');
@@ -598,6 +630,44 @@ async function _sheetFindDeepZoom(sheetId) {
     throw new Error(`DeepZoom listing failed: ${lastError && lastError.message}`);
 }
 
+async function _sheetDispatchControl(sheetId, generation, action) {
+    /* Round-8 finding 5: dispatch a control op (cancel/abandon) until the
+     * async event is ACCEPTED (fired === 1). Poly-Sheet's async lambda has
+     * retries disabled server-side, so a dropped enqueue must be re-sent
+     * by the client rather than silently lost. Returns true once accepted,
+     * false after the bounded retries are exhausted. */
+    for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt) await new Promise(r => setTimeout(r, 500 * attempt));
+        try {
+            const resp = await lambdaPost('dispatch', {
+                target: 'poly_sheet',
+                jobs: [{ action, sheet_id: sheetId, generation }],
+                expected_keys: [],
+            });
+            if ((resp.fired || 0) === 1) return true;
+        } catch (e) { /* transient; retry */ }
+    }
+    return false;
+}
+
+async function _sheetConfirmCancelMarker(sheetId, generation) {
+    /* Round-8 finding 5: a cancel is DURABLE only once the marker object
+     * exists — every worker polls it (server _cancel_requested), so its
+     * presence, not the 'fired' ack, is proof the cancel will be honored.
+     * Confirm the marker landed (bounded retries) before we stop watching
+     * the run. Matches _cancel_key: sheets/{id}/cancel_{generation}. */
+    for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt) await new Promise(r => setTimeout(r, 400 * attempt));
+        try {
+            const resp = await fetch(
+                _publicStorageUrl(`sheets/${sheetId}/cancel_${generation}`) + '?t=' + Date.now(),
+                { cache: 'no-store' });
+            if (resp.ok) return true;
+        } catch (e) { /* transient */ }
+    }
+    return false;
+}
+
 async function cancelPolySheet() {
     const statusEl = document.getElementById('sheets-status');
     // a run mid-backoff has no _activeSheetRun but IS persisted — cancel
@@ -608,31 +678,30 @@ async function cancelPolySheet() {
         return;
     }
     const { sheetId, generation } = target;
-    if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
-    // round-6 finding 4: guard this generation locally (like abandon) so a
-    // /list-sheets load cannot rediscover it in the window before the
-    // server's cancel mark propagates.
-    _sheetAbandonedGenerations.add(generation);
-    // round-7 finding 5: confirm the dispatch was ACCEPTED (fired) before
-    // clearing local state; a dropped enqueue (async retries are disabled
-    // server-side) must not silently lose the cancel.
-    let resp;
-    try {
-        resp = await lambdaPost('dispatch', {
-            target: 'poly_sheet',
-            jobs: [{ action: 'cancel', sheet_id: sheetId, generation }],
-            expected_keys: [],
-        });
-    } catch (e) {
-        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel failed to dispatch (${e.message}) — try again.`; statusEl.className = 'status error'; }
-        return;
-    }
-    if ((resp.fired || 0) !== 1) {
+    if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancelling...`; statusEl.className = 'status'; }
+    // round-8 finding 5: do NOT hide the generation or kill the resume
+    // timer until the cancel is confirmed durable. The old code hid the
+    // run and cleared its retry timer BEFORE the dispatch could fail — a
+    // dropped enqueue then left the run stranded (not cancelled, not
+    // resumed, not rediscoverable). Order is now: dispatch-until-fired ->
+    // confirm marker -> only then hide + clear.
+    const fired = await _sheetDispatchControl(sheetId, generation, 'cancel');
+    if (!fired) {
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel was not accepted — try again.`; statusEl.className = 'status error'; }
+        return;   // state intact; resume timer still live
+    }
+    const durable = await _sheetConfirmCancelMarker(sheetId, generation);
+    if (!durable) {
+        // fired but the marker isn't visible yet: keep the run under the
+        // resume timer's watch so it is not lost, and let the run's own
+        // between-frames cancel check terminate it once the marker lands.
+        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel dispatched — it takes effect between frames.`; statusEl.className = 'status'; }
         return;
     }
+    if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
+    _sheetAbandonedGenerations.add(generation);
     _sheetRunClear();
-    if (statusEl) statusEl.textContent = `Sheet ${sheetId}: cancel requested (takes effect between frames).`;
+    if (statusEl) statusEl.textContent = `Sheet ${sheetId}: cancelled (takes effect between frames).`;
 }
 
 async function _sheetDiscoverServerRun(rows) {

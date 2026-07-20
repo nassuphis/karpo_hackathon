@@ -297,7 +297,13 @@ test.describe('Round-4 resume + publish regressions', () => {
         }
         return { fired: 1 };
       };
+      // round-8 finding 5: the descriptor is only cleared once the cancel
+      // MARKER is confirmed durable — serve it so the confirm succeeds
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('cancel_')
+        ? { ok: true } : realFetch(url));
       await cancelPolySheet();
+      window.fetch = realFetch;
       const cleared = _sheetRunLoad() === null;
       return { cancelled, cleared };
     });
@@ -336,9 +342,14 @@ test.describe('Round-5 resume hardening', () => {
         return { fired: 1 };
       };
       _activeSheetRun = null;
+      // round-8 finding 4: give-up now requires BOTH the attempt ceiling
+      // AND a dispatch past the lease horizon — set the post-lease-
+      // exhausted state (attempts >= max, first resume long ago, a
+      // post-lease dispatch already recorded)
       _sheetRunSave({ sheetId: 'gv', jobId: 'j', generation: 'gg', steps: 4,
                       workers: [], stitchTask: 't', payload: {},
-                      resumeAttempts: 5 });
+                      resumeAttempts: 6, firstResumeAt: Date.now() - 500000,
+                      hadPostLeaseDispatch: true });
       await resumeSheetRun();
       // the run is now abandoned locally + server dispatch sent
       const cleared = _sheetRunLoad() === null;
@@ -390,7 +401,12 @@ test.describe('Round-6 lease + reconciliation', () => {
       _sheetRunSave({ sheetId: 'c6', jobId: 'j', generation: 'gc6', steps: 4,
                       workers: [], stitchTask: 't', payload: {} });
       window.lambdaPost = async () => ({ fired: 1 });
+      // round-8 finding 5: confirm the cancel marker so the guard commits
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('cancel_')
+        ? { ok: true } : realFetch(url));
       await cancelPolySheet();
+      window.fetch = realFetch;
       _sheetsInventory = [];
       const before = _sheetRunLoad();
       await _sheetDiscoverServerRun([{ sheet_id: 'c6', run_status: 'running',
@@ -422,9 +438,90 @@ test.describe('Round-7 cancel confirmation', () => {
       _sheetRunSave({ sheetId: 'ok', jobId: 'j', generation: 'gok', steps: 4,
                       workers: [], stitchTask: 't', payload: {} });
       window.lambdaPost = async () => ({ fired: 1 });
+      // round-8 finding 5: accepted AND marker confirmed -> descriptor clears
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('cancel_')
+        ? { ok: true } : realFetch(url));
       await cancelPolySheet();
+      window.fetch = realFetch;
       return { cleared: _sheetRunLoad() === null };
     });
     expect(out.cleared).toBe(true);
+  });
+
+  test('accepted cancel whose marker is NOT visible keeps the descriptor (finding 5)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'unconf', jobId: 'j', generation: 'gunc', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      window.lambdaPost = async () => ({ fired: 1 });   // accepted...
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('cancel_')
+        ? { ok: false } : realFetch(url));               // ...but marker not visible
+      await cancelPolySheet();
+      window.fetch = realFetch;
+      const survived = _sheetRunLoad() !== null;
+      if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
+      _sheetRunClear();
+      // a fired-but-unconfirmed cancel must NOT hide/clear the run — the
+      // resume watch keeps it alive until the marker lands
+      return { survived };
+    });
+    expect(out.survived).toBe(true);
+  });
+});
+
+test.describe('Round-8 fencing', () => {
+  test('give-up does NOT abandon before the lease horizon (finding 4)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      let abandonDispatched = false;
+      // record abandon dispatches; make the worker-status probe fail so the
+      // drive short-circuits into the (non-abandon) reschedule path fast
+      window.lambdaPost = async (name, body) => {
+        if (body && body.jobs && body.jobs[0] && body.jobs[0].action === 'abandon') {
+          abandonDispatched = true;
+          return { fired: 1 };
+        }
+        throw new Error('no drive in this test');
+      };
+      _activeSheetRun = null;
+      // attempts exhausted, but the FIRST resume was just now — the lease
+      // could not have expired yet, so we must keep trying, not abandon
+      _sheetRunSave({ sheetId: 'early', jobId: 'j', generation: 'gearly', steps: 4,
+                      workers: [], stitchTask: 't', payload: {},
+                      resumeAttempts: 6, firstResumeAt: Date.now(),
+                      hadPostLeaseDispatch: false });
+      await resumeSheetRun();
+      const stillPersisted = _sheetRunLoad() !== null;
+      if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
+      _sheetRunClear();
+      return { abandonDispatched, stillPersisted };
+    });
+    // before the lease horizon we must NOT abandon — a crashed worker's
+    // lease is still live and no reclaim could have succeeded yet
+    expect(out.abandonDispatched).toBe(false);
+    // and the run is NOT dropped: the retry path keeps it under watch
+    expect(out.stillPersisted).toBe(true);
+  });
+
+  test('unaccepted abandon keeps the descriptor and reschedules (finding 5)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      window.lambdaPost = async () => ({ fired: 0 });   // abandon never accepted
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'ab', jobId: 'j', generation: 'gab', steps: 4,
+                      workers: [], stitchTask: 't', payload: {},
+                      resumeAttempts: 6, firstResumeAt: Date.now() - 500000,
+                      hadPostLeaseDispatch: true });
+      await resumeSheetRun();
+      const survived = _sheetRunLoad() !== null;
+      const rescheduled = _sheetResumeTimer !== null;
+      if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
+      _sheetRunClear();
+      return { survived, rescheduled };
+    });
+    // an abandon the server never accepted must not silently drop — the
+    // descriptor stays and a retry is scheduled
+    expect(out.survived).toBe(true);
+    expect(out.rescheduled).toBe(true);
   });
 });

@@ -229,9 +229,16 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         # semantics have their own DDB-backed test. Restore the reals
         # after the test so stubs cannot leak (round-6 finding 6).
         import shared as _shared
-        real_claim, real_renew = mod.claim_task, mod.renew_claim
+        # round-8 finding 6: restore ALL THREE lease primitives. The old
+        # code stubbed finalize_task but only saved/restored claim_task and
+        # renew_claim, leaking the finalize stub into later handler tests so
+        # they never exercised the real finalizer.
+        real_claim = mod.claim_task
+        real_renew = mod.renew_claim
+        real_finalize = mod.finalize_task
         self.addCleanup(lambda: setattr(mod, "claim_task", real_claim))
         self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
+        self.addCleanup(lambda: setattr(mod, "finalize_task", real_finalize))
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
         mod.finalize_task = lambda *a, **k: True
@@ -374,7 +381,14 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         self.assertEqual(run["published_generation"], gen)
         self.assertEqual(run["status"], "done")
         self.assertEqual(stub.objects[run["published_png_key"]], ref_png)
-        self.assertEqual(run["published_png_key"], f"sheets/fan-sheet/{gen}/sheet.png")
+        # round-8 finding 2: the published png is ATTEMPT-scoped under the
+        # generation prefix (sheets/{id}/{gen}/{attempt}/sheet.png), so two
+        # same-generation stitchers never overwrite each other's objects
+        png_key = run["published_png_key"]
+        self.assertTrue(png_key.startswith(f"sheets/fan-sheet/{gen}/"), png_key)
+        tail = png_key[len(f"sheets/fan-sheet/{gen}/"):]
+        self.assertEqual(tail.count("/"), 1, png_key)
+        self.assertTrue(tail.endswith("/sheet.png"), png_key)
         # no mutable fixed keys are written by the fan-out path
         self.assertNotIn("sheets/fan-sheet/sheet.png", stub.objects)
         # scaffolding tiles are removed after the stitch
@@ -429,7 +443,10 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         import handler_poly_sheet as mod
 
         rows = []
-        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        # round-8 finding 6: capture and restore the lease primitives too —
+        # stubbing them without restoring leaked into later handler tests.
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status,
+                mod.claim_task, mod.renew_claim, mod.finalize_task)
         mod.s3 = _S3Stub()
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda job, task, status, *a, **k: rows.append(status)
@@ -444,7 +461,8 @@ class TestPolySheetEndToEnd(unittest.TestCase):
                                    "task_id": "sheet_tiles_nogen_w0",
                                    "frame_indices": [0]})
         finally:
-            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status,
+             mod.claim_task, mod.renew_claim, mod.finalize_task) = orig
         self.assertEqual(rows, [])
 
     def test_begin_probes_validates_and_prewrites_rows(self):
@@ -681,9 +699,16 @@ class TestAdmissionEnforcement(unittest.TestCase):
         # semantics have their own DDB-backed test. Restore the reals
         # after the test so stubs cannot leak (round-6 finding 6).
         import shared as _shared
-        real_claim, real_renew = mod.claim_task, mod.renew_claim
+        # round-8 finding 6: restore ALL THREE lease primitives. The old
+        # code stubbed finalize_task but only saved/restored claim_task and
+        # renew_claim, leaking the finalize stub into later handler tests so
+        # they never exercised the real finalizer.
+        real_claim = mod.claim_task
+        real_renew = mod.renew_claim
+        real_finalize = mod.finalize_task
         self.addCleanup(lambda: setattr(mod, "claim_task", real_claim))
         self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
+        self.addCleanup(lambda: setattr(mod, "finalize_task", real_finalize))
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
         mod.finalize_task = lambda *a, **k: True
@@ -797,9 +822,16 @@ class TestRound4Lifecycle(unittest.TestCase):
         # semantics have their own DDB-backed test. Restore the reals
         # after the test so stubs cannot leak (round-6 finding 6).
         import shared as _shared
-        real_claim, real_renew = mod.claim_task, mod.renew_claim
+        # round-8 finding 6: restore ALL THREE lease primitives. The old
+        # code stubbed finalize_task but only saved/restored claim_task and
+        # renew_claim, leaking the finalize stub into later handler tests so
+        # they never exercised the real finalizer.
+        real_claim = mod.claim_task
+        real_renew = mod.renew_claim
+        real_finalize = mod.finalize_task
         self.addCleanup(lambda: setattr(mod, "claim_task", real_claim))
         self.addCleanup(lambda: setattr(mod, "renew_claim", real_renew))
+        self.addCleanup(lambda: setattr(mod, "finalize_task", real_finalize))
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
         mod.finalize_task = lambda *a, **k: True
@@ -829,9 +861,13 @@ class TestRound4Lifecycle(unittest.TestCase):
             pa = self._render_generation(mod, stub, "race-sheet", gen_a)
             mod.handle_stitch({**pa, "action": "stitch", "generation": gen_a,
                                "task_id": f"sheet_stitch_race-sheet_{gen_a}"})
-            self.assertEqual(json.loads(stub.objects["sheets/race-sheet/run.json"])
-                             ["published_generation"], gen_a)
-            a_png = stub.objects[f"sheets/race-sheet/{gen_a}/sheet.png"]
+            run_a = json.loads(stub.objects["sheets/race-sheet/run.json"])
+            self.assertEqual(run_a["published_generation"], gen_a)
+            # round-8 finding 2: the pointer resolves the winning ATTEMPT
+            # under gen_a; capture that key and its bytes
+            a_key = run_a["published_png_key"]
+            self.assertTrue(a_key.startswith(f"sheets/race-sheet/{gen_a}/"), a_key)
+            a_png = stub.objects[a_key]
             # B supersedes: fresh begin overwrites run.json, renders, commits
             _admit(mod, stub, pa, gen_b, [[0, 1], [2, 3]])
             for w, frames in ((0, [0, 1]), (1, [2, 3])):
@@ -848,12 +884,13 @@ class TestRound4Lifecycle(unittest.TestCase):
             self.assertIn("superseded", str(ctx.exception))
             run = json.loads(stub.objects["sheets/race-sheet/run.json"])
             self.assertEqual(run["published_generation"], gen_b)
-            self.assertEqual(run["published_png_key"],
-                             f"sheets/race-sheet/{gen_b}/sheet.png")
-            # both generations' immutable artifacts survive, distinct and
-            # unmodified — the pointer is the only thing that moved
-            self.assertEqual(stub.objects[f"sheets/race-sheet/{gen_a}/sheet.png"], a_png)
-            self.assertIn(f"sheets/race-sheet/{gen_b}/sheet.png", stub.objects)
+            self.assertTrue(run["published_png_key"].startswith(
+                f"sheets/race-sheet/{gen_b}/"), run["published_png_key"])
+            # A's winning-attempt bytes survive untouched — the stale replay
+            # wrote to its OWN attempt prefix, never over A's (finding 2) —
+            # and the pointer is the only thing that moved
+            self.assertEqual(stub.objects[a_key], a_png)
+            self.assertIn(run["published_png_key"], stub.objects)
         finally:
             (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
 
@@ -1031,8 +1068,14 @@ class _LeaseDDB:
             row["task_status"] = "running"
         if ":status" in v and "task_status = :status" in UpdateExpression:
             row["task_status"] = v[":status"]["S"]
-        if "REMOVE lease_expiry_ms" in UpdateExpression:
-            row.pop("lease_expiry_ms", None)
+        if "REMOVE" in UpdateExpression:
+            removed = UpdateExpression.split("REMOVE", 1)[1]
+            if "lease_expiry_ms" in removed:
+                row.pop("lease_expiry_ms", None)
+            # round-8 finding 7: finalize clears claim_owner too, so a
+            # terminal row is unreclaimable even by the same owner
+            if "claim_owner" in removed:
+                row.pop("claim_owner", None)
         self.rows[k] = row
 
 
@@ -1085,6 +1128,22 @@ class TestClaimLease(unittest.TestCase):
         self._patch(ddb)
         self.assertFalse(shared.claim_task("j", "done-task", owner="A"))
         self.assertFalse(shared.claim_task("j", "absent", owner="A"))
+
+    def test_terminal_row_not_reclaimable_by_same_owner(self):
+        """Round-8 finding 7: finalize clears claim_owner, so the SAME
+        owner cannot move its own terminal row back to running via the
+        `OR claim_owner = :owner` re-entry clause."""
+        import shared
+
+        ddb = _LeaseDDB([1_000_000])
+        ddb.seed("j", "t", task_status="started")
+        self._patch(ddb)
+        self.assertTrue(shared.claim_task("j", "t", owner="A", lease_seconds=120))
+        self.assertTrue(shared.finalize_task("j", "t", owner="A", status="done"))
+        self.assertNotIn("claim_owner", ddb.rows[("j", "t")])
+        # A owned it and its lease was cleared — it CANNOT re-claim a done row
+        self.assertFalse(shared.claim_task("j", "t", owner="A", lease_seconds=120))
+        self.assertEqual(ddb.rows[("j", "t")]["task_status"], "done")
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
@@ -1192,8 +1251,10 @@ class TestRound5(unittest.TestCase):
             run = json.loads(stub.objects["sheets/carry-sheet/run.json"])
             self.assertEqual(run["status"], "running")   # new gen in flight
             self.assertEqual(run["published_generation"], gen_a)   # still A
-            self.assertEqual(run["published_png_key"],
-                             f"sheets/carry-sheet/{gen_a}/sheet.png")
+            # round-8 finding 2: attempt-scoped published path under gen_a
+            self.assertTrue(run["published_png_key"].startswith(
+                f"sheets/carry-sheet/{gen_a}/"), run["published_png_key"])
+            self.assertTrue(run["published_png_key"].endswith("/sheet.png"))
         finally:
             (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status, mod.claim_task) = orig
 
@@ -1378,3 +1439,137 @@ class TestRound7WorkerFencing(unittest.TestCase):
             mod._commit_run_publication("dbl-sheet", gen,
                                         f"sheets/dbl-sheet/{gen}/")
         self.assertIn("already published", str(ctx2.exception))
+
+
+class TestRound8Heartbeat(unittest.TestCase):
+    """Round-8 finding 1: a background heartbeat keeps a live worker's
+    lease across long native ops, and latches `lost` when a successor
+    takes the lease over so the worker stops before its next write."""
+
+    def _patch(self, ddb):
+        import shared
+        orig = shared._ddb
+        shared._ddb = ddb
+        self.addCleanup(lambda: setattr(shared, "_ddb", orig))
+
+    def test_heartbeat_renews_then_latches_on_takeover(self):
+        import shared
+        import time as _t
+
+        ddb = _LeaseDDB([1_000_000])
+        ddb.seed("j", "t", task_status="started")
+        self._patch(ddb)
+        self.assertTrue(shared.claim_task("j", "t", owner="A", lease_seconds=120))
+        hb = shared.LeaseHeartbeat("j", "t", owner="A", interval_s=0.02).start()
+        try:
+            _t.sleep(0.05)                       # a few renew ticks
+            self.assertFalse(hb.lost)            # A still owns it
+            lease_after_renew = ddb.rows[("j", "t")]["lease_expiry_ms"]
+            self.assertGreater(lease_after_renew, 0)   # the heartbeat renewed
+            # a healthy A can't be reclaimed (its lease is live) — simulate a
+            # successor takeover directly by flipping the owner, which is
+            # exactly what B's claim would do once A stopped renewing
+            ddb.rows[("j", "t")]["claim_owner"] = "B"
+            for _ in range(50):
+                if hb.lost:
+                    break
+                _t.sleep(0.02)
+            self.assertTrue(hb.lost)             # A's next renew failed -> latched
+        finally:
+            hb.stop()
+        # after stop the thread is joined and no longer renews
+        self.assertIsNone(hb._thread)
+
+    def test_transient_ddb_error_does_not_latch_lost(self):
+        """A throttle on renew must NOT be treated as a lost lease
+        (finding-3 discipline applied to the heartbeat)."""
+        import shared
+
+        class _Flaky:
+            def update_item(self, **kw):
+                raise RuntimeError("throttled")
+        orig = shared._ddb
+        shared._ddb = _Flaky()
+        self.addCleanup(lambda: setattr(shared, "_ddb", orig))
+        import time as _t
+        hb = shared.LeaseHeartbeat("j", "t", owner="A", interval_s=0.02).start()
+        try:
+            _t.sleep(0.08)
+            self.assertFalse(hb.lost)   # transient errors are retried, not fatal
+        finally:
+            hb.stop()
+
+
+@unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+class TestRound8Fencing(unittest.TestCase):
+    """Round-8 findings 2/3: stitch artifacts are ATTEMPT-scoped so two
+    same-generation stitchers cannot overwrite each other, and DDB
+    uncertainty never authorizes failing a run."""
+
+    def _patched(self, mod, stub):
+        mod.s3 = stub
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.report_status = lambda *a, **k: None
+        real = (mod.claim_task, mod.renew_claim, mod.finalize_task)
+        self.addCleanup(lambda: (setattr(mod, "claim_task", real[0]),
+                                 setattr(mod, "renew_claim", real[1]),
+                                 setattr(mod, "finalize_task", real[2])))
+
+    def test_stitch_artifacts_are_attempt_scoped(self):
+        """Finding 2: the published png/manifest live under an owner-scoped
+        prefix, so a stale same-generation stitch writing its own attempt
+        cannot overwrite the winner's supposedly-immutable objects."""
+        import handler_poly_sheet as mod
+
+        gen = "g8a8a8a8a8a8a"
+        stub = _S3Stub()
+        self._patched(mod, stub)
+        mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
+        p = _run_params("attempt-sheet")
+        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+        for w, frames in ((0, [0, 1]), (1, [2, 3])):
+            mod.handle_frames({**p, "action": "frames", "generation": gen,
+                               "task_id": f"sheet_tiles_attempt-sheet_{gen}_w{w}",
+                               "frame_indices": frames})
+        resp = mod.handle_stitch({**p, "action": "stitch", "generation": gen,
+                                  "task_id": f"sheet_stitch_attempt-sheet_{gen}"})
+        manifest = json.loads(resp["body"])
+        # the published keys are attempt-scoped: sheets/{id}/{gen}/{token}/...
+        run = json.loads(stub.objects["sheets/attempt-sheet/run.json"])
+        png_key = run["published_png_key"]
+        self.assertTrue(png_key.startswith(f"sheets/attempt-sheet/{gen}/"), png_key)
+        # one more path segment than the bare generation prefix (the attempt)
+        tail = png_key[len(f"sheets/attempt-sheet/{gen}/"):]
+        self.assertEqual(tail.count("/"), 1, png_key)
+        self.assertTrue(tail.endswith("/sheet.png"))
+        self.assertEqual(run["status"], "done")
+        self.assertEqual(manifest["png_key"], png_key)
+
+    def test_ddb_uncertain_finalize_does_not_fail_run(self):
+        """Finding 3: if the owner-conditional error write RAISES (DDB
+        throttle/outage), ownership is unknown — the run must NOT be marked
+        failed (a successor may own it). Recovery is via lease expiry."""
+        import handler_poly_sheet as mod
+
+        gen = "g8b8b8b8b8b8b"
+        stub = _S3Stub()
+        self._patched(mod, stub)
+        mod.claim_task = lambda *a, **k: True
+        mod.renew_claim = lambda *a, **k: True
+        def raising_finalize(*a, **k):
+            raise RuntimeError("DDB throttled")
+        mod.finalize_task = raising_finalize
+        mod.SWEEP_COEFFGEN = "/nonexistent/binary"   # force a render failure
+        p = _run_params("uncertain-sheet")
+        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+        # the original render error propagates (fails loudly for logging)...
+        with self.assertRaises(Exception):
+            mod.handle_frames({**p, "action": "frames", "generation": gen,
+                               "task_id": f"sheet_tiles_uncertain-sheet_{gen}_w0",
+                               "frame_indices": [0, 1]})
+        # ...but the shared run.json was NOT marked failed
+        self.assertEqual(
+            json.loads(stub.objects["sheets/uncertain-sheet/run.json"])["status"],
+            "running")

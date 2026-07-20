@@ -6,6 +6,7 @@ import math
 import os
 import re
 import struct
+import threading
 import time
 import errno
 import zlib
@@ -220,16 +221,18 @@ def finalize_task(job_id, task_id, *, owner, status, error_msg=None,
         ":status": {"S": str(status)},
         ":now": {"N": str(now_ms)},
     }
-    expr = ("SET task_status = :status, updated_at_ms = :now "
-            "REMOVE lease_expiry_ms")
+    # round-8 finding 7: a terminal write clears BOTH the lease AND the
+    # owner so the row is unreclaimable — the old code kept claim_owner,
+    # and claim_task's `OR claim_owner = :owner` clause would then let the
+    # same owner move a done/error row back to running.
+    set_expr = "task_status = :status, updated_at_ms = :now"
     if error_msg:
         values[":em"] = {"S": str(error_msg)[:1000]}
-        expr = ("SET task_status = :status, updated_at_ms = :now, "
-                "error_msg = :em REMOVE lease_expiry_ms")
+        set_expr += ", error_msg = :em"
     if result_data is not None:
         values[":rd"] = {"S": json.dumps(result_data)}
-        set_part, remove_part = expr.split(" REMOVE ")
-        expr = set_part + ", result_data = :rd REMOVE " + remove_part
+        set_expr += ", result_data = :rd"
+    expr = "SET " + set_expr + " REMOVE lease_expiry_ms, claim_owner"
     try:
         _get_ddb().update_item(
             TableName=JOBS_TABLE,
@@ -243,6 +246,69 @@ def finalize_task(job_id, task_id, *, owner, status, error_msg=None,
         if _is_conditional_failure(exc):
             return False
         raise
+
+
+# The heartbeat renews well inside the lease so a HEALTHY worker is never
+# reclaimed mid-frame. A single frame chains coeffgen + solve (+ a frozen-
+# viewport solve), each a native op capped at 300s — up to ~900s between
+# tile writes, far past the 420s lease. Without a background renewal a live
+# worker would lose its lease and could then overwrite a successor's keys.
+HEARTBEAT_INTERVAL_SECONDS = 90
+
+
+class LeaseHeartbeat:
+    """Background lease renewal for a worker/stitch running long native
+    ops between the points where it renews inline (round-8 finding 1).
+
+    While started, a daemon thread renews this owner's lease every
+    `interval_s`. If a renewal reveals the lease was TAKEN OVER (a
+    successor now owns the task) it latches `lost` and stops; callers
+    MUST check `lost` before every shared-state (S3) write and exit
+    benignly, so a reclaimed-but-still-running worker never overwrites
+    its successor's tiles or artifacts. A TRANSIENT DDB error does NOT
+    latch lost (that would be finding-3 in reverse — treating uncertainty
+    as loss); the heartbeat simply retries on the next tick, and the real
+    lease still expires on its own clock if the errors persist."""
+
+    def __init__(self, job_id, task_id, *, owner,
+                 interval_s=HEARTBEAT_INTERVAL_SECONDS,
+                 lease_seconds=CLAIM_LEASE_SECONDS):
+        self.job_id = job_id
+        self.task_id = task_id
+        self.owner = owner
+        self.interval_s = interval_s
+        self.lease_seconds = lease_seconds
+        self._stop = threading.Event()
+        self._lost = threading.Event()
+        self._thread = None
+
+    @property
+    def lost(self):
+        return self._lost.is_set()
+
+    def _loop(self):
+        while not self._stop.wait(self.interval_s):
+            try:
+                still_owner = renew_claim(
+                    self.job_id, self.task_id, owner=self.owner,
+                    lease_seconds=self.lease_seconds)
+            except Exception:
+                continue          # transient: retry next tick, don't latch
+            if not still_owner:
+                self._lost.set()
+                return
+
+    def start(self):
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._thread.start()
+        return self
+
+    def stop(self):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+            self._thread = None
 
 
 def report_status(job_id, task_id, status, error_msg=None, result_data=None):

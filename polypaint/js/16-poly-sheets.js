@@ -13,13 +13,43 @@ let _sheetResumeTimer = null;
 // (decoupled from the single descriptor, so a direct rail command can
 // establish intent for ANY run); the timer map gives each run its OWN retry
 // slot, so a stale retry can never clear or replace a newer run's timer.
-const _sheetCancelIntents = new Set();          // "sheetId::generation"
+// round-14 finding 2: the intent set is PERSISTED to localStorage under its
+// own identity-keyed store (NOT piggy-backed on the single Sheets
+// descriptor), so a rail cancellation of a run that is not the descriptor
+// survives a reload.
+const SHEET_CANCEL_INTENTS_KEY = 'polypaint_sheet_cancel_intents_v1';
+const _sheetCancelIntents = _sheetCancelIntentsLoad();  // "sheetId::generation"
 const _sheetCancelTimers = new Map();           // "sheetId::generation" -> handle
 function _sheetCancelKey(sheetId, generation) { return sheetId + '::' + generation; }
+function _sheetCancelIntentsLoad() {
+    try {
+        const raw = localStorage.getItem(SHEET_CANCEL_INTENTS_KEY);
+        return new Set(raw ? JSON.parse(raw) : []);
+    } catch (e) { return new Set(); }
+}
+function _sheetCancelIntentsPersist() {
+    try {
+        localStorage.setItem(SHEET_CANCEL_INTENTS_KEY,
+                             JSON.stringify([..._sheetCancelIntents]));
+    } catch (e) {}
+}
+function _sheetCancelIntentAdd(key) { _sheetCancelIntents.add(key); _sheetCancelIntentsPersist(); }
+function _sheetCancelIntentDelete(key) { _sheetCancelIntents.delete(key); _sheetCancelIntentsPersist(); }
 function _sheetClearCancelTimer(sheetId, generation) {
     const key = _sheetCancelKey(sheetId, generation);
     const h = _sheetCancelTimers.get(key);
     if (h !== undefined) { clearTimeout(h); _sheetCancelTimers.delete(key); }
+}
+async function _sheetResumePersistedCancels() {
+    /* round-14 finding 2: on boot, re-issue a DIRECT cancel for every
+     * persisted intent (its in-memory retry timer was lost on reload). Each
+     * is identity-scoped, so this is safe regardless of the descriptor. */
+    for (const key of [..._sheetCancelIntents]) {
+        const idx = key.lastIndexOf('::');
+        if (idx < 0) { _sheetCancelIntentDelete(key); continue; }
+        const sheetId = key.slice(0, idx), generation = key.slice(idx + 2);
+        void _cancelSheetRun(sheetId, generation, { direct: true });
+    }
 }
 // round-10 finding 6: only these EXPLICIT statuses count as terminal — a
 // malformed/unknown run.status must not be mistaken for a confirmed end
@@ -779,9 +809,11 @@ async function _cancelSheetRun(sheetId, generation, opts) {
     const key = _sheetCancelKey(sheetId, generation);
     const statusEl = document.getElementById('sheets-status');
     if (direct) {
-        _sheetCancelIntents.add(key);
-        // mirror on the descriptor if it IS this run, so a reload re-issues
-        // the cancel (the intent set is in-memory only)
+        // round-14 finding 2: PERSIST the intent (identity-keyed store), so a
+        // rail cancel of a non-descriptor run survives a reload.
+        _sheetCancelIntentAdd(key);
+        // also mirror on the descriptor if it IS this run (keeps the existing
+        // descriptor-driven resume path working)
         const d = _sheetRunLoad();
         if (d && d.sheetId === sheetId && d.generation === generation && !d.cancelRequested) {
             d.cancelRequested = true; _sheetRunSave(d);
@@ -809,9 +841,10 @@ async function _cancelSheetRun(sheetId, generation, opts) {
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel dispatched — taking effect between frames...`; statusEl.className = 'status'; }
         return { ok: true, dispatched: true, pending: true, status: null };
     }
-    // TERMINAL: retire this identity's intent + its OWN timer (never another
-    // run's), and clear the descriptor only if it is still THIS run.
-    _sheetCancelIntents.delete(key);
+    // TERMINAL: retire this identity's intent (persisted) + its OWN timer
+    // (never another run's), and clear the descriptor only if it is still
+    // THIS run.
+    _sheetCancelIntentDelete(key);
     _sheetClearCancelTimer(sheetId, generation);
     const still = _sheetRunLoad();
     if (still && still.sheetId === sheetId && still.generation === generation) {
@@ -885,6 +918,9 @@ async function _sheetDiscoverServerRun(rows) {
 
 async function loadSheetsTab() {
     void resumeSheetRun();
+    // round-14 finding 2: re-issue any cancellation intents that a reload
+    // stripped of their in-memory retry timers (identity-scoped, safe).
+    void _sheetResumePersistedCancels();
     const invEl = document.getElementById('sheets-inventory');
     try {
         const resp = await lambdaPost('storage', {}, '/list-sheets');

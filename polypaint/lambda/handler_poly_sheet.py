@@ -156,7 +156,7 @@ def handle_cancel(params):
     # cancellation competes with publication through the SAME run.json CAS.
     # The returned status is the ACTUAL outcome: 'cancelled' if we won,
     # 'done' if a publish beat us (cancel came too late), etc.
-    final = _mark_run_terminal(sheet_id, generation, "cancelled")
+    final, _run = _mark_run_terminal(sheet_id, generation, "cancelled")
     if final is None:
         # round-9 finding 2: could NOT confirm the transition — fail loudly
         # (the async invocation errors, the client's run.json poll stays
@@ -173,7 +173,7 @@ def handle_abandon(params):
     so it cannot abandon a newer run that took over the id."""
     sheet_id = _validated_sheet_id(params)
     generation = _validated_generation(params)
-    final = _mark_run_terminal(sheet_id, generation, "abandoned")
+    final, _run = _mark_run_terminal(sheet_id, generation, "abandoned")
     if final is None:
         raise RuntimeError(
             "abandon could not be confirmed: run.json unreachable — retry")
@@ -857,12 +857,13 @@ def _prune_own_attempt_if_not_published(sheet_id, generation, gen_prefix):
 
 
 def _reap_sheet_scaffolding(sheet_id, generation, steps, winner_prefix):
-    """Post-publication cleanup for a generation: delete the tiles + cancel
-    marker and prune every LOSING attempt's artifacts (keeping the winner
-    at winner_prefix). Idempotent, so it is safe to run from BOTH the normal
-    winner path AND the reconciliation path when a failure/ambiguous commit
-    later turns out to have published (round-13 finding 3). Returns True on
-    a clean sweep, False on any delete/list error."""
+    """Cleanup for a generation: delete the frame tiles + cancel marker and
+    prune attempt artifacts. winner_prefix=<prefix> keeps the winner and
+    prunes the losers (post-publication); winner_prefix=None means NO winner
+    (a failed/cancelled run) and prunes ALL attempts (round-14 finding 4).
+    Idempotent, so it is safe from BOTH the normal winner path AND the
+    reconciliation path. Returns True on a clean sweep, False on any
+    delete/list error."""
     ok = True
     try:
         delete_keys = []
@@ -890,9 +891,11 @@ def _prune_losing_attempts(sheet_id, generation, winning_prefix):
     """Round-9 finding 8: reap the artifacts of LOSING same-generation
     stitch attempts. Each attempt writes under sheets/{id}/{gen}/{token}/
     and exactly one token wins the run.json CAS; the others are orphans.
-    After a successful publish, delete every object under the generation
-    prefix that is NOT the winner's. Best-effort (part of cleanup_ok):
-    returns True on a clean sweep, False on any list/delete error."""
+    Delete every object under the generation prefix that is NOT the winner's.
+    Round-14 finding 4: winning_prefix=None means there is NO winner (a
+    failed/cancelled run) — delete ALL attempt objects under the generation.
+    Best-effort (part of cleanup_ok): returns True on a clean sweep, False on
+    any list/delete error."""
     gen_root = _gen_prefix(sheet_id, generation)     # sheets/{id}/{gen}/
     ok = True
     try:
@@ -903,7 +906,8 @@ def _prune_losing_attempts(sheet_id, generation, winning_prefix):
                 kwargs["ContinuationToken"] = token
             resp = s3.list_objects_v2(**kwargs)
             victims = [{"Key": o["Key"]} for o in resp.get("Contents", [])
-                       if not o["Key"].startswith(winning_prefix)]
+                       if winning_prefix is None
+                       or not o["Key"].startswith(winning_prefix)]
             for i in range(0, len(victims), 1000):
                 d = s3.delete_objects(
                     Bucket=BUCKET,
@@ -1019,35 +1023,38 @@ def _mark_run_terminal(sheet_id, generation, status):
     abandon, worker-failure and publish all transition it through this CAS,
     so exactly one terminal outcome wins and the others observe it.
 
-    Returns the run's ACTUAL terminal status for this generation:
-      - `status` if we won the CAS (we set it), OR
-      - the EXISTING terminal status if a concurrent writer reached a
-        different terminal first (round-9 finding 1: a publish that beat a
-        cancel leaves 'done' — the caller MUST NOT treat that as a
-        successful cancel; it now sees 'done' and reports the truth), OR
-      - SUPERSEDED if a newer begin owns the record, OR
-      - None if it could NOT be confirmed after retries (round-9 finding 2:
-        callers must treat None as FAILURE, never as success — a swallowed
-        failure left a ghost 'running' run)."""
+    Returns (resolved_status, run_record):
+      - resolved_status:
+          `status` if we won the CAS (we set it), OR the EXISTING terminal
+          status if a concurrent writer reached a different terminal first
+          (round-9 finding 1: a publish that beat a cancel leaves 'done'),
+          OR SUPERSEDED if a newer begin owns the record, OR None if it
+          could NOT be confirmed after retries (round-9 finding 2).
+      - run_record: the run.json dict at the RESOLVING read (carries the
+          published_* pointer when a publish won), or None for
+          SUPERSEDED/None. Round-14 finding 1: cleanup reconciliation MUST
+          key the winner off THIS record — a second read can catch a
+          concurrent new generation and mis-identify the winner, deleting
+          the real published artifacts."""
     for _ in range(5):
         try:
             resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
             etag = resp.get("ETag")
             run = json.loads(resp["Body"].read())
             if run.get("generation") != generation:
-                return SUPERSEDED    # a newer begin owns the record
+                return SUPERSEDED, None    # a newer begin owns the record
             cur = run.get("status")
             if cur != "running":
-                return cur           # already terminal — report WHICH one
+                return cur, run            # already terminal — record carries winner
             run["status"] = status
             run["finished_at_s"] = time.time()
             _cas_put_run(sheet_id, etag, run)
-            return status
+            return status, run
         except _CASConflict:
             continue                 # concurrent transition — re-read + re-evaluate
         except ClientError:
             continue                 # transient S3 error — retry
-    return None                      # UNCONFIRMED — caller must not claim success
+    return None, None                # UNCONFIRMED — caller must not claim success
 
 
 def _owns_for_write(job_id, task_id, owner, *, result_data=None):
@@ -1096,16 +1103,16 @@ def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
         raise exc                      # ownership UNKNOWN -> mutate nothing
     if not owns:
         return ok_response({"sheet_id": sheet_id, "lost_lease": True})
-    final = _mark_run_terminal(sheet_id, generation, "failed")
+    final, run = _mark_run_terminal(sheet_id, generation, "failed")
     if final is None:
         raise exc                      # unconfirmed run -> don't finalize; raise
-    # round-13 finding 3: reconcile cleanup NOW that the terminal outcome is
-    # known. The ambiguous-commit cleanup deferred deletion while run.json
-    # was still 'running'; here the run is terminal, so the caller can safely
-    # prune its orphan (terminal) OR run the winner sweep (if it published).
+    # round-13 finding 3 + round-14 finding 1: reconcile cleanup NOW that the
+    # terminal outcome is known, keyed off the SAME run record that resolved
+    # the status (never a second read, which could catch a concurrent new
+    # generation and delete the real winner).
     if on_terminal is not None:
         try:
-            on_terminal(final)
+            on_terminal(final, run)
         except Exception:
             pass
     # round-12 finding 4: record the DDB task at the ACTUAL resolved status.
@@ -1139,23 +1146,27 @@ def _published_keys(run):
     return None
 
 
-def _published_prefix(sheet_id, generation):
-    """The WINNING attempt's prefix (sheets/{id}/{gen}/{token}/) read from
-    run.json's pointer, or None if this generation is not published. Used to
-    reconcile the winner sweep when a failure/ambiguous path later turns out
-    to have published (round-13 finding 3)."""
-    try:
-        resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
-        run = json.loads(resp["Body"].read())
-    except Exception:
-        return None
-    if run.get("generation") != generation:
+def _winner_prefix_from_run(run, generation):
+    """The WINNING attempt prefix (sheets/{id}/{gen}/{token}/) derived from a
+    run RECORD — NOT a fresh read (round-14 finding 1: a second read can
+    catch a concurrent new generation and mis-identify the winner). Requires:
+    the record is for THIS generation, and BOTH published keys are present,
+    correctly suffixed, and agree on the prefix. Returns None when the winner
+    is not DEFINITIVELY known — the caller must then SKIP the family sweep
+    rather than guess (never substitute the caller's own prefix)."""
+    if not isinstance(run, dict) or run.get("generation") != generation:
         return None
     png = run.get("published_png_key")
-    suffix = "sheet.png"
-    if isinstance(png, str) and png.endswith(suffix):
-        return png[:-len(suffix)]
-    return None
+    man = run.get("published_manifest_key")
+    if not (isinstance(png, str) and isinstance(man, str)):
+        return None
+    if not (png.endswith("sheet.png") and man.endswith("sheet.json")):
+        return None
+    p_prefix = png[:-len("sheet.png")]
+    m_prefix = man[:-len("sheet.json")]
+    if p_prefix != m_prefix:
+        return None                # inconsistent pointer -> winner not known
+    return p_prefix
 
 
 # Fields that define the sheet's computation: the admission hash binds a
@@ -1428,7 +1439,7 @@ def handle_frames(params):
                 # terminal success until the run.json CAS is CONFIRMED — an
                 # unconfirmable transition (None) must raise, not 200 with a
                 # null status while run.json stays 'running'.
-                final = _mark_run_terminal(sheet_id, generation, "cancelled")
+                final, _run = _mark_run_terminal(sheet_id, generation, "cancelled")
                 if final is None:
                     raise RuntimeError(
                         "cancel could not be confirmed: run.json unreachable")
@@ -1540,7 +1551,7 @@ def handle_stitch(params):
             # NOT report a false cancellation. round-10 finding 2: an
             # unconfirmable transition (None) RAISES — never a 200 with a
             # null status while run.json stays 'running'.
-            final = _mark_run_terminal(sheet_id, generation, "cancelled")
+            final, _run = _mark_run_terminal(sheet_id, generation, "cancelled")
             if final is None:
                 raise RuntimeError(
                     "cancel could not be confirmed: run.json unreachable")
@@ -1668,17 +1679,24 @@ def handle_stitch(params):
         # prune while the run was still 'running' would otherwise leak the
         # orphan forever, and an ambiguous publication would skip the
         # winner sweep).
-        def _reconcile(final_status):
+        def _reconcile(final_status, run):
             if final_status == "done":
                 # the run IS published (possibly by our own ambiguous CAS) —
-                # run the winner sweep keyed on the ACTUAL published prefix
-                winner = _published_prefix(sheet_id, generation) or gen_prefix
+                # run the winner sweep keyed on the winner from the SAME
+                # record that resolved the status. round-14 finding 1: if the
+                # winner cannot be DEFINITIVELY identified (both published
+                # keys present + consistent + our generation), SKIP the
+                # family sweep — NEVER substitute gen_prefix, which is our
+                # OWN (possibly losing) prefix and would delete the winner.
+                winner = _winner_prefix_from_run(run, generation)
                 if winner is not None:
                     _reap_sheet_scaffolding(sheet_id, generation, cfg["steps"], winner)
-            elif gen_prefix is not None:
-                # terminal non-done -> our attempt is now a safe-to-prune
-                # orphan (our conditional CAS can no longer land)
-                _prune_own_attempt_if_not_published(sheet_id, generation, gen_prefix)
+            else:
+                # terminal non-done: no winner exists -> reap tiles + marker
+                # + ALL attempt artifacts (round-14 finding 4: the old path
+                # removed only our stitch attempt and left the tiles + cancel
+                # marker indefinitely).
+                _reap_sheet_scaffolding(sheet_id, generation, cfg["steps"], None)
         return _finalize_failure_or_exit(
             job_id, task_id, owner, sheet_id, generation, e,
             phase_label="Stitch failed", on_terminal=_reconcile)

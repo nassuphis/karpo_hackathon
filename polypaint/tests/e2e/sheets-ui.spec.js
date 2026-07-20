@@ -770,3 +770,61 @@ test.describe('Round-13 cancellation lifecycle', () => {
     expect(out.reason).toBe('intent-cleared');
   });
 });
+
+test.describe('Round-14 cancellation durability + rail integration', () => {
+  test('a rail cancel intent is PERSISTED (survives reload) even with no descriptor (finding 2)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      window.lambdaPost = async () => ({ fired: 1 });
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gP', status: 'running' }) }
+        : realFetch(url));
+      _sheetRunClear();                              // NO descriptor
+      localStorage.removeItem('polypaint_sheet_cancel_intents_v1');
+      // a DIRECT rail cancel for a run that is not the descriptor
+      await _cancelSheetRun('railsheet', 'gP', { direct: true });
+      window.fetch = realFetch;
+      // the intent is in localStorage under its OWN store -> survives reload
+      const persisted = JSON.parse(
+        localStorage.getItem('polypaint_sheet_cancel_intents_v1') || '[]');
+      const out = { persisted, descNull: _sheetRunLoad() === null };
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
+      localStorage.removeItem('polypaint_sheet_cancel_intents_v1');
+      return out;
+    });
+    // the intent persisted despite no matching descriptor
+    expect(out.persisted).toContain('railsheet::gP');
+    expect(out.descNull).toBe(true);
+  });
+
+  test('a confirmed rail cancellation RESOLVES the card (finding 3)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      window.confirm = () => true;
+      window.lambdaPost = async () => ({ fired: 1 });
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gK', status: 'cancelled' }) }
+        : realFetch(url));
+      _sheetRunClear();
+      // inject a RUNNING sheet rail card and kill it via the actual rail path
+      _jobsRailJobs.length = 0;
+      _jobsRailJobs.push({ id: 'sheet:ks', kind: 'sheet', jobId: 'ks', generation: 'gK',
+                           state: 'running', label: 'Sheet ks', startedAt: Date.now(),
+                           detail: '' });
+      await _jobsRailKill('sheet:ks');
+      window.fetch = realFetch;
+      const job = _jobsRailJobs.find(j => j.id === 'sheet:ks');
+      const out = { state: job.state, killRequested: !!job.killRequested, detail: job.detail };
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
+      localStorage.removeItem('polypaint_sheet_cancel_intents_v1');
+      _jobsRailJobs.length = 0;
+      return out;
+    });
+    // the card RESOLVED to a terminal state (not stuck "running" forever)
+    expect(out.state).not.toBe('running');
+    expect(out.killRequested).toBe(false);
+    expect(out.detail.toLowerCase()).toContain('cancelled');
+  });
+});

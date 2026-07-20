@@ -2006,9 +2006,17 @@ async function _jobsRailKill(id) {
                 job.killRequested = false;
                 job.detail = `cancel failed: ${result.reason || 'not accepted'}`;
             } else if (result && result.status && result.status !== 'running') {
+                // round-14 finding 3: a CONFIRMED terminal outcome must RESOLVE
+                // the card (state + clear killRequested), not just change the
+                // detail — otherwise it shows "running" forever.
+                job.killRequested = false;
+                job.state = result.status === 'done' ? 'done' : 'error';
                 job.detail = result.status === 'done'
                     ? 'published before cancel' : `cancelled (${result.status})`;
+                job.updatedAt = Date.now();
             } else {
+                // still pending — the run goes terminal between frames; the
+                // durable retry keeps trying and will resolve the card later
                 job.detail = 'cancelling — takes effect between frames…';
             }
             _renderJobsRail();

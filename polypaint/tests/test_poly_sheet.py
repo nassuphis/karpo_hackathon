@@ -2068,64 +2068,102 @@ class TestRound13Reconciliation(_LeaseIsoTestCase):
         self.addCleanup(lambda: setattr(mod, "finalize_task", _shared.finalize_task))
         mod.s3 = stub
 
-    def test_deferred_orphan_is_pruned_once_run_is_terminal(self):
+    def _prod_reconcile(self, mod, sheet_id, generation, steps, gen_prefix):
+        # mirrors handle_stitch's _reconcile EXACTLY (round-14): winner keyed
+        # off the run RECORD, never gen_prefix; reap-all on non-done.
+        def _reconcile(final_status, run):
+            if final_status == "done":
+                winner = mod._winner_prefix_from_run(run, generation)
+                if winner is not None:
+                    mod._reap_sheet_scaffolding(sheet_id, generation, steps, winner)
+            else:
+                mod._reap_sheet_scaffolding(sheet_id, generation, steps, None)
+        return _reconcile
+
+    def test_failed_run_reaps_tiles_marker_and_all_attempts(self):
+        """Round-14 finding 4: a failed/cancelled run reaps the frame tiles,
+        the cancel marker AND every attempt — not just the stitch attempt."""
         import handler_poly_sheet as mod
         gen = "ga1a1a1a1a1a1"
         stub = _S3Stub(); self._patch(stub)
-        prefix = f"sheets/orph-sheet/{gen}/tttttttttttt/"
+        prefix = f"sheets/fail-reap/{gen}/tttttttttttt/"
         stub.put_object(Bucket="b", Key=prefix + "sheet.png", Body=b"orphan")
         stub.put_object(Bucket="b", Key=prefix + "sheet.json", Body=b"{}")
-        # at cleanup time the run was still 'running' -> the prune deferred
-        stub.put_object(Bucket="b", Key="sheets/orph-sheet/run.json",
+        stub.put_object(Bucket="b", Key=mod._tile_key("fail-reap", gen, 0), Body=b"tile")
+        stub.put_object(Bucket="b", Key=mod._cancel_key("fail-reap", gen), Body=b"1")
+        stub.put_object(Bucket="b", Key="sheets/fail-reap/run.json",
                         Body=json.dumps({"generation": gen, "status": "running"}).encode())
         mod.renew_claim = lambda *a, **k: True
         mod.finalize_task = lambda *a, **k: True
-
-        def _reconcile(final_status):
-            if final_status != "done":
-                mod._prune_own_attempt_if_not_published("orph-sheet", gen, prefix)
         with self.assertRaises(RuntimeError):
             mod._finalize_failure_or_exit(
-                "j", "sheet_stitch_orph-sheet", "A", "orph-sheet", gen,
-                RuntimeError("ambiguous commit"), phase_label="Stitch failed",
-                on_terminal=_reconcile)
-        # run.json is now 'failed', and the orphan was pruned (NOT leaked)
-        self.assertEqual(json.loads(stub.objects["sheets/orph-sheet/run.json"])["status"],
+                "j", "sheet_stitch_fail-reap", "A", "fail-reap", gen,
+                RuntimeError("stitch failed"), phase_label="Stitch failed",
+                on_terminal=self._prod_reconcile(mod, "fail-reap", gen, 1, prefix))
+        self.assertEqual(json.loads(stub.objects["sheets/fail-reap/run.json"])["status"],
                          "failed")
+        # attempt + tile + marker ALL reaped (nothing leaks)
         self.assertNotIn(prefix + "sheet.png", stub.objects)
+        self.assertNotIn(mod._tile_key("fail-reap", gen, 0), stub.objects)
+        self.assertNotIn(mod._cancel_key("fail-reap", gen), stub.objects)
 
-    def test_ambiguous_publish_runs_winner_sweep(self):
+    def test_ambiguous_publish_keys_winner_off_record_not_our_prefix(self):
+        """Round-14 finding 1: run.json is 'done' published to a DIFFERENT
+        (winner) prefix; OUR gen_prefix is the LOSER. The reconcile keys the
+        sweep off the RUN RECORD (from _mark_run_terminal), so the WINNER
+        survives and OUR loser is deleted — never the reverse (the old
+        `_published_prefix(...) or gen_prefix` fallback deleted the winner)."""
         import handler_poly_sheet as mod
         gen = "gb2b2b2b2b2b2"
         stub = _S3Stub(); self._patch(stub)
-        winner = f"sheets/amb-pub/{gen}/wwwwwwwwwwww/"
-        loser = f"sheets/amb-pub/{gen}/llllllllllll/"
-        for pfx, body in ((winner, b"win"), (loser, b"lose")):
+        winner = f"sheets/keyed/{gen}/wwwwwwwwwwww/"
+        loser = f"sheets/keyed/{gen}/llllllllllll/"   # OUR gen_prefix
+        for pfx, body in ((winner, b"WIN"), (loser, b"lose")):
             stub.put_object(Bucket="b", Key=pfx + "sheet.png", Body=body)
             stub.put_object(Bucket="b", Key=pfx + "sheet.json", Body=b"{}")
-        stub.put_object(Bucket="b", Key=mod._tile_key("amb-pub", gen, 0), Body=b"tile")
-        # the CAS actually landed (published to winner) but we took the except
-        # path — run.json is 'done'
-        stub.put_object(Bucket="b", Key="sheets/amb-pub/run.json",
+        stub.put_object(Bucket="b", Key=mod._tile_key("keyed", gen, 0), Body=b"tile")
+        stub.put_object(Bucket="b", Key="sheets/keyed/run.json",
+                        Body=json.dumps({"generation": gen, "status": "done",
+                                         "published_generation": gen,
+                                         "published_png_key": winner + "sheet.png",
+                                         "published_manifest_key": winner + "sheet.json"}).encode())
+        mod.renew_claim = lambda *a, **k: True
+        mod.finalize_task = lambda *a, **k: True
+        resp = mod._finalize_failure_or_exit(
+            "j", "sheet_stitch_keyed", "A", "keyed", gen,
+            RuntimeError("lost response"), phase_label="Stitch failed",
+            on_terminal=self._prod_reconcile(mod, "keyed", gen, 1, loser))
+        self.assertEqual(json.loads(resp["body"])["status"], "done")
+        self.assertEqual(stub.objects[winner + "sheet.png"], b"WIN")   # winner survives
+        self.assertNotIn(loser + "sheet.png", stub.objects)            # our loser reaped
+        self.assertNotIn(mod._tile_key("keyed", gen, 0), stub.objects)
+
+    def test_done_with_unknown_winner_skips_family_sweep(self):
+        """Round-14 finding 1: if the winner cannot be DEFINITIVELY identified
+        from the record (a published key missing/inconsistent), SKIP the
+        family sweep — never guess and delete the real winner."""
+        import handler_poly_sheet as mod
+        gen = "gc3c3c3c3c3c3"
+        stub = _S3Stub(); self._patch(stub)
+        winner = f"sheets/unk/{gen}/wwwwwwwwwwww/"
+        loser = f"sheets/unk/{gen}/llllllllllll/"
+        for pfx, body in ((winner, b"WIN"), (loser, b"lose")):
+            stub.put_object(Bucket="b", Key=pfx + "sheet.png", Body=body)
+            stub.put_object(Bucket="b", Key=pfx + "sheet.json", Body=b"{}")
+        # 'done' but only ONE published key present -> winner not determinable
+        stub.put_object(Bucket="b", Key="sheets/unk/run.json",
                         Body=json.dumps({"generation": gen, "status": "done",
                                          "published_generation": gen,
                                          "published_png_key": winner + "sheet.png"}).encode())
         mod.renew_claim = lambda *a, **k: True
         mod.finalize_task = lambda *a, **k: True
-
-        def _reconcile(final_status):
-            if final_status == "done":
-                w = mod._published_prefix("amb-pub", gen)
-                mod._reap_sheet_scaffolding("amb-pub", gen, 1, w)
-        resp = mod._finalize_failure_or_exit(
-            "j", "sheet_stitch_amb-pub", "A", "amb-pub", gen,
+        mod._finalize_failure_or_exit(
+            "j", "sheet_stitch_unk", "A", "unk", gen,
             RuntimeError("lost response"), phase_label="Stitch failed",
-            on_terminal=_reconcile)
-        self.assertEqual(json.loads(resp["body"])["status"], "done")
-        # winner SURVIVES; the tile + losing attempt are reaped (not leaked)
-        self.assertIn(winner + "sheet.png", stub.objects)
-        self.assertNotIn(loser + "sheet.png", stub.objects)
-        self.assertNotIn(mod._tile_key("amb-pub", gen, 0), stub.objects)
+            on_terminal=self._prod_reconcile(mod, "unk", gen, 1, loser))
+        # winner NOT deleted (sweep skipped) — losing leak beats winner loss
+        self.assertEqual(stub.objects[winner + "sheet.png"], b"WIN")
+        self.assertIn(loser + "sheet.png", stub.objects)
 
 
 # Defined LAST so pytest (file-definition order) runs it AFTER every other

@@ -49,6 +49,18 @@ function _computePreviewSquareBounds() {
 
 // sel: fractional image coords {x0,y0,x1,y1} in [0,1] (y down);
 // viewport: the displayed image's bounds. Pure — pinned by the frontend harness.
+function _computePreviewUnrotateFrac(x, y, ccwDeg) {
+    /* Display-box fraction -> image fraction under the preview's CSS
+     * quarter-turn (CR35-F25: the marquee mapped pointer coordinates as
+     * if the image were unrotated). ccwDeg is the rotate control's
+     * counter-clockwise degrees; screen y grows downward. */
+    const d = ((Math.round(ccwDeg / 90) % 4) + 4) % 4;
+    if (d === 1) return { x: 1 - y, y: x };
+    if (d === 2) return { x: 1 - x, y: 1 - y };
+    if (d === 3) return { x: y, y: 1 - x };
+    return { x, y };
+}
+
 function _computePreviewMarqueeToBounds(sel, viewport) {
     const fx0 = Math.min(sel.x0, sel.x1), fx1 = Math.max(sel.x0, sel.x1);
     const fy0 = Math.min(sel.y0, sel.y1), fy1 = Math.max(sel.y0, sel.y1);
@@ -125,8 +137,11 @@ function _attachComputePreviewMarquee(img) {
             if (rectEl) { rectEl.remove(); rectEl = null; }
             const end = relFrac(up);
             if (Math.abs(end.x - start.x) < 0.01 || Math.abs(end.y - start.y) < 0.01) return;
+            const rot = parseInt(document.getElementById('compute-preview-rotate')?.value, 10) || 0;
+            const a = _computePreviewUnrotateFrac(start.x, start.y, rot);
+            const b = _computePreviewUnrotateFrac(end.x, end.y, rot);
             _computePreviewMarqueeBounds = _computePreviewMarqueeToBounds(
-                { x0: start.x, y0: start.y, x1: end.x, y1: end.y },
+                { x0: a.x, y0: a.y, x1: b.x, y1: b.y },
                 _computePreviewLastViewport);
             start = null;
             _updateComputePreviewMarqueeInfo();

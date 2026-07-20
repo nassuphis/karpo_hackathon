@@ -154,3 +154,85 @@ test.describe('Sheets frame context menu', () => {
     expect(states).toEqual({ afterOpen: 'block', afterEscape: 'none', afterOutsideClick: 'none' });
   });
 });
+
+test.describe('CR35 wave D regressions', () => {
+  test('marquee unrotation maps corners for all quarter turns (F25)', async ({ page }) => {
+    const results = await page.evaluate(() => {
+      const corners = [[0, 0], [1, 0], [1, 1], [0, 1], [0.25, 0.5]];
+      const out = {};
+      for (const deg of [0, 90, 180, 270]) {
+        out[deg] = corners.map(([x, y]) => {
+          const p = _computePreviewUnrotateFrac(x, y, deg);
+          return [Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100];
+        });
+      }
+      return out;
+    });
+    // identity
+    expect(results[0]).toEqual([[0, 0], [1, 0], [1, 1], [0, 1], [0.25, 0.5]]);
+    // display top-left under a CCW-90 view came from image top-right
+    expect(results[90][0]).toEqual([1, 0]);
+    expect(results[180][0]).toEqual([1, 1]);
+    expect(results[270][0]).toEqual([0, 1]);
+    // round-trip: applying the forward map to the inverse restores identity
+    const roundTrip = await page.evaluate(() => {
+      const fwd = (x, y, d) => {
+        // forward display position of an image point under CCW d
+        if (d === 90) return { x: y, y: 1 - x };
+        if (d === 180) return { x: 1 - x, y: 1 - y };
+        if (d === 270) return { x: 1 - y, y: x };
+        return { x, y };
+      };
+      for (const d of [0, 90, 180, 270]) {
+        for (const [x, y] of [[0.1, 0.7], [0.9, 0.2]]) {
+          const img = _computePreviewUnrotateFrac(x, y, d);
+          const back = fwd(img.x, img.y, d);
+          if (Math.abs(back.x - x) > 1e-12 || Math.abs(back.y - y) > 1e-12) return `fail d=${d}`;
+        }
+      }
+      return 'ok';
+    });
+    expect(roundTrip).toBe('ok');
+  });
+
+  test('root pad preserves untouched tokens (F26)', async ({ page }) => {
+    const out = await page.evaluate(() => {
+      const rendered = _rootPadFormatCall([
+        { re: 1.5, im: 0, raw: '1.5000' },          // untouched: keeps spelling
+        { re: 2.5, im: 0.5, raw: null },            // moved: reformats
+        { re: 0, im: -2, raw: '-2j' },              // untouched: keeps j suffix
+      ]);
+      return { rendered, fmtShort: _scrubFormatNumber(1.5) };
+    });
+    expect(out.rendered).toContain('1.5000');   // original token intact
+    expect(out.rendered).toContain('2.5+0.5i'); // only the moved root reformats
+    expect(out.rendered).toContain('-2j');
+    expect(out.fmtShort).toBe('1.5');
+  });
+
+  test('dismissed live rail cards stay dismissed (F27)', async ({ page }) => {
+    const out = await page.evaluate(() => {
+      _jobsRailJobs.length = 0;
+      _jobsRailUpsert({ id: 'sheet:t1', kind: 'sheet', state: 'running',
+                        startedAt: Date.now(), label: 'T1', jobId: 'j' });
+      _jobsRailDismiss('sheet:t1');
+      const afterDismiss = _jobsRailJobs.some(j => j.id === 'sheet:t1');
+      // the poll tick that used to resurrect it
+      _jobsRailUpsert({ id: 'sheet:t1', state: 'running', detail: '3/8 frames' });
+      const afterPoll = _jobsRailJobs.some(j => j.id === 'sheet:t1');
+      // terminal update retires the tombstone silently
+      _jobsRailUpsert({ id: 'sheet:t1', state: 'done', detail: 'done' });
+      const afterTerminal = _jobsRailJobs.some(j => j.id === 'sheet:t1');
+      // a NEW run with the same id (fresh startedAt) shows again
+      _jobsRailUpsert({ id: 'sheet:t1', kind: 'sheet', state: 'running',
+                        startedAt: Date.now(), label: 'T1b', jobId: 'j' });
+      const afterNewRun = _jobsRailJobs.some(j => j.id === 'sheet:t1');
+      _jobsRailJobs.length = 0;
+      return { afterDismiss, afterPoll, afterTerminal, afterNewRun };
+    });
+    expect(out).toEqual({
+      afterDismiss: false, afterPoll: false,
+      afterTerminal: false, afterNewRun: true,
+    });
+  });
+});

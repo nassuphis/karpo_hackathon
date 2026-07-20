@@ -500,8 +500,9 @@ test.describe('Root pad (roots_literal geometry)', () => {
       };
     });
     expect(after.active).toBe(0);
-    expect(after.root0).toEqual({ re: 2, im: 0.5 });
-    expect(after.text.startsWith('roots_literal(\n    2+0.5i,\n    2i,\n    -7.5+2i\n)')).toBe(true);
+    expect(after.root0).toEqual({ re: 2, im: 0.5, raw: null });
+    // CR35-F26: untouched roots keep their original spelling (incl. j)
+    expect(after.text.startsWith('roots_literal(\n    2+0.5i,\n    2i,\n    -7.5+2j\n)')).toBe(true);
     expect(after.text.endsWith('poly = blend(0.5)\nemit')).toBe(true);
     expect(after.readout).toBe('3 roots · 2+0.5i');
   });
@@ -547,7 +548,7 @@ test.describe('Root pad (roots_literal geometry)', () => {
     expect(after.cRe).toBe(0);
     expect(after.cIm).toBe(0);
     expect(after.half).toBe(15);
-    expect(after.root1).toEqual({ re: 5, im: -5 });
+    expect(after.root1).toEqual({ re: 5, im: -5, raw: null });
     expect(after.text).toContain('5-5i,');
   });
 

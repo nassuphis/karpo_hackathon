@@ -1625,6 +1625,7 @@ function _programRootsLiteralSpanAtCursor(textarea) {
     for (const part of inner.split(',')) {
         const parsed = _rootPadParseArg(part);
         if (!parsed) return null;
+        parsed.raw = part.trim();   // original token, preserved until moved
         roots.push(parsed);
     }
     if (roots.length > 255) return null;
@@ -1640,9 +1641,10 @@ function _scrubFormatRoot(re, im) {
 }
 
 function _rootPadFormatCall(roots) {
-    // one root per line, matching the generator layout (diff-friendly)
+    // one root per line, matching the generator layout (diff-friendly);
+    // roots the user never moved keep their ORIGINAL token text
     const lines = roots.map((r, i) =>
-        `    ${_scrubFormatRoot(r.re, r.im)}${i < roots.length - 1 ? ',' : ''}`);
+        `    ${r.raw != null ? r.raw : _scrubFormatRoot(r.re, r.im)}${i < roots.length - 1 ? ',' : ''}`);
     return `roots_literal(\n${lines.join('\n')}\n)`;
 }
 
@@ -1689,6 +1691,11 @@ function _programMetricSpanAtCursor(which, textarea) {
 }
 
 function _scrubFormatNumber(v) {
+    // 6 significant digits for COMPUTED drag positions: pointer
+    // resolution on a 260px pad is ~1e-2 relative, so nothing real is
+    // lost. CR35-F26's data-loss case — rewriting tokens the user never
+    // touched — is fixed by raw-token preservation in the root pad, not
+    // by widening this display format.
     if (!Number.isFinite(v)) return '0';
     let s = String(Number(v.toPrecision(6)));
     if (s.includes('e') || s.includes('E')) {
@@ -1823,7 +1830,7 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
     };
     const st = _scrubPadState;
     if (mode === 'roots') {
-        st.roots = span.roots.map(r => ({ re: r.re, im: r.im }));
+        st.roots = span.roots.map(r => ({ re: r.re, im: r.im, raw: r.raw }));
         st.plane = _rootPadPlane(st.roots, 260);
         st.snapStep = 0.5;
         st.snapOn = true;
@@ -2229,11 +2236,16 @@ function _rootPadDragStart(event) {
     if (best < 0) return;
     st.activeRoot = best;
     st.dragging = true;
+    // CR35-F26: pointer-down SELECTS only. The first mutation needs
+    // real movement (threshold below) — with snap on, an immediate
+    // drag-move used to snap an unsnapped root just from clicking it.
+    st.dragOrigin = pt;
+    st.dragConfirmed = false;
     const canvas = document.getElementById('program-scrub-canvas');
     if (canvas && typeof canvas.setPointerCapture === 'function' && event && event.pointerId != null) {
         try { canvas.setPointerCapture(event.pointerId); } catch (e) {}
     }
-    _rootPadDragMove(event);
+    _rootPadDraw();
     const move = e => _rootPadDragMove(e);
     const up = () => {
         if (_scrubPadState) _scrubPadState.dragging = false;
@@ -2246,11 +2258,20 @@ function _rootPadDragStart(event) {
     document.addEventListener('pointercancel', up);
 }
 
+const _ROOT_PAD_DRAG_THRESHOLD_PX = 4;
+
 function _rootPadDragMove(event) {
     const st = _scrubPadState;
-    if (!st || st.mode !== 'roots' || st.activeRoot < 0) return;
+    if (!st || st.mode !== 'roots' || st.activeRoot < 0 || !st.dragging) return;
     const pt = _rootPadCanvasPoint(event);
     if (!pt) return;
+    if (!st.dragConfirmed) {
+        const o = st.dragOrigin || pt;
+        const dx = pt.x - o.x;
+        const dy = pt.y - o.y;
+        if (dx * dx + dy * dy < _ROOT_PAD_DRAG_THRESHOLD_PX * _ROOT_PAD_DRAG_THRESHOLD_PX) return;
+        st.dragConfirmed = true;
+    }
     let re = st.plane.toRe(pt.x);
     let im = st.plane.toIm(pt.y);
     if (st.snapOn) {
@@ -2261,6 +2282,7 @@ function _rootPadDragMove(event) {
     if (root.re === re && root.im === im) return;
     root.re = re;
     root.im = im;
+    root.raw = null;   // moved: formats with round-trip precision
     _rootPadWrite();
 }
 

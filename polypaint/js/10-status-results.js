@@ -1887,6 +1887,19 @@ function _jobsRailCollapsed() {
 
 function _jobsRailUpsert(job) {
     if (!_jobsRailValidRecord(job)) return;
+    if (_jobsRailDismissed.has(job.id)) {
+        if (job.startedAt != null) {
+            // a fresh card creation = a new run of the same logical id
+            _jobsRailDismissed.delete(job.id);
+        } else if (job.state === 'running' || job.state == null) {
+            return;                          // suppressed while dismissed
+        } else {
+            // terminal: the user dismissed this run — retire the
+            // tombstone silently rather than resurrecting a stub card
+            _jobsRailDismissed.delete(job.id);
+            return;
+        }
+    }
     const idx = _jobsRailJobs.findIndex(j => j.id === job.id);
     const prev = idx >= 0 ? _jobsRailJobs[idx] : null;
     const next = prev ? { ...prev } : { startedAt: Date.now() };
@@ -1929,9 +1942,16 @@ const _JOBS_RAIL_KILL_TARGETS = {
     palette: 'palette_orchestrator',
 };
 
+const _jobsRailDismissed = new Set();   // CR35-F27: session tombstones
+
 function _jobsRailDismiss(id) {
     const idx = _jobsRailJobs.findIndex(j => j.id === id);
     if (idx < 0) return;
+    // a dismissed LIVE card must stay gone: its poll loop keeps
+    // upserting every interval, so removal alone reappeared in 3 s.
+    // The tombstone suppresses running updates until the job turns
+    // terminal (the final state shows once) or a NEW run reuses the id.
+    if (_jobsRailJobs[idx].state === 'running') _jobsRailDismissed.add(id);
     _jobsRailJobs.splice(idx, 1);
     _jobsRailPersistHistory();
     _renderJobsRail();

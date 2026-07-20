@@ -2074,6 +2074,7 @@ async function main() {
       "const JOBS_RAIL_COLLAPSED_KEY = 'polypaint_jobs_rail_collapsed';",
       'const JOBS_RAIL_MAX = 12;',
       'let _jobsRailJobs = [];',
+      'const _jobsRailDismissed = new Set();',
       extractFunction('_jobsRailValidRecord'),
       extractFunction('_jobsRailLoadHistory'),
       extractFunction('_jobsRailPersistHistory'),
@@ -2204,6 +2205,7 @@ async function main() {
       extractFunction('_rootPadSetSnap'),
       extractFunction('_rootPadWrite'),
       extractFunction('_rootPadCanvasPoint'),
+      'const _ROOT_PAD_DRAG_THRESHOLD_PX = 4;',
       extractFunction('_rootPadDragStart'),
       extractFunction('_rootPadDragMove'),
       extractFunction('_scrubPadWriteComplex'),
@@ -2442,8 +2444,10 @@ async function main() {
       vm.runInContext(`_rootPadDragMove({ clientX: ${dest.x}, clientY: ${dest.y} })`, scrubCtx);
       rst = vm.runInContext('_state()', scrubCtx);
       assert(rst.roots[0].re === 2 && rst.roots[0].im === 0.5, 'snapped drag should land on the 0.5 grid');
-      assert(scrubCtx._ta.value.startsWith('roots_literal(\n    2+0.5i,\n    2i,\n    -7.5+2i\n)'),
-        'drag should rewrite the whole call in place, got ' + JSON.stringify(scrubCtx._ta.value.split('\\n')[0]));
+      // CR35-F26: only the MOVED root reformats; untouched roots keep
+      // their original token spelling verbatim (incl. the j suffix)
+      assert(scrubCtx._ta.value.startsWith('roots_literal(\n    2+0.5i,\n    2i,\n    -7.5+2j\n)'),
+        'drag should rewrite only the moved root, got ' + JSON.stringify(scrubCtx._ta.value.split('\\n')[0]));
       assert(scrubCtx._ta.value.endsWith('poly = blend(0.5)\nemit'), 'text after the call must be untouched');
       assert(scrubCtx._notifyCalls.includes('cp'), 'root drag should run the coeff editor input handler');
       // window control: a single number d frames a square of side d

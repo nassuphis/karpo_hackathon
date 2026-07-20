@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_87",
+  "chain": [],
+  "source_text": "poly = scan(51, 0, k*exp(6.283185307179586i*t1)+(51-k)*exp(6.283185307179586i*t2)+log(abs(exp(6.283185307179586i*t1)-k*exp(6.283185307179586i*t2))+1), k*exp(6.283185307179586i*t1)+(51-k)*exp(6.283185307179586i*t2)+log(abs(exp(6.283185307179586i*t1)-k*exp(6.283185307179586i*t2))+1))\npoly[0] = exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2)\npoly[1] = 1+exp(6.283185307179586i*t1)*exp(6.283185307179586i*t2)+log(abs(exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2))+1)\npoly[2] = exp(6.283185307179586i*t1)+exp(6.283185307179586i*t2)+log(abs(1-exp(6.283185307179586i*t1)*exp(6.283185307179586i*t2))+1)\npoly[10] = poly[0]+poly[9]-sin(exp(6.283185307179586i*t1))\npoly[20] = poly[30]+poly[40]-cos(exp(6.283185307179586i*t2))\npoly[30] = poly[20]+poly[40]+sin(exp(6.283185307179586i*t1))\npoly[40] = poly[30]+poly[20]-cos(exp(6.283185307179586i*t2))\npoly[50] = poly[40]+poly[20]+sin(exp(6.283185307179586i*t2))\npoly = rev(poly)\nemit\n"
+}

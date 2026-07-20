@@ -143,9 +143,25 @@ def _validated_generation(params):
 def handle_cancel(params):
     sheet_id = _validated_sheet_id(params)
     generation = _validated_generation(params)
-    s3.put_object(Bucket=BUCKET, Key=_cancel_key(sheet_id, generation), Body=b"1")
-    _mark_run_terminal(sheet_id, generation, "cancelled")
-    return ok_response({"cancelled": sheet_id, "generation": generation})
+    # the marker is a best-effort FAST hint so a worker stops between frames
+    # without waiting for run.json; it is NOT the authoritative decision
+    # (round-9 finding 1) — that is the run.json CAS below.
+    try:
+        s3.put_object(Bucket=BUCKET, Key=_cancel_key(sheet_id, generation), Body=b"1")
+    except ClientError:
+        pass
+    # cancellation competes with publication through the SAME run.json CAS.
+    # The returned status is the ACTUAL outcome: 'cancelled' if we won,
+    # 'done' if a publish beat us (cancel came too late), etc.
+    final = _mark_run_terminal(sheet_id, generation, "cancelled")
+    if final is None:
+        # round-9 finding 2: could NOT confirm the transition — fail loudly
+        # (the async invocation errors, the client's run.json poll stays
+        # 'running', and it retries) rather than reporting a false success.
+        raise RuntimeError(
+            "cancel could not be confirmed: run.json unreachable — retry")
+    return ok_response({"sheet_id": sheet_id, "generation": generation,
+                        "status": final, "cancelled": final == "cancelled"})
 
 
 def handle_abandon(params):
@@ -154,16 +170,23 @@ def handle_abandon(params):
     so it cannot abandon a newer run that took over the id."""
     sheet_id = _validated_sheet_id(params)
     generation = _validated_generation(params)
-    _mark_run_terminal(sheet_id, generation, "abandoned")
-    return ok_response({"abandoned": sheet_id, "generation": generation})
+    final = _mark_run_terminal(sheet_id, generation, "abandoned")
+    if final is None:
+        raise RuntimeError(
+            "abandon could not be confirmed: run.json unreachable — retry")
+    return ok_response({"sheet_id": sheet_id, "generation": generation,
+                        "status": final})
 
 
 def _cancel_requested(sheet_id, generation):
-    """Generation-scoped cancel check. Only a genuinely-absent marker
-    means 'not cancelled'; an operational S3 error (throttle, 5xx) is
-    retried once and then treated as not-cancelled — a transient blip
-    must not kill legitimate work, and the next frame re-checks
-    (CR35-F17: the old code swallowed EVERY ClientError as absence)."""
+    """Generation-scoped best-effort cancel HINT (a fast worker-stop signal
+    between frames; the authoritative cancel decision is the run.json CAS).
+    Only a genuinely-absent marker means 'not cancelled'. An operational S3
+    error (throttle, 5xx) is retried a couple times and then FAILS CLOSED —
+    returns True — because with S3 unreachable the tiles could not upload
+    anyway and honoring a possible cancel beats blind work (round-9 finding
+    7: the docstring previously CLAIMED 'not-cancelled' but the code has
+    returned True on persistent failure since CR35-F17)."""
     for attempt in range(3):
         try:
             s3.head_object(Bucket=BUCKET, Key=_cancel_key(sheet_id, generation))
@@ -760,6 +783,20 @@ def _write_generation_artifacts(cfg, generation, manifest, canvas, owner):
     return prefix
 
 
+def _prune_own_attempt(sheet_id, gen_prefix):
+    """Round-9 finding 5: a stitch that WROTE its attempt artifacts but then
+    lost the lease or the commit CAS cleans its OWN prefix immediately,
+    rather than relying solely on the winner's one-shot sweep (which can
+    miss a late writer). Best-effort."""
+    try:
+        s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [
+            {"Key": gen_prefix + "sheet.png"},
+            {"Key": gen_prefix + "sheet.json"},
+        ], "Quiet": True})
+    except Exception:
+        pass
+
+
 def _prune_losing_attempts(sheet_id, generation, winning_prefix):
     """Round-9 finding 8: reap the artifacts of LOSING same-generation
     stitch attempts. Each attempt writes under sheets/{id}/{gen}/{token}/
@@ -792,12 +829,20 @@ def _prune_losing_attempts(sheet_id, generation, winning_prefix):
     return ok
 
 
+class _CASConflict(RuntimeError):
+    """The run.json If-Match precondition failed — a concurrent writer
+    changed the record. RETRYABLE: the caller re-reads and re-evaluates.
+    Distinct from the fatal no-conditional-writes RuntimeError, which must
+    propagate (fail closed), never be swallowed as a retryable conflict
+    (round-9 finding: the commit loop was masking the fail-closed error)."""
+
+
 def _cas_put_run(sheet_id, expected_etag, run):
     """Conditional run.json write (round-3 findings 2/3). The If-Match on
     the ETag captured in the SAME read is the atomic commit; there is NO
     unconditional fallback — an environment without S3 conditional writes
     FAILS CLOSED rather than silently clobbering a newer begin. Returns
-    True on commit; raises 'superseded' when the precondition fails."""
+    True on commit; raises _CASConflict when the precondition fails."""
     body = json.dumps(run, indent=1).encode("utf-8")
     kwargs = {"Bucket": BUCKET, "Key": _run_json_key(sheet_id), "Body": body,
               "ContentType": "application/json"}
@@ -811,9 +856,8 @@ def _cas_put_run(sheet_id, expected_etag, run):
     except ClientError as exc:
         code = (exc.response or {}).get("Error", {}).get("Code", "")
         if code in ("PreconditionFailed", "412", "ConditionalRequestConflict", "409"):
-            raise RuntimeError(
-                "publish refused: the run record changed under this stitch "
-                "(a newer begin took over)")
+            raise _CASConflict(
+                "run record changed under this write (concurrent transition)")
         raise
     except (TypeError, ParamValidationError) as exc:
         raise RuntimeError(
@@ -823,71 +867,84 @@ def _cas_put_run(sheet_id, expected_etag, run):
 
 
 def _commit_run_publication(sheet_id, generation, gen_prefix):
-    """CAS run.json to point at the generation's immutable artifacts. The
-    pointer is the ONLY authoritative publish; consumers resolve the
-    current sheet through it (never the mutable fixed keys, which no
-    longer exist for pointer-published sheets)."""
-    resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
-    etag = resp.get("ETag")
-    run = json.loads(resp["Body"].read())
-    if run.get("generation") != generation:
-        raise RuntimeError(
-            f"publish refused: run superseded by {run.get('generation')}")
-    # round-5 finding 1 + round-7 finding 3: re-check terminal state at
-    # commit time — a cancel/abandon/failure that landed AFTER _bind_to_run
-    # (a TOCTOU window) must block the publish, and an already-'done' run
-    # of THIS generation must be rejected so a second stitcher cannot
-    # re-publish over a committed sheet.
-    if run.get("status") in ("cancelled", "abandoned", "failed"):
-        raise RuntimeError(
-            f"publish refused: run is {run.get('status')}")
-    if run.get("status") == "done" and run.get("published_generation") == generation:
-        raise RuntimeError(
-            "publish refused: this generation is already published")
-    # round-9 finding 3: the cancel marker is checked INSIDE the commit's
-    # critical section (as close to the CAS as an S3 object allows), so a
-    # cancel that raced ahead of its own run.json transition still blocks
-    # the publish. Combined with the recheck just before this call, the
-    # window where a confirmed cancel could publish 'done' is closed.
-    if _cancel_requested(sheet_id, generation):
-        raise RuntimeError("publish refused: run was cancelled")
-    run["status"] = "done"
-    run["finished_at_s"] = time.time()
-    run["published_generation"] = generation
-    run["published_png_key"] = gen_prefix + "sheet.png"
-    run["published_manifest_key"] = gen_prefix + "sheet.json"
-    _cas_put_run(sheet_id, etag, run)
+    """CAS run.json to point at the generation's immutable artifacts.
+    Publication competes with cancel/abandon/failure through the SAME
+    run.json CAS (round-9 finding 1) so exactly one terminal outcome wins.
+    Returns the RESOLVED status:
+      - 'done' if we published (or this generation was already published), OR
+      - 'cancelled'/'abandoned'/'failed' if a terminal decision beat us —
+        the stitch then reports that outcome instead of publishing.
+    Raises 'superseded' only when a NEWER generation owns the record.
+
+    The loop re-reads on every CAS conflict and re-evaluates, so a cancel
+    that lands between our read and our CAS is observed (not blindly
+    overwritten) — the reproduced marker/publish race can no longer resolve
+    to a wrongly-published 'done'."""
+    for _ in range(6):
+        resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+        etag = resp.get("ETag")
+        run = json.loads(resp["Body"].read())
+        if run.get("generation") != generation:
+            raise RuntimeError(
+                f"publish refused: run superseded by {run.get('generation')}")
+        status = run.get("status")
+        if status in ("cancelled", "abandoned", "failed"):
+            return status                    # a terminal decision won — report it
+        if status == "done" and run.get("published_generation") == generation:
+            return "done"                    # idempotent: already published
+        run["status"] = "done"
+        run["finished_at_s"] = time.time()
+        run["published_generation"] = generation
+        run["published_png_key"] = gen_prefix + "sheet.png"
+        run["published_manifest_key"] = gen_prefix + "sheet.json"
+        try:
+            _cas_put_run(sheet_id, etag, run)
+            return "done"
+        except _CASConflict:
+            continue                         # conflict: re-read + re-evaluate
+        # a NON-conflict RuntimeError (no conditional writes) propagates —
+        # fail closed, never masked as a retryable conflict
+    raise RuntimeError("publish refused: run.json contended — retry")
+
+
+SUPERSEDED = "superseded"
 
 
 def _mark_run_terminal(sheet_id, generation, status):
-    """CAS run.json to a terminal state on worker error / cancel (round-3
-    finding 5: terminal runs stayed 'running' and were rediscovered
-    forever). Generation-guarded; a lost race against a newer begin is
-    fine — that newer run owns the record. Round-9 finding 5: RETRY the
-    CAS on conflict so the terminal transition reliably LANDS — a
-    swallowed one-shot failure left run.json 'running' (a ghost) while the
-    client cleared its descriptor off the DDB write, so discovery
-    resurrected the dead run. Returns True when run.json is terminal for
-    this generation (either we set it, or a concurrent writer already
-    made it terminal), False only if it could not be confirmed."""
+    """CAS run.json to a terminal state (round-3 finding 5). run.json is
+    the SINGLE serialization point for the run's terminal decision — cancel,
+    abandon, worker-failure and publish all transition it through this CAS,
+    so exactly one terminal outcome wins and the others observe it.
+
+    Returns the run's ACTUAL terminal status for this generation:
+      - `status` if we won the CAS (we set it), OR
+      - the EXISTING terminal status if a concurrent writer reached a
+        different terminal first (round-9 finding 1: a publish that beat a
+        cancel leaves 'done' — the caller MUST NOT treat that as a
+        successful cancel; it now sees 'done' and reports the truth), OR
+      - SUPERSEDED if a newer begin owns the record, OR
+      - None if it could NOT be confirmed after retries (round-9 finding 2:
+        callers must treat None as FAILURE, never as success — a swallowed
+        failure left a ghost 'running' run)."""
     for _ in range(5):
         try:
             resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
             etag = resp.get("ETag")
             run = json.loads(resp["Body"].read())
             if run.get("generation") != generation:
-                return True          # a newer begin owns the record
-            if run.get("status") != "running":
-                return True          # already terminal (someone else won)
+                return SUPERSEDED    # a newer begin owns the record
+            cur = run.get("status")
+            if cur != "running":
+                return cur           # already terminal — report WHICH one
             run["status"] = status
             run["finished_at_s"] = time.time()
             _cas_put_run(sheet_id, etag, run)
-            return True
-        except RuntimeError:
-            continue                 # CAS conflict (superseded) — re-read + retry
+            return status
+        except _CASConflict:
+            continue                 # concurrent transition — re-read + re-evaluate
         except ClientError:
             continue                 # transient S3 error — retry
-    return False
+    return None                      # UNCONFIRMED — caller must not claim success
 
 
 def _owns_for_write(job_id, task_id, owner, *, result_data=None):
@@ -1299,7 +1356,10 @@ def handle_stitch(params):
         t0 = float(params.get("started_at_s") or time.time())
 
         if _cancel_requested(sheet_id, generation):
-            _mark_run_terminal(sheet_id, generation, "cancelled")
+            # honor the ACTUAL resolved status (round-9 finding 1): if a
+            # successor already published, run.json is 'done' and we must
+            # NOT report a false cancellation.
+            final = _mark_run_terminal(sheet_id, generation, "cancelled")
             try:
                 finalize_task(job_id, task_id, owner=owner, status="error",
                               error_msg="Cancelled by user",
@@ -1307,7 +1367,9 @@ def handle_stitch(params):
                                            "sheet_id": sheet_id})
             except Exception:
                 pass
-            return ok_response({"cancelled": sheet_id, "frames_done": 0})
+            return ok_response({"sheet_id": sheet_id, "generation": generation,
+                                "status": final, "frames_done": 0,
+                                "cancelled": final == "cancelled"})
 
         tile_bytes = cfg["tile_px"] * cfg["tile_px"]
         canvas = bytearray(bytes([cfg["bg"]]) * (cfg["canvas_w"] * cfg["canvas_h"]))
@@ -1352,44 +1414,49 @@ def handle_stitch(params):
         degree = max(degrees) if degrees else None
         manifest = _sheet_manifest(cfg, params, t0, degree, frame_records, "fanout")
         manifest["generation"] = generation
-        # round-9 finding 1: the FENCE is a synchronous owner-conditional
-        # renew (fail-closed) right before the encode+upload, NOT the async
-        # heartbeat's stale `lost` flag — a reclaimed stitch must produce no
-        # artifacts. The heartbeat above was only a keep-alive across the
-        # (possibly long) tile-read loop.
+        # round-9 finding 1/3: FENCE (synchronous fail-closed renew) before
+        # the expensive encode+upload — a reclaimed stitch produces no
+        # artifacts. The heartbeat above was only a keep-alive.
         if not _owns_for_write(job_id, task_id, owner, result_data={
                 "phase": "stitch", "phase_label": "Publishing",
                 "sheet_id": sheet_id, "generation": generation,
                 "frames": cfg["steps"]}):
             return ok_response({"sheet_id": sheet_id, "lost_lease": True})
-        # round-9 finding 3: RE-CHECK the cancel marker immediately before
-        # the commit. The startup check is far in the past; a cancel that
-        # landed during the read/encode must block the publish. Marker
-        # visibility is the durable cancel signal — honor it as late as
-        # possible so a confirmed cancel cannot still publish 'done'.
-        if _cancel_requested(sheet_id, generation):
-            _mark_run_terminal(sheet_id, generation, "cancelled")
-            try:
-                finalize_task(job_id, task_id, owner=owner, status="error",
-                              error_msg="Cancelled by user",
-                              result_data={"phase": "error", "phase_label": "Cancelled",
-                                           "sheet_id": sheet_id})
-            except Exception:
-                pass
-            return ok_response({"cancelled": sheet_id, "frames_done": cfg["steps"]})
         gen_prefix = _write_generation_artifacts(cfg, generation, manifest,
                                                   canvas, owner)
         manifest["png_key"] = gen_prefix + "sheet.png"
         manifest["manifest_key"] = gen_prefix + "sheet.json"
-        # re-write the manifest now that it carries its own final keys,
-        # then the pointer commit makes it authoritative. The CAS on
-        # run.json selects the ONE winning attempt; a superseded attempt
-        # fails the commit and its orphaned objects are GC'd (round-3 f4 +
-        # round-8 f2).
         s3.put_object(Bucket=BUCKET, Key=gen_prefix + "sheet.json",
                       Body=json.dumps(manifest, indent=1).encode("utf-8"),
                       ContentType="application/json")
-        _commit_run_publication(sheet_id, generation, gen_prefix)   # <- COMMIT
+        # round-9 finding 3: FENCE AGAIN immediately before the commit — the
+        # encode + three writes above are an unbounded section during which
+        # the lease could have expired, so re-prove ownership so the only
+        # remaining unfenced step is the CAS itself.
+        if not _owns_for_write(job_id, task_id, owner):
+            _prune_own_attempt(sheet_id, gen_prefix)
+            return ok_response({"sheet_id": sheet_id, "lost_lease": True})
+        # THE COMMIT: publication competes with cancel/abandon through the
+        # SAME run.json CAS (round-9 finding 1). The resolved status is the
+        # single source of truth — 'done' if we published, otherwise a
+        # terminal decision beat us and we did NOT publish.
+        outcome = _commit_run_publication(sheet_id, generation, gen_prefix)
+        if outcome != "done":
+            # a cancel/abandon/failure won the CAS: clean our OWN orphaned
+            # attempt (round-9 finding 5) and report the real outcome — never
+            # a false 'done'.
+            _prune_own_attempt(sheet_id, gen_prefix)
+            try:
+                finalize_task(job_id, task_id, owner=owner, status="error",
+                              error_msg=f"run was {outcome} before publish",
+                              result_data={"phase": "error",
+                                           "phase_label": outcome.title(),
+                                           "sheet_id": sheet_id})
+            except Exception:
+                pass
+            return ok_response({"sheet_id": sheet_id, "generation": generation,
+                                "status": outcome,
+                                "cancelled": outcome == "cancelled"})
     except Exception as e:
         # PRE-commit failures mark the run failed — but only when ownership
         # is CONFIRMED (round-8 finding 3). A stale stitch that lost its

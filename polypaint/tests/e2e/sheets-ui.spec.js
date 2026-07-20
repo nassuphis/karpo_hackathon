@@ -297,11 +297,12 @@ test.describe('Round-4 resume + publish regressions', () => {
         }
         return { fired: 1 };
       };
-      // round-8 finding 5: the descriptor is only cleared once the cancel
-      // MARKER is confirmed durable — serve it so the confirm succeeds
+      // round-9 finding 1/2: the descriptor clears only once the
+      // AUTHORITATIVE run.json shows a terminal status — serve it cancelled
       const realFetch = window.fetch;
-      window.fetch = async (url) => (String(url).includes('cancel_')
-        ? { ok: true } : realFetch(url));
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gp', status: 'cancelled' }) }
+        : realFetch(url));
       await cancelPolySheet();
       window.fetch = realFetch;
       const cleared = _sheetRunLoad() === null;
@@ -408,10 +409,11 @@ test.describe('Round-6 lease + reconciliation', () => {
       _sheetRunSave({ sheetId: 'c6', jobId: 'j', generation: 'gc6', steps: 4,
                       workers: [], stitchTask: 't', payload: {} });
       window.lambdaPost = async () => ({ fired: 1 });
-      // round-8 finding 5: confirm the cancel marker so the guard commits
+      // round-9 finding 1/2: confirm run.json terminal so the guard commits
       const realFetch = window.fetch;
-      window.fetch = async (url) => (String(url).includes('cancel_')
-        ? { ok: true } : realFetch(url));
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gc6', status: 'cancelled' }) }
+        : realFetch(url));
       await cancelPolySheet();
       window.fetch = realFetch;
       _sheetsInventory = [];
@@ -445,10 +447,11 @@ test.describe('Round-7 cancel confirmation', () => {
       _sheetRunSave({ sheetId: 'ok', jobId: 'j', generation: 'gok', steps: 4,
                       workers: [], stitchTask: 't', payload: {} });
       window.lambdaPost = async () => ({ fired: 1 });
-      // round-8 finding 5: accepted AND marker confirmed -> descriptor clears
+      // round-9 finding 1/2: accepted AND run.json confirmed terminal -> clears
       const realFetch = window.fetch;
-      window.fetch = async (url) => (String(url).includes('cancel_')
-        ? { ok: true } : realFetch(url));
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gok', status: 'cancelled' }) }
+        : realFetch(url));
       await cancelPolySheet();
       window.fetch = realFetch;
       return { cleared: _sheetRunLoad() === null };
@@ -456,22 +459,46 @@ test.describe('Round-7 cancel confirmation', () => {
     expect(out.cleared).toBe(true);
   });
 
-  test('accepted cancel whose marker is NOT visible keeps the descriptor (finding 5)', async ({ page }) => {
+  test('accepted cancel that a publish WON reports done, not a false cancel (finding 1)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'won', jobId: 'j', generation: 'gwon', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      window.lambdaPost = async () => ({ fired: 1 });   // cancel accepted...
+      // ...but a publish already won the run.json CAS: status is 'done'
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gwon', status: 'done' }) }
+        : realFetch(url));
+      const statusEl = document.getElementById('sheets-status');
+      await cancelPolySheet();
+      window.fetch = realFetch;
+      // the run is terminal ('done') so it clears, and the message reports
+      // the TRUTH — published, not a false "cancelled"
+      return { cleared: _sheetRunLoad() === null, msg: statusEl ? statusEl.textContent : '' };
+    });
+    expect(out.cleared).toBe(true);
+    expect(out.msg.toLowerCase()).toContain('published');
+    expect(out.msg.toLowerCase()).not.toContain('cancelled');
+  });
+
+  test('accepted cancel whose run.json is still running keeps the descriptor (finding 5)', async ({ page }) => {
     const out = await page.evaluate(async () => {
       _activeSheetRun = null;
       _sheetRunSave({ sheetId: 'unconf', jobId: 'j', generation: 'gunc', steps: 4,
                       workers: [], stitchTask: 't', payload: {} });
       window.lambdaPost = async () => ({ fired: 1 });   // accepted...
       const realFetch = window.fetch;
-      window.fetch = async (url) => (String(url).includes('cancel_')
-        ? { ok: false } : realFetch(url));               // ...but marker not visible
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gunc', status: 'running' }) }
+        : realFetch(url));                               // ...but not yet terminal
       await cancelPolySheet();
       window.fetch = realFetch;
       const survived = _sheetRunLoad() !== null;
       if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
       _sheetRunClear();
       // a fired-but-unconfirmed cancel must NOT hide/clear the run — the
-      // resume watch keeps it alive until the marker lands
+      // resume watch keeps it alive until the run actually goes terminal
       return { survived };
     });
     expect(out.survived).toBe(true);

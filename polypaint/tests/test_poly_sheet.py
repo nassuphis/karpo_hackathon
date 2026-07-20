@@ -37,6 +37,33 @@ emit
 """
 
 
+class _LeaseIsoTestCase(unittest.TestCase):
+    """Round-9 finding 6: assert AFTER EVERY test (not only at suite end)
+    that no lease-fn stub leaked into handler_poly_sheet. The suite-end
+    sentinel alone gave false confidence — a later fixture's cleanup could
+    repair a leak before the sentinel ran, so an order-dependent leak (one
+    fixture stubbing without restoring) passed. This per-test check fails
+    the offending test itself, even run in isolation."""
+
+    def setUp(self):
+        super().setUp()
+        # Register the check FIRST so (addCleanup is LIFO) it runs LAST —
+        # after every fixture's restore cleanup registered during the test.
+        # A tearDown() check would run BEFORE those restores and see the
+        # stubs still active.
+        self.addCleanup(self._assert_no_lease_leak)
+
+    def _assert_no_lease_leak(self):
+        import handler_poly_sheet as _mod
+        import shared as _shared
+        self.assertIs(_mod.claim_task, _shared.claim_task,
+                      "claim_task stub leaked past this test")
+        self.assertIs(_mod.renew_claim, _shared.renew_claim,
+                      "renew_claim stub leaked past this test")
+        self.assertIs(_mod.finalize_task, _shared.finalize_task,
+                      "finalize_task stub leaked past this test")
+
+
 class _S3Stub:
     """ETag-aware S3 fake with real conditional-write semantics — the
     round-3 review flagged that the old stub had no ETags and silently
@@ -135,7 +162,7 @@ def _run_params(sheet_id, steps=4, solver="jt64", extra=None):
     return p
 
 
-class TestPolySheetUnits(unittest.TestCase):
+class TestPolySheetUnits(_LeaseIsoTestCase):
     def test_scan_values_spacings(self):
         import handler_poly_sheet as mod
 
@@ -226,7 +253,7 @@ class TestPolySheetUnits(unittest.TestCase):
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
-class TestPolySheetEndToEnd(unittest.TestCase):
+class TestPolySheetEndToEnd(_LeaseIsoTestCase):
     def _patched(self, mod, s3stub):
         mod.s3 = s3stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
@@ -688,7 +715,7 @@ if __name__ == "__main__":
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
-class TestAdmissionEnforcement(unittest.TestCase):
+class TestAdmissionEnforcement(_LeaseIsoTestCase):
     """Review round-2 finding 4/7: frames/stitch must BIND to the
     admitted run — generation, task allocation, payload hash — and an
     older stitch must not overwrite a newer generation's sheet."""
@@ -807,7 +834,7 @@ class TestAdmissionEnforcement(unittest.TestCase):
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
-class TestRound4Lifecycle(unittest.TestCase):
+class TestRound4Lifecycle(_LeaseIsoTestCase):
     """Round-4 regressions: the lifecycle code the earlier rounds changed
     without tests — CAS interleaving, fail-closed publish, terminal run
     state, idempotent replay, the runtime deadline, and action gating."""
@@ -1003,7 +1030,7 @@ class TestRound4Lifecycle(unittest.TestCase):
             (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
 
 
-class TestRunBinaryDeadline(unittest.TestCase):
+class TestRunBinaryDeadline(_LeaseIsoTestCase):
     def test_past_deadline_refuses_before_spawning(self):
         """Round-3 finding 3: the native-invocation deadline is a real
         budget wall, checked at the wrapper (not just the loop top)."""
@@ -1073,7 +1100,7 @@ class _LeaseDDB:
         self.rows[k] = row
 
 
-class TestClaimLease(unittest.TestCase):
+class TestClaimLease(_LeaseIsoTestCase):
     """Round-6 finding 1: the claim is a LEASE — one live owner, but a
     crashed owner's lease expires so a redispatch can reclaim."""
 
@@ -1141,7 +1168,7 @@ class TestClaimLease(unittest.TestCase):
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
-class TestRound5(unittest.TestCase):
+class TestRound5(_LeaseIsoTestCase):
     def _patched(self, mod, s3stub):
         import shared as _shared
         mod.s3 = s3stub
@@ -1201,8 +1228,14 @@ class TestRound5(unittest.TestCase):
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.claim_task = lambda *a, **k: True
         mod.renew_claim = lambda *a, **k: True
-        real_fin = mod.finalize_task
-        self.addCleanup(lambda: setattr(mod, "finalize_task", real_fin))
+        # round-9 finding 6: the finally block below restores only claim_task
+        # (via `orig`); renew_claim and finalize_task must be restored too or
+        # they LEAK into later tests (reviewer ran this test alone and got
+        # renew_real=False). Restore all three to the KNOWN-REAL shared impls.
+        import shared as _shared
+        self.addCleanup(lambda: setattr(mod, "claim_task", _shared.claim_task))
+        self.addCleanup(lambda: setattr(mod, "renew_claim", _shared.renew_claim))
+        self.addCleanup(lambda: setattr(mod, "finalize_task", _shared.finalize_task))
         # fail ONLY the stitch's terminal 'done' finalize (post-commit) —
         # its failure must not turn the published sheet into a failure
         def flaky_finalize(job, task, *a, **k):
@@ -1265,7 +1298,7 @@ class TestRound5(unittest.TestCase):
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
-class TestConcurrentCarryForward(unittest.TestCase):
+class TestConcurrentCarryForward(_LeaseIsoTestCase):
     """Round-6 finding 5: begin's carry-forward is a CAS loop. If another
     generation commits between begin's read and its write, begin must
     re-read and preserve the newer pointer instead of erasing it."""
@@ -1321,7 +1354,7 @@ class TestConcurrentCarryForward(unittest.TestCase):
         self.assertEqual(run["status"], "running")
 
 
-class TestFinalizeTaskFencing(unittest.TestCase):
+class TestFinalizeTaskFencing(_LeaseIsoTestCase):
     """Round-7 findings 1/2/6: the terminal write is OWNER-CONDITIONAL —
     a stale owner that lost its lease cannot overwrite its successor."""
 
@@ -1355,7 +1388,7 @@ class TestFinalizeTaskFencing(unittest.TestCase):
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
-class TestRound7WorkerFencing(unittest.TestCase):
+class TestRound7WorkerFencing(_LeaseIsoTestCase):
     def _patched(self, mod, stub):
         mod.s3 = stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
@@ -1440,15 +1473,20 @@ class TestRound7WorkerFencing(unittest.TestCase):
                                "task_id": f"sheet_stitch_dbl-sheet_{gen}"})
         msg = str(ctx.exception)
         self.assertTrue("terminal" in msg or "already published" in msg, msg)
-        # the commit-level backstop, exercised directly (both stitchers
-        # bound while running, then race to publish)
-        with self.assertRaises(RuntimeError) as ctx2:
-            mod._commit_run_publication("dbl-sheet", gen,
-                                        f"sheets/dbl-sheet/{gen}/")
-        self.assertIn("already published", str(ctx2.exception))
+        # round-9: the commit is now IDEMPOTENT through the run.json CAS — a
+        # second commit of an already-published same-generation run resolves
+        # to 'done' WITHOUT re-publishing or corrupting the pointer (it does
+        # not raise; the CAS + already-published check is the backstop)
+        published = json.loads(stub.objects["sheets/dbl-sheet/run.json"])
+        outcome = mod._commit_run_publication("dbl-sheet", gen,
+                                              f"sheets/dbl-sheet/{gen}/")
+        self.assertEqual(outcome, "done")
+        # the pointer is unchanged — the first publish still owns run.json
+        self.assertEqual(json.loads(stub.objects["sheets/dbl-sheet/run.json"]),
+                         published)
 
 
-class TestRound8Heartbeat(unittest.TestCase):
+class TestRound8Heartbeat(_LeaseIsoTestCase):
     """Round-8 finding 1: a background heartbeat keeps a live worker's
     lease across long native ops, and latches `lost` when a successor
     takes the lease over so the worker stops before its next write."""
@@ -1513,7 +1551,7 @@ class TestRound8Heartbeat(unittest.TestCase):
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
-class TestRound8Fencing(unittest.TestCase):
+class TestRound8Fencing(_LeaseIsoTestCase):
     """Round-8 findings 2/3: stitch artifacts are ATTEMPT-scoped so two
     same-generation stitchers cannot overwrite each other, and DDB
     uncertainty never authorizes failing a run."""
@@ -1589,14 +1627,16 @@ class TestRound8Fencing(unittest.TestCase):
             "running")
 
 
-class TestRound9WriteFence(unittest.TestCase):
+class TestRound9WriteFence(_LeaseIsoTestCase):
     """Round-9 finding 1: the write fence is a SYNCHRONOUS fail-closed
     owner renew, not an async heartbeat flag."""
 
     def test_owns_for_write_fails_closed_on_ddb_error(self):
         import handler_poly_sheet as mod
-        real = mod.renew_claim
-        self.addCleanup(lambda: setattr(mod, "renew_claim", real))
+        import shared as _shared
+        # round-9 finding 6: restore to the KNOWN-REAL impl, not a captured
+        # current value that a prior leak could have stubbed
+        self.addCleanup(lambda: setattr(mod, "renew_claim", _shared.renew_claim))
         # lost lease -> False (renew returned False)
         mod.renew_claim = lambda *a, **k: False
         self.assertFalse(mod._owns_for_write("j", "t", "A"))
@@ -1611,7 +1651,7 @@ class TestRound9WriteFence(unittest.TestCase):
 
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
-class TestRound9Fencing(unittest.TestCase):
+class TestRound9Fencing(_LeaseIsoTestCase):
     """Round-9 findings 1/3/8: fail-closed write fence in the worker, a
     cancel that lands before commit blocks the publish, losing attempt
     artifacts are reaped."""
@@ -1711,7 +1751,7 @@ class TestRound9Fencing(unittest.TestCase):
         self.assertIn(run["published_png_key"], stub.objects)
 
 
-class TestRound9MarkTerminalRetry(unittest.TestCase):
+class TestRound9MarkTerminalRetry(_LeaseIsoTestCase):
     """Round-9 finding 5: _mark_run_terminal RETRIES the CAS so the
     terminal transition reliably lands (no ghost 'running' runs)."""
 
@@ -1744,10 +1784,71 @@ class TestRound9MarkTerminalRetry(unittest.TestCase):
                          "failed")
 
 
+class TestRound9CancelRace(_LeaseIsoTestCase):
+    """Round-10 findings 1/2: cancellation and publication resolve through
+    the SAME run.json CAS; the loser reports the ACTUAL outcome, and an
+    unconfirmable transition FAILS rather than reporting a false success."""
+
+    def _patch_s3(self, stub):
+        import handler_poly_sheet as mod
+        real = mod.s3
+        self.addCleanup(lambda: setattr(mod, "s3", real))
+        mod.s3 = stub
+
+    def test_commit_returns_cancelled_when_cancel_won_the_cas(self):
+        import handler_poly_sheet as mod
+        gen = "gc1c1c1c1c1c1"
+        stub = _S3Stub()
+        self._patch_s3(stub)
+        # a cancel already CAS'd run.json to 'cancelled'
+        stub.put_object(Bucket="b", Key="sheets/cr-sheet/run.json",
+                        Body=json.dumps({"generation": gen,
+                                         "status": "cancelled"}).encode())
+        before = stub.objects["sheets/cr-sheet/run.json"]
+        outcome = mod._commit_run_publication("cr-sheet", gen,
+                                              f"sheets/cr-sheet/{gen}/x/")
+        # the publish LOST the race: it reports 'cancelled' and does NOT
+        # touch run.json (no 'done', no pointer)
+        self.assertEqual(outcome, "cancelled")
+        self.assertEqual(stub.objects["sheets/cr-sheet/run.json"], before)
+
+    def test_cancel_reports_the_truth_when_publish_won(self):
+        """The reviewer's reproduced interleaving: a publish reached 'done'
+        first — cancel must NOT report a false success."""
+        import handler_poly_sheet as mod
+        gen = "gd2d2d2d2d2d2"
+        stub = _S3Stub()
+        self._patch_s3(stub)
+        stub.put_object(Bucket="b", Key="sheets/pw-sheet/run.json",
+                        Body=json.dumps({"generation": gen, "status": "done",
+                                         "published_generation": gen}).encode())
+        resp = mod.handle_cancel({"action": "cancel", "sheet_id": "pw-sheet",
+                                  "generation": gen})
+        body = json.loads(resp["body"])
+        self.assertFalse(body["cancelled"])       # NOT a false cancel
+        self.assertEqual(body["status"], "done")  # reports the real outcome
+
+    def test_cancel_that_cannot_confirm_raises(self):
+        """Round-10 finding 2: an unconfirmable terminal transition must
+        FAIL (raise), never return a false HTTP-200 success."""
+        import handler_poly_sheet as mod
+        gen = "ge3e3e3e3e3e3"
+
+        class _NoRun(_S3Stub):
+            def get_object(self, Bucket, Key):
+                from botocore.exceptions import ClientError
+                raise ClientError({"Error": {"Code": "500"}}, "GetObject")
+        stub = _NoRun()
+        self._patch_s3(stub)
+        with self.assertRaises(RuntimeError):
+            mod.handle_cancel({"action": "cancel", "sheet_id": "x-sheet",
+                               "generation": gen})
+
+
 # Defined LAST so pytest (file-definition order) runs it AFTER every other
 # test — round-9 finding 7: an empirical guard that NO test leaked a lease
 # stub into the handler module (exactly the check the reviewer ran by hand).
-class TestZZLeaseIsolationNoLeak(unittest.TestCase):
+class TestZZLeaseIsolationNoLeak(_LeaseIsoTestCase):
     def test_no_lease_stub_leaked_into_handler(self):
         import handler_poly_sheet as mod
         import shared

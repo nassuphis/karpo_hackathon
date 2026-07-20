@@ -300,6 +300,9 @@ async function _sheetDriveRun(desc, statusEl, opts) {
             expected_keys: [],
         });
         if ((stitch.fired || 0) !== 1) throw new Error('poly-sheet stitch dispatch failed');
+        // round-9 finding 4: report a REAL accepted stitch redispatch so a
+        // stitch-only recovery records an actual dispatch, not intent
+        if (opts && opts.onDispatch) opts.onDispatch();
     }
     const doneRd = await _pollSheetTask(sheetId, jobId, desc.stitchTask, statusEl, 'stitching', 'sheet:' + sheetId, desc.generation);
     _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'done', detail: `${doneRd.frames} frames` });
@@ -368,8 +371,11 @@ async function _sheetWorkersNeedingDispatch(desc) {
 
 async function resumeSheetRun() {
     /* Reload recovery (CR35-F4, hardened round-3): bounded attempts with
-     * backoff, no recursion into loadSheetsTab, and only never-started
-     * workers are redispatched. */
+     * backoff, no recursion into loadSheetsTab. Round-6 finding 1: EVERY
+     * non-terminal worker is redispatched (the server lease gates
+     * duplicates — a live worker no-ops, a crashed one is reclaimed);
+     * round-9 finding 7: this comment previously said "only never-started
+     * workers", contradicting that fix. */
     const desc = _sheetRunLoad();
     if (!desc || _activeSheetRun) return;
     // anchor the lease clock on the first resume so give-up can require a
@@ -455,22 +461,26 @@ async function resumeSheetRun() {
         detail: `resume attempt ${desc.resumeAttempts}`,
     });
     if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId}: resuming (attempt ${desc.resumeAttempts})...`; statusEl.className = 'status'; }
-    try {
-        // _sheetWorkersNeedingDispatch POLLS the workers' real DDB rows —
-        // reaching here past the lease horizon is an OBSERVED post-lease
-        // state read (finding 4), not mere intent, and it throws on a
-        // status-probe failure so a failed probe never satisfies give-up
-        const pending = await _sheetWorkersNeedingDispatch(desc);
-        if (pending.length) {
-            await _sheetDispatchWorkers({ ...desc, workers: pending });
-        }
-        // record the observed post-horizon dispatch/observation only now,
-        // after the probe succeeded and any pending workers were redispatched
+    // round-9 finding 4: record the post-lease reclaim ONLY when a real
+    // recovery invocation is ACCEPTED (a fired worker or stitch redispatch),
+    // never on a mere status read. A status-probe success with no pending
+    // workers, followed by a failing stitch probe, must NOT satisfy give-up.
+    const markPostLeaseDispatch = () => {
         if (pastLeaseHorizon && !desc.hadPostLeaseDispatch) {
             desc.hadPostLeaseDispatch = true;
             _sheetRunSave(desc);
         }
-        await _sheetDriveRun(desc, statusEl, { dispatchWorkers: false });
+    };
+    try {
+        const pending = await _sheetWorkersNeedingDispatch(desc);
+        if (pending.length) {
+            await _sheetDispatchWorkers({ ...desc, workers: pending });
+            markPostLeaseDispatch();   // a REAL accepted worker redispatch
+        }
+        // the stitch redispatch (a stitch-only recovery) reports via the
+        // callback, so it too records an actual accepted dispatch
+        await _sheetDriveRun(desc, statusEl, { dispatchWorkers: false,
+                                               onDispatch: markPostLeaseDispatch });
         _sheetRunClear();
         void loadSheetsTab();
     } catch (e) {
@@ -683,6 +693,18 @@ async function _sheetConfirmRunTerminal(sheetId, generation) {
      * record actually left 'running' for THIS generation (bounded
      * retries) before we clear local state — otherwise a discovery from
      * this or another client resurrects a ghost 'running' run. */
+    return (await _sheetResolveRunStatus(sheetId, generation)) !== null;
+}
+
+async function _sheetResolveRunStatus(sheetId, generation) {
+    /* Round-9 finding 1/2: run.json is the AUTHORITATIVE terminal record —
+     * cancellation and publication compete through its CAS. Return the
+     * resolved status for THIS generation once it leaves 'running'
+     * ('cancelled'/'done'/'abandoned'/'failed'), 'superseded' if a newer
+     * generation took over, or null while it is still running / unconfirmed
+     * (bounded retries). The marker is only a worker-stop hint, never the
+     * proof — confirming it (as the old code did) could clear a run that a
+     * publish actually won. */
     for (let attempt = 0; attempt < 4; attempt++) {
         if (attempt) await new Promise(r => setTimeout(r, 400 * attempt));
         try {
@@ -691,32 +713,12 @@ async function _sheetConfirmRunTerminal(sheetId, generation) {
                 { cache: 'no-store' });
             if (resp.ok) {
                 const run = await resp.json();
-                // a newer generation taking over, or any non-running status
-                // for ours, both mean this run is no longer live
-                if (!run || run.generation !== generation
-                        || run.status !== 'running') return true;
+                if (!run || run.generation !== generation) return 'superseded';
+                if (run.status !== 'running') return run.status;
             }
         } catch (e) { /* transient */ }
     }
-    return false;
-}
-
-async function _sheetConfirmCancelMarker(sheetId, generation) {
-    /* Round-8 finding 5: a cancel is DURABLE only once the marker object
-     * exists — every worker polls it (server _cancel_requested), so its
-     * presence, not the 'fired' ack, is proof the cancel will be honored.
-     * Confirm the marker landed (bounded retries) before we stop watching
-     * the run. Matches _cancel_key: sheets/{id}/cancel_{generation}. */
-    for (let attempt = 0; attempt < 4; attempt++) {
-        if (attempt) await new Promise(r => setTimeout(r, 400 * attempt));
-        try {
-            const resp = await fetch(
-                _publicStorageUrl(`sheets/${sheetId}/cancel_${generation}`) + '?t=' + Date.now(),
-                { cache: 'no-store' });
-            if (resp.ok) return true;
-        } catch (e) { /* transient */ }
-    }
-    return false;
+    return null;
 }
 
 async function cancelPolySheet() {
@@ -730,29 +732,40 @@ async function cancelPolySheet() {
     }
     const { sheetId, generation } = target;
     if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancelling...`; statusEl.className = 'status'; }
-    // round-8 finding 5: do NOT hide the generation or kill the resume
-    // timer until the cancel is confirmed durable. The old code hid the
-    // run and cleared its retry timer BEFORE the dispatch could fail — a
-    // dropped enqueue then left the run stranded (not cancelled, not
-    // resumed, not rediscoverable). Order is now: dispatch-until-fired ->
-    // confirm marker -> only then hide + clear.
+    // round-8/9 finding 5/1/2: do NOT hide the generation or clear local
+    // state until the cancel is confirmed through the AUTHORITATIVE run.json
+    // record (not the best-effort marker — a publish can win the run.json
+    // CAS, and confirming the marker would then wrongly clear a published
+    // run). Order: dispatch-until-fired -> resolve run.json status -> clear.
     const fired = await _sheetDispatchControl(sheetId, generation, 'cancel');
     if (!fired) {
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel was not accepted — try again.`; statusEl.className = 'status error'; }
         return;   // state intact; resume timer still live
     }
-    const durable = await _sheetConfirmCancelMarker(sheetId, generation);
-    if (!durable) {
-        // fired but the marker isn't visible yet: keep the run under the
-        // resume timer's watch so it is not lost, and let the run's own
-        // between-frames cancel check terminate it once the marker lands.
+    const status = await _sheetResolveRunStatus(sheetId, generation);
+    if (status === null) {
+        // fired but run.json is still 'running' — keep the run under the
+        // resume timer's watch and let the between-frames cancel take effect.
         if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel dispatched — it takes effect between frames.`; statusEl.className = 'status'; }
         return;
     }
+    // the run is terminal — clear regardless of WHICH terminal, but report
+    // the TRUTH: a publish may have beaten the cancel.
     if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
     _sheetAbandonedGenerations.add(generation);
     _sheetRunClear();
-    if (statusEl) statusEl.textContent = `Sheet ${sheetId}: cancelled (takes effect between frames).`;
+    if (statusEl) {
+        if (status === 'cancelled') {
+            statusEl.textContent = `Sheet ${sheetId}: cancelled.`;
+            statusEl.className = 'status';
+        } else if (status === 'done') {
+            statusEl.textContent = `Sheet ${sheetId}: already published before the cancel took effect.`;
+            statusEl.className = 'status ok';
+        } else {
+            statusEl.textContent = `Sheet ${sheetId}: run ended (${status}).`;
+            statusEl.className = 'status';
+        }
+    }
 }
 
 async function _sheetDiscoverServerRun(rows) {

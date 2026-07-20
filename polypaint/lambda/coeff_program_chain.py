@@ -2038,6 +2038,25 @@ def expand_monic_roots(roots):
     # a polynomial is (integer coefficient pairs, shared exponent E) with
     # value c * 2^-E. Products are pure bigint convolutions — no Fraction
     # gcd normalization, which dominated the old runtime.
+    # Work bound (review round-2 finding 6): the exact cost scales with
+    # the per-root INTEGER sizes — subnormals carry ~1074-bit exponents
+    # and 1e300-range values carry ~1000-bit numerators, an accepted
+    # 255-root subnormal literal took ~11 s vs 1.4 s for ordinary roots.
+    # Ordinary art roots cost < ~70 bits each; reject extreme totals.
+    MAX_TOTAL_LEAF_BITS = 40_000
+    total_bits = 0
+    for re_, im_ in key:
+        nre, dre = re_.as_integer_ratio()
+        nim, dim_ = im_.as_integer_ratio()
+        total_bits += max(abs(nre).bit_length(), dre.bit_length(),
+                          abs(nim).bit_length(), dim_.bit_length())
+    if total_bits > MAX_TOTAL_LEAF_BITS:
+        raise RuntimeError(
+            f"exact root expansion refused: roots span {total_bits} bits of "
+            f"binary precision (max {MAX_TOTAL_LEAF_BITS}) — subnormal or "
+            "astronomically scaled roots make the exact product "
+            "intractable; rescale the roots toward O(1)")
+
     def leaf(re_, im_):
         nre, dre = (-re_).as_integer_ratio()
         nim, dim_ = (-im_).as_integer_ratio()

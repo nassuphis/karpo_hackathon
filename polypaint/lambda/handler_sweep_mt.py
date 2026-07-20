@@ -85,12 +85,16 @@ def handle_solve_mt_from_coeffs(params):
 
         t0 = time.time()
 
-        resp = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
-        coeffs_data = resp["Body"].read()
-
+        # Stream to disk (review round-2 finding 2): read() held a full
+        # Python copy of the coefficient object while the C process
+        # allocated its own input AND output — a legal one-chunk
+        # degree-200/N-1600 job peaked ~12.3 GB on the 10240 MiB lambda.
         coeffs_file = "/tmp/coeffs_chunk_mt.bin"
+        resp = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
         with open(coeffs_file, "wb") as fh:
-            fh.write(coeffs_data)
+            for chunk in resp["Body"].iter_chunks(chunk_size=8 * 1024 * 1024):
+                fh.write(chunk)
+        coeffs_size = os.path.getsize(coeffs_file)
 
         bin_path = "/tmp/roots_chunk_mt.bin"
         spec = {
@@ -123,7 +127,7 @@ def handle_solve_mt_from_coeffs(params):
                     phase="native solve",
                     tmp_file=bin_path,
                     coeffs_key=coeffs_key,
-                    coeffs_size=len(coeffs_data),
+                    coeffs_size=coeffs_size,
                     n_coeffs=n_coeffs,
                     n_steps=n_steps,
                     job_id=job_id,
@@ -168,7 +172,7 @@ def handle_solve_mt_from_coeffs(params):
                 phase="local temp write",
                 tmp_file="/tmp",
                 coeffs_key=coeffs_key,
-                coeffs_size=len(coeffs_data) if 'coeffs_data' in locals() else 0,
+                coeffs_size=coeffs_size if 'coeffs_size' in locals() else 0,
                 n_coeffs=n_coeffs,
                 n_steps=n_steps,
                 job_id=job_id,

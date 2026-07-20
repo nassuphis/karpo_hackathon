@@ -69,6 +69,9 @@ def handle_fused_chunk(params):
     solver_iters = int(params.get("solver_iters") or 0)
     if solver_iters < 0 or solver_iters > 64:
         raise RuntimeError(f"fused compute solver_iters must be in 0..64; got {solver_iters}")
+    if solver_mode == "newton" and solver_iters > 50:
+        raise RuntimeError(
+            f"newton solver_iters must be <= 50 (native ceiling), got {solver_iters}")
     task_id = str(params.get("task_id") or f"compute_fused_{chunk_idx}")
     function_name = _require_str(params, "function")
     param_transforms = params.get("param_transforms") or []

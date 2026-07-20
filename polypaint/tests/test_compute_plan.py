@@ -1194,12 +1194,31 @@ class TestClassicMemoryFloor(unittest.TestCase):
         }
         plan = json.loads(mod.handle_build_plan(request)["body"])
         floor = plan["compute"]["classic_min_memory_chunks"]
-        self.assertGreaterEqual(floor, 1)
-        self.assertGreaterEqual(plan["compute"]["n_chunks"], floor)
-        # 1600^2 steps * (71+70)*8 bytes ~ 2.9 GB total: floor must push
-        # past a single chunk once the budget is applied
+        # degree 70 at N=1600 is ~2.9 GB C-side (post-streaming): fits in
+        # one chunk, floor 1 — the honest post-fix number for the review
+        # case, since the Python copy no longer exists
         total_bytes = 1600 * 1600 * (71 + 70) * 8
         import math as _m
         self.assertEqual(floor, _m.ceil(total_bytes / 3_300_000_000))
+        self.assertGreaterEqual(plan["compute"]["n_chunks"], floor)
         # threading is a planned value (CR35-F12)
         self.assertEqual(plan["solve"]["threads"], 2)
+
+        # a case that genuinely exceeds one chunk: degree 200 CM
+        big = json.loads(json.dumps(request))
+        big["probe"]["degree"] = 200
+        big["probe"]["n_coeffs"] = 201
+        plan_big = json.loads(mod.handle_build_plan(big)["body"])
+        floor_big = plan_big["compute"]["classic_min_memory_chunks"]
+        self.assertEqual(
+            floor_big, _m.ceil(1600 * 1600 * (201 + 200) * 8 / 3_300_000_000))
+        self.assertGreater(floor_big, 1)
+        self.assertGreaterEqual(plan_big["compute"]["n_chunks"], floor_big)
+
+        # aberth uses the 10240 MB lambda's budget (round-2 finding 2)
+        ae = json.loads(json.dumps(big))
+        ae["params"]["solver_mode"] = "aberth_mt"
+        plan_ae = json.loads(mod.handle_build_plan(ae)["body"])
+        self.assertEqual(
+            plan_ae["compute"]["classic_min_memory_chunks"],
+            _m.ceil(1600 * 1600 * (201 + 200) * 8 / 9_000_000_000))

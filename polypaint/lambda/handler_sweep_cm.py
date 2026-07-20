@@ -76,7 +76,11 @@ def handle_solve_cm(params):
         if params.get("n_threads") is not None:
             spec["n_threads"] = int(params["n_threads"])
         max_iter = int(params.get("max_iter") or 0)
-        if solve_mode == "solve_newton" and 1 <= max_iter <= 64:
+        if solve_mode == "solve_newton" and max_iter > 50:
+            # round-2 finding 11: C clamps to 50 silently — reject loudly
+            raise RuntimeError(
+                f"newton max_iter must be <= 50 (native ceiling), got {max_iter}")
+        if solve_mode == "solve_newton" and 1 <= max_iter <= 50:
             # capped-Newton brush knob (plan.solve.iters via the ASL)
             spec["max_iter"] = max_iter
         # CR35-F13: exactly one owner of parallelism — the row workers.

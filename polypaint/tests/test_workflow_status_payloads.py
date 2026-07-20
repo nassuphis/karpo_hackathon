@@ -77,3 +77,16 @@ class TestStopExecutionIamContract(unittest.TestCase):
         template = open(os.path.join(
             ROOT, "stepfunctions", "compute_workflow.asl.json.template")).read()
         self.assertIn('"n_threads.$": "$.plan.solve.threads"', template)
+
+    def test_classic_route_runs_the_degree_probe(self):
+        """Round-2 finding 1: the memory floor was dead code — classic
+        executions went straight to BuildPlan with no probe. The route
+        must send classic through its own probe and thread the result
+        into BuildPlan's payload."""
+        template = open(os.path.join(
+            ROOT, "stepfunctions", "compute_workflow.asl.json.template")).read()
+        self.assertIn('"Default": "ClassicDegreeProbePhase"', template)
+        self.assertIn('"ClassicDegreeProbeTask"', template)
+        build_plan = template[template.index('"BuildPlan"'):]
+        self.assertIn('"probe.$": "$.degree_probe.body"', build_plan[:1200])
+        self.assertNotIn('"Payload.$": "$"', build_plan[:1200])

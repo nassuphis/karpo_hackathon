@@ -34,6 +34,7 @@ generation, so replays and concurrent runs cannot mix state. Frozen
 viewport under fan-out: every worker derives frame 0's bounds itself
 (the pipeline is deterministic, so all workers agree exactly).
 """
+import hashlib
 import json
 import math
 import os
@@ -95,7 +96,7 @@ SHEET_WORKERS = 8
 
 def handler(event, context):
     params = parse_body(event)
-    action = str(params.get("action") or "run").strip().lower()
+    action = str(params.get("action") or "").strip().lower()
     if action == "begin":
         return handle_begin(params)
     if action == "cancel":
@@ -104,7 +105,12 @@ def handler(event, context):
         return handle_frames(params)
     if action == "stitch":
         return handle_stitch(params)
-    return handle_run(params)
+    if action == "run":
+        return handle_run(params)
+    # review round-2: the dispatch fan-out is a public entry point — an
+    # unknown or missing action must not silently run a full sheet
+    raise RuntimeError(
+        f"poly-sheet action must be one of begin/frames/stitch/run/cancel, got {action!r}")
 
 
 def _cancel_key(sheet_id, generation):
@@ -140,15 +146,19 @@ def _cancel_requested(sheet_id, generation):
     retried once and then treated as not-cancelled — a transient blip
     must not kill legitimate work, and the next frame re-checks
     (CR35-F17: the old code swallowed EVERY ClientError as absence)."""
-    for _ in range(2):
+    for attempt in range(3):
         try:
             s3.head_object(Bucket=BUCKET, Key=_cancel_key(sheet_id, generation))
             return True
         except ClientError as exc:
             if is_missing_s3_error(exc):
                 return False
-            time.sleep(0.2)
-    return False
+            time.sleep(0.2 * (attempt + 1))
+    # review round-2 finding 9: only a CONFIRMED-missing marker means
+    # "not cancelled". Persistent operational failure fails CLOSED —
+    # honoring a possible user cancel beats continuing blind (and with
+    # S3 unreachable the tiles could not upload anyway).
+    return True
 
 
 def scan_values(lo, hi, steps, spacing, step=None):
@@ -440,6 +450,9 @@ def _parse_sheet_config(params):
     solver_iters = int(frame.get("solver_iters") or 0)
     if not 0 <= solver_iters <= 64:
         raise RuntimeError(f"solver_iters must be in 0..64, got {solver_iters}")
+    if solver_mode == "newton" and solver_iters > 50:
+        raise RuntimeError(
+            f"newton solver_iters must be <= 50 (native ceiling), got {solver_iters}")
 
     viewport = frame.get("viewport") or {}
     vp_mode = str(viewport.get("mode") or "quantile").strip().lower()
@@ -544,8 +557,8 @@ def _require_job_task(params, action):
     return job_id, task_id
 
 
-def _budget_check(cfg, n_frames, what):
-    spp = _solve_us_per_step(solver_mode=cfg["solver_mode"], degree=40,
+def _budget_check(cfg, n_frames, what, degree=40):
+    spp = _solve_us_per_step(solver_mode=cfg["solver_mode"], degree=degree,
                              fused_threads=2)
     est_us = int(n_frames * cfg["n"] * cfg["n"] * (spp + 3.0) * 1.4)
     if est_us > BUDGET_US:
@@ -681,6 +694,64 @@ def _upload_sheet(cfg, manifest, canvas):
                   ContentType="application/json")
 
 
+# Fields that define the sheet's computation: the admission hash binds a
+# dispatched worker/stitch payload to exactly what begin validated.
+_HASHED_PARAM_FIELDS = (
+    "sheet_id", "function", "cfpv", "scans", "scan", "frame", "grid_cols",
+    "param_transforms", "coeff_transforms",
+    "param_program_chain", "coeff_program_chain",
+    "param_program_source_text", "coeff_program_source_text",
+)
+
+
+def _params_hash(params):
+    payload = {k: params.get(k) for k in _HASHED_PARAM_FIELDS if params.get(k) is not None}
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_run(sheet_id):
+    try:
+        body = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))["Body"].read()
+        run = json.loads(body)
+        return run if isinstance(run, dict) else None
+    except ClientError as exc:
+        if is_missing_s3_error(exc):
+            return None
+        raise
+
+
+def _bind_to_run(params, sheet_id, generation, task_id, *, frame_indices=None,
+                 stitch=False):
+    """Review round-2 finding 4: admission must be ENFORCED, not a client
+    convention. A frames/stitch request is only valid if it matches the
+    persisted run record: same generation, an allocated task id, the
+    exact allocated frame range, and the admitted payload hash."""
+    run = _load_run(sheet_id)
+    if run is None:
+        raise RuntimeError(
+            f"no admitted run for sheet {sheet_id}; call begin first")
+    if run.get("generation") != generation:
+        raise RuntimeError(
+            f"generation {generation} is not the admitted run "
+            f"({run.get('generation')}); superseded or forged request")
+    if run.get("params_hash") and _params_hash(params) != run.get("params_hash"):
+        raise RuntimeError(
+            "request payload does not match the admitted configuration")
+    if stitch:
+        if task_id != run.get("stitch_task_id"):
+            raise RuntimeError(f"task {task_id} is not the admitted stitch task")
+    else:
+        allocation = {w.get("task_id"): list(w.get("frames") or [])
+                      for w in run.get("workers") or []}
+        if task_id not in allocation:
+            raise RuntimeError(f"task {task_id} is not an admitted worker task")
+        if frame_indices is not None and sorted(frame_indices) != sorted(allocation[task_id]):
+            raise RuntimeError(
+                f"frame range for {task_id} does not match the admission")
+    return run
+
+
 def _probe_frame_cost(params, cfg):
     """Compile + 1x1-coeffgen probe of frame 0: the REAL degree and the
     measured per-frame compile cost feed the budget (CR35-F6: the old
@@ -764,6 +835,11 @@ def handle_begin(params):
         "est_worker_us": est_worker_us,
         "created_at_s": time.time(),
         "status": "running",
+        # the admitted payload, verbatim: a resume (or any client) can
+        # rebuild the exact dispatch jobs from the server record alone
+        "params_hash": _params_hash(params),
+        "payload": {k: params.get(k) for k in _HASHED_PARAM_FIELDS
+                    if params.get(k) is not None},
     }
     s3.put_object(Bucket=BUCKET, Key=_run_json_key(sheet_id),
                   Body=json.dumps(run, indent=1).encode("utf-8"),
@@ -791,9 +867,16 @@ def handle_frames(params):
         if indices[0] < 0 or indices[-1] >= cfg["steps"]:
             raise RuntimeError(
                 f"frame_indices out of range 0..{cfg['steps'] - 1}: {indices}")
+        run = _bind_to_run(params, sheet_id, generation, task_id,
+                           frame_indices=indices)
+        # budget with the ADMITTED degree, not a constant (review round-2
+        # finding 5); the runtime check below is the true enforcement —
+        # scan tokens can change the degree per frame
         _budget_check(cfg, len(indices) + (1 if cfg["vp_mode"] == "frozen" else 0),
-                      "worker share")
+                      "worker share",
+                      degree=max(2, int(run.get("degree_probe") or 40)))
         _substitute_frame(params, cfg, indices[0])
+        worker_deadline_s = time.time() + BUDGET_US / 1e6
 
         report_status(job_id, task_id, "running", result_data={
             "phase": "sheet", "phase_label": "Sheet frames",
@@ -809,6 +892,12 @@ def handle_frames(params):
                                            "phase_label": "Cancelled",
                                            "sheet_id": sheet_id, "frame": done})
                 return ok_response({"cancelled": sheet_id, "frames_done": done})
+            if time.time() > worker_deadline_s:
+                raise RuntimeError(
+                    f"worker exceeded its {BUDGET_US / 1e6:.0f}s budget at "
+                    f"frame {k} ({done}/{len(indices)} done) — per-frame cost "
+                    "grew beyond the admission estimate (scan tokens can "
+                    "raise the degree); reduce frames or N")
             tile, record = _render_frame_tile(cfg, params, k, frozen_cache)
             key = _tile_key(sheet_id, generation, k)
             s3.put_object(Bucket=BUCKET, Key=key,
@@ -855,6 +944,7 @@ def handle_stitch(params):
         generation = _validated_generation(params)
         cfg = _parse_sheet_config(params)
         sheet_id = cfg["sheet_id"]
+        _bind_to_run(params, sheet_id, generation, task_id, stitch=True)
         t0 = float(params.get("started_at_s") or time.time())
 
         report_status(job_id, task_id, "running", result_data={
@@ -895,9 +985,19 @@ def handle_stitch(params):
                 f"(frames {missing[:8]}{'...' if len(missing) > 8 else ''}) — "
                 f"a worker failed or is still running")
 
-        degree = frame_records[0].get("degree") if frame_records else None
+        # the sheet-wide degree is the MAX over frames: scan tokens can
+        # change the degree per frame (review round-2 finding 5)
+        degrees = [int(r.get("degree") or 0) for r in frame_records]
+        degree = max(degrees) if degrees else None
         manifest = _sheet_manifest(cfg, params, t0, degree, frame_records, "fanout")
         manifest["generation"] = generation
+        # publication ownership (review round-2 finding 7): re-check the
+        # run record immediately before publishing so an older stitch
+        # cannot overwrite a newer generation's sheet
+        current = _load_run(sheet_id)
+        if current is not None and current.get("generation") != generation:
+            raise RuntimeError(
+                f"publish refused: run superseded by {current.get('generation')}")
         _upload_sheet(cfg, manifest, canvas)          # <- COMMIT POINT
         _mark_run_done(sheet_id, generation)
 

@@ -1888,8 +1888,9 @@ function _jobsRailCollapsed() {
 function _jobsRailUpsert(job) {
     if (!_jobsRailValidRecord(job)) return;
     if (_jobsRailDismissed.has(job.id)) {
-        if (job.startedAt != null) {
-            // a fresh card creation = a new run of the same logical id
+        const dismissedStart = _jobsRailDismissed.get(job.id);
+        if (job.startedAt != null && job.startedAt !== dismissedStart) {
+            // a DIFFERENT startedAt = genuinely new run of the same id
             _jobsRailDismissed.delete(job.id);
         } else if (job.state === 'running' || job.state == null) {
             return;                          // suppressed while dismissed
@@ -1942,16 +1943,19 @@ const _JOBS_RAIL_KILL_TARGETS = {
     palette: 'palette_orchestrator',
 };
 
-const _jobsRailDismissed = new Set();   // CR35-F27: session tombstones
+const _jobsRailDismissed = new Map();   // CR35-F27: id -> startedAt at dismissal
 
 function _jobsRailDismiss(id) {
     const idx = _jobsRailJobs.findIndex(j => j.id === id);
     if (idx < 0) return;
     // a dismissed LIVE card must stay gone: its poll loop keeps
-    // upserting every interval, so removal alone reappeared in 3 s.
-    // The tombstone suppresses running updates until the job turns
-    // terminal (the final state shows once) or a NEW run reuses the id.
-    if (_jobsRailJobs[idx].state === 'running') _jobsRailDismissed.add(id);
+    // upserting every interval (render/compute polls even re-send the
+    // run's ORIGINAL startedAt each tick), so the tombstone remembers
+    // which startedAt was dismissed — only a run with a DIFFERENT
+    // startedAt counts as new.
+    if (_jobsRailJobs[idx].state === 'running') {
+        _jobsRailDismissed.set(id, _jobsRailJobs[idx].startedAt || 0);
+    }
     _jobsRailJobs.splice(idx, 1);
     _jobsRailPersistHistory();
     _renderJobsRail();
@@ -1963,7 +1967,15 @@ async function _jobsRailKill(id) {
     if (String(job.id).startsWith('sheet:')) {
         // sheets have no Step Functions execution — the kill is the S3
         // cancel marker; workers stop between frames and the run's poll
-        // finishes the card through its normal error path
+        // finishes the card through its normal error path. The marker is
+        // GENERATION-scoped: the card carries the generation (a cancel
+        // without it is rejected server-side, and async dispatch would
+        // report success while the worker refused — the wave-B bug).
+        if (!job.generation) {
+            job.detail = 'cancel unavailable: run generation unknown (pre-upgrade card)';
+            _renderJobsRail();
+            return;
+        }
         if (typeof window !== 'undefined' && typeof window.confirm === 'function'
             && !window.confirm(`Stop this sheet run?\n${job.label || job.id}`)) return;
         job.killRequested = true;
@@ -1972,7 +1984,8 @@ async function _jobsRailKill(id) {
         try {
             const resp = await lambdaPost('dispatch', {
                 target: 'poly_sheet',
-                jobs: [{ action: 'cancel', sheet_id: job.jobId }],
+                jobs: [{ action: 'cancel', sheet_id: job.jobId,
+                         generation: job.generation }],
                 expected_keys: [],
             });
             if ((resp.fired || 0) !== 1) throw new Error('cancel dispatch failed');
@@ -2066,7 +2079,8 @@ function _renderJobsRail() {
             return;
         }
         cardsEl.innerHTML = _jobsRailJobs.map(job => {
-            const state = job.state === 'running' ? 'running' : (job.state === 'failed' ? 'failed' : 'done');
+            const state = job.state === 'running' ? 'running'
+                : (job.state === 'failed' || job.state === 'error' ? 'failed' : 'done');
             const age = _jobsRailAge(job.updatedAt || job.startedAt);
             const detail = String(job.detail || '');
             // Click routes through a data attribute: onclick-string

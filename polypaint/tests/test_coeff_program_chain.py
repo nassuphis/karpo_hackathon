@@ -1187,16 +1187,43 @@ class TestExpandMonicRootsPerformance(unittest.TestCase):
                 coefficients = expanded
             return [complex(float(r), float(i)) for r, i in coefficients]
 
+        def bits(seq):
+            # complex == treats -0.0 == 0.0; repr distinguishes the bits
+            return [(repr(c.real), repr(c.imag)) for c in seq]
+
         rng = random.Random(35)
         for n in (1, 3, 17, 48):
             roots = [complex(rng.uniform(-2, 2), rng.uniform(-2, 2))
                      for _ in range(n)]
             cpc._EXPAND_MEMO.clear()
-            self.assertEqual(cpc.expand_monic_roots(roots), reference(roots))
+            self.assertEqual(bits(cpc.expand_monic_roots(roots)),
+                             bits(reference(roots)))
         edge = [complex(5e-324, 0.0), complex(-0.0, 1.5),
                 complex(0.0, -5e-324), complex(1e300, -1e-300)]
         cpc._EXPAND_MEMO.clear()
-        self.assertEqual(cpc.expand_monic_roots(edge), reference(edge))
+        self.assertEqual(bits(cpc.expand_monic_roots(edge)), bits(reference(edge)))
+
+    def test_extreme_root_batches_are_rejected_fast(self):
+        """Round-2 finding 6: 255 subnormal/astronomical roots took
+        10-12 s of exact arithmetic; the leaf-bit budget rejects them
+        before any work."""
+        import time
+
+        import coeff_program_chain as cpc
+
+        for bad in (
+            [complex(5e-324 * (k + 1), 1e-310) for k in range(255)],
+            [complex(1e300, -1e-300)] * 255,
+        ):
+            cpc._EXPAND_MEMO.clear()
+            t0 = time.time()
+            with self.assertRaises(RuntimeError) as ctx:
+                cpc.expand_monic_roots(bad)
+            self.assertLess(time.time() - t0, 0.05)
+            self.assertIn("exact root expansion refused", str(ctx.exception))
+        # a FEW extreme roots stay legal (cost is bounded by the total)
+        cpc._EXPAND_MEMO.clear()
+        cpc.expand_monic_roots([complex(5e-324, 0.0), complex(1e300, 0.0)])
 
     def test_repeated_literals_are_memoized(self):
         import time

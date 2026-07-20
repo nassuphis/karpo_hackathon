@@ -803,6 +803,9 @@ def _materialize_recomputed_preview(*, params, calc, job_id, degree, n_coeffs, v
             "n_coeffs": int(n_coeffs),
             "n_steps": int(n_steps),
         }
+        if solver_mode == "newton" and solver_iters > 50:
+            raise RuntimeError(
+                f"newton solver_iters must be <= 50 (native ceiling), got {solver_iters}")
         if solver_mode == "newton" and solver_iters:
             # reproduce the run's capped-Newton brush at lores fidelity
             solve_spec["max_iter"] = solver_iters

@@ -50,14 +50,87 @@
                   "Next": "DegreeProbePhase"
                 }
               ],
-              "Default": "BuildPlan"
+              "Default": "ClassicDegreeProbePhase"
+            },
+            "ClassicDegreeProbePhase": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${StatusFunctionArn}",
+                "Payload": {
+                  "action": "phase",
+                  "job_id.$": "$.job_id",
+                  "task_id.$": "$.task_id",
+                  "run_id.$": "$.run_id",
+                  "run_started_at_ms.$": "$.run_started_at_ms",
+                  "mode.$": "$.mode",
+                  "solver_mode.$": "$.params.solver_mode",
+                  "phase": "degree_probe",
+                  "phase_label": "Degree probe",
+                  "execution_arn.$": "$$.Execution.Id"
+                }
+              },
+              "ResultPath": null,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "ClassicDegreeProbeTask"
+            },
+            "ClassicDegreeProbeTask": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${CoeffgenFunctionArn}",
+                "Payload": {
+                  "phase": "degree_probe",
+                  "function.$": "$.params.function",
+                  "param_program_chain.$": "$.params.param_program_chain",
+                  "param_program_source_text.$": "$.params.param_program_source_text",
+                  "coeff_program_chain.$": "$.params.coeff_program_chain",
+                  "coeff_program_source_text.$": "$.params.coeff_program_source_text",
+                  "cfpv.$": "$.params.cfpv"
+                }
+              },
+              "ResultSelector": {
+                "body.$": "States.StringToJson($.Payload.body)"
+              },
+              "ResultPath": "$.degree_probe",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "BackoffRate": 2.0,
+                  "MaxAttempts": 3
+                }
+              ],
+              "Next": "BuildPlan"
             },
             "BuildPlan": {
               "Type": "Task",
               "Resource": "arn:aws:states:::lambda:invoke",
               "Parameters": {
                 "FunctionName": "${PlanFunctionArn}",
-                "Payload.$": "$"
+                "Payload": {
+                  "action": "build_plan",
+                  "job_id.$": "$.job_id",
+                  "run_id.$": "$.run_id",
+                  "task_id.$": "$.task_id",
+                  "params.$": "$.params",
+                  "probe.$": "$.degree_probe.body"
+                }
               },
               "ResultSelector": {
                 "plan.$": "$.Payload.body"

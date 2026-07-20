@@ -305,20 +305,26 @@ def handle_build_plan(params):
         actual_chunks = min(int(fused_estimate["actual_chunks"]), total_steps)
 
     classic_min_memory_chunks = 0
-    if execution_method != "fused_chunk_pipeline" and solver_mode in (
-            "companion_matrix", "jenkins_traub", "newton"):
-        # CR35-F8: the classic sweep_cm lambda (4096 MB) allocates the
-        # full per-chunk coefficient input AND root output natively; the
-        # handler now streams to disk (no Python copy), leaving
-        # input+output+runtime as the footprint. Derive the chunk floor
-        # from the probed degree so a legal plan cannot exceed memory.
+    if execution_method != "fused_chunk_pipeline":
+        # CR35-F8 + round-2 findings 1/2: the classic solve lambdas
+        # allocate the full per-chunk coefficient input AND root output
+        # natively (both handlers stream S3 to disk now, so there is no
+        # extra Python copy). Derive the chunk floor from the probed
+        # degree — the classic ASL route runs its own degree probe, so
+        # the probe is always present in production.
+        SOLVER_BUDGET_BYTES = {
+            "companion_matrix": 3_300_000_000,   # 4096 MB lambda - margin
+            "jenkins_traub": 3_300_000_000,
+            "newton": 3_300_000_000,
+            "aberth_mt": 9_000_000_000,          # 10240 MB lambda - margin
+        }
+        budget = SOLVER_BUDGET_BYTES.get(solver_mode)
         probe_degree_hint = (params.get("probe") or {}).get("degree")
-        if probe_degree_hint:
+        if budget and probe_degree_hint:
             degree_i = int(probe_degree_hint)
             per_step_bytes = ((degree_i + 1) + degree_i) * 8   # coeffs + roots
-            SWEEP_CM_BUDGET_BYTES = 3_300_000_000              # 4096MB - runtime margin
             classic_min_memory_chunks = int(math.ceil(
-                total_steps * per_step_bytes / SWEEP_CM_BUDGET_BYTES))
+                total_steps * per_step_bytes / budget))
             if classic_min_memory_chunks > actual_chunks:
                 actual_chunks = min(classic_min_memory_chunks, total_steps)
 

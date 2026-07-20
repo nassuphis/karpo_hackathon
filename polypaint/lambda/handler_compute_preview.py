@@ -156,23 +156,53 @@ def _program_chain_has_native(chain, name):
 _EMBEDDED_ROOT_SOLVERS = ("roots_cm", "roots_jt", "roots", "roots_ae")
 
 
-def _sync_preview_budget_error(*, n_preview, coeff_transforms, coeff_program_chain=None):
+# registry fn indices of the embedded solvers (roots_cm=27, roots=28,
+# roots_jt=30, roots_ae=31): scanning COMPILED tokens is macro-proof —
+# a saved macro can hide the chip from the pre-expansion chain
+_EMBEDDED_ROOT_SOLVER_FN_INDICES = frozenset({27, 28, 30, 31})
+
+
+def _compiled_program_embedded_solver(program_payload):
+    """Name of an embedded per-row solver in a COMPILED program, or None.
+    Round-2 finding 11: the chain-level guard misses macro-inlined
+    solvers; the compiled token stream cannot hide them."""
+    if not isinstance(program_payload, dict):
+        return None
+    from coeff_program_chain import legacy_registry
+
+    for token in program_payload.get("tokens") or []:
+        if not isinstance(token, dict):
+            continue
+        if int(token.get("op") or 0) in (9, 29):   # legacy / native transform
+            fn_index = int(token.get("fn_index") or 0)
+            if fn_index in _EMBEDDED_ROOT_SOLVER_FN_INDICES:
+                spec = legacy_registry()["by_index"].get(fn_index)
+                return (spec or {}).get("name") or f"fn_{fn_index}"
+    return None
+
+
+def _sync_preview_budget_error(*, n_preview, coeff_transforms, coeff_program_chain=None,
+                               compiled_coeff_program=None):
     # One embedded solve per row; at N-preview=256 that is 65k solves,
     # past the 25s synchronous subprocess cap. Guard BOTH spellings —
     # the legacy coefficient transform and the coeff-program chip — for
     # every solver in the family, and NAME the one that tripped.
+    found = None
     for name in _EMBEDDED_ROOT_SOLVERS:
         if (_chain_has_transform(coeff_transforms, name)
                 or _program_chain_has_native(coeff_program_chain, name)):
-            if n_preview > ROOTS_CM_SYNC_MAX_N:
-                return (
-                    f"compute preview refused before coeffgen: {name} runs a "
-                    f"full root solve per row — too slow for the synchronous "
-                    f"HTTP preview at N-preview={n_preview}; use N-preview <= "
-                    f"{ROOTS_CM_SYNC_MAX_N}, remove {name}, or run the full "
-                    "Compute pipeline"
-                )
-            return None
+            found = name
+            break
+    if found is None:
+        found = _compiled_program_embedded_solver(compiled_coeff_program)
+    if found is not None and n_preview > ROOTS_CM_SYNC_MAX_N:
+        return (
+            f"compute preview refused before coeffgen: {found} runs a "
+            f"full root solve per row — too slow for the synchronous "
+            f"HTTP preview at N-preview={n_preview}; use N-preview <= "
+            f"{ROOTS_CM_SYNC_MAX_N}, remove {found}, or run the full "
+            "Compute pipeline"
+        )
     return None
 
 
@@ -611,6 +641,7 @@ def handler(event, context):
             n_preview=n_preview,
             coeff_transforms=coeff_transforms_display,
             coeff_program_chain=coeff_program_chain,
+            compiled_coeff_program=compiled.get("coeff_program"),
         )
         if budget_error:
             return _json_response(400, {"message": f"{budget_error} ({ctx})"})

@@ -62,6 +62,28 @@ class _S3Stub:
             self.objects.pop(entry["Key"], None)
 
 
+def _admit(mod, stub, params, gen, worker_frames):
+    """Write the run.json record begin would have produced, so
+    frames/stitch requests bind (admission enforcement)."""
+    sheet_id = params["sheet_id"]
+    run = {
+        "sheet_id": sheet_id,
+        "generation": gen,
+        "job_id": params.get("job_id", "sheet_job"),
+        "steps": sum(len(r) for r in worker_frames),
+        "workers": [
+            {"task_id": f"sheet_tiles_{sheet_id}_{gen}_w{i}", "frames": r}
+            for i, r in enumerate(worker_frames)
+        ],
+        "stitch_task_id": f"sheet_stitch_{sheet_id}_{gen}",
+        "degree_probe": 5,
+        "params_hash": mod._params_hash(params),
+        "status": "running",
+    }
+    stub.objects[f"sheets/{sheet_id}/run.json"] = json.dumps(run).encode()
+    return run
+
+
 def _run_params(sheet_id, steps=4, solver="jt64", extra=None):
     p = {
         "action": "run",
@@ -280,6 +302,7 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         try:
             p = _run_params("fan-sheet")
             p["generation"] = gen
+            _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
             mod.handle_frames({**p, "action": "frames",
                                "task_id": f"sheet_tiles_fan-sheet_{gen}_w0",
                                "frame_indices": [0, 1]})
@@ -312,6 +335,7 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         try:
             p = _run_params("gap-sheet")
             p["generation"] = gen
+            _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
             mod.handle_frames({**p, "action": "frames",
                                "task_id": f"sheet_tiles_gap-sheet_{gen}_w0",
                                "frame_indices": [0, 1]})   # frames 2,3 never rendered
@@ -331,7 +355,9 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
         self._patched(mod, stub)
         try:
-            resp = mod.handle_frames({**_run_params("cx-sheet"), "action": "frames",
+            p = _run_params("cx-sheet")
+            _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+            resp = mod.handle_frames({**p, "action": "frames",
                                       "generation": gen,
                                       "task_id": f"sheet_tiles_cx-sheet_{gen}_w0",
                                       "frame_indices": [0, 1]})
@@ -572,3 +598,109 @@ class TestPolySheetEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+class TestAdmissionEnforcement(unittest.TestCase):
+    """Review round-2 finding 4/7: frames/stitch must BIND to the
+    admitted run — generation, task allocation, payload hash — and an
+    older stitch must not overwrite a newer generation's sheet."""
+
+    def _patched(self, mod, s3stub):
+        mod.s3 = s3stub
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.report_status = lambda *a, **k: None
+
+    def test_unadmitted_and_mismatched_requests_are_refused(self):
+        import handler_poly_sheet as mod
+
+        gen = "g111111111111"
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            p = _run_params("bind-sheet")
+            p["generation"] = gen
+            # no run.json at all
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_frames({**p, "action": "frames",
+                                   "task_id": f"sheet_tiles_bind-sheet_{gen}_w0",
+                                   "frame_indices": [0, 1]})
+            self.assertIn("begin first", str(ctx.exception))
+
+            run = _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+            # wrong generation
+            with self.assertRaises(RuntimeError):
+                mod.handle_frames({**p, "action": "frames",
+                                   "generation": "g222222222222",
+                                   "task_id": f"sheet_tiles_bind-sheet_{gen}_w0",
+                                   "frame_indices": [0, 1]})
+            # unallocated task
+            with self.assertRaises(RuntimeError):
+                mod.handle_frames({**p, "action": "frames",
+                                   "task_id": f"sheet_tiles_bind-sheet_{gen}_w9",
+                                   "frame_indices": [0, 1]})
+            # frame range not matching the allocation
+            with self.assertRaises(RuntimeError):
+                mod.handle_frames({**p, "action": "frames",
+                                   "task_id": f"sheet_tiles_bind-sheet_{gen}_w0",
+                                   "frame_indices": [0, 1, 2]})
+            # tampered payload (different program) fails the hash
+            tampered = {**p, "coeff_program_source_text":
+                        p["coeff_program_source_text"].replace("$T", "3*$T")}
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_frames({**tampered, "action": "frames",
+                                   "task_id": f"sheet_tiles_bind-sheet_{gen}_w0",
+                                   "frame_indices": [0, 1]})
+            self.assertIn("does not match the admitted", str(ctx.exception))
+            self.assertTrue(run["params_hash"])
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+
+    def test_superseded_stitch_cannot_publish(self):
+        import handler_poly_sheet as mod
+
+        old_gen = "gaaaaaaaaaaaa"
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status)
+        self._patched(mod, stub)
+        try:
+            p = _run_params("race-sheet")
+            _admit(mod, stub, p, old_gen, [[0, 1], [2, 3]])
+            for w, frames in ((0, [0, 1]), (1, [2, 3])):
+                mod.handle_frames({**p, "action": "frames", "generation": old_gen,
+                                   "task_id": f"sheet_tiles_race-sheet_{old_gen}_w{w}",
+                                   "frame_indices": frames})
+            # a NEWER run takes over before the old stitch fires
+            new_gen = "gbbbbbbbbbbbb"
+            _admit(mod, stub, p, new_gen, [[0, 1], [2, 3]])
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_stitch({**p, "action": "stitch", "generation": old_gen,
+                                   "task_id": f"sheet_stitch_race-sheet_{old_gen}"})
+            self.assertIn("superseded", str(ctx.exception))
+            self.assertNotIn("sheets/race-sheet/sheet.png", stub.objects)
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
+
+    def test_unknown_action_is_rejected(self):
+        import handler_poly_sheet as mod
+
+        with self.assertRaises(RuntimeError):
+            mod.handler({"body": json.dumps({"sheet_id": "x"})}, None)
+        with self.assertRaises(RuntimeError):
+            mod.handler({"body": json.dumps({"action": "evil", "sheet_id": "x"})}, None)
+
+    def test_cancel_fails_closed_on_persistent_s3_errors(self):
+        import handler_poly_sheet as mod
+
+        class _Angry:
+            def head_object(self, **kw):
+                from botocore.exceptions import ClientError
+                raise ClientError({"Error": {"Code": "SlowDown"}}, "HeadObject")
+
+        orig = mod.s3
+        mod.s3 = _Angry()
+        try:
+            self.assertTrue(mod._cancel_requested("any-sheet", "g0123456789ab"))
+        finally:
+            mod.s3 = orig

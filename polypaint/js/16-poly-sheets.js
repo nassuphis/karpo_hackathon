@@ -180,21 +180,32 @@ async function runPolySheet() {
             id: 'sheet:' + sheetId, kind: 'sheet',
             label: `Sheet ${steps}f N=${frame.n} · ${funcName}`,
             jobId, tab: 'sheets', state: 'running', startedAt: Date.now(),
+            generation: run.generation,
             detail: `accepted (${run.workers.length} workers)`,
         });
         if (btn) btn.textContent = 'Rendering...';
         await _sheetDriveRun(desc, statusEl, { dispatchWorkers: true });
+        _sheetRunClear();                       // terminal success
         if (btn) { btn.textContent = '✓ Done'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
     } catch (e) {
+        // only a SERVER-reported terminal outcome retires the descriptor;
+        // a transient drive failure (network, poll timeout) must keep it
+        // so a reload can resume the run (the review's crash window)
+        if (e && e.sheetTerminal) _sheetRunClear();
         _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'error', detail: e.message });
         if (statusEl) { statusEl.textContent = 'Sheet failed: ' + e.message; statusEl.className = 'status error'; }
         if (btn) { btn.textContent = orig; btn.disabled = false; }
         return;
     } finally {
         _activeSheetRun = null;
-        _sheetRunClear();
     }
     void loadSheetsTab();
+}
+
+function _sheetTerminalError(message) {
+    const err = new Error(message);
+    err.sheetTerminal = true;
+    return err;
 }
 
 async function _sheetDispatchWorkers(desc) {
@@ -224,16 +235,20 @@ async function _sheetDriveRun(desc, statusEl, opts) {
     await _pollSheetWorkers(sheetId, jobId, steps, desc.workers.length, statusEl, desc.generation);
 
     const stitchState = await _sheetTaskPhase(jobId, desc.stitchTask);
-    if (stitchState !== 'done') {
-        if (stitchState === 'accepted' || stitchState === null || stitchState === 'error_retryable') {
-            const stitch = await lambdaPost('dispatch', {
-                target: 'poly_sheet',
-                jobs: [{ ...desc.payload, action: 'stitch', task_id: desc.stitchTask,
-                         started_at_s: desc.startedAtS }],
-                expected_keys: [],
-            });
-            if ((stitch.fired || 0) !== 1) throw new Error('poly-sheet stitch dispatch failed');
-        }
+    if (stitchState === null) {
+        // UNKNOWN (poll failure) must not double-dispatch the stitch
+        // (review round-2 finding 7): fail transiently — the descriptor
+        // survives and resume retries with a real answer
+        throw new Error('could not determine stitch state; will retry on resume');
+    }
+    if (stitchState !== 'done' && stitchState === 'accepted') {
+        const stitch = await lambdaPost('dispatch', {
+            target: 'poly_sheet',
+            jobs: [{ ...desc.payload, action: 'stitch', task_id: desc.stitchTask,
+                     started_at_s: desc.startedAtS }],
+            expected_keys: [],
+        });
+        if ((stitch.fired || 0) !== 1) throw new Error('poly-sheet stitch dispatch failed');
     }
     const doneRd = await _pollSheetTask(sheetId, jobId, desc.stitchTask, statusEl, 'stitching', 'sheet:' + sheetId);
     _jobsRailUpsert({ id: 'sheet:' + sheetId, state: 'done', detail: `${doneRd.frames} frames` });
@@ -243,16 +258,18 @@ async function _sheetDriveRun(desc, statusEl, opts) {
 }
 
 async function _sheetTaskPhase(jobId, taskId) {
-    try {
-        const check = await lambdaPost('storage', {
-            job_id: jobId, task_prefix: taskId, expected: 1,
-        }, '/check-status');
-        if ((check.errors || 0) > 0) return 'error';
-        const rd = check.results?.[0];
-        return rd ? (rd.phase || 'accepted') : null;
-    } catch (e) {
-        return null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt) await new Promise(r => setTimeout(r, 1000 * attempt));
+        try {
+            const check = await lambdaPost('storage', {
+                job_id: jobId, task_prefix: taskId, expected: 1,
+            }, '/check-status');
+            if ((check.errors || 0) > 0) return 'error';
+            const rd = check.results?.[0];
+            return rd ? (rd.phase || 'accepted') : 'accepted';
+        } catch (e) { /* transient; retry */ }
     }
+    return null;   // UNKNOWN after retries — caller must not guess
 }
 
 async function resumeSheetRun() {
@@ -268,17 +285,22 @@ async function resumeSheetRun() {
         label: `Sheet ${desc.steps}f N=${desc.n} · ${desc.funcName}`,
         jobId: desc.jobId, tab: 'sheets', state: 'running',
         startedAt: (desc.startedAtS || 0) * 1000 || Date.now(),
+        generation: desc.generation,
         detail: 'resumed after reload',
     });
     if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId}: resuming...`; statusEl.className = 'status'; }
     try {
-        await _sheetDriveRun(desc, statusEl, { dispatchWorkers: false });
+        // workers may never have been dispatched (crash between begin and
+        // dispatch): re-dispatch is idempotent per generation, so resume
+        // always dispatches — accepted rows tolerate the overlap
+        await _sheetDriveRun(desc, statusEl, { dispatchWorkers: true });
+        _sheetRunClear();
     } catch (e) {
+        if (e && e.sheetTerminal) _sheetRunClear();
         _jobsRailUpsert({ id: 'sheet:' + desc.sheetId, state: 'error', detail: e.message });
         if (statusEl) { statusEl.textContent = `Sheet ${desc.sheetId} resume failed: ${e.message}`; statusEl.className = 'status error'; }
     } finally {
         _activeSheetRun = null;
-        _sheetRunClear();
     }
     void loadSheetsTab();
 }
@@ -315,7 +337,7 @@ async function _pollSheetWorkers(sheetId, jobId, steps, workers, statusEl, gener
         }
         if (check.errors > 0) {
             const detail = check.error_details?.[0] || {};
-            throw new Error(detail.error_msg || 'sheet worker failed');
+            throw _sheetTerminalError(detail.error_msg || 'sheet worker failed');
         }
         const rows = check.results || [];
         const doneFrames = rows.reduce((a, r) => a + (Number(r.frame) || 0), 0);
@@ -359,7 +381,7 @@ async function _pollSheetTask(sheetId, jobId, taskId, statusEl, phaseLabel, rail
         }
         if (check.errors > 0) {
             const detail = check.error_details?.[0] || {};
-            throw new Error(detail.error_msg || `sheet ${phaseLabel} failed`);
+            throw _sheetTerminalError(detail.error_msg || `sheet ${phaseLabel} failed`);
         }
         const rd = check.results?.[0] || {};
         const label = rd.phase_label || rd.phase || phaseLabel;
@@ -818,13 +840,21 @@ function _sheetPopulateFrame() {
     // the clicked frame's exact sources: every token replaced by the
     // literal value that rendered it (same spelling the server used)
     const pipeline = { ...m.pipeline };
-    for (const field of ['param_program_source_text', 'coeff_program_source_text']) {
-        let text = pipeline[field];
-        if (typeof text !== 'string' || !text) continue;
-        scans.forEach((sc, i) => {
-            if (values[i] != null) text = text.split(sc.token).join(_sheetValueLiteral(values[i]));
-        });
-        pipeline[field] = text;
+    // ONE lexical longest-match pass, mirroring the backend: split/join
+    // per token let $T corrupt $T2 (review round-2 finding)
+    const tokenMap = {};
+    scans.forEach((sc, i) => {
+        if (values[i] != null) tokenMap[sc.token] = _sheetValueLiteral(values[i]);
+    });
+    const tokens = Object.keys(tokenMap).sort((a, b) => b.length - a.length);
+    if (tokens.length) {
+        const esc = tokens.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const pattern = new RegExp('(?:' + esc.join('|') + ')(?![A-Za-z0-9_])', 'g');
+        for (const field of ['param_program_source_text', 'coeff_program_source_text']) {
+            const text = pipeline[field];
+            if (typeof text !== 'string' || !text) continue;
+            pipeline[field] = text.replace(pattern, (mtok) => tokenMap[mtok]);
+        }
     }
 
     // preview controls, as in populateSelectedSheet

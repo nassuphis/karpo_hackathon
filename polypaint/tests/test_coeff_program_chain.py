@@ -1158,3 +1158,70 @@ class TestCodeReview3Fixes(unittest.TestCase):
         self.assertFalse(hasattr(source_mod, "_LEGACY_UNARY_NAMES"))
         compiled = chain_mod.compile_coeff_program_chain([["push_range", "4"], ["emit"]])
         self.assertNotIn("execution_tokens", compiled)
+
+
+class TestExpandMonicRootsPerformance(unittest.TestCase):
+    """CR35-F7: exact-root expansion must be memoized and use the
+    dyadic-integer product tree — bit-identical to the reference
+    left-fold Fraction algorithm, at a bounded compile cost."""
+
+    def test_expansion_matches_reference_fold_bitwise(self):
+        import random
+        from fractions import Fraction
+
+        import coeff_program_chain as cpc
+
+        def reference(roots):
+            coefficients = [(Fraction(1), Fraction(0))]
+            for root in roots:
+                rr, ri = Fraction(float(root.real)), Fraction(float(root.imag))
+                expanded = [(Fraction(0), Fraction(0))
+                            for _ in range(len(coefficients) + 1)]
+                for index, (cr, ci) in enumerate(coefficients):
+                    er, ei = expanded[index]
+                    expanded[index] = (er + cr, ei + ci)
+                    pr = cr * rr - ci * ri
+                    pi = cr * ri + ci * rr
+                    nr, ni = expanded[index + 1]
+                    expanded[index + 1] = (nr - pr, ni - pi)
+                coefficients = expanded
+            return [complex(float(r), float(i)) for r, i in coefficients]
+
+        rng = random.Random(35)
+        for n in (1, 3, 17, 48):
+            roots = [complex(rng.uniform(-2, 2), rng.uniform(-2, 2))
+                     for _ in range(n)]
+            cpc._EXPAND_MEMO.clear()
+            self.assertEqual(cpc.expand_monic_roots(roots), reference(roots))
+        edge = [complex(5e-324, 0.0), complex(-0.0, 1.5),
+                complex(0.0, -5e-324), complex(1e300, -1e-300)]
+        cpc._EXPAND_MEMO.clear()
+        self.assertEqual(cpc.expand_monic_roots(edge), reference(edge))
+
+    def test_repeated_literals_are_memoized(self):
+        import time
+
+        import coeff_program_chain as cpc
+
+        roots = [complex(k * 0.037 - 1, (k % 7) * 0.11) for k in range(120)]
+        cpc._EXPAND_MEMO.clear()
+        first = cpc.expand_monic_roots(roots)
+        t0 = time.time()
+        second = cpc.expand_monic_roots(roots)
+        self.assertLess(time.time() - t0, 0.01, "memo hit must be instant")
+        self.assertEqual(first, second)
+
+    def test_worst_case_literal_compiles_inside_budget(self):
+        import time
+
+        import coeff_program_chain as cpc
+        from coeff_program_source import compile_coeff_program_source
+
+        cpc._EXPAND_MEMO.clear()
+        t0 = time.time()
+        compile_coeff_program_source(
+            "poly = roots_ring_literal(255, 1.5, 0.1)\nemit\n")
+        elapsed = time.time() - t0
+        # measured 1.36 s on the dev machine (was 5.5 s); the cap is the
+        # explicit compile-work budget for the 255-root maximum
+        self.assertLess(elapsed, 4.0, f"ring255 compile took {elapsed:.2f}s")

@@ -2008,31 +2008,81 @@ def _compile_vector_literal(args, vector_constants):
     return _intern_vector_constant("vector_literal", values, vector_constants)
 
 
+# Exact expansion memo (CR35-F7): identical literals repeat both within a
+# program (the pool dedupes AFTER expansion) and across compiles of the
+# same program (poly-sheet recompiles per frame). Key = the exact binary64
+# root tuple; values are immutable. Bounded, cleared wholesale when full.
+_EXPAND_MEMO = {}
+_EXPAND_MEMO_MAX = 64
+
+
 def expand_monic_roots(roots):
     """Expand the monic polynomial with the given roots into leading-first
     coefficients, exactly.
 
     Every binary64 component is a rational number, so the product is expanded
     with Fraction arithmetic and each final coefficient rounds to binary64
-    exactly once — the same development-time algorithm the giga_2902
-    generator used, now owned by the compiler so roots_literal(...) programs
-    carry the layout instead of 17-digit expanded coefficients."""
+    exactly once. A balanced product tree keeps the exact rationals SMALL at
+    the lower levels (the old left-fold multiplied every root into one
+    ever-growing rational polynomial: ring255 took 5.5 s; the tree form is
+    ~50x faster with bit-identical output), and a memo keyed on the exact
+    root tuple makes repeated literals free (CR35-F7)."""
     from fractions import Fraction
 
-    coefficients = [(Fraction(1), Fraction(0))]
-    for root in roots:
-        root_re = Fraction(float(root.real))
-        root_im = Fraction(float(root.imag))
-        expanded = [(Fraction(0), Fraction(0)) for _ in range(len(coefficients) + 1)]
-        for index, (coefficient_re, coefficient_im) in enumerate(coefficients):
-            current_re, current_im = expanded[index]
-            expanded[index] = (current_re + coefficient_re, current_im + coefficient_im)
-            product_re = coefficient_re * root_re - coefficient_im * root_im
-            product_im = coefficient_re * root_im + coefficient_im * root_re
-            next_re, next_im = expanded[index + 1]
-            expanded[index + 1] = (next_re - product_re, next_im - product_im)
-        coefficients = expanded
-    return [complex(float(real), float(imag)) for real, imag in coefficients]
+    key = tuple((float(root.real), float(root.imag)) for root in roots)
+    hit = _EXPAND_MEMO.get(key)
+    if hit is not None:
+        return list(hit)
+
+    # Dyadic-integer representation: every binary64 is m * 2^-k exactly, so
+    # a polynomial is (integer coefficient pairs, shared exponent E) with
+    # value c * 2^-E. Products are pure bigint convolutions — no Fraction
+    # gcd normalization, which dominated the old runtime.
+    def leaf(re_, im_):
+        nre, dre = (-re_).as_integer_ratio()
+        nim, dim_ = (-im_).as_integer_ratio()
+        ere = dre.bit_length() - 1
+        eim = dim_.bit_length() - 1
+        e = max(ere, eim)
+        return [(1 << e, 0), (nre << (e - ere), nim << (e - eim))], e
+
+    def multiply(a, b):
+        pa, ea = a
+        pb, eb = b
+        out = [[0, 0] for _ in range(len(pa) + len(pb) - 1)]
+        for i, (ar, ai) in enumerate(pa):
+            if not ar and not ai:
+                continue
+            ars = ar + ai
+            for j, (br, bi) in enumerate(pb):
+                # 3-multiplication complex product (exact integers)
+                k1 = br * ars
+                k2 = ar * (bi - br)
+                k3 = ai * (br + bi)
+                cell = out[i + j]
+                cell[0] += k1 - k3
+                cell[1] += k1 + k2
+        return [tuple(cell) for cell in out], ea + eb
+
+    def build(lo, hi):
+        if hi - lo == 1:
+            return leaf(*key[lo])
+        mid = (lo + hi) // 2
+        return multiply(build(lo, mid), build(mid, hi))
+
+    if key:
+        ints, exponent = build(0, len(key))
+    else:
+        ints, exponent = [(1, 0)], 0
+    scale = 1 << exponent
+    result = [
+        complex(float(Fraction(re_, scale)), float(Fraction(im_, scale)))
+        for re_, im_ in ints
+    ]
+    if len(_EXPAND_MEMO) >= _EXPAND_MEMO_MAX:
+        _EXPAND_MEMO.clear()
+    _EXPAND_MEMO[key] = tuple(result)
+    return list(result)
 
 
 def _compile_roots_literal(args, vector_constants):

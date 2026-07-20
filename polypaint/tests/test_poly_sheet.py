@@ -128,6 +128,16 @@ class _SQSStub:
         return {"MessageId": str(len(self.messages))}
 
 
+class _DDBReadStub:
+    def __init__(self, items=None):
+        self.items = items or {}
+
+    def get_item(self, TableName, Key, ConsistentRead=False):
+        identity = (Key["job_id"]["S"], Key["task_id"]["S"])
+        item = self.items.get(identity)
+        return {"Item": item} if item is not None else {}
+
+
 def _admit(mod, stub, params, gen, worker_frames):
     """Write the run.json record begin would have produced, so
     frames/stitch requests bind (admission enforcement)."""
@@ -530,6 +540,9 @@ class TestPolySheetEndToEnd(_LeaseIsoTestCase):
         self.assertTrue(run["generation"].startswith("g"))
         self.assertEqual(run["degree_probe"], 5)
         self.assertEqual(run["steps"], 4)
+        self.assertAlmostEqual(
+            run["resume_deadline_s"] - run["created_at_s"],
+            mod.SHEET_RUN_RESUME_WINDOW_S, delta=0.01)
         self.assertEqual(sum(len(w["frames"]) for w in run["workers"]), 4)
         # a status row per worker + the stitch row, all pre-written
         self.assertEqual(len(rows), len(run["workers"]) + 1)
@@ -2410,7 +2423,7 @@ class TestRound16SupersededAttemptCleanup(_LeaseIsoTestCase):
 
 
 class TestRound17DurableGenerationGC(_LeaseIsoTestCase):
-    def _patch(self, stub, queue=None):
+    def _patch(self, stub, queue=None, ddb=None):
         import handler_poly_sheet as mod
         real_s3 = mod.s3
         real_sqs = mod._sqs
@@ -2421,6 +2434,10 @@ class TestRound17DurableGenerationGC(_LeaseIsoTestCase):
         mod.s3 = stub
         mod._sqs = queue
         mod.POLY_SHEET_GC_QUEUE_URL = "https://sqs.test/poly-sheet-gc" if queue else ""
+        if ddb is not None:
+            real_get_ddb = mod._get_ddb
+            self.addCleanup(lambda: setattr(mod, "_get_ddb", real_get_ddb))
+            mod._get_ddb = lambda: ddb
 
     def _message(self, mod, sheet, generation, steps=1, not_before_s=None):
         return {
@@ -2471,10 +2488,95 @@ class TestRound17DurableGenerationGC(_LeaseIsoTestCase):
         }).encode())
         result = mod._handle_generation_gc_message(self._message(mod, "gcr", gen))
         self.assertEqual(result["state"], "deferred")
+        self.assertEqual(result["reason"], "running-within-resume-window")
         self.assertIn(tile, stub.objects)
         self.assertEqual(len(queue.messages), 1)
         self.assertLessEqual(queue.messages[0]["DelaySeconds"],
-                             mod.SHEET_GC_RUNNING_RECHECK_S + 1)
+                             mod.SHEET_GC_MAX_DELAY_S + 1)
+
+    def test_expired_running_generation_is_abandoned_then_waits_for_quiescence(self):
+        import handler_poly_sheet as mod
+        gen = "g343434343434"
+        stub, queue, ddb = _S3Stub(), _SQSStub(), _DDBReadStub()
+        self._patch(stub, queue, ddb)
+        tile = mod._tile_key("gcx", gen, 0)
+        stub.put_object(Bucket="b", Key=tile, Body=b"tile")
+        stub.put_object(Bucket="b", Key="sheets/gcx/run.json", Body=json.dumps({
+            "generation": gen, "status": "running", "steps": 1,
+            "job_id": "sheet_job",
+            "workers": [{"task_id": "sheet_tiles_gcx_w0", "frames": [0]}],
+            "stitch_task_id": "sheet_stitch_gcx",
+            "created_at_s": time.time() - mod.SHEET_RUN_RESUME_WINDOW_S - 1,
+            # A corrupt/old oversized declaration cannot restore an
+            # unbounded running-message chain; server policy caps it.
+            "resume_deadline_s": time.time() + 365 * 24 * 60 * 60,
+        }).encode())
+
+        result = mod._handle_generation_gc_message(self._message(mod, "gcx", gen))
+
+        run = json.loads(stub.objects["sheets/gcx/run.json"])
+        self.assertEqual(run["status"], "abandoned")
+        self.assertIn("finished_at_s", run)
+        self.assertEqual(result["state"], "deferred")
+        self.assertEqual(result["reason"], "terminal-quiescence")
+        self.assertIn(tile, stub.objects,
+                      "expiry CAS must not reap while old writers can live")
+        self.assertEqual(len(queue.messages), 1)
+        queued = json.loads(queue.messages[0]["MessageBody"])
+        self.assertGreaterEqual(
+            queued["not_before_s"], run["finished_at_s"] + mod.SHEET_GC_QUIESCENCE_S)
+
+    def test_expired_running_generation_with_live_lease_is_not_abandoned(self):
+        import handler_poly_sheet as mod
+        gen = "g373737373737"
+        now = time.time()
+        worker_task = "sheet_tiles_gclive_w0"
+        ddb = _DDBReadStub({
+            ("sheet_job", worker_task): {
+                "task_status": {"S": "running"},
+                "lease_expiry_ms": {"N": str(int((now + 300) * 1000))},
+            },
+        })
+        stub, queue = _S3Stub(), _SQSStub()
+        self._patch(stub, queue, ddb)
+        stub.put_object(Bucket="b", Key="sheets/gclive/run.json", Body=json.dumps({
+            "generation": gen, "status": "running", "steps": 1,
+            "job_id": "sheet_job",
+            "workers": [{"task_id": worker_task, "frames": [0]}],
+            "stitch_task_id": "sheet_stitch_gclive",
+            "created_at_s": now - mod.SHEET_RUN_RESUME_WINDOW_S - 1,
+        }).encode())
+
+        result = mod._handle_generation_gc_message(
+            self._message(mod, "gclive", gen))
+
+        run = json.loads(stub.objects["sheets/gclive/run.json"])
+        self.assertEqual(run["status"], "running")
+        self.assertEqual(result["reason"], "running-live-task-lease")
+        self.assertEqual(len(queue.messages), 1)
+        self.assertGreater(queue.messages[0]["DelaySeconds"], 0)
+
+    def test_terminal_enqueue_retries_then_relies_on_admission_message(self):
+        import handler_poly_sheet as mod
+
+        class FailingQueue:
+            def __init__(self):
+                self.calls = 0
+
+            def send_message(self, **kwargs):
+                self.calls += 1
+                raise RuntimeError("SQS unavailable")
+
+        gen = "g353535353535"
+        stub, queue = _S3Stub(), FailingQueue()
+        self._patch(stub, queue)
+        with self.assertLogs(mod.logger, level="WARNING"):
+            scheduled = mod._schedule_terminal_gc_from_run("gcf", gen, {
+                "generation": gen, "status": "failed", "steps": 1,
+                "finished_at_s": time.time(),
+            })
+        self.assertFalse(scheduled)
+        self.assertEqual(queue.calls, mod.SHEET_GC_SEND_ATTEMPTS)
 
     def test_superseded_gc_preserves_only_the_carried_winner(self):
         import handler_poly_sheet as mod
@@ -2556,6 +2658,14 @@ class TestRound17DurableGenerationGC(_LeaseIsoTestCase):
         with self.assertRaises(RuntimeError):
             mod.handler({"body": json.dumps({"action": "gc"})}, None)
 
+    def test_records_inside_public_body_cannot_spoof_sqs_dispatch(self):
+        import handler_poly_sheet as mod
+        with self.assertRaises(RuntimeError):
+            mod.handler({"body": json.dumps({
+                "action": "gc",
+                "Records": [{"eventSource": "aws:sqs", "body": "{}"}],
+            })}, None)
+
 
 @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
 class TestRound17FenceAndPartialWrites(_LeaseIsoTestCase):
@@ -2615,7 +2725,7 @@ class TestRound17FenceAndPartialWrites(_LeaseIsoTestCase):
             def get_object(self, Bucket, Key):
                 if Key.endswith("/run.json"):
                     self.run_reads += 1
-                    if self.run_reads in (2, 3, 4):
+                    if self.run_reads >= 2:
                         raise RuntimeError("run read unavailable")
                 return super().get_object(Bucket, Key)
 
@@ -2630,8 +2740,47 @@ class TestRound17FenceAndPartialWrites(_LeaseIsoTestCase):
                 "frame_indices": [0, 1],
             })
         run = json.loads(stub.objects["sheets/unknown-read/run.json"])
-        self.assertEqual(run["status"], "failed")
+        self.assertEqual(run["status"], "running",
+                         "run-state uncertainty must remain resumable")
         self.assertFalse([key for key in stub.objects if "/tiles/" in key])
+
+    def test_unconfirmed_stitch_fence_leaves_run_resumable(self):
+        import handler_poly_sheet as mod
+
+        class UnconfirmedFenceS3(_S3Stub):
+            def __init__(self):
+                super().__init__(); self.run_reads = 0
+
+            def get_object(self, Bucket, Key):
+                if Key.endswith("/run.json"):
+                    self.run_reads += 1
+                    if self.run_reads >= 2:
+                        raise RuntimeError("run read unavailable")
+                return super().get_object(Bucket, Key)
+
+        gen = "g363636363636"
+        stub = UnconfirmedFenceS3(); self._patched(mod, stub)
+        params = _run_params("unknown-stitch")
+        _admit(mod, stub, params, gen, [[0, 1], [2, 3]])
+        for k in range(4):
+            key = mod._tile_key("unknown-stitch", gen, k)
+            stub.put_object(Bucket="b", Key=key, Body=bytes(32 * 32))
+            stub.put_object(Bucket="b", Key=key.replace(".bin", ".json"),
+                            Body=json.dumps({"frame": k, "value": k,
+                                             "values": [k], "degree": 5,
+                                             "bounds": [-1, 1, -1, 1]}).encode())
+        with self.assertRaisesRegex(RuntimeError, "could not be confirmed"):
+            mod.handle_stitch({
+                **params, "action": "stitch", "generation": gen,
+                "task_id": f"sheet_stitch_unknown-stitch_{gen}",
+            })
+        run = json.loads(stub.objects["sheets/unknown-stitch/run.json"])
+        self.assertEqual(run["status"], "running")
+        attempt_root = f"sheets/unknown-stitch/{gen}/"
+        self.assertFalse([
+            key for key in stub.objects
+            if key.startswith(attempt_root) and key.endswith(("sheet.png", "sheet.json"))
+        ])
 
     def test_partial_worker_pair_cleans_only_the_created_key(self):
         import handler_poly_sheet as mod

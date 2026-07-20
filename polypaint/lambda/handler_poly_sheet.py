@@ -52,7 +52,9 @@ from cp437_font import FONT_ROWS
 from handler_compute_preview import _compile_compute_inputs
 from shared import (
     BUCKET,
+    JOBS_TABLE,
     REF_SIZE,
+    _get_ddb,
     compute_viewport_from_bin,
     encode_png_gray,
     is_missing_s3_error,
@@ -105,6 +107,14 @@ RUN_INACTIVE = "inactive"
 RUN_UNKNOWN = "unknown"
 RUN_TERMINAL_STATUSES = frozenset(("done", "failed", "cancelled", "abandoned"))
 
+# A browser may disappear after admission and later redispatch unfinished
+# workers, but that recovery right cannot remain open forever. The durable
+# run record carries this fixed horizon; delayed GC serializes expiry through
+# the same terminal CAS used by cancel/publish before reaping anything.
+SHEET_RUN_RESUME_WINDOW_S = 24 * 60 * 60
+RUN_STATE_READ_ATTEMPTS = 5
+RUN_STATE_RETRY_BASE_S = 0.05
+
 # SQS is the durable quiescence boundary for generation cleanup. Lambda's
 # longest invocation is 900 seconds; cleanup waits longer than that after a
 # terminal/superseding run.json write so no pre-transition writer can still be
@@ -113,17 +123,36 @@ RUN_TERMINAL_STATUSES = frozenset(("done", "failed", "cancelled", "abandoned"))
 POLY_SHEET_GC_QUEUE_URL = os.environ.get("POLY_SHEET_GC_QUEUE_URL", "")
 SHEET_GC_QUIESCENCE_S = 930
 SHEET_GC_MAX_DELAY_S = 900
-SHEET_GC_RUNNING_RECHECK_S = 120
+SHEET_GC_SEND_ATTEMPTS = 3
+SHEET_GC_SEND_RETRY_BASE_S = 0.1
 SHEET_GC_MESSAGE_TYPE = "poly-sheet-generation-gc-v1"
 _sqs = None
 
 logger = logging.getLogger(__name__)
 
 
+class _RunStateUnconfirmed(RuntimeError):
+    """A write fence could not read durable run state after bounded retries.
+
+    This is recoverable infrastructure uncertainty, not evidence that the
+    program or run failed. The invocation must relinquish its lease without
+    transitioning run.json; the normal lease-expiry/resume path retries it.
+    """
+
+
 def handler(event, context):
     if _is_sqs_gc_event(event):
         for record in event["Records"]:
-            _handle_generation_gc_message(json.loads(record["body"]))
+            try:
+                _handle_generation_gc_message(json.loads(record["body"]))
+            except Exception:
+                logger.exception(
+                    "poly-sheet GC message failed message_id=%s receive_count=%s",
+                    record.get("messageId", "?"),
+                    (record.get("attributes") or {}).get(
+                        "ApproximateReceiveCount", "?"),
+                )
+                raise
         return {"processed": len(event["Records"])}
 
     params = parse_body(event)
@@ -797,12 +826,28 @@ def _send_generation_gc(message):
     _, _, _, not_before_s = _validated_gc_identity(message)
     delay = max(0, min(SHEET_GC_MAX_DELAY_S,
                        int(math.ceil(not_before_s - time.time()))))
-    _get_sqs().send_message(
-        QueueUrl=POLY_SHEET_GC_QUEUE_URL,
-        DelaySeconds=delay,
-        MessageBody=json.dumps(message, separators=(",", ":"), sort_keys=True),
-    )
-    return True
+    body = json.dumps(message, separators=(",", ":"), sort_keys=True)
+    for attempt in range(SHEET_GC_SEND_ATTEMPTS):
+        try:
+            _get_sqs().send_message(
+                QueueUrl=POLY_SHEET_GC_QUEUE_URL,
+                DelaySeconds=delay,
+                MessageBody=body,
+            )
+            return True
+        except Exception:
+            if attempt + 1 >= SHEET_GC_SEND_ATTEMPTS:
+                logger.exception(
+                    "poly-sheet GC enqueue failed sheet=%s generation=%s attempts=%s",
+                    message.get("sheet_id"), message.get("generation"),
+                    SHEET_GC_SEND_ATTEMPTS,
+                )
+                raise
+            logger.warning(
+                "poly-sheet GC enqueue retry sheet=%s generation=%s attempt=%s",
+                message.get("sheet_id"), message.get("generation"), attempt + 1,
+            )
+            time.sleep(SHEET_GC_SEND_RETRY_BASE_S * (2 ** attempt))
 
 
 def _schedule_generation_gc(sheet_id, generation, steps, *, not_before_s=None):
@@ -820,27 +865,68 @@ def _schedule_generation_gc(sheet_id, generation, steps, *, not_before_s=None):
 
 def _schedule_terminal_gc_from_run(sheet_id, generation, run):
     if not isinstance(run, dict) or run.get("generation") != generation:
+        logger.warning(
+            "poly-sheet terminal GC not scheduled: invalid run identity sheet=%s generation=%s",
+            sheet_id, generation,
+        )
         return False
     try:
         steps = int(run.get("steps"))
     except (TypeError, ValueError):
+        logger.warning(
+            "poly-sheet terminal GC not scheduled: invalid steps sheet=%s generation=%s",
+            sheet_id, generation,
+        )
+        return False
+    if not 1 <= steps <= MAX_STEPS:
+        logger.warning(
+            "poly-sheet terminal GC not scheduled: steps out of range sheet=%s generation=%s steps=%r",
+            sheet_id, generation, run.get("steps"),
+        )
         return False
     try:
         finished_at_s = float(run.get("finished_at_s"))
     except (TypeError, ValueError):
+        logger.warning(
+            "poly-sheet terminal GC run lacks finished_at_s; using current time sheet=%s generation=%s",
+            sheet_id, generation,
+        )
         finished_at_s = time.time()
     if not math.isfinite(finished_at_s):
+        logger.warning(
+            "poly-sheet terminal GC run has non-finite finished_at_s; using current time sheet=%s generation=%s",
+            sheet_id, generation,
+        )
         finished_at_s = time.time()
-    return _schedule_generation_gc(
-        sheet_id, generation, steps,
-        not_before_s=finished_at_s + SHEET_GC_QUIESCENCE_S)
+    try:
+        return _schedule_generation_gc(
+            sheet_id, generation, steps,
+            not_before_s=finished_at_s + SHEET_GC_QUIESCENCE_S)
+    except Exception:
+        # Every admitted run already has a durable message queued before its
+        # run.json CAS. This terminal message accelerates cleanup; losing it
+        # must not undo an otherwise-successful terminal transition.
+        logger.warning(
+            "poly-sheet terminal GC enqueue exhausted retries; admission message remains sheet=%s generation=%s",
+            sheet_id, generation,
+        )
+        return False
 
 
-def _gc_requeue(message, not_before_s):
+def _gc_requeue(message, not_before_s, *, reason):
     message = dict(message)
     message["not_before_s"] = float(not_before_s)
     _send_generation_gc(message)
-    return {"state": "deferred", "not_before_s": float(not_before_s)}
+    log = logger.warning if reason in (
+        "running-within-resume-window", "running-live-task-lease",
+        "terminal-transition-raced") else logger.info
+    log(
+        "poly-sheet GC deferred sheet=%s generation=%s reason=%s not_before_s=%.3f",
+        message.get("sheet_id"), message.get("generation"), reason,
+        float(not_before_s),
+    )
+    return {"state": "deferred", "reason": reason,
+            "not_before_s": float(not_before_s)}
 
 
 def _object_modified_s(response):
@@ -855,6 +941,93 @@ def _object_modified_s(response):
     return None
 
 
+def _run_resume_deadline_s(run, response, now_s):
+    """Return the bounded recovery deadline for a matching running record.
+
+    New records persist the deadline explicitly. Older records derive it
+    from created_at_s (or S3 LastModified), but even an oversized persisted
+    value is capped by the server policy so malformed state cannot restore
+    the old infinite-requeue behavior.
+    """
+    try:
+        created_at_s = float(run.get("created_at_s"))
+    except (TypeError, ValueError):
+        created_at_s = _object_modified_s(response)
+    if created_at_s is None or not math.isfinite(created_at_s):
+        raise RuntimeError(
+            "poly-sheet GC cannot establish the running generation start time")
+    if created_at_s > float(now_s) + 300:
+        raise RuntimeError(
+            "poly-sheet GC found a future-dated running generation")
+
+    policy_deadline_s = created_at_s + SHEET_RUN_RESUME_WINDOW_S
+    if "resume_deadline_s" not in run:
+        return policy_deadline_s
+    try:
+        declared_deadline_s = float(run.get("resume_deadline_s"))
+    except (TypeError, ValueError):
+        raise RuntimeError("poly-sheet GC found invalid resume_deadline_s")
+    if not math.isfinite(declared_deadline_s):
+        raise RuntimeError("poly-sheet GC found invalid resume_deadline_s")
+    # The persisted field is descriptive, not authority: corrupt data may
+    # neither shorten the recovery right nor extend it beyond server policy.
+    return policy_deadline_s
+
+
+def _run_live_lease_deadline_s(run, now_s):
+    """Return the latest live DDB task lease, or None when all are expired.
+
+    Age alone is not authority to abandon a run: a user can legitimately
+    resume just before the recovery deadline. Strongly-consistent reads of
+    every admitted worker and stitch row prove that no invocation still owns
+    a live lease before GC attempts the terminal CAS. Any malformed row or
+    DDB error raises, leaving the run untouched for SQS retry/DLQ handling.
+    """
+    job_id = str(run.get("job_id") or "").strip()
+    workers = run.get("workers")
+    stitch_task_id = str(run.get("stitch_task_id") or "").strip()
+    if (not job_id or not isinstance(workers, list) or not workers
+            or len(workers) > SHEET_WORKERS or not stitch_task_id):
+        raise RuntimeError(
+            "poly-sheet GC cannot validate task leases from the run record")
+    task_ids = []
+    for worker in workers:
+        task_id = (str(worker.get("task_id") or "").strip()
+                   if isinstance(worker, dict) else "")
+        if not task_id:
+            raise RuntimeError(
+                "poly-sheet GC found an invalid worker task identity")
+        task_ids.append(task_id)
+    if len(set(task_ids)) != len(task_ids) or stitch_task_id in task_ids:
+        raise RuntimeError(
+            "poly-sheet GC found duplicate admitted task identities")
+    task_ids.append(stitch_task_id)
+
+    now_ms = int(float(now_s) * 1000)
+    latest_ms = None
+    ddb = _get_ddb()
+    for task_id in task_ids:
+        response = ddb.get_item(
+            TableName=JOBS_TABLE,
+            Key={"job_id": {"S": job_id}, "task_id": {"S": task_id}},
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        if not item or item.get("task_status", {}).get("S") != "running":
+            continue
+        raw_expiry = item.get("lease_expiry_ms", {}).get("N")
+        if raw_expiry is None:
+            continue                # running-without-lease is claimable
+        try:
+            expiry_ms = int(raw_expiry)
+        except (TypeError, ValueError):
+            raise RuntimeError(
+                f"poly-sheet GC found invalid lease for task {task_id}")
+        if expiry_ms > now_ms:
+            latest_ms = max(latest_ms or expiry_ms, expiry_ms)
+    return (latest_ms / 1000.0) if latest_ms is not None else None
+
+
 def _handle_generation_gc_message(message):
     """Reap one generation only after all pre-terminal writers must be dead.
 
@@ -865,7 +1038,7 @@ def _handle_generation_gc_message(message):
     sheet_id, generation, message_steps, not_before_s = _validated_gc_identity(message)
     now = time.time()
     if now < not_before_s:
-        return _gc_requeue(message, not_before_s)
+        return _gc_requeue(message, not_before_s, reason="message-not-due")
 
     response = None
     run = None
@@ -888,7 +1061,37 @@ def _handle_generation_gc_message(message):
     elif run.get("generation") == generation:
         status = run.get("status")
         if status == "running":
-            return _gc_requeue(message, now + SHEET_GC_RUNNING_RECHECK_S)
+            resume_deadline_s = _run_resume_deadline_s(run, response, now)
+            if now < resume_deadline_s:
+                return _gc_requeue(
+                    message, resume_deadline_s,
+                    reason="running-within-resume-window")
+
+            live_lease_deadline_s = _run_live_lease_deadline_s(run, now)
+            if live_lease_deadline_s is not None:
+                return _gc_requeue(
+                    message, live_lease_deadline_s,
+                    reason="running-live-task-lease")
+
+            # A ghost run has exhausted its server-owned recovery window.
+            # Serialize expiry through the same CAS as cancel/publish; then
+            # wait a fresh quiescence interval before destructive cleanup.
+            final, terminal_run = _mark_run_terminal(
+                sheet_id, generation, "abandoned")
+            if final is None:
+                raise RuntimeError(
+                    "poly-sheet GC could not confirm expired-run transition")
+            if final == SUPERSEDED:
+                return _gc_requeue(
+                    message, now + SHEET_GC_QUIESCENCE_S,
+                    reason="terminal-transition-raced")
+            run = terminal_run
+            response = None
+            status = final
+            logger.warning(
+                "poly-sheet GC closed expired running generation sheet=%s generation=%s resolved_status=%s",
+                sheet_id, generation, final,
+            )
         if status not in RUN_TERMINAL_STATUSES:
             raise RuntimeError(f"poly-sheet GC found unknown run status {status!r}")
         try:
@@ -923,7 +1126,8 @@ def _handle_generation_gc_message(message):
         raise RuntimeError("poly-sheet GC cannot establish the quiescence timestamp")
     quiescent_at_s = inactive_at_s + SHEET_GC_QUIESCENCE_S
     if now < quiescent_at_s:
-        return _gc_requeue(message, quiescent_at_s)
+        return _gc_requeue(
+            message, quiescent_at_s, reason="terminal-quiescence")
 
     if not _reap_sheet_scaffolding(sheet_id, generation, steps, winner):
         raise RuntimeError("poly-sheet generation GC was incomplete")
@@ -1079,7 +1283,8 @@ def _prune_own_attempt_if_not_published(sheet_id, generation, gen_prefix):
     # CAS could still publish -> leave the objects for the winner's sweep
 
 
-def _run_write_state(sheet_id, generation, attempts=3):
+def _run_write_state(sheet_id, generation,
+                     attempts=RUN_STATE_READ_ATTEMPTS):
     """Return (active|inactive|unknown, run) for a shared-write fence.
 
     A confirmed terminal state or generation mismatch is INACTIVE. A
@@ -1099,11 +1304,11 @@ def _run_write_state(sheet_id, generation, attempts=3):
             if is_missing_s3_error(exc):
                 return RUN_INACTIVE, None
             if attempt + 1 < attempts:
-                time.sleep(0.05 * (attempt + 1))
+                time.sleep(RUN_STATE_RETRY_BASE_S * (2 ** attempt))
             continue
         except Exception:
             if attempt + 1 < attempts:
-                time.sleep(0.05 * (attempt + 1))
+                time.sleep(RUN_STATE_RETRY_BASE_S * (2 ** attempt))
             continue
 
         if run.get("generation") != generation:
@@ -1703,8 +1908,12 @@ def handle_begin(params):
         try:
             # This timestamp is the supersession fence used by delayed GC;
             # stamp it immediately before the CAS, not before potentially
-            # slow SQS/status work.
-            run["created_at_s"] = time.time()
+            # slow SQS/status work. The recovery deadline is immutable for
+            # the admitted generation and bounded by server policy.
+            admitted_at_s = time.time()
+            run["created_at_s"] = admitted_at_s
+            run["resume_deadline_s"] = (
+                admitted_at_s + SHEET_RUN_RESUME_WINDOW_S)
             _cas_put_run(sheet_id, etag, run)
             # A pre-feature prior generation may not have its own queued GC.
             # Enqueue one now, but never reap inline: an old worker can remain
@@ -1838,7 +2047,7 @@ def handle_frames(params):
             # only cleaner for that case). NOT on lost-lease exits.
             run_state, fenced_run = _run_write_state(sheet_id, generation)
             if run_state == RUN_UNKNOWN:
-                raise RuntimeError(
+                raise _RunStateUnconfirmed(
                     "run.json state could not be confirmed before tile write")
             if run_state == RUN_INACTIVE:
                 _delete_keys_best_effort(written)
@@ -1864,7 +2073,7 @@ def handle_frames(params):
         # terminal reap with the client no longer watching.
         run_state, fenced_run = _run_write_state(sheet_id, generation)
         if run_state == RUN_UNKNOWN:
-            raise RuntimeError(
+            raise _RunStateUnconfirmed(
                 "run.json state could not be confirmed after tile writes")
         if run_state == RUN_INACTIVE:
             _delete_keys_best_effort(written)
@@ -1882,6 +2091,16 @@ def handle_frames(params):
         except Exception:
             pass
         return ok_response({"sheet_id": sheet_id, "frames_done": done})
+    except _RunStateUnconfirmed:
+        # Infrastructure uncertainty is not a program failure. Leave the
+        # run and DDB task non-terminal; the claim expires and the existing
+        # resume path redispatches this worker. Any tiles already created are
+        # valid if the run is active and covered by delayed GC if it is not.
+        logger.warning(
+            "poly-sheet worker relinquishing after unconfirmed run fence sheet=%s generation=%s task=%s",
+            sheet_id, generation, task_id,
+        )
+        raise
     except Exception as e:
         return _finalize_failure_or_exit(
             job_id, task_id, owner, sheet_id, generation, e,
@@ -2006,7 +2225,7 @@ def handle_stitch(params):
         # artifacts that the begin-GC (which already ran) can never revisit.
         run_state, fenced_run = _run_write_state(sheet_id, generation)
         if run_state == RUN_UNKNOWN:
-            raise RuntimeError(
+            raise _RunStateUnconfirmed(
                 "run.json state could not be confirmed before publication")
         if run_state == RUN_INACTIVE:
             return _confirmed_run_inactive_response(
@@ -2057,6 +2276,14 @@ def handle_stitch(params):
             return ok_response({"sheet_id": sheet_id, "generation": generation,
                                 "status": "done",
                                 "published_by_this_attempt": False})
+    except _RunStateUnconfirmed:
+        # Do not turn a transient run-record outage into a failed sheet.
+        # No publication CAS has run, so lease expiry + redispatch is safe.
+        logger.warning(
+            "poly-sheet stitch relinquishing after unconfirmed run fence sheet=%s generation=%s task=%s",
+            sheet_id, generation, task_id,
+        )
+        raise
     except Exception as e:
         # PRE-commit failures mark the run failed — but only when ownership
         # is CONFIRMED (round-8 finding 3). A stale stitch that lost its

@@ -115,8 +115,15 @@ class TestDeployPackaging(unittest.TestCase):
         fn = self._manifest_fn("poly_sheet")
         self.assertIn("POLY_SHEET_GC_QUEUE_URL=$POLY_SHEET_GC_QUEUE_URL", fn["env"])
         self.assertIn('POLY_SHEET_GC_QUEUE_NAME="polypaint-poly-sheet-gc"', DEPLOY_TEXT)
+        self.assertIn(
+            'POLY_SHEET_GC_DLQ_NAME="polypaint-poly-sheet-gc-dlq"', DEPLOY_TEXT)
         self.assertIn('"VisibilityTimeout":"6000"', DEPLOY_TEXT)
         self.assertIn('"MessageRetentionPeriod":"345600"', DEPLOY_TEXT)
+        self.assertIn('"MessageRetentionPeriod":"1209600"', DEPLOY_TEXT)
+        self.assertIn('"RedrivePolicy"', DEPLOY_TEXT)
+        self.assertIn('deadLetterTargetArn', DEPLOY_TEXT)
+        self.assertIn('$POLY_SHEET_GC_DLQ_ARN', DEPLOY_TEXT)
+        self.assertIn('maxReceiveCount', DEPLOY_TEXT)
         for action in ("sqs:SendMessage", "sqs:ReceiveMessage",
                        "sqs:DeleteMessage", "sqs:GetQueueAttributes"):
             self.assertIn(action, DEPLOY_TEXT)

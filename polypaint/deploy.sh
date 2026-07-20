@@ -35,6 +35,9 @@ JOBS_TABLE="polypaint-jobs"
 POLY_SHEET_GC_QUEUE_NAME="polypaint-poly-sheet-gc"
 POLY_SHEET_GC_QUEUE_URL=""
 POLY_SHEET_GC_QUEUE_ARN=""
+POLY_SHEET_GC_DLQ_NAME="polypaint-poly-sheet-gc-dlq"
+POLY_SHEET_GC_DLQ_URL=""
+POLY_SHEET_GC_DLQ_ARN=""
 LAYER_PUBLISH_PREFIX="deploy/layers"
 LIBVIPS_LAYER_NAME="polypaint-libvips"
 LAPACK_LAYER_NAME="polypaint-lapack"
@@ -1982,6 +1985,30 @@ apply_s3_role_policy() {
 # worker/stitch. SQS supplies the durable timer and retries; inline cleanup
 # cannot cover a process that dies after its last S3 write.
 ensure_poly_sheet_gc_queue() {
+    POLY_SHEET_GC_DLQ_URL=$(aws sqs get-queue-url \
+        --queue-name "$POLY_SHEET_GC_DLQ_NAME" \
+        --region "$REGION" --query 'QueueUrl' --output text 2>/dev/null || true)
+    if [ -z "$POLY_SHEET_GC_DLQ_URL" ] || [ "$POLY_SHEET_GC_DLQ_URL" = "None" ]; then
+        echo "Creating Poly-Sheet GC dead-letter queue..."
+        POLY_SHEET_GC_DLQ_URL=$(aws sqs create-queue \
+            --queue-name "$POLY_SHEET_GC_DLQ_NAME" \
+            --attributes '{"MessageRetentionPeriod":"1209600"}' \
+            --region "$REGION" --query 'QueueUrl' --output text)
+    else
+        aws sqs set-queue-attributes \
+            --queue-url "$POLY_SHEET_GC_DLQ_URL" \
+            --attributes '{"MessageRetentionPeriod":"1209600"}' \
+            --region "$REGION"
+    fi
+    POLY_SHEET_GC_DLQ_ARN=$(aws sqs get-queue-attributes \
+        --queue-url "$POLY_SHEET_GC_DLQ_URL" --attribute-names QueueArn \
+        --region "$REGION" --query 'Attributes.QueueArn' --output text)
+
+    local SOURCE_ATTRIBUTES
+    SOURCE_ATTRIBUTES=$(
+        printf '{"VisibilityTimeout":"6000","MessageRetentionPeriod":"345600","RedrivePolicy":"{\"deadLetterTargetArn\":\"%s\",\"maxReceiveCount\":\"5\"}"}' \
+            "$POLY_SHEET_GC_DLQ_ARN"
+    )
     POLY_SHEET_GC_QUEUE_URL=$(aws sqs get-queue-url \
         --queue-name "$POLY_SHEET_GC_QUEUE_NAME" \
         --region "$REGION" --query 'QueueUrl' --output text 2>/dev/null || true)
@@ -1989,18 +2016,19 @@ ensure_poly_sheet_gc_queue() {
         echo "Creating Poly-Sheet GC queue..."
         POLY_SHEET_GC_QUEUE_URL=$(aws sqs create-queue \
             --queue-name "$POLY_SHEET_GC_QUEUE_NAME" \
-            --attributes '{"VisibilityTimeout":"6000","MessageRetentionPeriod":"345600"}' \
+            --attributes "$SOURCE_ATTRIBUTES" \
             --region "$REGION" --query 'QueueUrl' --output text)
     else
         aws sqs set-queue-attributes \
             --queue-url "$POLY_SHEET_GC_QUEUE_URL" \
-            --attributes '{"VisibilityTimeout":"6000","MessageRetentionPeriod":"345600"}' \
+            --attributes "$SOURCE_ATTRIBUTES" \
             --region "$REGION"
     fi
     POLY_SHEET_GC_QUEUE_ARN=$(aws sqs get-queue-attributes \
         --queue-url "$POLY_SHEET_GC_QUEUE_URL" --attribute-names QueueArn \
         --region "$REGION" --query 'Attributes.QueueArn' --output text)
     export POLY_SHEET_GC_QUEUE_URL POLY_SHEET_GC_QUEUE_ARN
+    export POLY_SHEET_GC_DLQ_URL POLY_SHEET_GC_DLQ_ARN
 }
 
 apply_poly_sheet_gc_policy() {
@@ -2043,7 +2071,7 @@ ensure_poly_sheet_gc_event_source() {
         aws lambda update-event-source-mapping --uuid "$UUID" \
             --batch-size 1 --enabled --region "$REGION" >/dev/null
     fi
-    echo "  Poly-Sheet GC queue: $POLY_SHEET_GC_QUEUE_NAME"
+    echo "  Poly-Sheet GC queue: $POLY_SHEET_GC_QUEUE_NAME (DLQ: $POLY_SHEET_GC_DLQ_NAME)"
 }
 
 if [ "$ACTION" = "create" ]; then

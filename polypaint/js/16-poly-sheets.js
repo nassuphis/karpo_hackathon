@@ -8,6 +8,11 @@
 let _sheetsInventory = [];
 let _activeSheetRun = null;   // {sheetId, jobId, taskId}
 let _sheetResumeTimer = null;
+let _sheetCancelTimer = null;
+// round-10 finding 6: only these EXPLICIT statuses count as terminal — a
+// malformed/unknown run.status must not be mistaken for a confirmed end
+const SHEET_TERMINAL_STATUSES = new Set(
+    ['cancelled', 'done', 'abandoned', 'failed', 'superseded']);
 // generations this client just abandoned — discovery must not re-grab
 // them in the window before the server's terminal mark propagates
 const _sheetAbandonedGenerations = new Set();
@@ -378,6 +383,10 @@ async function resumeSheetRun() {
      * workers", contradicting that fix. */
     const desc = _sheetRunLoad();
     if (!desc || _activeSheetRun) return;
+    // round-10 finding 3: a persisted cancellation intent (set before a
+    // reload lost the in-page retry timer) takes precedence — re-issue the
+    // authoritative cancel instead of driving the run forward.
+    if (desc.cancelRequested) { void cancelPolySheet(); return; }
     // anchor the lease clock on the first resume so give-up can require a
     // real post-lease-expiry dispatch (round-8 finding 4). Persisted, so
     // it survives reloads across the whole retry window.
@@ -714,7 +723,12 @@ async function _sheetResolveRunStatus(sheetId, generation) {
             if (resp.ok) {
                 const run = await resp.json();
                 if (!run || run.generation !== generation) return 'superseded';
-                if (run.status !== 'running') return run.status;
+                // round-10 finding 6: require an EXPLICIT terminal status;
+                // 'running' or any unknown/malformed value -> not-yet-terminal
+                if (run.status && run.status !== 'running') {
+                    return SHEET_TERMINAL_STATUSES.has(run.status)
+                        ? run.status : null;
+                }
             }
         } catch (e) { /* transient */ }
     }
@@ -732,6 +746,12 @@ async function cancelPolySheet() {
     }
     const { sheetId, generation } = target;
     if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancelling...`; statusEl.className = 'status'; }
+    // round-10 finding 3: PERSIST the cancellation intent so an inconclusive
+    // attempt (or a page reload) keeps retrying the authoritative transition
+    // until a terminal result wins — async retries are disabled server-side,
+    // so a single fire-and-hope drops the cancel.
+    const desc = _sheetRunLoad();
+    if (desc && !desc.cancelRequested) { desc.cancelRequested = true; _sheetRunSave(desc); }
     // round-8/9 finding 5/1/2: do NOT hide the generation or clear local
     // state until the cancel is confirmed through the AUTHORITATIVE run.json
     // record (not the best-effort marker — a publish can win the run.json
@@ -739,18 +759,23 @@ async function cancelPolySheet() {
     // run). Order: dispatch-until-fired -> resolve run.json status -> clear.
     const fired = await _sheetDispatchControl(sheetId, generation, 'cancel');
     if (!fired) {
-        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel was not accepted — try again.`; statusEl.className = 'status error'; }
-        return;   // state intact; resume timer still live
+        // not accepted — keep the intent and RETRY (round-10 finding 3)
+        _sheetScheduleCancelRetry();
+        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel not accepted — retrying...`; statusEl.className = 'status'; }
+        return;
     }
     const status = await _sheetResolveRunStatus(sheetId, generation);
     if (status === null) {
-        // fired but run.json is still 'running' — keep the run under the
-        // resume timer's watch and let the between-frames cancel take effect.
-        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel dispatched — it takes effect between frames.`; statusEl.className = 'status'; }
+        // fired but run.json is still 'running' — the cancel takes effect
+        // between frames; keep retrying the authoritative transition until
+        // the run actually goes terminal (finding 3), don't just hope.
+        _sheetScheduleCancelRetry();
+        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel dispatched — taking effect between frames...`; statusEl.className = 'status'; }
         return;
     }
-    // the run is terminal — clear regardless of WHICH terminal, but report
-    // the TRUTH: a publish may have beaten the cancel.
+    // the run is terminal — clear the intent + local state, report the TRUTH
+    // (a publish may have beaten the cancel).
+    if (_sheetCancelTimer) { clearTimeout(_sheetCancelTimer); _sheetCancelTimer = null; }
     if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
     _sheetAbandonedGenerations.add(generation);
     _sheetRunClear();
@@ -766,6 +791,16 @@ async function cancelPolySheet() {
             statusEl.className = 'status';
         }
     }
+}
+
+function _sheetScheduleCancelRetry() {
+    /* Round-10 finding 3: keep re-issuing the authoritative cancel until the
+     * run reaches a terminal status. The run WILL terminate (workers finish
+     * or the cancel lands), so this converges; the persisted cancelRequested
+     * intent also survives a reload (resumeSheetRun re-invokes cancel). */
+    if (_sheetCancelTimer) clearTimeout(_sheetCancelTimer);
+    _sheetCancelTimer = setTimeout(() => { void cancelPolySheet(); },
+                                   SHEET_RESUME_BACKOFF_MS);
 }
 
 async function _sheetDiscoverServerRun(rows) {

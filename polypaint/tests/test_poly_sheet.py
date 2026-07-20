@@ -462,8 +462,13 @@ class TestPolySheetEndToEnd(_LeaseIsoTestCase):
         finally:
             (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status) = orig
         body = json.loads(resp["body"])
-        self.assertEqual(body["cancelled"], "cx-sheet")
+        # round-10 finding 2: the worker reports the ACTUAL resolved status
+        self.assertEqual(body["status"], "cancelled")
+        self.assertTrue(body["cancelled"])
         self.assertEqual(body["frames_done"], 0)
+        # run.json was actually transitioned
+        self.assertEqual(json.loads(stub.objects["sheets/cx-sheet/run.json"])["status"],
+                         "cancelled")
 
     def test_unbound_worker_raises_without_poisoning_status(self):
         """Round-3 finding 7: a request that fails admission (here: no
@@ -1424,24 +1429,23 @@ class TestRound7WorkerFencing(_LeaseIsoTestCase):
                          "running")
         self.assertNotIn("error", finals)
 
-    def test_worker_failure_without_ownership_does_not_fail_run(self):
-        """Finding 1: on a genuine render failure, if the owner-conditional
-        error write shows we lost the lease, the run is NOT failed."""
+    def test_failure_without_ownership_does_not_fail_run(self):
+        """Round-10 finding 2: the failure path's ownership check is now a
+        renew (not the terminal finalize). If renew shows we lost the lease,
+        _finalize_failure_or_exit exits benignly and the run is NOT failed."""
         import handler_poly_sheet as mod
 
         gen = "g7b7b7b7b7b7b"
         stub = _S3Stub()
         self._patched(mod, stub)
-        mod.claim_task = lambda *a, **k: True
-        mod.renew_claim = lambda *a, **k: True
-        mod.finalize_task = lambda *a, **k: False   # we no longer own it
-        mod.SWEEP_COEFFGEN = "/nonexistent/binary"   # force a render failure
-        p = _run_params("lostfail-sheet")
-        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
-        resp = mod.handle_frames({**p, "action": "frames", "generation": gen,
-                                  "task_id": f"sheet_tiles_lostfail-sheet_{gen}_w0",
-                                  "frame_indices": [0, 1]})
+        stub.put_object(Bucket="b", Key="sheets/lostfail-sheet/run.json",
+                        Body=json.dumps({"generation": gen, "status": "running"}).encode())
+        mod.renew_claim = lambda *a, **k: False    # a successor owns the task
+        resp = mod._finalize_failure_or_exit(
+            "j", "sheet_stitch_lostfail-sheet", "A", "lostfail-sheet", gen,
+            RuntimeError("render failed"), phase_label="Stitch failed")
         self.assertTrue(json.loads(resp["body"]).get("lost_lease"))
+        # the successor's run was NOT marked failed
         self.assertEqual(json.loads(stub.objects["sheets/lostfail-sheet/run.json"])["status"],
                          "running")
 
@@ -1478,9 +1482,12 @@ class TestRound7WorkerFencing(_LeaseIsoTestCase):
         # to 'done' WITHOUT re-publishing or corrupting the pointer (it does
         # not raise; the CAS + already-published check is the backstop)
         published = json.loads(stub.objects["sheets/dbl-sheet/run.json"])
-        outcome = mod._commit_run_publication("dbl-sheet", gen,
-                                              f"sheets/dbl-sheet/{gen}/")
+        outcome, won = mod._commit_run_publication("dbl-sheet", gen,
+                                                   f"sheets/dbl-sheet/{gen}/")
+        # round-10 finding 1: idempotent 'done' but won=False (ANOTHER
+        # attempt published) — so the caller must NOT family-prune
         self.assertEqual(outcome, "done")
+        self.assertFalse(won)
         # the pointer is unchanged — the first publish still owns run.json
         self.assertEqual(json.loads(stub.objects["sheets/dbl-sheet/run.json"]),
                          published)
@@ -1599,32 +1606,33 @@ class TestRound8Fencing(_LeaseIsoTestCase):
         self.assertEqual(run["status"], "done")
         self.assertEqual(manifest["png_key"], png_key)
 
-    def test_ddb_uncertain_finalize_does_not_fail_run(self):
-        """Finding 3: if the owner-conditional error write RAISES (DDB
-        throttle/outage), ownership is unknown — the run must NOT be marked
-        failed (a successor may own it). Recovery is via lease expiry."""
+    def test_ddb_uncertain_ownership_does_not_fail_run(self):
+        """Round-10 finding 2: if the ownership renew RAISES (DDB
+        throttle/outage), ownership is UNKNOWN — the run must NOT be marked
+        failed (a successor may own it) and the DDB task must NOT be
+        finalized. Recovery is via lease expiry."""
         import handler_poly_sheet as mod
 
         gen = "g8b8b8b8b8b8b"
         stub = _S3Stub()
         self._patched(mod, stub)
-        mod.claim_task = lambda *a, **k: True
-        mod.renew_claim = lambda *a, **k: True
-        def raising_finalize(*a, **k):
+        stub.put_object(Bucket="b", Key="sheets/uncertain-sheet/run.json",
+                        Body=json.dumps({"generation": gen, "status": "running"}).encode())
+        finalized = []
+        mod.finalize_task = lambda *a, **k: finalized.append(k.get("status")) or True
+        def raising_renew(*a, **k):
             raise RuntimeError("DDB throttled")
-        mod.finalize_task = raising_finalize
-        mod.SWEEP_COEFFGEN = "/nonexistent/binary"   # force a render failure
-        p = _run_params("uncertain-sheet")
-        _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
-        # the original render error propagates (fails loudly for logging)...
-        with self.assertRaises(Exception):
-            mod.handle_frames({**p, "action": "frames", "generation": gen,
-                               "task_id": f"sheet_tiles_uncertain-sheet_{gen}_w0",
-                               "frame_indices": [0, 1]})
-        # ...but the shared run.json was NOT marked failed
+        mod.renew_claim = raising_renew
+        # the original error propagates (fails loudly for logging)...
+        with self.assertRaises(RuntimeError):
+            mod._finalize_failure_or_exit(
+                "j", "sheet_stitch_uncertain-sheet", "A", "uncertain-sheet", gen,
+                RuntimeError("render failed"), phase_label="Stitch failed")
+        # ...run.json was NOT marked failed, and the DDB task was NOT finalized
         self.assertEqual(
             json.loads(stub.objects["sheets/uncertain-sheet/run.json"])["status"],
             "running")
+        self.assertEqual(finalized, [])
 
 
 class TestRound9WriteFence(_LeaseIsoTestCase):
@@ -1805,11 +1813,12 @@ class TestRound9CancelRace(_LeaseIsoTestCase):
                         Body=json.dumps({"generation": gen,
                                          "status": "cancelled"}).encode())
         before = stub.objects["sheets/cr-sheet/run.json"]
-        outcome = mod._commit_run_publication("cr-sheet", gen,
-                                              f"sheets/cr-sheet/{gen}/x/")
-        # the publish LOST the race: it reports 'cancelled' and does NOT
-        # touch run.json (no 'done', no pointer)
+        outcome, won = mod._commit_run_publication("cr-sheet", gen,
+                                                   f"sheets/cr-sheet/{gen}/x/")
+        # the publish LOST the race: reports 'cancelled', won=False, and does
+        # NOT touch run.json (no 'done', no pointer)
         self.assertEqual(outcome, "cancelled")
+        self.assertFalse(won)
         self.assertEqual(stub.objects["sheets/cr-sheet/run.json"], before)
 
     def test_cancel_reports_the_truth_when_publish_won(self):
@@ -1843,6 +1852,88 @@ class TestRound9CancelRace(_LeaseIsoTestCase):
         with self.assertRaises(RuntimeError):
             mod.handle_cancel({"action": "cancel", "sheet_id": "x-sheet",
                                "generation": gen})
+
+
+class TestRound10Fencing(_LeaseIsoTestCase):
+    """Round-10 findings 1/4/5: an idempotent publisher never prunes the
+    winner, tiles are write-once, and an ambiguous-commit prune re-reads
+    run.json before deleting."""
+
+    def _patch_s3(self, stub):
+        import handler_poly_sheet as mod
+        real = mod.s3
+        self.addCleanup(lambda: setattr(mod, "s3", real))
+        mod.s3 = stub
+
+    def test_idempotent_publisher_does_not_touch_the_winner(self):
+        """Finding 1: when ANOTHER attempt already published, our commit
+        returns (done, False) and we prune ONLY our own prefix — the
+        winner's pointer target survives (the reviewer's pointer_target
+        _survives=False probe)."""
+        import handler_poly_sheet as mod
+        gen = "gf1f1f1f1f1f1"
+        stub = _S3Stub()
+        self._patch_s3(stub)
+        a_prefix = f"sheets/win-sheet/{gen}/aaaaaaaaaaaa/"
+        stub.put_object(Bucket="b", Key=a_prefix + "sheet.png", Body=b"WINNER")
+        stub.put_object(Bucket="b", Key=a_prefix + "sheet.json", Body=b"{}")
+        stub.put_object(Bucket="b", Key="sheets/win-sheet/run.json",
+                        Body=json.dumps({"generation": gen, "status": "done",
+                                         "published_generation": gen,
+                                         "published_png_key": a_prefix + "sheet.png"}).encode())
+        b_prefix = f"sheets/win-sheet/{gen}/bbbbbbbbbbbb/"
+        stub.put_object(Bucket="b", Key=b_prefix + "sheet.png", Body=b"loser")
+        stub.put_object(Bucket="b", Key=b_prefix + "sheet.json", Body=b"{}")
+        outcome, won = mod._commit_run_publication("win-sheet", gen, b_prefix)
+        self.assertEqual((outcome, won), ("done", False))
+        # the not-won branch prunes ONLY its own prefix — never family-wide
+        mod._prune_own_attempt("win-sheet", b_prefix)
+        self.assertEqual(stub.objects[a_prefix + "sheet.png"], b"WINNER")
+        self.assertNotIn(b_prefix + "sheet.png", stub.objects)
+
+    def test_tiles_are_write_once(self):
+        """Finding 4: create-only tile writes reject a delayed stale worker's
+        overwrite (the object is immutable once written)."""
+        import handler_poly_sheet as mod
+        stub = _S3Stub()
+        self._patch_s3(stub)
+        key = "sheets/t/tiles/g/00000.bin"
+        mod._put_object_once(key, b"first", "application/octet-stream")
+        mod._put_object_once(key, b"STALE-OVERWRITE", "application/octet-stream")
+        self.assertEqual(stub.objects[key], b"first")   # NOT overwritten
+
+    def test_ambiguous_commit_keeps_artifacts_if_actually_published(self):
+        """Finding 5: on an ambiguous commit, re-read run.json — if it shows
+        OUR prefix published (the CAS actually succeeded), keep the objects."""
+        import handler_poly_sheet as mod
+        gen = "gf5f5f5f5f5f5"
+        stub = _S3Stub()
+        self._patch_s3(stub)
+        prefix = f"sheets/amb-sheet/{gen}/zzzzzzzzzzzz/"
+        stub.put_object(Bucket="b", Key=prefix + "sheet.png", Body=b"pixels")
+        stub.put_object(Bucket="b", Key=prefix + "sheet.json", Body=b"{}")
+        stub.put_object(Bucket="b", Key="sheets/amb-sheet/run.json",
+                        Body=json.dumps({"generation": gen, "status": "done",
+                                         "published_png_key": prefix + "sheet.png"}).encode())
+        mod._prune_own_attempt_if_not_published("amb-sheet", prefix)
+        self.assertIn(prefix + "sheet.png", stub.objects)   # we actually won
+
+    def test_ambiguous_commit_prunes_orphan_when_not_published(self):
+        """Finding 5: if run.json references a DIFFERENT prefix, ours is a
+        confirmed orphan and is pruned."""
+        import handler_poly_sheet as mod
+        gen = "gf6f6f6f6f6f6"
+        stub = _S3Stub()
+        self._patch_s3(stub)
+        prefix = f"sheets/amb2-sheet/{gen}/yyyyyyyyyyyy/"
+        stub.put_object(Bucket="b", Key=prefix + "sheet.png", Body=b"orphan")
+        stub.put_object(Bucket="b", Key=prefix + "sheet.json", Body=b"{}")
+        stub.put_object(Bucket="b", Key="sheets/amb2-sheet/run.json",
+                        Body=json.dumps({"generation": gen, "status": "done",
+                                         "published_png_key":
+                                         f"sheets/amb2-sheet/{gen}/other/sheet.png"}).encode())
+        mod._prune_own_attempt_if_not_published("amb2-sheet", prefix)
+        self.assertNotIn(prefix + "sheet.png", stub.objects)   # pruned
 
 
 # Defined LAST so pytest (file-definition order) runs it AFTER every other

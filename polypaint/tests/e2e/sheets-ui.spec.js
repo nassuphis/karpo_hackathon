@@ -623,3 +623,47 @@ test.describe('Round-9 fencing', () => {
     expect(out.rescheduled).toBe(true);
   });
 });
+
+test.describe('Round-10 cancellation durability', () => {
+  test('inconclusive cancel persists intent and schedules a retry (finding 3)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'cd', jobId: 'j', generation: 'gcd', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      window.lambdaPost = async () => ({ fired: 1 });   // cancel accepted...
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gcd', status: 'running' }) }
+        : realFetch(url));                               // ...but not yet terminal
+      await cancelPolySheet();
+      window.fetch = realFetch;
+      const desc = _sheetRunLoad();
+      const out = { intent: !!(desc && desc.cancelRequested),
+                    retryScheduled: _sheetCancelTimer !== null,
+                    survived: desc !== null };
+      if (_sheetCancelTimer) { clearTimeout(_sheetCancelTimer); _sheetCancelTimer = null; }
+      _sheetRunClear();
+      return out;
+    });
+    // async retries are disabled server-side, so an inconclusive cancel must
+    // persist intent + keep retrying the authoritative transition
+    expect(out.intent).toBe(true);
+    expect(out.retryScheduled).toBe(true);
+    expect(out.survived).toBe(true);
+  });
+
+  test('malformed run status is not mistaken for terminal (finding 6)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      const realFetch = window.fetch;
+      // run.json has a bogus status — must NOT be treated as terminal
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gm', status: 'weird' }) }
+        : realFetch(url));
+      const resolved = await _sheetResolveRunStatus('m', 'gm');
+      window.fetch = realFetch;
+      return { resolved };
+    });
+    // an unknown status resolves to null (not-yet-terminal), never a false end
+    expect(out.resolved).toBe(null);
+  });
+});

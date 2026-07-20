@@ -145,10 +145,13 @@ def handle_cancel(params):
     generation = _validated_generation(params)
     # the marker is a best-effort FAST hint so a worker stops between frames
     # without waiting for run.json; it is NOT the authoritative decision
-    # (round-9 finding 1) — that is the run.json CAS below.
+    # (round-9 finding 1) — that is the run.json CAS below. round-10 finding
+    # 3: swallow ANY error here (not just ClientError — an
+    # EndpointConnectionError is NOT a ClientError and previously aborted
+    # cancel before the authoritative CAS ever ran).
     try:
         s3.put_object(Bucket=BUCKET, Key=_cancel_key(sheet_id, generation), Body=b"1")
-    except ClientError:
+    except Exception:
         pass
     # cancellation competes with publication through the SAME run.json CAS.
     # The returned status is the ACTUAL outcome: 'cancelled' if we won,
@@ -692,6 +695,26 @@ def _tile_key(sheet_id, generation, k):
     return f"sheets/{sheet_id}/tiles/{generation}/{k:05d}.bin"
 
 
+def _put_object_once(key, body, content_type):
+    """Write-once create-only PUT (round-10 finding 4). If-None-Match='*'
+    makes the object immutable once written, so a delayed STALE worker
+    cannot overwrite a successor's tile — the second write is rejected. The
+    render is deterministic, so an already-present object is byte-equivalent
+    and 'already exists' is a benign success. On a runtime without
+    conditional writes (TypeError/ParamValidationError) fall back to a plain
+    put: the deterministic content makes that overwrite benign."""
+    try:
+        s3.put_object(Bucket=BUCKET, Key=key, Body=body,
+                      ContentType=content_type, IfNoneMatch="*")
+    except ClientError as exc:
+        code = (exc.response or {}).get("Error", {}).get("Code", "")
+        if code in ("PreconditionFailed", "412", "ConditionalRequestConflict", "409"):
+            return                       # already written (deterministic == ours)
+        raise
+    except (TypeError, ParamValidationError):
+        s3.put_object(Bucket=BUCKET, Key=key, Body=body, ContentType=content_type)
+
+
 def _run_json_key(sheet_id):
     return f"sheets/{sheet_id}/run.json"
 
@@ -797,6 +820,22 @@ def _prune_own_attempt(sheet_id, gen_prefix):
         pass
 
 
+def _prune_own_attempt_if_not_published(sheet_id, gen_prefix):
+    """Round-10 finding 5: prune this attempt's artifacts on a FAILED or
+    AMBIGUOUS commit — but RE-READ run.json first. A network-ambiguous CAS
+    may actually have succeeded, so only delete when run.json demonstrably
+    does NOT reference our prefix; if we cannot confirm, LEAVE the objects
+    (a leaked orphan is reaped later; deleting a possible winner is not)."""
+    try:
+        resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+        run = json.loads(resp["Body"].read())
+    except Exception:
+        return                                  # cannot confirm -> do not delete
+    if run.get("published_png_key") == gen_prefix + "sheet.png":
+        return                                  # our (ambiguous) CAS actually won
+    _prune_own_attempt(sheet_id, gen_prefix)    # confirmed orphan
+
+
 def _prune_losing_attempts(sheet_id, generation, winning_prefix):
     """Round-9 finding 8: reap the artifacts of LOSING same-generation
     stitch attempts. Each attempt writes under sheets/{id}/{gen}/{token}/
@@ -879,7 +918,12 @@ def _commit_run_publication(sheet_id, generation, gen_prefix):
     The loop re-reads on every CAS conflict and re-evaluates, so a cancel
     that lands between our read and our CAS is observed (not blindly
     overwritten) — the reproduced marker/publish race can no longer resolve
-    to a wrongly-published 'done'."""
+    to a wrongly-published 'done'.
+
+    Returns (status, won_by_this_attempt): `won` is True ONLY when THIS
+    call set 'done' (round-10 finding 1 — an idempotent 'done' from a
+    DIFFERENT attempt returns ('done', False) so the caller does NOT run
+    family-wide pruning and delete the real winner's artifacts)."""
     for _ in range(6):
         resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
         etag = resp.get("ETag")
@@ -889,9 +933,9 @@ def _commit_run_publication(sheet_id, generation, gen_prefix):
                 f"publish refused: run superseded by {run.get('generation')}")
         status = run.get("status")
         if status in ("cancelled", "abandoned", "failed"):
-            return status                    # a terminal decision won — report it
+            return status, False             # a terminal decision won
         if status == "done" and run.get("published_generation") == generation:
-            return "done"                    # idempotent: already published
+            return "done", False             # ANOTHER attempt already published
         run["status"] = "done"
         run["finished_at_s"] = time.time()
         run["published_generation"] = generation
@@ -899,7 +943,7 @@ def _commit_run_publication(sheet_id, generation, gen_prefix):
         run["published_manifest_key"] = gen_prefix + "sheet.json"
         try:
             _cas_put_run(sheet_id, etag, run)
-            return "done"
+            return "done", True              # WE published — the winner
         except _CASConflict:
             continue                         # conflict: re-read + re-evaluate
         # a NON-conflict RuntimeError (no conditional writes) propagates —
@@ -966,29 +1010,35 @@ def _owns_for_write(job_id, task_id, owner, *, result_data=None):
 
 def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
                               exc, *, phase_label):
-    """Shared error path for the worker and the stitch. Fail the run ONLY
-    when ownership is CONFIRMED (round-8 finding 3 — an indeterminate
-    ownership check must never authorize a shared-state mutation):
+    """Shared error path for the worker and the stitch. Ordered so no shared
+    state is mutated on unconfirmed ownership, and the DDB task is finalized
+    only AFTER the authoritative run.json transition is confirmed (round-8
+    finding 3 + round-10 finding 2):
 
-      - finalize_task returns True  -> we still own the task: mark the run
-        failed and re-raise so the invocation fails loudly.
-      - finalize_task returns False -> a successor owns it: exit benignly
-        (round-7) so a stale owner never fails its successor's run.
-      - finalize_task RAISES (DDB throttle/outage: ownership UNKNOWN) ->
-        do NOT mark the run failed. The old code set still_owner=True here
-        and a throttled stale owner could fail a run its successor owned.
-        Re-raise the ORIGINAL error for logging; recovery comes from lease
-        expiry + redispatch, never from a guessed terminal write."""
+      1. Confirm ownership via a renew (does NOT transition the task
+         terminal). renew False -> a successor owns it: exit benignly. renew
+         RAISES (DDB uncertain) -> touch NOTHING, re-raise the original error.
+      2. We own it: CAS run.json -> failed. If that returns None (could not
+         be confirmed after retries) leave BOTH the DDB task and run.json as
+         they are and re-raise loudly — do not finalize the task against an
+         unconfirmed run (that manufactured ghost 'running' runs).
+      3. run.json confirmed terminal -> finalize the DDB task, then re-raise."""
     try:
-        still_owner = finalize_task(
-            job_id, task_id, owner=owner, status="error", error_msg=str(exc),
-            result_data={"phase": "error", "phase_label": phase_label,
-                         "task_id": task_id})
+        owns = renew_claim(job_id, task_id, owner=owner)
     except Exception:
-        raise exc
-    if not still_owner:
+        raise exc                      # ownership UNKNOWN -> mutate nothing
+    if not owns:
         return ok_response({"sheet_id": sheet_id, "lost_lease": True})
-    _mark_run_terminal(sheet_id, generation, "failed")
+    final = _mark_run_terminal(sheet_id, generation, "failed")
+    if final is not None:
+        # only transition the DDB task once run.json is confirmed terminal
+        try:
+            finalize_task(job_id, task_id, owner=owner, status="error",
+                          error_msg=str(exc),
+                          result_data={"phase": "error", "phase_label": phase_label,
+                                       "task_id": task_id})
+        except Exception:
+            pass
     raise exc
 
 
@@ -1268,13 +1318,26 @@ def handle_frames(params):
         done = 0
         for k in indices:
             if _cancel_requested(sheet_id, generation):
-                _mark_run_terminal(sheet_id, generation, "cancelled")
-                finalize_task(job_id, task_id, owner=owner, status="error",
-                              error_msg="Cancelled by user",
-                              result_data={"phase": "error", "phase_label": "Cancelled",
-                                           "task_id": task_id, "sheet_id": sheet_id,
-                                           "frame": done})
-                return ok_response({"cancelled": sheet_id, "frames_done": done})
+                # round-10 finding 2: do NOT finalize the DDB task or report
+                # terminal success until the run.json CAS is CONFIRMED — an
+                # unconfirmable transition (None) must raise, not 200 with a
+                # null status while run.json stays 'running'.
+                final = _mark_run_terminal(sheet_id, generation, "cancelled")
+                if final is None:
+                    raise RuntimeError(
+                        "cancel could not be confirmed: run.json unreachable")
+                try:
+                    finalize_task(job_id, task_id, owner=owner, status="error",
+                                  error_msg="Cancelled by user",
+                                  result_data={"phase": "error",
+                                               "phase_label": "Cancelled",
+                                               "task_id": task_id,
+                                               "sheet_id": sheet_id, "frame": done})
+                except Exception:
+                    pass
+                return ok_response({"sheet_id": sheet_id, "generation": generation,
+                                    "status": final, "frames_done": done,
+                                    "cancelled": final == "cancelled"})
             if time.time() > worker_deadline_s:
                 raise RuntimeError(
                     f"worker exceeded its {BUDGET_US / 1e6:.0f}s budget at "
@@ -1298,12 +1361,16 @@ def handle_frames(params):
                     "frames": len(indices), "frame": done_after}):
                 return ok_response({"sheet_id": sheet_id, "frames_done": done,
                                     "lost_lease": True})
+            # round-10 finding 4: WRITE-ONCE tiles (create-only). Even though
+            # the fence proved ownership an instant ago, a sufficiently
+            # delayed stale worker could still reach here after losing the
+            # lease; create-only makes the tile object immutable once
+            # written, so a stale write is REJECTED (not an overwrite). The
+            # render is deterministic, so an existing tile is byte-equivalent.
             key = _tile_key(sheet_id, generation, k)
-            s3.put_object(Bucket=BUCKET, Key=key,
-                          Body=bytes(tile), ContentType="application/octet-stream")
-            s3.put_object(Bucket=BUCKET, Key=key.replace(".bin", ".json"),
-                          Body=json.dumps(record).encode("utf-8"),
-                          ContentType="application/json")
+            _put_object_once(key, bytes(tile), "application/octet-stream")
+            _put_object_once(key.replace(".bin", ".json"),
+                             json.dumps(record).encode("utf-8"), "application/json")
             done = done_after
         # round-7 finding 2: the terminal 'done' is OWNER-CONDITIONAL and
         # best-effort — a lost lease means a successor owns it (don't
@@ -1352,14 +1419,20 @@ def handle_stitch(params):
     # long; the heartbeat keeps a live stitch's lease alive, and hb.lost
     # gates the artifact write so a reclaimed stitch never publishes.
     hb = LeaseHeartbeat(job_id, task_id, owner=owner).start()
+    gen_prefix = None   # set once this attempt's artifacts are written (finding 5)
     try:
         t0 = float(params.get("started_at_s") or time.time())
 
         if _cancel_requested(sheet_id, generation):
             # honor the ACTUAL resolved status (round-9 finding 1): if a
             # successor already published, run.json is 'done' and we must
-            # NOT report a false cancellation.
+            # NOT report a false cancellation. round-10 finding 2: an
+            # unconfirmable transition (None) RAISES — never a 200 with a
+            # null status while run.json stays 'running'.
             final = _mark_run_terminal(sheet_id, generation, "cancelled")
+            if final is None:
+                raise RuntimeError(
+                    "cancel could not be confirmed: run.json unreachable")
             try:
                 finalize_task(job_id, task_id, owner=owner, status="error",
                               error_msg="Cancelled by user",
@@ -1437,14 +1510,12 @@ def handle_stitch(params):
             _prune_own_attempt(sheet_id, gen_prefix)
             return ok_response({"sheet_id": sheet_id, "lost_lease": True})
         # THE COMMIT: publication competes with cancel/abandon through the
-        # SAME run.json CAS (round-9 finding 1). The resolved status is the
-        # single source of truth — 'done' if we published, otherwise a
-        # terminal decision beat us and we did NOT publish.
-        outcome = _commit_run_publication(sheet_id, generation, gen_prefix)
+        # SAME run.json CAS (round-9 finding 1). Returns (status, won): won
+        # is True ONLY when THIS attempt set 'done'.
+        outcome, won = _commit_run_publication(sheet_id, generation, gen_prefix)
         if outcome != "done":
             # a cancel/abandon/failure won the CAS: clean our OWN orphaned
-            # attempt (round-9 finding 5) and report the real outcome — never
-            # a false 'done'.
+            # attempt and report the real outcome — never a false 'done'.
             _prune_own_attempt(sheet_id, gen_prefix)
             try:
                 finalize_task(job_id, task_id, owner=owner, status="error",
@@ -1457,7 +1528,29 @@ def handle_stitch(params):
             return ok_response({"sheet_id": sheet_id, "generation": generation,
                                 "status": outcome,
                                 "cancelled": outcome == "cancelled"})
+        if not won:
+            # round-10 finding 1: ANOTHER attempt already published — WE are
+            # the orphan. Prune ONLY our own prefix; NEVER run the family-wide
+            # sweep below (it would delete the actual winner's artifacts).
+            _prune_own_attempt(sheet_id, gen_prefix)
+            try:
+                finalize_task(job_id, task_id, owner=owner, status="done",
+                              result_data={"phase": "done",
+                                           "phase_label": "Published by another attempt",
+                                           "sheet_id": sheet_id,
+                                           "generation": generation})
+            except Exception:
+                pass
+            return ok_response({"sheet_id": sheet_id, "generation": generation,
+                                "status": "done",
+                                "published_by_this_attempt": False})
     except Exception as e:
+        # round-10 finding 5: if we wrote attempt artifacts but the commit
+        # failed/was ambiguous, prune our own orphan — but RE-READ run.json
+        # first (a network-ambiguous CAS may have actually succeeded, in
+        # which case these ARE the winner's artifacts and must survive).
+        if gen_prefix is not None:
+            _prune_own_attempt_if_not_published(sheet_id, gen_prefix)
         # PRE-commit failures mark the run failed — but only when ownership
         # is CONFIRMED (round-8 finding 3). A stale stitch that lost its
         # lease exits benignly; DDB-uncertain ownership never authorizes

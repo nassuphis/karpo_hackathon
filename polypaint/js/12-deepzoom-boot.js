@@ -1218,12 +1218,19 @@ _initJobsRail();
 
 _syncRenderColorInterpretationUi();
 
-// round-15 finding 4: resumePersistedCancels at BOOT (not only when the
-// Sheets tab opens) — Compute is the default tab, so a reload must still
-// re-issue cancels the user requested. Runs here in the boot block because
-// it references js/16; the dispatch-until-fired retry covers config not yet
-// being loaded.
-if (typeof _sheetResumePersistedCancels === 'function') void _sheetResumePersistedCancels();
+// round-15 finding 4 + round-16 finding 4: resumePersistedCancels at BOOT
+// (not only when the Sheets tab opens) — Compute is the default tab, so a
+// reload must still re-issue cancels the user requested. js/12 parses
+// BEFORE js/16 (index.html order), so a direct call here sees the function
+// undefined and silently no-ops (the round-15 bug: the typeof guard turned
+// a load-order error into a permanent no-op). Register a LOAD listener
+// instead: 'load' fires after every classic script has parsed, so the
+// callback really sees js/16's definition.
+window.addEventListener('load', function () {
+    if (typeof _sheetResumePersistedCancels === 'function') {
+        void _sheetResumePersistedCancels();
+    }
+});
 
 document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible') {

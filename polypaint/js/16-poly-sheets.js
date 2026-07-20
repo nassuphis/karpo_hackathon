@@ -823,14 +823,23 @@ async function _cancelSheetRun(sheetId, generation, opts) {
         // or superseded) — do nothing, and do NOT touch any other run.
         return { ok: false, reason: 'intent-cleared' };
     }
-    if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancelling...`; statusEl.className = 'status'; }
+    // round-16 finding 5 (status text): every status write from this
+    // cancellation is suppressed while a NEWER run of the same sheet owns
+    // the descriptor — a stale retry must never overwrite the live run's
+    // status line (re-evaluated per write; the descriptor can change
+    // across the awaits below).
+    const staleForStatus = () => {
+        const cur = _sheetRunLoad();
+        return !!(cur && cur.sheetId === sheetId && cur.generation !== generation);
+    };
+    if (statusEl && !staleForStatus()) { statusEl.textContent = `Sheet ${sheetId}: cancelling...`; statusEl.className = 'status'; }
     // round-8/9 finding 5/1/2: confirm through the AUTHORITATIVE run.json,
     // not the best-effort marker. Order: dispatch-until-fired -> resolve
     // run.json status -> clear.
     const fired = await _sheetDispatchControl(sheetId, generation, 'cancel');
     if (!fired) {
         _sheetScheduleCancelRetry(sheetId, generation);
-        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel not accepted — retrying...`; statusEl.className = 'status'; }
+        if (statusEl && !staleForStatus()) { statusEl.textContent = `Sheet ${sheetId}: cancel not accepted — retrying...`; statusEl.className = 'status'; }
         return { ok: false, dispatched: false, pending: true, reason: 'not-accepted' };
     }
     const status = await _sheetResolveRunStatus(sheetId, generation);
@@ -838,7 +847,7 @@ async function _cancelSheetRun(sheetId, generation, opts) {
         // fired but run.json is still 'running' — keep retrying until the
         // run actually goes terminal (the cancel takes effect between frames)
         _sheetScheduleCancelRetry(sheetId, generation);
-        if (statusEl) { statusEl.textContent = `Sheet ${sheetId}: cancel dispatched — taking effect between frames...`; statusEl.className = 'status'; }
+        if (statusEl && !staleForStatus()) { statusEl.textContent = `Sheet ${sheetId}: cancel dispatched — taking effect between frames...`; statusEl.className = 'status'; }
         return { ok: true, dispatched: true, pending: true, status: null };
     }
     // TERMINAL: retire this identity's intent (persisted) + its OWN timer
@@ -855,8 +864,14 @@ async function _cancelSheetRun(sheetId, generation, opts) {
     // round-15 finding 3: resolve any sheet rail card for this run — a
     // DURABLE retry (not the original _jobsRailKill call) that reaches
     // terminal here must clear the card, not leave it "cancelling…" forever.
-    if (typeof _jobsRailResolveSheet === 'function') _jobsRailResolveSheet(sheetId, status);
-    if (statusEl) {
+    // round-16 finding 5: generation-exact, so an old run's completion can
+    // never corrupt a newer run's card.
+    if (typeof _jobsRailResolveSheet === 'function') {
+        _jobsRailResolveSheet(sheetId, generation, status);
+    }
+    // round-16 finding 5 (status text): a stale completion message must not
+    // misdescribe the live run — stay silent when a newer run owns the line.
+    if (statusEl && !staleForStatus()) {
         if (status === 'cancelled') {
             statusEl.textContent = `Sheet ${sheetId}: cancelled.`;
             statusEl.className = 'status';

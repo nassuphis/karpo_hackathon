@@ -1961,17 +1961,24 @@ function _jobsRailDismiss(id) {
     _renderJobsRail();
 }
 
-function _jobsRailResolveSheet(sheetId, status) {
+function _jobsRailResolveSheet(sheetId, generation, status) {
     // round-15 finding 3: resolve a sheet rail card when a DURABLE cancel
     // RETRY (not the original _jobsRailKill call) later observes a terminal
     // run.json status. Called by _cancelSheetRun from js/16.
-    const job = _jobsRailJobs.find(j => j.id === 'sheet:' + sheetId);
+    // round-16 finding 5: the card is matched by sheetId AND generation —
+    // a delayed OLD-generation cancellation must never corrupt the card of
+    // a NEWER run that reused the same sheet id (cards carry generation).
+    const job = _jobsRailJobs.find(j => j.id === 'sheet:' + sheetId
+        && j.generation === generation);
     if (!job || job.state !== 'running') return;
     job.killRequested = false;
     job.state = status === 'done' ? 'done' : 'error';
     job.detail = status === 'done'
         ? 'published before cancel' : `cancelled (${status})`;
     job.updatedAt = Date.now();
+    // round-16 finding 6: persist the resolved terminal state — without
+    // this a cancelled card silently reverted to running after a reload.
+    _jobsRailPersistHistory();
     _renderJobsRail();
 }
 
@@ -2001,20 +2008,26 @@ async function _jobsRailKill(id) {
         // Sheets descriptor) and retries the authoritative transition until
         // run.json goes terminal. Use its STRUCTURED result to update the
         // card rather than leaving it stuck at "cancel requested…".
+        // round-16 finding 5: capture the generation we are cancelling — the
+        // card object is id-keyed and a NEWER run can re-generation it while
+        // we await; the post-await mutations apply ONLY if it is still the
+        // same run.
+        const cancelledGen = job.generation;
         try {
             let result;
             if (typeof _cancelSheetRun === 'function') {
-                result = await _cancelSheetRun(job.jobId, job.generation, { direct: true });
+                result = await _cancelSheetRun(job.jobId, cancelledGen, { direct: true });
             } else {
                 const resp = await lambdaPost('dispatch', {
                     target: 'poly_sheet',
                     jobs: [{ action: 'cancel', sheet_id: job.jobId,
-                             generation: job.generation }],
+                             generation: cancelledGen }],
                     expected_keys: [],
                 });
                 if ((resp.fired || 0) !== 1) throw new Error('cancel dispatch failed');
                 result = { ok: true, pending: true };
             }
+            if (job.generation !== cancelledGen) return;   // a newer run owns the card
             if (result && result.ok === false && !result.pending) {
                 // not accepted at all — surface it so the user can retry
                 job.killRequested = false;
@@ -2028,6 +2041,7 @@ async function _jobsRailKill(id) {
                 job.detail = result.status === 'done'
                     ? 'published before cancel' : `cancelled (${result.status})`;
                 job.updatedAt = Date.now();
+                _jobsRailPersistHistory();   // round-16 finding 6
             } else {
                 // still pending — the run goes terminal between frames; the
                 // durable retry keeps trying and will resolve the card later
@@ -2035,9 +2049,11 @@ async function _jobsRailKill(id) {
             }
             _renderJobsRail();
         } catch (e) {
-            job.killRequested = false;
-            job.detail = `cancel failed: ${e.message}`;
-            _renderJobsRail();
+            if (job.generation === cancelledGen) {
+                job.killRequested = false;
+                job.detail = `cancel failed: ${e.message}`;
+                _renderJobsRail();
+            }
         }
         return;
     }

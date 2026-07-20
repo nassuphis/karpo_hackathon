@@ -896,3 +896,105 @@ test.describe('Round-15 cancellation completion', () => {
     expect(out.dispatched).toContain('gB');
   });
 });
+
+test.describe('Round-16 quiescence + wiring', () => {
+  test('the BOOT LISTENER (not a manual call) re-issues persisted cancels (finding 4)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      let dispatched = [];
+      window.lambdaPost = async (name, body) => {
+        const job = body && body.jobs && body.jobs[0];
+        if (job && job.action === 'cancel') dispatched.push(job.generation);
+        return { fired: 1 };
+      };
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gW', status: 'running' }) }
+        : realFetch(url));
+      _sheetCancelIntents.clear();
+      _sheetCancelIntents.add('wiresheet::gW');
+      localStorage.setItem('polypaint_sheet_cancel_intents_v1',
+                           JSON.stringify(['wiresheet::gW']));
+      // re-fire the load event: this exercises the ACTUAL js/12 boot
+      // listener (round-15's direct js/12 call ran before js/16 was parsed
+      // and silently no-op'd — a manual helper call could never catch that)
+      window.dispatchEvent(new Event('load'));
+      await new Promise(r => setTimeout(r, 100));
+      window.fetch = realFetch;
+      const out = { dispatched };
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
+      localStorage.removeItem('polypaint_sheet_cancel_intents_v1');
+      return out;
+    });
+    // the load listener itself performed the dispatch
+    expect(out.dispatched).toContain('gW');
+  });
+
+  test('an old-generation resolution cannot corrupt a newer run card (finding 5)', async ({ page }) => {
+    const out = await page.evaluate(() => {
+      _jobsRailJobs.length = 0;
+      _jobsRailJobs.push({ id: 'sheet:rs', kind: 'sheet', jobId: 'rs',
+                           generation: 'gNEW', state: 'running',
+                           label: 'Sheet rs', startedAt: Date.now(), detail: '' });
+      // a DELAYED old-generation cancellation completes — must not touch gNEW
+      _jobsRailResolveSheet('rs', 'gOLD', 'cancelled');
+      const afterStale = _jobsRailJobs[0].state;
+      // the matching generation resolves it
+      _jobsRailResolveSheet('rs', 'gNEW', 'cancelled');
+      const afterMatch = _jobsRailJobs[0].state;
+      const out = { afterStale, afterMatch };
+      _jobsRailJobs.length = 0;
+      return out;
+    });
+    expect(out.afterStale).toBe('running');    // stale gen: untouched
+    expect(out.afterMatch).toBe('error');      // exact gen: resolved
+  });
+
+  test('a resolved rail card is PERSISTED (finding 6)', async ({ page }) => {
+    const out = await page.evaluate(() => {
+      let persists = 0;
+      const realPersist = window._jobsRailPersistHistory;
+      window._jobsRailPersistHistory = () => { persists += 1; };
+      _jobsRailJobs.length = 0;
+      _jobsRailJobs.push({ id: 'sheet:ps9', kind: 'sheet', jobId: 'ps9',
+                           generation: 'gP9', state: 'running',
+                           label: 'Sheet ps9', startedAt: Date.now(), detail: '' });
+      _jobsRailResolveSheet('ps9', 'gP9', 'cancelled');
+      window._jobsRailPersistHistory = realPersist;
+      const out = { persists, state: _jobsRailJobs[0].state };
+      _jobsRailJobs.length = 0;
+      return out;
+    });
+    // the terminal state was persisted, not just rendered
+    expect(out.persists).toBeGreaterThan(0);
+    expect(out.state).toBe('error');
+  });
+
+  test('a stale completion does not overwrite a newer run status line (finding 5)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      window.lambdaPost = async () => ({ fired: 1 });
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gOLD2', status: 'cancelled' }) }
+        : realFetch(url));
+      // a NEWER run of the same sheet is the active descriptor
+      _sheetRunSave({ sheetId: 'st', jobId: 'j', generation: 'gNEW2', steps: 4,
+                      workers: [], stitchTask: 't', payload: {} });
+      const statusEl = document.getElementById('sheets-status');
+      statusEl.textContent = 'live run message';
+      _sheetCancelIntents.add('st::gOLD2');
+      await _cancelSheetRun('st', 'gOLD2');   // old run's cancel completes
+      window.fetch = realFetch;
+      const out = { text: statusEl.textContent,
+                    descSurvives: _sheetRunLoad() !== null };
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
+      localStorage.removeItem('polypaint_sheet_cancel_intents_v1');
+      _sheetRunClear();
+      return out;
+    });
+    // the stale completion left the newer run's status line + descriptor alone
+    expect(out.text).toBe('live run message');
+    expect(out.descSurvives).toBe(true);
+  });
+});

@@ -849,7 +849,12 @@ def _prune_own_attempt_if_not_published(sheet_id, generation, gen_prefix):
         run = json.loads(resp["Body"].read())
     except Exception:
         return                                  # cannot confirm -> defer to GC
-    if run.get("published_png_key") == gen_prefix + "sheet.png":
+    # round-16 finding 2 discipline: pointer-ours is checked against BOTH
+    # published keys (OR = conservative KEEP) — if either key references our
+    # prefix, deleting would break a live reference (possibly carried
+    # forward by a superseding begin).
+    if (run.get("published_png_key") == gen_prefix + "sheet.png"
+            or run.get("published_manifest_key") == gen_prefix + "sheet.json"):
         return                                  # our (ambiguous) CAS actually won
     if run.get("generation") != generation:
         _prune_own_attempt(sheet_id, gen_prefix)    # a newer generation owns it
@@ -861,14 +866,50 @@ def _prune_own_attempt_if_not_published(sheet_id, generation, gen_prefix):
     # CAS could still publish -> leave the objects for the winner's sweep
 
 
-def _reap_sheet_scaffolding(sheet_id, generation, steps, winner_prefix):
+def _run_is_active(sheet_id, generation):
+    """The authoritative WRITE fence (round-16 finding 1): True only when
+    run.json is READABLE, owned by THIS generation, and status 'running'.
+    The DDB lease is ORTHOGONAL to cancellation/supersession — a cancelled
+    run's worker still holds a perfectly valid lease — so every shared S3
+    write must also be fenced against the run record itself. Fail closed:
+    unreadable / generation mismatch / terminal -> False (skip the write)."""
+    try:
+        resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+        run = json.loads(resp["Body"].read())
+    except Exception:
+        return False
+    return run.get("generation") == generation and run.get("status") == "running"
+
+
+def _delete_keys_best_effort(keys):
+    """Round-16 findings 1/3: a fenced-out writer deletes the objects IT
+    wrote in this invocation. Once the run is inactive (terminal or
+    superseded) those keys are provably garbage — generation-keyed and
+    referenced by nothing — so the writer self-cleans instead of relying on
+    a cleanup pass that cannot know about in-flight writes. NEVER called on
+    a lost-lease exit: there a successor legitimately shares these keys."""
+    if not keys:
+        return
+    try:
+        s3.delete_objects(Bucket=BUCKET, Delete={
+            "Objects": [{"Key": k} for k in keys], "Quiet": True})
+    except Exception:
+        pass
+
+
+def _reap_sheet_scaffolding(sheet_id, generation, steps, winner_prefix,
+                            keep_marker=False):
     """Cleanup for a generation: delete the frame tiles + cancel marker and
     prune attempt artifacts. winner_prefix=<prefix> keeps the winner and
     prunes the losers (post-publication); winner_prefix=None means NO winner
     (a failed/cancelled run) and prunes ALL attempts (round-14 finding 4).
-    Idempotent, so it is safe from BOTH the normal winner path AND the
-    reconciliation path. Returns True on a clean sweep, False on any
-    delete/list error."""
+    keep_marker=True preserves the cancel marker (round-16 finding 1: on a
+    CANCELLED run the marker is the in-flight workers' fast stop signal —
+    deleting it before they quiesce made them miss the cancel entirely; it
+    is reaped later by the superseding begin's GC, once generation-fencing
+    has quiesced the old workers). Idempotent, so it is safe from BOTH the
+    normal winner path AND the reconciliation path. Returns True on a clean
+    sweep, False on any delete/list error."""
     ok = True
     try:
         delete_keys = []
@@ -876,7 +917,8 @@ def _reap_sheet_scaffolding(sheet_id, generation, steps, winner_prefix):
             key = _tile_key(sheet_id, generation, k)
             delete_keys.append({"Key": key})
             delete_keys.append({"Key": key.replace(".bin", ".json")})
-        delete_keys.append({"Key": _cancel_key(sheet_id, generation)})
+        if not keep_marker:
+            delete_keys.append({"Key": _cancel_key(sheet_id, generation)})
         for i in range(0, len(delete_keys), 1000):
             resp = s3.delete_objects(
                 Bucket=BUCKET,
@@ -930,7 +972,13 @@ def _reap_terminal_generation(sheet_id, generation):
             return None                               # winner unknown -> skip
         return _reap_sheet_scaffolding(sheet_id, generation, steps, winner)
     if status in ("failed", "cancelled", "abandoned"):
-        return _reap_sheet_scaffolding(sheet_id, generation, steps, None)
+        # round-16 finding 1: KEEP the cancel marker — in-flight workers of
+        # this generation still poll it between frames; the run-active write
+        # fence stops their tile writes, and the marker lets them stop FAST
+        # instead of rendering to the fence. The superseding begin's GC
+        # deletes it once generation-fencing has quiesced them.
+        return _reap_sheet_scaffolding(sheet_id, generation, steps, None,
+                                       keep_marker=True)
     return None                                       # running/unknown -> skip
 
 
@@ -952,12 +1000,20 @@ def _reap_superseded_generation(sheet_id, prior):
         steps = int(prior.get("steps") or 0)
     except (TypeError, ValueError):
         steps = 0
-    winner = None
-    png = prior.get("published_png_key")
-    if (prior.get("published_generation") == prior_gen
-            and isinstance(png, str) and png.endswith("sheet.png")):
-        winner = png[:-len("sheet.png")]      # the winner IS under prior_gen
-    _reap_sheet_scaffolding(sheet_id, prior_gen, steps, winner)
+    if prior.get("published_generation") == prior_gen:
+        # the carried winner lives UNDER prior_gen — round-16 finding 2: use
+        # the shared fail-closed validator (BOTH keys present, suffixed, and
+        # agreeing), not a png-only guess. An indeterminate winner on a
+        # published record means we cannot know what is referenced -> SKIP
+        # the whole destructive sweep rather than delete a referenced object.
+        winner = _winner_prefix_from_run(prior, prior_gen)
+        if winner is None:
+            return
+        _reap_sheet_scaffolding(sheet_id, prior_gen, steps, winner)
+        return
+    # the published pointer (if any) lives under an even-older generation,
+    # untouched by reaping THIS one -> reap-all of prior_gen is safe
+    _reap_sheet_scaffolding(sheet_id, prior_gen, steps, None)
 
 
 def _prune_losing_attempts(sheet_id, generation, winning_prefix):
@@ -1156,7 +1212,7 @@ def _task_status_for(resolved):
 
 
 def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
-                              exc, *, phase_label):
+                              exc, *, phase_label, own_attempt_prefix=None):
     """Shared error path for the worker and the stitch. Ordered so no shared
     state is mutated on unconfirmed ownership, and the DDB task is finalized
     only AFTER the authoritative run.json transition is confirmed (round-8
@@ -1184,6 +1240,13 @@ def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
     # reap-all a superseded generation whose winner a newer begin carried
     # forward). Idempotent + re-runnable, so stragglers are caught later.
     _reap_terminal_generation(sheet_id, generation)
+    # round-16 finding 3: a SUPERSEDED stitch's just-written attempt is
+    # invisible to both the owner above (fail-closed skip) and the begin-GC
+    # (which ran before the write) — the writer itself must clean it. The
+    # prune is pointer-guarded (keeps the attempt when run.json references
+    # it, e.g. our ambiguous CAS won and was carried forward).
+    if own_attempt_prefix is not None:
+        _prune_own_attempt_if_not_published(sheet_id, generation, own_attempt_prefix)
     # round-12 finding 4: record the DDB task at the ACTUAL resolved status.
     # If a concurrent attempt published (final == 'done') the run SUCCEEDED,
     # so the task is 'done' — not a false 'error'.
@@ -1508,6 +1571,7 @@ def handle_frames(params):
 
         frozen_cache = {}
         done = 0
+        written = []   # keys THIS invocation wrote (round-16 self-clean)
         for k in indices:
             if _cancel_requested(sheet_id, generation):
                 # round-10 finding 2: do NOT finalize the DDB task or report
@@ -1559,6 +1623,19 @@ def handle_frames(params):
                     "frames": len(indices), "frame": done_after}):
                 return ok_response({"sheet_id": sheet_id, "frames_done": done,
                                     "lost_lease": True})
+            # round-16 finding 1: the lease is ORTHOGONAL to cancellation —
+            # a cancelled/superseded run's worker still holds a valid lease,
+            # so the write must ALSO be fenced against the run record. A
+            # worker that missed the marker mid-render stops HERE: tiles can
+            # never be recreated after terminal cleanup. Self-clean what we
+            # wrote (same-gen terminal is re-reaped by the owner; a
+            # superseded gen's reap fails closed, so own-key deletion is the
+            # only cleaner for that case). NOT on lost-lease exits.
+            if not _run_is_active(sheet_id, generation):
+                _reap_terminal_generation(sheet_id, generation)
+                _delete_keys_best_effort(written)
+                return ok_response({"sheet_id": sheet_id, "generation": generation,
+                                    "frames_done": done, "run_terminal": True})
             # round-10 finding 4: WRITE-ONCE tiles (create-only). Even though
             # the fence proved ownership an instant ago, a sufficiently
             # delayed stale worker could still reach here after losing the
@@ -1569,7 +1646,17 @@ def handle_frames(params):
             _put_object_once(key, bytes(tile), "application/octet-stream")
             _put_object_once(key.replace(".bin", ".json"),
                              json.dumps(record).encode("utf-8"), "application/json")
+            written.extend([key, key.replace(".bin", ".json")])
             done = done_after
+        # round-16 finding 1: final quiescence check — a cancel that lands
+        # during the LAST frame's write window has no later loop iteration
+        # to catch it; without this, that straggler tile would outlive the
+        # terminal reap with the client no longer watching.
+        if not _run_is_active(sheet_id, generation):
+            _reap_terminal_generation(sheet_id, generation)
+            _delete_keys_best_effort(written)
+            return ok_response({"sheet_id": sheet_id, "generation": generation,
+                                "frames_done": done, "run_terminal": True})
         # round-7 finding 2: the terminal 'done' is OWNER-CONDITIONAL and
         # best-effort — a lost lease means a successor owns it (don't
         # overwrite), and a transient DDB throttle on the done write must
@@ -1698,6 +1785,12 @@ def handle_stitch(params):
                 "sheet_id": sheet_id, "generation": generation,
                 "frames": cfg["steps"]}):
             return ok_response({"sheet_id": sheet_id, "lost_lease": True})
+        # round-16 finding 3: fence the artifact write against the RUN RECORD
+        # too — a superseded/terminal run's stitch must not create attempt
+        # artifacts that the begin-GC (which already ran) can never revisit.
+        if not _run_is_active(sheet_id, generation):
+            return ok_response({"sheet_id": sheet_id, "generation": generation,
+                                "run_terminal": True})
         gen_prefix = _write_generation_artifacts(cfg, generation, manifest,
                                                   canvas, owner)
         manifest["png_key"] = gen_prefix + "sheet.png"
@@ -1753,10 +1846,12 @@ def handle_stitch(params):
         # lease exits benignly; DDB-uncertain ownership never authorizes
         # failing the successor's run. Cleanup is reconciled inside
         # _finalize_failure_or_exit through the single _reap_terminal_
-        # generation owner (round-15).
+        # generation owner (round-15); own_attempt_prefix lets the SUPERSEDED
+        # case self-clean the attempt the fail-closed owner cannot touch
+        # (round-16 finding 3).
         return _finalize_failure_or_exit(
             job_id, task_id, owner, sheet_id, generation, e,
-            phase_label="Stitch failed")
+            phase_label="Stitch failed", own_attempt_prefix=gen_prefix)
     finally:
         hb.stop()
 

@@ -1,13 +1,13 @@
 """
-Coeff-program registers: source locals with REBINDING plus native
-transforms composable in expression position. Together these give the
-register mental model (r1 = scan(...); r3 = sort_mod_keep_angle(r1);
-r1 = r1 + r2) with zero VM changes — every definition inlines at its
-use sites, so the lowered chain is byte-identical to hand-inlining and
-the registry's existing src=pop/tgt=push selectors carry the
-composition. Fingerprints, wire formats, and deployed VMs are untouched
-(pinned here by fingerprint-equivalence and a live sweep_test parity
-run).
+Coeff-program registers are REAL evaluate-once VM slots (CR35-F1/F2):
+`r = RHS` with a vector-valued RHS lowers ONCE to an evaluate+
+local_store sequence, and every reference is a local_load of the
+STORED value — reading a register never re-runs its definition, so
+nondeterministic operations (littlewood seeds by token index) are safe
+to name, and rebinding chains grow linearly instead of exponentially.
+Scalar-shaped RHS stays a text alias (deterministic pure-math grammar,
+capped at define time). Programs without vector registers keep their
+pre-register chains byte-for-byte.
 """
 import importlib.util
 import json
@@ -59,10 +59,12 @@ def _run_vm(compiled, t1, t2):
 
 
 class TestCoeffRegisters(unittest.TestCase):
-    def test_register_program_compiles_and_equals_hand_inlined(self):
+    @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+    def test_register_program_matches_hand_inlined_values(self):
         """The motivating program (registers naming a scan, a transform of
-        it, and their sum) compiles, and its chain is BYTE-IDENTICAL to the
-        hand-inlined form: registers are pure compile-time splicing."""
+        it, and their sum) computes the SAME VALUES as the hand-inlined
+        form. The chains differ by design now (store/load ops instead of
+        duplicated definitions) — value equivalence is the contract."""
         from coeff_program_source import compile_coeff_program_source
 
         compiled = compile_coeff_program_source(USER_PROGRAM)
@@ -72,11 +74,21 @@ class TestCoeffRegisters(unittest.TestCase):
             "scan(31, 0, -1*(t1-t2), cos(0.463801-prev)*prev*(t1+t2)))\n"
             "emit"
         )
-        self.assertEqual(compiled["fingerprint"], inlined["fingerprint"])
+        for u, v in ((0.2, 0.3), (0.71, 0.13)):
+            got = _run_vm(compiled, u, v)
+            ref = _run_vm(inlined, u, v)
+            self.assertEqual(len(got), len(ref))
+            self.assertTrue(all(abs(a - b) < 1e-12 for a, b in zip(got, ref)))
+        # the register form evaluates the scan ONCE; the inlined form twice
+        scan_ops = [t for t in compiled["tokens"] if t.get("op") == 31]
+        inlined_scan_ops = [t for t in inlined["tokens"] if t.get("op") == 31]
+        self.assertEqual(len(scan_ops), 1)
+        self.assertEqual(len(inlined_scan_ops), 2)
 
+    @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
     def test_rebinding_is_register_like(self):
-        """r1 = add(r1, r2): the previous r1 inlines into the new definition
-        — sequential register semantics without VM state."""
+        """r1 = add(r1, r2): references inside a rebind read the PREVIOUS
+        stored value; the rebind re-stores the same slot."""
         from coeff_program_source import compile_coeff_program_source
 
         rebound = compile_coeff_program_source(
@@ -89,7 +101,99 @@ class TestCoeffRegisters(unittest.TestCase):
         inlined = compile_coeff_program_source(
             "poly = add(scan(5, 0, 1, prev*2), fill(5, 3))\nemit"
         )
-        self.assertEqual(rebound["fingerprint"], inlined["fingerprint"])
+        for u, v in ((0.2, 0.3), (0.9, 0.05)):
+            got = _run_vm(rebound, u, v)
+            ref = _run_vm(inlined, u, v)
+            self.assertTrue(all(abs(a - b) < 1e-12 for a, b in zip(got, ref)))
+
+    @unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+    def test_registers_evaluate_once_for_nondeterministic_rhs(self):
+        """CR35-F1 regression: littlewood's native lowering seeds by token
+        index, so under the old textual macros an EXTRA READ of r changed
+        the value an earlier assignment had stored. With real registers the
+        definition runs once; reads cannot perturb it."""
+        from coeff_program_source import compile_coeff_program_source
+
+        base = compile_coeff_program_source(
+            "r = littlewood(0, 1)\npoly = r\nemit\n")
+        extra_read = compile_coeff_program_source(
+            "r = littlewood(0, 1)\npoly = r\nr\nemit\n")
+        both_args = compile_coeff_program_source(
+            "r = littlewood(0, 1)\npoly = add(r, r)\nemit\n")
+        for u, v in ((0.2, 0.3), (0.77, 0.42)):
+            a = _run_vm(base, u, v)
+            b = _run_vm(extra_read, u, v)
+            self.assertEqual(a, b, "an extra read changed a stored register value")
+            c = _run_vm(both_args, u, v)
+            self.assertEqual(len(c), 1)
+            self.assertTrue(abs(c[0] - 2 * a[0]) < 1e-12,
+                            "add(r, r) must read the same stored value twice")
+
+    def test_rebind_chains_compile_linearly(self):
+        """CR35-F2 regression: 16 rebinds used to expand to ~7.5 MB of
+        chain text and seconds of compile; real registers grow linearly."""
+        import time
+
+        from coeff_program_source import compile_coeff_program_source
+
+        src = "r = fill(1, 1)\n" + "r = add(r, r)\n" * 16 + "poly = r\nemit\n"
+        t0 = time.time()
+        compiled = compile_coeff_program_source(src)
+        elapsed = time.time() - t0
+        self.assertLess(elapsed, 0.5, f"rebind compile took {elapsed:.3f}s")
+        self.assertLess(compiled["token_count"], 120)
+
+    def test_scalar_rebind_expansion_is_capped(self):
+        """The scalar text-alias side of CR35-F2: definition text growth is
+        rejected at define/use time, cheaply."""
+        import time
+
+        from coeff_program_source import (
+            CoeffProgramSourceCompileError,
+            compile_coeff_program_source,
+        )
+
+        src = "a = 1+1\n" + "a = a+a\n" * 24 + "poly = fill(1, a)\nemit\n"
+        t0 = time.time()
+        with self.assertRaises(CoeffProgramSourceCompileError):
+            compile_coeff_program_source(src)
+        self.assertLess(time.time() - t0, 0.5)
+
+    def test_local_free_programs_keep_their_chains(self):
+        """Programs with no vector registers (including scalar aliases)
+        compile to the SAME fingerprints as before the register VM ops —
+        deployed programs must not shift."""
+        from coeff_program_source import compile_coeff_program_source
+
+        alias = compile_coeff_program_source(
+            "a = 2+3\npoly = fill(3, a)\nemit\n")
+        direct = compile_coeff_program_source(
+            "poly = fill(3, 2+3)\nemit\n")
+        self.assertEqual(alias["fingerprint"], direct["fingerprint"])
+
+    def test_register_misuse_is_rejected(self):
+        from coeff_program_source import (
+            CoeffProgramSourceCompileError,
+            compile_coeff_program_source,
+        )
+
+        cases = {
+            "self-reference in first definition":
+                "r = add(r, r)\npoly = r\nemit\n",
+            "vector register in scalar expression":
+                "r = fill(3, 1)\npoly = fill(3, 0)\npoly[0] = r*2\nemit\n",
+            "scalar rebound to vector":
+                "x = 5\nx = fill(3, 1)\npoly = x\nemit\n",
+            "vector rebound to scalar":
+                "r = fill(3, 1)\nr = 5\npoly = r\nemit\n",
+            "too many registers":
+                "".join(f"v{i} = fill(2, {i})\n" for i in range(9))
+                + "poly = v0\nemit\n",
+        }
+        for label, src in cases.items():
+            with self.subTest(label=label):
+                with self.assertRaises(CoeffProgramSourceCompileError):
+                    compile_coeff_program_source(src)
 
     def test_transforms_compose_in_expression_position(self):
         """Native transforms accept expression arguments in statement AND

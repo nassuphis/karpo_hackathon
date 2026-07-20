@@ -268,7 +268,12 @@ class TestCompiledEndToEnd(unittest.TestCase):
             "poly = add(power(ks, 2), multiply(ks, l))\n"
         )
         self.assertLessEqual(compiled["token_count"], 256)
-        self.assertEqual(compiled["scalar_expr_count"], compiled["scalar_expr_count"])
+        # ks is a vector REGISTER now: one store, two loads, and the range
+        # lowers exactly once (CR35-F28 replaced a vacuous self-equality)
+        ops = [t.get("op") for t in compiled["tokens"]]
+        self.assertEqual(ops.count(50), 1, "one local_store for ks")
+        self.assertEqual(ops.count(51), 2, "two local_load reads of ks")
+        self.assertEqual(ops.count(18), 1, "range evaluates once")
         self.assertTrue(compiled["fingerprint"])
 
 

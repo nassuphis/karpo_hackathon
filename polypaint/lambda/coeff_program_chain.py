@@ -88,6 +88,9 @@ COEFF_OP_REDUCE = 34
 # reserved range so v1 and v2 payloads use the same numeric wire values.
 COEFF_OP_PUSH_VECTOR_CONST = 48
 COEFF_OP_TRANSLATE_ROOTS = 49
+COEFF_OP_LOCAL_STORE = 50
+COEFF_OP_LOCAL_LOAD = 51
+COEFF_PROGRAM_MAX_LOCALS = 8
 
 COEFF_SEL_CF = 1
 COEFF_SEL_POLY = 2
@@ -175,6 +178,8 @@ _OP_NAMES = {
     COEFF_OP_REDUCE: "reduce",
     COEFF_OP_PUSH_VECTOR_CONST: "push_vector_const",
     COEFF_OP_TRANSLATE_ROOTS: "translate_roots",
+    COEFF_OP_LOCAL_STORE: "local_store",
+    COEFF_OP_LOCAL_LOAD: "local_load",
 }
 
 _SOURCE_SELECTORS = {
@@ -1921,6 +1926,27 @@ REDUCE_OPS = {"sum": 1, "prod": 2}
 _REDUCE_NAMES = {v: k for k, v in REDUCE_OPS.items()}
 
 
+def _local_slot_arg(name, args):
+    if len(args) != 1:
+        raise RuntimeError(f"{name} chip requires exactly one slot argument")
+    try:
+        slot = int(str(args[0]).strip())
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{name} slot must be an integer, got {args[0]!r}")
+    if not 0 <= slot < COEFF_PROGRAM_MAX_LOCALS:
+        raise RuntimeError(
+            f"{name} slot must be in 0..{COEFF_PROGRAM_MAX_LOCALS - 1}, got {slot}")
+    return slot
+
+
+def _compile_local_store_chip(args, scalar_exprs):
+    return _token(COEFF_OP_LOCAL_STORE, fn_index=_local_slot_arg("local_store", args))
+
+
+def _compile_local_load_chip(args, scalar_exprs):
+    return _token(COEFF_OP_LOCAL_LOAD, fn_index=_local_slot_arg("local_load", args))
+
+
 def _compile_reduce_chip(args, scalar_exprs):
     if len(args) != 1 or str(args[0]).strip().lower() not in REDUCE_OPS:
         raise RuntimeError("reduce chip requires one of: " + ", ".join(sorted(REDUCE_OPS)))
@@ -2203,6 +2229,8 @@ _CHIP_COMPILERS = {
     "slice": _compile_slice_read_chip,
     "poke_slice": _compile_slice_write_chip,
     "reduce": _compile_reduce_chip,
+    "local_store": _compile_local_store_chip,
+    "local_load": _compile_local_load_chip,
     "_native_transform_stack_args": _compile_native_transform_stack_args_chip,
     "littlewood": _compile_littlewood,
     "legacy": _compile_legacy_chip,
@@ -2263,6 +2291,7 @@ def _validate_stack(tokens):
     types = []
     max_depth = 0
     diagnostics = []
+    local_types = {}          # slot -> stored value type ("vector"/"scalar")
 
     def depth():
         return len(types)
@@ -2379,6 +2408,15 @@ def _validate_stack(tokens):
         elif op == COEFF_OP_REDUCE:
             need_vector_pop(idx, "reduce")
             types.append("scalar")
+        elif op == COEFF_OP_LOCAL_STORE:
+            slot = int(token.get("fn_index") or 0)
+            local_types[slot] = need_any(idx, "local_store")
+        elif op == COEFF_OP_LOCAL_LOAD:
+            slot = int(token.get("fn_index") or 0)
+            if slot not in local_types:
+                raise RuntimeError(
+                    f"local_load at token {idx}: slot {slot} read before store")
+            types.append(local_types[slot])
         elif op == COEFF_OP_TYPED_PUSH_SCALAR:
             types.append("scalar")
         elif op == COEFF_OP_TYPED_PUSH_VECTOR:

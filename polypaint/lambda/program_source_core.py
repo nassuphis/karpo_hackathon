@@ -311,26 +311,33 @@ def parse_call(text, *, error_cls=ProgramSourceError):
 _LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+# A scalar alias definition may inline earlier aliases; cap the SUBSTITUTED
+# text at define time so rebinding chains (a = a + a, repeated) cannot grow
+# exponentially before any use-site token cap sees them (CR35-F2).
+MAX_LOCAL_DEFINITION_CHARS = 4096
+
+
 class SourceLocals:
-    """Single-assignment source aliases — lightweight compile-time macros.
+    """Source locals: scalar TEXT ALIASES plus (per-profile) VECTOR REGISTERS.
 
-    `name = expr` where `name` is not a reserved word defines an alias;
+    Scalar path — `name = expr` where the profile lowers `expr` as a scalar:
     later statements see whole-word occurrences of the name replaced by its
-    definition text. Definitions inline any earlier aliases at definition
-    time, so substitution is a single pass and define-before-use falls out
-    naturally. Rebinding is allowed and register-like: `r1 = r1 + r2`
-    inlines the PREVIOUS r1 into the new definition (pure sequential
-    semantics — indistinguishable from mutation because every expression
-    is deterministic). A first definition cannot reference itself.
+    definition text. Scalar expressions contain only deterministic pure-math
+    grammar, so substitution is value-equivalent to evaluation; rebinding
+    inlines the previous definition (capped by MAX_LOCAL_DEFINITION_CHARS).
 
-    Substituted text is parenthesized unless the definition is a bare
+    Vector path — profiles that implement `lower_local_definition` claim
+    vector-valued RHS as REAL registers: the definition lowers ONCE to an
+    evaluate-and-store chip sequence and every reference loads the stored
+    value (CR35-F1: textual re-expansion of nondeterministic operations such
+    as littlewood changed already-assigned values). This table only tracks
+    the vector NAMES so the two kinds cannot collide; slot allocation and
+    chip emission live with the profile.
+
+    Substituted scalar text is parenthesized unless the definition is a bare
     number/identifier or a complete call — infix fragments need the parens
     for precedence; calls and atoms must stay bare so value lowerers that
     dispatch on call shape still recognize them.
-
-    The lowered chain is byte-identical to hand-inlining, so fingerprints
-    and wire formats are untouched. Reuse duplicates the definition's chain
-    (same trade-off solve-score locals have always had).
     """
 
     def __init__(self, *, reserved, error_cls=ProgramSourceError, reserved_patterns=()):
@@ -339,6 +346,7 @@ class SourceLocals:
         self._error_cls = error_cls
         self._map = {}
         self._pattern = None
+        self._vector_names = set()
 
     def _substitution_text(self, rhs):
         raw = rhs.strip()
@@ -356,22 +364,49 @@ class SourceLocals:
             return text
         return self._pattern.sub(lambda m: self._map[m.group(0).lower()], text)
 
-    def try_define(self, statement):
-        """Consume `name = expr` alias definitions; True when handled."""
+    def match_definition(self, statement):
+        """`name = expr` local definition -> (name, rhs); None otherwise.
+        Pure recognition — no substitution or registration happens here."""
         text = statement.text
         idx = find_top_level_assignment(text)
         if idx < 0:
-            return False
+            return None
         lhs = text[:idx].strip().lower()
         if not _LOCAL_NAME_RE.match(lhs) or lhs in self._reserved:
-            return False
+            return None
         if any(p.match(lhs) for p in self._reserved_patterns):
-            return False
+            return None
         rhs = text[idx + 1:].strip()
         if not rhs:
             raise self._error_cls(
                 f"local {lhs!r} definition is empty",
                 line=statement.line, column=statement.column, code="empty_expression",
+            )
+        return lhs, rhs
+
+    def has_scalar(self, name):
+        return str(name).lower() in self._map
+
+    def is_vector(self, name):
+        return str(name).lower() in self._vector_names
+
+    def register_vector(self, name, statement):
+        """Claim a name as a vector register (profile owns the slot)."""
+        lhs = str(name).lower()
+        if lhs in self._map:
+            raise self._error_cls(
+                f"local {lhs!r} is a scalar alias; it cannot be rebound to a vector value",
+                line=statement.line, column=statement.column, code="local_kind_conflict",
+            )
+        self._vector_names.add(lhs)
+
+    def define_scalar(self, lhs, rhs, statement):
+        """Register a scalar text alias (substituting earlier aliases)."""
+        lhs = str(lhs).lower()
+        if lhs in self._vector_names:
+            raise self._error_cls(
+                f"local {lhs!r} is a vector register; it cannot be rebound to a scalar expression",
+                line=statement.line, column=statement.column, code="local_kind_conflict",
             )
         substituted = self.substitute(rhs)
         if re.search(rf"(?<![A-Za-z0-9_]){re.escape(lhs)}(?![A-Za-z0-9_])", substituted, re.IGNORECASE):
@@ -379,12 +414,26 @@ class SourceLocals:
                 f"local {lhs!r} cannot reference itself",
                 line=statement.line, column=statement.column, code="local_self_reference",
             )
+        if len(substituted) > MAX_LOCAL_DEFINITION_CHARS:
+            raise self._error_cls(
+                f"local {lhs!r} definition expands to {len(substituted)} characters "
+                f"(max {MAX_LOCAL_DEFINITION_CHARS}); rebinding chains multiply "
+                "inlined text — restructure with fewer rebinds",
+                line=statement.line, column=statement.column, code="local_expansion_too_large",
+            )
         self._map[lhs] = self._substitution_text(substituted)
         names = sorted(self._map, key=len, reverse=True)
         self._pattern = re.compile(
             r"(?<![A-Za-z0-9_])(?:" + "|".join(re.escape(n) for n in names) + r")(?![A-Za-z0-9_])",
             re.IGNORECASE,
         )
+
+    def try_define(self, statement):
+        """Back-compat scalar-only entry: consume alias definitions."""
+        definition = self.match_definition(statement)
+        if definition is None:
+            return False
+        self.define_scalar(definition[0], definition[1], statement)
         return True
 
 
@@ -621,10 +670,22 @@ def parse_profile_source(
         if callable(reserved) else None
     )
 
+    lower_local = getattr(lowerer, "lower_local_definition", None)
     for stmt in statements:
         try:
             if locals_table is not None:
-                if locals_table.try_define(stmt):
+                definition = locals_table.match_definition(stmt)
+                if definition is not None:
+                    lhs, rhs = definition
+                    fragment = None
+                    if callable(lower_local):
+                        # vector RHS -> real register store (evaluate once);
+                        # None means "scalar-shaped, use the text alias path"
+                        fragment = lower_local(lhs, rhs, locals_table, stmt)
+                    if fragment is None:
+                        locals_table.define_scalar(lhs, rhs, stmt)
+                    else:
+                        chain.extend(fragment)
                     continue
                 substituted = locals_table.substitute(stmt.text)
                 if substituted != stmt.text:

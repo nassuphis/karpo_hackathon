@@ -30,13 +30,22 @@ pytestmark = pytest.mark.skipif(not _docker_available(), reason="Docker unavaila
 
 
 def _docker_run(cmd_inside):
-    r = subprocess.run(
-        ["docker", "run", "--rm", "--platform", "linux/arm64",
-         "-v", f"{os.path.abspath(LAMBDA_DIR)}:/src",
-         "public.ecr.aws/amazonlinux/amazonlinux:2023",
-         "bash", "-c", cmd_inside],
-        capture_output=True, text=True, timeout=30,
-    )
+    # Docker Desktop's VirtioFS mount intermittently refuses the FIRST
+    # open-for-write in a fresh container ("Cannot open output /src/...")
+    # and succeeds on an identical immediate rerun — measured 1-in-3 on an
+    # otherwise idle daemon. Retry ONCE, only on that exact signature, so
+    # a real binary failure still surfaces first try.
+    for attempt in range(2):
+        r = subprocess.run(
+            ["docker", "run", "--rm", "--platform", "linux/arm64",
+             "-v", f"{os.path.abspath(LAMBDA_DIR)}:/src",
+             "public.ecr.aws/amazonlinux/amazonlinux:2023",
+             "bash", "-c", cmd_inside],
+            capture_output=True, text=True, timeout=30,
+        )
+        flake = ("Cannot open" in (r.stderr or "") and "/src/_test_pal" in (r.stderr or ""))
+        if r.returncode == 0 or not flake:
+            return r
     return r
 
 
@@ -60,6 +69,16 @@ def run_palette(bin_path, degree, lores_n, full_n, times=1, metric="proximity",
     host_scores = os.path.join(LAMBDA_DIR, "_test_pal_scores.bin")
     host_bins = os.path.join(LAMBDA_DIR, "_test_pal_bins.bin")
     shutil.copy(bin_path, host_bin)
+    # VirtioFS flakes on the container CREATING a new file in the mount
+    # (measured: each failing run had created the previous output and died
+    # on the next new one; reruns succeed once the files exist). Pre-create
+    # every expected output on the host so the container only ever opens
+    # existing files.
+    precreate = [host_out]
+    if with_sidecars:
+        precreate += [host_scores, host_bins]
+    for p in precreate:
+        open(p, "wb").close()
     try:
         args = (f"/src/solve_palette_debug /src/_test_pal_input.bin /src/_test_pal_out.raw "
                 f"--degree={degree} --lores_n={lores_n} --full_n={full_n} --times={times} "

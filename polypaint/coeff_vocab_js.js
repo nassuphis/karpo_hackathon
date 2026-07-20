@@ -1394,6 +1394,28 @@ window._coeffRegistryVocab = {
         ]
       },
       {
+        "name": "local_store",
+        "op_symbol": "COEFF_OP_LOCAL_STORE",
+        "op": 50,
+        "args": [
+          {
+            "name": "slot",
+            "type": "int_literal"
+          }
+        ]
+      },
+      {
+        "name": "local_load",
+        "op_symbol": "COEFF_OP_LOCAL_LOAD",
+        "op": 51,
+        "args": [
+          {
+            "name": "slot",
+            "type": "int_literal"
+          }
+        ]
+      },
+      {
         "name": "macro",
         "op_symbol": null,
         "op": null,

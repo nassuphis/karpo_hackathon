@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import math
 import re
 import warnings
 
@@ -329,6 +330,7 @@ def _format_scalar_literal(value):
 
 
 def _typed_lower_scalar(text):
+    _reject_vector_local_in_scalar(text)
     try:
         expr = ExpressionParser(_canonical_expr(text)).parse()
         static_value = expr_value_if_static(expr)
@@ -523,19 +525,22 @@ def _try_fold_constant_index(expr_text):
         return None
     if re.search(r"[A-Za-z_]", text.replace("floor", "")):
         return None
-    import math
-
+    # CR35-F3: the bounded static-expression evaluator replaces Python
+    # eval — same grammar the rest of the compiler trusts (token-capped,
+    # no exponent towers, no interpreter surface).
     try:
-        value = eval(text, {"__builtins__": {}}, {"floor": math.floor})  # noqa: S307
+        expr = ExpressionParser(_canonical_expr(text)).parse()
+        value = expr_value_if_static(expr)
     except Exception:
         return None
-    if isinstance(value, float):
-        if not value.is_integer():
-            return None
-        value = int(value)
-    if not isinstance(value, int):
+    if value is None:
         return None
-    return value
+    if value.imag != 0:
+        return None
+    real = value.real
+    if not (real == int(real)) or not math.isfinite(real):
+        return None
+    return int(real)
 
 
 def _reject_stack_effect_args(name, args):
@@ -678,6 +683,8 @@ def _typed_lower_value(text):
     lowered = raw.lower()
     if lowered in _TYPED_VECTOR_SOURCE_NAMES:
         return _typed_lower_vector_source(lowered), "vector"
+    if lowered in _ACTIVE_VECTOR_LOCALS:
+        return [["local_load", str(_ACTIVE_VECTOR_LOCALS[lowered])]], "vector"
     call = _parse_call(raw)
     if call:
         name, args = call
@@ -900,6 +907,8 @@ _TYPED_OP_PASSTHROUGH_NAMES = frozenset({
 _NATIVE_OP_PASSTHROUGH_NAMES = frozenset({
     "_native_transform",
     "_native_transform_stack_args",
+    "local_store",
+    "local_load",
 })
 _ROUNDTRIP_PASSTHROUGH_NAMES = _TYPED_OP_PASSTHROUGH_NAMES | _NATIVE_OP_PASSTHROUGH_NAMES
 
@@ -1172,6 +1181,7 @@ _LOCALS_RESERVED_EXTRA = frozenset({
     "roots_chess_literal", "roots_grid_literal", "roots_ring_literal",
     "roots_ascii_literal",
     "window", "step", "prev", "prev2", "k", "select", "i", "j",
+    "local_store", "local_load",
     "pi", "pi2", "pi2i", "tau", "tau_i",
     "p1", "p2", "t1", "t2", "poly_len",
 })
@@ -1197,6 +1207,34 @@ def _locals_reserved_names():
     return _LOCALS_RESERVED_CACHE
 
 
+# name -> slot for the parse in flight. Compiles are synchronous per
+# process (handler and CLI paths alike), so a module table reset by
+# parse_coeff_program_source is safe; the reset lives in a finally.
+_ACTIVE_VECTOR_LOCALS = {}
+
+COEFF_PROGRAM_MAX_LOCALS = 8
+
+
+def _vector_local_slot(text):
+    name = str(text or "").strip().lower()
+    return _ACTIVE_VECTOR_LOCALS.get(name)
+
+
+def _reject_vector_local_in_scalar(text):
+    """Vector registers hold whole vectors; a scalar expression cannot
+    read one. Raise the targeted error instead of the generic unknown-
+    identifier message (probe paths catch this and fall through to the
+    vector-expression lowering, so rev(r1)-style args still work)."""
+    if not _ACTIVE_VECTOR_LOCALS:
+        return
+    raw = str(text or "")
+    for name in _ACTIVE_VECTOR_LOCALS:
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", raw, re.IGNORECASE):
+            raise CoeffProgramSourceError(
+                f"local {name!r} holds a vector register; vector registers "
+                "cannot appear inside scalar expressions")
+
+
 class _CoeffStatementLowerer(ProfileStatementLowerer):
     """Coeff source semantics through the shared statement dispatcher."""
 
@@ -1211,6 +1249,75 @@ class _CoeffStatementLowerer(ProfileStatementLowerer):
         # would shadow them (and `poly2 = 5` is far likelier a poke typo
         # than an alias). Match the whole family.
         return (r"^(cf|poly|tos|p|t)\d+$",)
+
+    def lower_local_definition(self, name, rhs, locals_table, statement):
+        """Vector-valued RHS -> real register: evaluate once, store the
+        VALUE in a VM local slot; every later reference loads it. Returns
+        None for scalar-shaped RHS (the text-alias path handles those).
+        Rebinding re-stores the same slot; references inside a rebind RHS
+        read the PREVIOUS value — genuine sequential register semantics,
+        correct even for nondeterministic operations (CR35-F1)."""
+        rhs_sub = locals_table.substitute(rhs)
+        if name not in _ACTIVE_VECTOR_LOCALS:
+            # first definition: the name has no value yet, so a self-
+            # reference cannot mean anything (mirror the scalar rule with
+            # the register vocabulary before generic lowering runs)
+            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])",
+                         rhs_sub, re.IGNORECASE):
+                raise CoeffProgramSourceError(
+                    f"local {name!r} cannot reference itself in its first definition",
+                    line=statement.line, column=statement.column,
+                    code="local_self_reference",
+                )
+        # Scalar-shaped RHS keeps the text-alias path byte-for-byte (every
+        # pre-register scalar alias, e.g. a = abs(p1), stays an alias). Only
+        # RHS that CANNOT be a scalar expression becomes a register.
+        scalar_shaped = False
+        try:
+            _reject_vector_local_in_scalar(rhs_sub)
+            ExpressionParser(_canonical_expr(rhs_sub)).parse()
+            scalar_shaped = True
+        except Exception:
+            scalar_shaped = False
+        if scalar_shaped:
+            if name in _ACTIVE_VECTOR_LOCALS:
+                raise CoeffProgramSourceError(
+                    f"local {name!r} is a vector register; it cannot be rebound "
+                    "to a scalar expression",
+                    line=statement.line, column=statement.column,
+                    code="local_kind_conflict",
+                )
+            return None
+        try:
+            chain, value_type = _typed_lower_value(rhs_sub)
+        except CoeffProgramSourceError:
+            # value forms the typed lowerer does not model but the statement
+            # machinery pushes with target="push": exactly one value each
+            call = _parse_call(rhs_sub)
+            if call is None or call[0].strip().lower() not in {
+                    "littlewood", "roll", "rolr", "argsort"}:
+                raise
+            chain, value_type = _lower_call(call[0], call[1], target="push"), "vector"
+        if value_type != "vector":
+            raise CoeffProgramSourceError(
+                f"local {name!r} definition is neither a scalar expression nor "
+                "a vector value",
+                line=statement.line, column=statement.column,
+            )
+        slot = _ACTIVE_VECTOR_LOCALS.get(name)
+        if slot is None:
+            if len(_ACTIVE_VECTOR_LOCALS) >= COEFF_PROGRAM_MAX_LOCALS:
+                raise CoeffProgramSourceError(
+                    f"a Coeff program may hold at most {COEFF_PROGRAM_MAX_LOCALS} "
+                    "vector registers "
+                    f"({', '.join(sorted(_ACTIVE_VECTOR_LOCALS))} are in use)",
+                    line=statement.line, column=statement.column,
+                    code="too_many_locals",
+                )
+            locals_table.register_vector(name, statement)
+            slot = len(_ACTIVE_VECTOR_LOCALS)
+            _ACTIVE_VECTOR_LOCALS[name] = slot
+        return chain + [["local_store", str(slot)]]
 
     def lower_indexed_assignment(self, statement, lhs_name, index_expr, rhs):
         if lhs_name not in _WRITABLE_LHS_NAMES:
@@ -1281,6 +1388,10 @@ class _CoeffStatementLowerer(ProfileStatementLowerer):
         bare = rhs.strip().lower()
         if bare in _SOURCE_NAMES:
             return [["set", lhs, bare]]
+        if bare in _ACTIVE_VECTOR_LOCALS:
+            return _append_typed_target(
+                [["local_load", str(_ACTIVE_VECTOR_LOCALS[bare])]],
+                "vector", target=lhs)
         if _IDENT_RE.match(bare):
             return _lower_call(bare, [], target=lhs)
         chain, value_type = _typed_lower_value(rhs)
@@ -1295,6 +1406,8 @@ class _CoeffStatementLowerer(ProfileStatementLowerer):
             return [["push", bare]]
         if bare in _STACK_ALIASES:
             return [[_STACK_ALIASES[bare]]]
+        if bare in _ACTIVE_VECTOR_LOCALS:
+            return [["local_load", str(_ACTIVE_VECTOR_LOCALS[bare])]]
         if bare in {"pop", "peek"}:
             hint = f"use drop to discard the stack top, or write {_POLY_SYMBOL} = pop / {_POLY_SYMBOL} = peek explicitly"
             raise CoeffProgramSourceError(
@@ -1357,15 +1470,19 @@ def parse_coeff_program_source(source_text, *, strict=True):
     The shared parser core owns splitting, diagnostic shape, and strict vs
     non-strict behavior. Coeff supplies only profile-specific semantic hooks.
     """
-    return parse_profile_source(
-        source_text,
-        lowerer=_COEFF_STATEMENT_LOWERER,
-        display_fn=display_coeff_program_chain,
-        error_cls=CoeffProgramSourceError,
-        compile_error_cls=CoeffProgramSourceCompileError,
-        max_bytes=MAX_COEFF_PROGRAM_SOURCE_BYTES,
-        strict=strict,
-    )
+    _ACTIVE_VECTOR_LOCALS.clear()
+    try:
+        return parse_profile_source(
+            source_text,
+            lowerer=_COEFF_STATEMENT_LOWERER,
+            display_fn=display_coeff_program_chain,
+            error_cls=CoeffProgramSourceError,
+            compile_error_cls=CoeffProgramSourceCompileError,
+            max_bytes=MAX_COEFF_PROGRAM_SOURCE_BYTES,
+            strict=strict,
+        )
+    finally:
+        _ACTIVE_VECTOR_LOCALS.clear()
 
 
 def compile_coeff_program_source(source_text, *, macro_resolver=None, strict=True):

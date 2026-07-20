@@ -3614,6 +3614,7 @@ static void pp_perf_report(const char *mode) {
 #endif
 #define COEFF_PROGRAM_MAX_VECTOR_STACK 64
 #define COEFF_PROGRAM_MAX_VECTOR_LEN 256
+#define COEFF_PROGRAM_MAX_LOCALS 8
 #define COEFF_PROGRAM_MAX_ARGS 8
 #define COEFF_PROGRAM_MAX_SCALAR_EXPRS 64
 #define COEFF_PROGRAM_MAX_VECTOR_CONSTANTS 8
@@ -3662,7 +3663,9 @@ enum CoeffProgramOp {
     COEFF_OP_SLICE_WRITE = 33,
     COEFF_OP_REDUCE = 34,
     COEFF_OP_PUSH_VECTOR_CONST = 48,
-    COEFF_OP_TRANSLATE_ROOTS = 49
+    COEFF_OP_TRANSLATE_ROOTS = 49,
+    COEFF_OP_LOCAL_STORE = 50,
+    COEFF_OP_LOCAL_LOAD = 51
 };
 
 enum CoeffStackValueType {
@@ -3882,6 +3885,18 @@ typedef struct {
     double aux_re[COEFF_PROGRAM_MAX_VECTOR_LEN];
     double aux_im[COEFF_PROGRAM_MAX_VECTOR_LEN];
 
+    /* Evaluate-once locals: vector/scalar register file mirroring the
+     * stack's dual planes. local_store pops the stack top into a slot;
+     * local_load pushes a copy. local_set is zeroed per evaluation so a
+     * hand-crafted payload cannot read a previous row's value. */
+    double local_re[COEFF_PROGRAM_MAX_LOCALS][COEFF_PROGRAM_MAX_VECTOR_LEN];
+    double local_im[COEFF_PROGRAM_MAX_LOCALS][COEFF_PROGRAM_MAX_VECTOR_LEN];
+    double local_scalar_re[COEFF_PROGRAM_MAX_LOCALS];
+    double local_scalar_im[COEFF_PROGRAM_MAX_LOCALS];
+    uint16_t local_len[COEFF_PROGRAM_MAX_LOCALS];
+    uint8_t local_type[COEFF_PROGRAM_MAX_LOCALS];
+    uint8_t local_set[COEFF_PROGRAM_MAX_LOCALS];
+
     /* Hidden scalar-expression arena. Dynamic chip args are lowered at load
      * time and evaluated here per token; intermediate values never touch the
      * user-visible vector/scalar stack. */
@@ -4001,6 +4016,46 @@ static int coeff_stack_require_vector(const CoeffProgramWorkspace *ws, uint16_t 
         return 1;
     }
     return 0;
+}
+
+static int coeffProgramLocalStoreOp(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
+    int slot = (int)tok->fn_index;
+    if (slot < 0 || slot >= COEFF_PROGRAM_MAX_LOCALS) {
+        fprintf(stderr, "coeff_program local_store slot %d out of range\n", slot);
+        return 1;
+    }
+    uint16_t s;
+    if (coeff_stack_pop(ws, &s)) return 1;
+    ws->local_type[slot] = ws->stack_type[s];
+    if (ws->stack_type[s] == COEFF_STACK_SCALAR) {
+        ws->local_scalar_re[slot] = ws->stack_scalar_re[s];
+        ws->local_scalar_im[slot] = ws->stack_scalar_im[s];
+        ws->local_len[slot] = 1;
+    } else {
+        int n = ws->stack_len[s];
+        if (coeff_program_check_len(n, "local_store") != 0) return 1;
+        coeff_vec_copy(ws->local_re[slot], ws->local_im[slot],
+                       ws->stack_re[s], ws->stack_im[s], n);
+        ws->local_len[slot] = (uint16_t)n;
+    }
+    ws->local_set[slot] = 1;
+    return 0;
+}
+
+static int coeffProgramLocalLoadOp(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
+    int slot = (int)tok->fn_index;
+    if (slot < 0 || slot >= COEFF_PROGRAM_MAX_LOCALS) {
+        fprintf(stderr, "coeff_program local_load slot %d out of range\n", slot);
+        return 1;
+    }
+    if (!ws->local_set[slot]) {
+        fprintf(stderr, "coeff_program local_load slot %d read before store\n", slot);
+        return 1;
+    }
+    if (ws->local_type[slot] == COEFF_STACK_SCALAR) {
+        return coeff_stack_push_scalar(ws, ws->local_scalar_re[slot], ws->local_scalar_im[slot]);
+    }
+    return coeff_stack_push(ws, ws->local_re[slot], ws->local_im[slot], ws->local_len[slot]);
 }
 
 static int coeff_stack_require_scalar(const CoeffProgramWorkspace *ws, uint16_t slot, const char *where) {
@@ -6346,6 +6401,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
     ws->poly_len = 0;
     ws->scratch_len = 0;
     ws->original_len = 0;
+    memset(ws->local_set, 0, sizeof(ws->local_set));
     coeff_vec_copy(ws->poly_re, ws->poly_im, cfRe, cfIm, cfLen);
     ws->poly_len = (uint16_t)cfLen;
 
@@ -6428,6 +6484,8 @@ static int evalCoeffProgram(const CoeffProgram *program,
             case COEFF_OP_REDUCE:            rc = coeffProgramReduceOp(ctx, tok); break;
             case COEFF_OP_PUSH_VECTOR_CONST: rc = coeffProgramPushVectorConstOp(ctx, tok); break;
             case COEFF_OP_TRANSLATE_ROOTS:   rc = coeffProgramTranslateRootsOp(ws); break;
+            case COEFF_OP_LOCAL_STORE:       rc = coeffProgramLocalStoreOp(ws, tok); break;
+            case COEFF_OP_LOCAL_LOAD:        rc = coeffProgramLocalLoadOp(ws, tok); break;
             default:
                 fprintf(stderr, "unknown coeff_program opcode: %d\n", tok->op);
                 return 1;

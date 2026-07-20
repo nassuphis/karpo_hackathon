@@ -52,16 +52,19 @@ def handle_solve_cm(params):
         report_status(job_id, task_id, "started")
         t0 = time.time()
 
-        # Download coefficient file
+        # Stream the coefficient object straight to disk (CR35-F8): the
+        # old read() held a full Python bytes copy WHILE the C process
+        # allocated its own input + output — a legal classic plan could
+        # exceed the 4096 MB allocation before runtime overhead.
+        coeffs_file = "/tmp/coeffs_chunk.bin"
         try:
             resp = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
+            with open(coeffs_file, "wb") as f:
+                for chunk in resp["Body"].iter_chunks(chunk_size=8 * 1024 * 1024):
+                    f.write(chunk)
         except Exception as e:
             raise RuntimeError(f"Failed to download coefficients s3://{BUCKET}/{coeffs_key}: {e}") from e
-        coeffs_data = resp["Body"].read()
-
-        coeffs_file = "/tmp/coeffs_chunk.bin"
-        with open(coeffs_file, "wb") as f:
-            f.write(coeffs_data)
+        coeffs_size = os.path.getsize(coeffs_file)
 
         bin_path = "/tmp/roots_chunk.bin"
         spec = {
@@ -76,10 +79,20 @@ def handle_solve_cm(params):
         if solve_mode == "solve_newton" and 1 <= max_iter <= 64:
             # capped-Newton brush knob (plan.solve.iters via the ASL)
             spec["max_iter"] = max_iter
+        # CR35-F13: exactly one owner of parallelism — the row workers.
+        # The deployed binary links OpenBLAS, which would otherwise start
+        # its own thread team per LAPACK call under every row worker.
+        blas_env = dict(os.environ)
+        blas_env.update({
+            "OPENBLAS_NUM_THREADS": "1",
+            "OMP_NUM_THREADS": "1",
+            "GOTO_NUM_THREADS": "1",
+        })
         result = subprocess.run(
             [SWEEP_CM, bin_path],
             input=json.dumps(spec),
-            capture_output=True, text=True, timeout=840
+            capture_output=True, text=True, timeout=840,
+            env=blas_env,
         )
         print(f"sweep_cm rc={result.returncode} stdout={repr(result.stdout[:200])} stderr={repr(result.stderr[:500])}")
         if result.returncode != 0:
@@ -89,7 +102,7 @@ def handle_solve_cm(params):
                     phase="native solve",
                     tmp_file=bin_path,
                     coeffs_key=coeffs_key,
-                    coeffs_size=len(coeffs_data),
+                    coeffs_size=coeffs_size,
                     n_coeffs=n_coeffs,
                     n_steps=n_steps,
                     job_id=job_id,
@@ -138,7 +151,7 @@ def handle_solve_cm(params):
                 phase="local temp write",
                 tmp_file="/tmp",
                 coeffs_key=coeffs_key,
-                coeffs_size=len(coeffs_data) if 'coeffs_data' in locals() else 0,
+                coeffs_size=coeffs_size if 'coeffs_size' in locals() else 0,
                 n_coeffs=n_coeffs,
                 n_steps=n_steps,
                 job_id=job_id,

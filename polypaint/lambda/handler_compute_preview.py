@@ -149,24 +149,30 @@ def _program_chain_has_native(chain, name):
     return False
 
 
+# Every embedded per-row root solve: the companion eigensolve, the JT
+# trip, the padded Aberth (`roots`), and the np.roots-shaped roots_ae —
+# each is a full solver invocation PER ROW (CR35-F24: roots_ae ran a
+# 64-iteration Aberth per row and bypassed the guard entirely).
+_EMBEDDED_ROOT_SOLVERS = ("roots_cm", "roots_jt", "roots", "roots_ae")
+
+
 def _sync_preview_budget_error(*, n_preview, coeff_transforms, coeff_program_chain=None):
-    # roots_cm runs a companion-matrix zgeev eigensolve per row; at
-    # N-preview=256 that is 65k solves, past the 25s synchronous
-    # subprocess cap on the deployed LAPACK. Guard BOTH spellings: the
-    # legacy coefficient transform and the coeff-program chip (e.g.
-    # giga_2880's roots_p stage).
-    has_roots_cm = any(
-        _chain_has_transform(coeff_transforms, name)
-        or _program_chain_has_native(coeff_program_chain, name)
-        for name in ("roots_cm", "roots_jt")
-    )
-    if has_roots_cm and n_preview > ROOTS_CM_SYNC_MAX_N:
-        return (
-            "compute preview refused before coeffgen: roots_cm is too slow "
-            f"for the synchronous HTTP preview at N-preview={n_preview} "
-            "(one eigensolve per row); "
-            f"use N-preview <= {ROOTS_CM_SYNC_MAX_N}, remove roots_cm, or run the full Compute pipeline"
-        )
+    # One embedded solve per row; at N-preview=256 that is 65k solves,
+    # past the 25s synchronous subprocess cap. Guard BOTH spellings —
+    # the legacy coefficient transform and the coeff-program chip — for
+    # every solver in the family, and NAME the one that tripped.
+    for name in _EMBEDDED_ROOT_SOLVERS:
+        if (_chain_has_transform(coeff_transforms, name)
+                or _program_chain_has_native(coeff_program_chain, name)):
+            if n_preview > ROOTS_CM_SYNC_MAX_N:
+                return (
+                    f"compute preview refused before coeffgen: {name} runs a "
+                    f"full root solve per row — too slow for the synchronous "
+                    f"HTTP preview at N-preview={n_preview}; use N-preview <= "
+                    f"{ROOTS_CM_SYNC_MAX_N}, remove {name}, or run the full "
+                    "Compute pipeline"
+                )
+            return None
     return None
 
 
@@ -549,6 +555,10 @@ def handler(event, context):
             return _json_response(400, {"message": f"solver_iters must be an integer, got {params.get('solver_iters')!r}"})
         if solver_iters < 0 or solver_iters > 64:
             return _json_response(400, {"message": f"solver_iters must be in 0..64, got {solver_iters}"})
+        if solver_mode == "newton" and solver_iters > 50:
+            # CR35-F23: Newton's native ceiling is 50; reject instead of
+            # letting the solver silently rewrite the request
+            return _json_response(400, {"message": f"solver_iters for newton must be <= 50, got {solver_iters}"})
         viewport_mode = str(params.get("viewport_mode") or "quantile").strip().lower()
         if viewport_mode not in {"quantile", "explicit"}:
             return _json_response(400, {"message": f"unsupported viewport_mode: {viewport_mode}"})

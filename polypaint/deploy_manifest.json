@@ -57,7 +57,7 @@
    "layers": [
     "lapack"
    ],
-   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,OPENBLAS_NUM_THREADS=1,OMP_NUM_THREADS=1",
    "group": "core",
    "memory_why": "companion matrix eigensolve needs more memory",
    "tmp": "binary",

@@ -401,7 +401,9 @@ async function runComputePreview() {
     const ptDisplay = _displayActiveParamPipeline(',');
     const ctDisplay = _displayActiveCoeffPipeline(',');
     const rootsCmSyncMaxN = 128;
-    if ((_chainHasTransformName(coeffTransforms, 'roots_cm') || _chainHasTransformName(coeffTransforms, 'roots_jt')) && nPreview > rootsCmSyncMaxN) {
+    const _embeddedRootSolver = ['roots_cm', 'roots_jt', 'roots', 'roots_ae']
+        .find(name => _chainHasTransformName(coeffTransforms, name));
+    if (_embeddedRootSolver && nPreview > rootsCmSyncMaxN) {
         const requestedN = nPreview;
         nPreview = rootsCmSyncMaxN;
         const nInput = document.getElementById('compute-preview-n');

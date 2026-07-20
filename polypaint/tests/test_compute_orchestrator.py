@@ -46,56 +46,96 @@ class TestComputeStarterLambda(unittest.TestCase):
         mock_sfn.start_execution.assert_not_called()
 
     @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.ddb_client")
     @patch("handler_compute_orchestrator.sfn_client")
-    def test_stop_action_kills_execution_and_marks_status(self, mock_sfn, mock_report):
-        """The jobs-rail kill: action=stop calls StopExecution with the run's
-        ARN and marks the status row as a user stop (the client poll then
-        terminates through its normal error path)."""
+    def test_stop_action_kills_the_bound_execution(self, mock_sfn, mock_ddb, mock_report):
+        """CR35-F11: the stop targets the execution recorded in the run's
+        OWN status row; a mismatched, unbound, or foreign-workflow ARN is
+        refused before any AWS call."""
         import handler_compute_orchestrator as mod
 
         class _NoSuch(Exception):
             pass
         mock_sfn.exceptions.ExecutionDoesNotExist = _NoSuch
 
+        sm_arn = "arn:aws:states:us-east-1:123:stateMachine:wf"
         arn = "arn:aws:states:us-east-1:123:execution:wf:compute_aberth_mt_run_x"
-        result = mod.handler(_make_event({
-            "action": "stop",
-            "job_id": "j",
-            "task_id": "compute_run_aberth_mt_run_x",
-            "execution_arn": arn,
-        }), None)
-        body = json.loads(result["body"])
-        self.assertTrue(body["stopped"])
-        mock_sfn.stop_execution.assert_called_once()
-        kwargs = mock_sfn.stop_execution.call_args.kwargs
-        self.assertEqual(kwargs["executionArn"], arn)
-        self.assertEqual(kwargs["error"], "UserStopped")
-        mock_sfn.start_execution.assert_not_called()
-        args = mock_report.call_args.args
-        self.assertEqual(args[0], "j")
-        self.assertEqual(args[1], "compute_run_aberth_mt_run_x")
-        self.assertEqual(args[2], "error")
-        self.assertEqual(args[3], "Stopped by user")
-
-        # already-finished executions still mark the row stopped
-        mock_report.reset_mock()
-        mock_sfn.stop_execution.side_effect = _NoSuch()
-        result = mod.handler(_make_event({
-            "action": "stop", "job_id": "j",
-            "task_id": "compute_run_aberth_mt_run_x", "execution_arn": arn,
-        }), None)
-        self.assertTrue(json.loads(result["body"])["stopped"])
-        self.assertEqual(mock_report.call_args.args[2], "error")
-
-        # malformed ARNs are rejected before any AWS call
-        mock_sfn.stop_execution.reset_mock()
-        mock_sfn.stop_execution.side_effect = None
-        with self.assertRaises(RuntimeError):
-            mod.handler(_make_event({
-                "action": "stop", "job_id": "j",
-                "task_id": "t", "execution_arn": "not-an-arn",
+        row = {"Item": {
+            "job_id": {"S": "j"},
+            "task_id": {"S": "compute_run_aberth_mt_run_x"},
+            "result_data": {"S": json.dumps({"execution_arn": arn})},
+        }}
+        mock_ddb.get_item.return_value = row
+        orig_sm = mod.STATE_MACHINE_ARN
+        mod.STATE_MACHINE_ARN = sm_arn
+        try:
+            result = mod.handler(_make_event({
+                "action": "stop",
+                "job_id": "j",
+                "task_id": "compute_run_aberth_mt_run_x",
+                "execution_arn": arn,
             }), None)
-        mock_sfn.stop_execution.assert_not_called()
+            body = json.loads(result["body"])
+            self.assertTrue(body["stopped"])
+            mock_sfn.stop_execution.assert_called_once()
+            kwargs = mock_sfn.stop_execution.call_args.kwargs
+            self.assertEqual(kwargs["executionArn"], arn)
+            self.assertEqual(kwargs["error"], "UserStopped")
+            mock_sfn.start_execution.assert_not_called()
+            args = mock_report.call_args.args
+            self.assertEqual(args[0], "j")
+            self.assertEqual(args[1], "compute_run_aberth_mt_run_x")
+            self.assertEqual(args[2], "error")
+            self.assertEqual(args[3], "Stopped by user")
+
+            # already-finished executions still mark the row stopped
+            mock_report.reset_mock()
+            mock_sfn.stop_execution.side_effect = _NoSuch()
+            result = mod.handler(_make_event({
+                "action": "stop", "job_id": "j",
+                "task_id": "compute_run_aberth_mt_run_x", "execution_arn": arn,
+            }), None)
+            self.assertTrue(json.loads(result["body"])["stopped"])
+            self.assertEqual(mock_report.call_args.args[2], "error")
+
+            mock_sfn.stop_execution.reset_mock()
+            mock_sfn.stop_execution.side_effect = None
+
+            # a client ARN that does not match the stored one is refused
+            with self.assertRaises(RuntimeError):
+                mod.handler(_make_event({
+                    "action": "stop", "job_id": "j",
+                    "task_id": "compute_run_aberth_mt_run_x",
+                    "execution_arn": arn + "-stale",
+                }), None)
+            mock_sfn.stop_execution.assert_not_called()
+
+            # a row with no recorded execution is refused
+            mock_ddb.get_item.return_value = {"Item": {
+                "job_id": {"S": "j"}, "task_id": {"S": "t"},
+                "result_data": {"S": "{}"},
+            }}
+            with self.assertRaises(RuntimeError):
+                mod.handler(_make_event({
+                    "action": "stop", "job_id": "j", "task_id": "t",
+                    "execution_arn": arn,
+                }), None)
+            mock_sfn.stop_execution.assert_not_called()
+
+            # a stored execution from ANOTHER state machine is refused
+            mock_ddb.get_item.return_value = {"Item": {
+                "job_id": {"S": "j"}, "task_id": {"S": "t"},
+                "result_data": {"S": json.dumps({
+                    "execution_arn": "arn:aws:states:us-east-1:123:execution:other:x"})},
+            }}
+            with self.assertRaises(RuntimeError):
+                mod.handler(_make_event({
+                    "action": "stop", "job_id": "j", "task_id": "t",
+                    "execution_arn": "arn:aws:states:us-east-1:123:execution:other:x",
+                }), None)
+            mock_sfn.stop_execution.assert_not_called()
+        finally:
+            mod.STATE_MACHINE_ARN = orig_sm
 
     @patch("handler_compute_orchestrator.report_status")
     @patch("handler_compute_orchestrator.sfn_client")

@@ -14,7 +14,7 @@ import time
 import boto3
 
 from compute_fused import execution_method_from_params
-from shared import JOBS_TABLE, ok_response, parse_body, report_status, assert_safe_id
+from shared import JOBS_TABLE, ok_response, parse_body, report_status, assert_safe_id, resolve_bound_execution_arn
 
 sfn_client = boto3.client("stepfunctions", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 ddb_client = boto3.client("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
@@ -152,17 +152,22 @@ def handler(event, context):
 
 
 def handle_stop(params):
-    """Stop a running workflow from the jobs rail: kill the Step Functions
-    execution and mark the run's status row as a user stop (the client's
-    poll loop then terminates through its normal error path)."""
-    execution_arn = str(params.get("execution_arn") or "").strip()
+    """Stop a running workflow from the jobs rail. The stop targets the
+    execution recorded in the run's OWN status row (CR35-F11): the
+    client ARN is only a staleness check, and a mismatched or unbound
+    request is refused — a stale payload can no longer stop execution A
+    while marking job B as stopped."""
     job_id = params["job_id"]
     task_id = str(params.get("task_id") or "").strip()
-    if not execution_arn.startswith("arn:aws:states:") or not task_id:
-        raise RuntimeError("stop requires the run's execution_arn and task_id")
+    bound_arn = resolve_bound_execution_arn(
+        ddb_client, JOBS_TABLE,
+        job_id=job_id, task_id=task_id,
+        client_arn=params.get("execution_arn"),
+        state_machine_arn=STATE_MACHINE_ARN,
+    )
     try:
         sfn_client.stop_execution(
-            executionArn=execution_arn,
+            executionArn=bound_arn,
             error="UserStopped",
             cause="Stopped from the jobs rail",
         )

@@ -840,6 +840,7 @@
                 "s3_key.$": "$$.Map.Item.Value.bin_key",
                 "solve_mode.$": "$.plan.solve.bin_mode",
                 "max_iter.$": "$.plan.solve.iters",
+                "n_threads.$": "$.plan.solve.threads",
                 "solver_function_name.$": "$.plan.solve.function_name"
               },
               "ItemProcessor": {

@@ -721,7 +721,7 @@ class TestComputePreviewHandler(unittest.TestCase):
         body = json.loads(result["body"])
 
         self.assertEqual(result["statusCode"], 400)
-        self.assertIn("roots_cm is too slow", body["message"])
+        self.assertIn("roots_cm runs a full root solve per row", body["message"])
         self.assertIn("N-preview=256", body["message"])
         self.assertIn("N-preview <= 128", body["message"])
         self.assertIn("coeff=legacy(power,poly,poly,8),legacy(roots_cm,poly,poly,hi),emit", body["message"])
@@ -754,7 +754,7 @@ class TestComputePreviewHandler(unittest.TestCase):
         body = json.loads(result["body"])
 
         self.assertEqual(result["statusCode"], 400)
-        self.assertIn("roots_cm is too slow", body["message"])
+        self.assertIn("roots_cm runs a full root solve per row", body["message"])
         self.assertIn("N-preview <= 128", body["message"])
         mock_run.assert_not_called()
 
@@ -843,3 +843,32 @@ class TestComputePreviewHandler(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEmbeddedRootSolverGuardFamily(unittest.TestCase):
+    def test_every_embedded_root_solver_trips_the_guard(self):
+        """CR35-F24: roots_ae (and the padded `roots`) run a full
+        per-row solve exactly like roots_cm/roots_jt — the sync-preview
+        guard must cover the whole family and name the culprit."""
+        import handler_compute_preview as mod
+
+        for name in ("roots_cm", "roots_jt", "roots", "roots_ae"):
+            with self.subTest(name=name):
+                err = mod._sync_preview_budget_error(
+                    n_preview=256,
+                    coeff_transforms=[[name, "poly", "poly"]],
+                    coeff_program_chain=None,
+                )
+                self.assertIsNotNone(err)
+                self.assertIn(name, err)
+                err2 = mod._sync_preview_budget_error(
+                    n_preview=256,
+                    coeff_transforms=[],
+                    coeff_program_chain=[["_native_transform", name, "pop", "poly"]],
+                )
+                self.assertIsNotNone(err2)
+        self.assertIsNone(mod._sync_preview_budget_error(
+            n_preview=64,
+            coeff_transforms=[["roots_ae", "poly", "poly"]],
+            coeff_program_chain=None,
+        ))

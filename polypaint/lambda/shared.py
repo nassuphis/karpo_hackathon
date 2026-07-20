@@ -47,6 +47,51 @@ def build_identity():
     return out
 
 
+def resolve_bound_execution_arn(ddb_client, jobs_table, *, job_id, task_id,
+                                client_arn, state_machine_arn):
+    """CR35-F11: a stop request must not trust the client's execution
+    ARN. The authoritative binding is the status row the workflow wrote
+    for (job_id, task_id): its stored execution_arn (written by the ASL
+    from $$.Execution.Id) is the ONLY execution a stop may target, it
+    must belong to this orchestrator's state machine, and the client's
+    ARN — kept as a staleness check — must match it exactly."""
+    job = str(job_id or "").strip()
+    task = str(task_id or "").strip()
+    arn = str(client_arn or "").strip()
+    if not job or not task or not arn:
+        raise RuntimeError("stop requires job_id, task_id, and execution_arn")
+    resp = ddb_client.get_item(
+        TableName=jobs_table,
+        Key={"job_id": {"S": job}, "task_id": {"S": task}},
+        ConsistentRead=True,
+    )
+    item = resp.get("Item")
+    if not item:
+        raise RuntimeError(f"stop refused: no status row for {job}/{task}")
+    stored = ""
+    raw_result = item.get("result_data", {}).get("S")
+    if raw_result:
+        try:
+            parsed = json.loads(raw_result)
+            if isinstance(parsed, dict):
+                stored = str(parsed.get("execution_arn") or "").strip()
+        except (TypeError, ValueError):
+            stored = ""
+    if not stored:
+        raise RuntimeError(
+            f"stop refused: status row for {job}/{task} carries no execution ARN")
+    expected_prefix = str(state_machine_arn or "").replace(
+        ":stateMachine:", ":execution:") + ":"
+    if not state_machine_arn or not stored.startswith(expected_prefix):
+        raise RuntimeError(
+            "stop refused: stored execution does not belong to this workflow")
+    if arn != stored:
+        raise RuntimeError(
+            "stop refused: the supplied execution ARN does not match the "
+            "run's recorded execution (stale client state?)")
+    return stored
+
+
 def report_status(job_id, task_id, status, error_msg=None, result_data=None):
     """Write task completion status to DynamoDB. TTL = 24h auto-cleanup.
     Optional result_data dict is stored as JSON string for later retrieval."""

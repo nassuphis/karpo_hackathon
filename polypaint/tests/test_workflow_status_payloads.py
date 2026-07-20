@@ -50,3 +50,30 @@ class TestWorkflowStatusPayloads(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStopExecutionIamContract(unittest.TestCase):
+    def test_stop_execution_is_granted_on_execution_arns(self):
+        """CR35-F10: StartExecution authorizes against stateMachine ARNs,
+        StopExecution against EXECUTION ARNs. The deploy policy must keep
+        the two actions in separate statements with the right resource
+        types — one merged statement ships a Kill that always gets
+        AccessDenied while stubbed unit tests stay green."""
+        deploy = open(os.path.join(ROOT, "deploy.sh")).read()
+        start = deploy.index("grant_sfn_start_policy()")
+        block = deploy[start:start + 2000]
+        self.assertIn('states:StartExecution', block)
+        self.assertIn('states:StopExecution', block)
+        # StopExecution must NOT share a statement with the state-machine
+        # resources: it must reference the :execution: rewritten ARNs
+        self.assertIn(':stateMachine:/:execution:', block)
+        self.assertIn('EXEC_ARN', block)
+        stop_stmt = block[block.index("states:StopExecution"):]
+        self.assertIn("EXEC_ARN", stop_stmt[:400])
+
+    def test_solve_map_carries_planned_threads(self):
+        """CR35-F12: the classic SolveMap payload forwards the planned
+        solve thread count to handler_sweep_cm."""
+        template = open(os.path.join(
+            ROOT, "stepfunctions", "compute_workflow.asl.json.template")).read()
+        self.assertIn('"n_threads.$": "$.plan.solve.threads"', template)

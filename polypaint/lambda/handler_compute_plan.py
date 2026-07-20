@@ -112,7 +112,21 @@ def handle_build_plan(params):
 
     solver_mode = _validate_solver_mode(run_params.get("solver_mode", "aberth_mt"))
     solver_iters = _validate_solver_iters(run_params.get("solver_iters"))
+    if solver_mode == "newton" and solver_iters > 50:
+        # CR35-F23: Newton's native ceiling is 50; anything above was
+        # silently rewritten downstream. Reject loudly instead.
+        raise RuntimeError(
+            f"solver_iters for newton must be <= 50 (native ceiling), got {solver_iters}")
     execution_method = execution_method_from_params(run_params)
+    if solver_mode in ("jt64", "cm64", "ae64") and execution_method != "fused_chunk_pipeline":
+        # CR35-F9: the classic state machine only writes coefficients;
+        # its SolveMap would hand a fused_* mode to sweep_mt, which
+        # expects roots that were never generated. The combination is
+        # unconstructible — reject it at admission.
+        raise RuntimeError(
+            f"solver_mode {solver_mode} requires execution_method "
+            f"fused_chunk_pipeline; the classic pipeline has no fused "
+            f"solve stage (got {execution_method})")
     n = _validate_positive_int(run_params.get("N"), "N", max_value=MAX_N)
     times = _validate_positive_int(run_params.get("times", 1), "times", max_value=MAX_TIMES)
     requested_chunks = _validate_positive_int(run_params.get("n_chunks", 10), "n_chunks", max_value=MAX_CHUNKS)
@@ -290,6 +304,24 @@ def handle_build_plan(params):
             )
         actual_chunks = min(int(fused_estimate["actual_chunks"]), total_steps)
 
+    classic_min_memory_chunks = 0
+    if execution_method != "fused_chunk_pipeline" and solver_mode in (
+            "companion_matrix", "jenkins_traub", "newton"):
+        # CR35-F8: the classic sweep_cm lambda (4096 MB) allocates the
+        # full per-chunk coefficient input AND root output natively; the
+        # handler now streams to disk (no Python copy), leaving
+        # input+output+runtime as the footprint. Derive the chunk floor
+        # from the probed degree so a legal plan cannot exceed memory.
+        probe_degree_hint = (params.get("probe") or {}).get("degree")
+        if probe_degree_hint:
+            degree_i = int(probe_degree_hint)
+            per_step_bytes = ((degree_i + 1) + degree_i) * 8   # coeffs + roots
+            SWEEP_CM_BUDGET_BYTES = 3_300_000_000              # 4096MB - runtime margin
+            classic_min_memory_chunks = int(math.ceil(
+                total_steps * per_step_bytes / SWEEP_CM_BUDGET_BYTES))
+            if classic_min_memory_chunks > actual_chunks:
+                actual_chunks = min(classic_min_memory_chunks, total_steps)
+
     chunk_items = build_chunk_items(
         job_id=job_id,
         run_id=run_id,
@@ -335,6 +367,7 @@ def handle_build_plan(params):
             "coeffgen_threads": coeffgen_threads,
             "lores_param_gen_threads": lores_param_gen_threads,
             "lores_coeffgen_threads": lores_coeffgen_threads,
+            "classic_min_memory_chunks": classic_min_memory_chunks,
         },
         "param_gen": {
             "task_id": f"compute_{run_id}_param_gen",
@@ -353,6 +386,10 @@ def handle_build_plan(params):
             # chunk map via the ASL template; iters=0 means solver default
             "bin_mode": _solver_bin_mode(solver_mode),
             "iters": solver_iters,
+            # CR35-F12: the CM/JT/Newton row-threading is a PLANNED value
+            # carried through the ASL into handler_sweep_cm (the lambda
+            # has ~2 vCPUs; BLAS is pinned to 1 thread, F13)
+            "threads": 2,
             "function_name": _solver_function_name(solver_mode),
             "task_prefix": f"compute_{run_id}_solve_",
         },

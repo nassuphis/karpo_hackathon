@@ -1760,16 +1760,28 @@ ensure_state_machine() {
     echo "  State machine: $SM_NAME"
 }
 
-# Allow the Lambda execution role to start the three workflows.
+# Allow the Lambda execution role to start AND stop the three workflows.
+# CR35-F10: StartExecution authorizes against stateMachine ARNs, but
+# StopExecution authorizes against EXECUTION ARNs — one statement with
+# state-machine resources silently granted a stop nobody could use
+# (AccessDenied at runtime while unit tests, which stub boto3, stayed
+# green). Execution ARNs swap the resource type and append :name.
 grant_sfn_start_policy() {
+    local RENDER_EXEC_ARN="${RENDER_SM_ARN/:stateMachine:/:execution:}:*"
+    local COMPUTE_EXEC_ARN="${COMPUTE_SM_ARN/:stateMachine:/:execution:}:*"
+    local PALETTE_EXEC_ARN="${PALETTE_SM_ARN/:stateMachine:/:execution:}:*"
     aws iam put-role-policy --role-name "$ROLE_NAME" \
         --policy-name polypaint-sfn-start \
         --policy-document "{
             \"Version\": \"2012-10-17\",
             \"Statement\": [{
                 \"Effect\": \"Allow\",
-                \"Action\": [\"states:StartExecution\", \"states:StopExecution\"],
+                \"Action\": [\"states:StartExecution\"],
                 \"Resource\": [\"${RENDER_SM_ARN}\", \"${COMPUTE_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
+            }, {
+                \"Effect\": \"Allow\",
+                \"Action\": [\"states:StopExecution\", \"states:DescribeExecution\"],
+                \"Resource\": [\"${RENDER_EXEC_ARN}\", \"${COMPUTE_EXEC_ARN}\", \"${PALETTE_EXEC_ARN}\"]
             }]
         }"
 }

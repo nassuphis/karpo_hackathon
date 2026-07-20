@@ -83,11 +83,44 @@ class TestComputePlan(unittest.TestCase):
             with self.subTest(solver_mode=solver_mode):
                 request = json.loads(json.dumps(base))
                 request["params"]["solver_mode"] = solver_mode
+                if solver_mode in ("jt64", "cm64", "ae64"):
+                    # CR35-F9: fused solvers are only constructible on the
+                    # fused pipeline (the classic combination is rejected —
+                    # pinned below); the fused planner needs the degree probe
+                    request["params"]["execution_method"] = "fused_chunk_pipeline"
+                    request["probe"] = {
+                        "probe_stable": True,
+                        "degree": 10,
+                        "n_coeffs": 11,
+                        "probe_signature": mod.build_probe_signature(
+                            function_name="g1",
+                            param_transforms=[],
+                            coeff_transforms=[],
+                            cfpv=[],
+                        ),
+                    }
                 plan = json.loads(mod.handle_build_plan(request)["body"])
                 self.assertEqual(plan["solve"]["mode"], solver_mode)
                 self.assertEqual(plan["solve"]["bin_mode"], bin_mode)
                 self.assertEqual(plan["solve"]["iters"], 0)
                 self.assertEqual(plan["solve"]["function_name"], fn_name)
+
+        # CR35-F9: 64-bit solver + classic topology is unconstructible
+        for solver_mode in ("jt64", "cm64", "ae64"):
+            request = json.loads(json.dumps(base))
+            request["params"]["solver_mode"] = solver_mode
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_build_plan(request)
+            self.assertIn("fused_chunk_pipeline", str(ctx.exception))
+
+        # CR35-F23: Newton above its native 50 ceiling is rejected, not
+        # silently rewritten by the solver
+        request = json.loads(json.dumps(base))
+        request["params"]["solver_mode"] = "newton"
+        request["params"]["solver_iters"] = 51
+        with self.assertRaises(RuntimeError) as ctx:
+            mod.handle_build_plan(request)
+        self.assertIn("<= 50", str(ctx.exception))
 
         request = json.loads(json.dumps(base))
         request["params"]["solver_mode"] = "aberth_mt"
@@ -1124,3 +1157,49 @@ class TestComputePlan(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestClassicMemoryFloor(unittest.TestCase):
+    def test_classic_cm_chunks_raised_to_memory_floor(self):
+        """CR35-F8: a legal classic CM plan must not exceed the sweep_cm
+        lambda's memory — the planner derives a chunk floor from the
+        probed degree (review case: degree 70, N 1600, chunks 1)."""
+        import handler_compute_plan as mod
+
+        request = {
+            "job_id": "compute_j",
+            "run_id": "run_mem",
+            "task_id": "compute_run_x_run_mem",
+            "probe": {
+                "probe_stable": True,
+                "degree": 70,
+                "n_coeffs": 71,
+                "probe_signature": mod.build_probe_signature(
+                    function_name="g1",
+                    param_transforms=[],
+                    coeff_transforms=[],
+                    cfpv=[],
+                ),
+            },
+            "params": {
+                "N": 1600,
+                "times": 1,
+                "n_chunks": 1,
+                "solver_mode": "companion_matrix",
+                "function": "g1",
+                "param_transforms": [],
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+        }
+        plan = json.loads(mod.handle_build_plan(request)["body"])
+        floor = plan["compute"]["classic_min_memory_chunks"]
+        self.assertGreaterEqual(floor, 1)
+        self.assertGreaterEqual(plan["compute"]["n_chunks"], floor)
+        # 1600^2 steps * (71+70)*8 bytes ~ 2.9 GB total: floor must push
+        # past a single chunk once the budget is applied
+        total_bytes = 1600 * 1600 * (71 + 70) * 8
+        import math as _m
+        self.assertEqual(floor, _m.ceil(total_bytes / 3_300_000_000))
+        # threading is a planned value (CR35-F12)
+        self.assertEqual(plan["solve"]["threads"], 2)

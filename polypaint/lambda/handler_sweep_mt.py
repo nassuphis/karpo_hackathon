@@ -44,11 +44,16 @@ def handle_solve_mt_from_coeffs(params):
         n_steps = (i1_end - i1_start) * n2
     task_id = params.get("task_id", f"sweep_{chunk_idx}")
     solve_mode = str(params.get("solve_mode") or "").strip().lower()
+    # CR35-F9: explicit allowlist — an unknown fused_* string must fail
+    # loudly, not silently take the verify-and-skip path
+    if solve_mode.startswith("fused_") and solve_mode not in (
+            "fused_jt64", "fused_cm64", "fused_ae64"):
+        raise RuntimeError(f"unknown fused solve_mode {solve_mode!r}")
 
     try:
         report_status(job_id, task_id, "started")
 
-        if solve_mode.startswith("fused_"):
+        if solve_mode in ("fused_jt64", "fused_cm64", "fused_ae64"):
             # JT64/CM64/AE64 lores: the roots were already solved
             # IN-PROCESS from the f64 coefficients during the lores
             # coeffgen and uploaded to s3_key — solving the f32 coeffs

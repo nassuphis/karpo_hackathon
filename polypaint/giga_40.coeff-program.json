@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "name": "giga_40",
+  "chain": [],
+  "source_text": "poly = fill(35, 0)\npoly[0] = 1\npoly[6] = -2\npoly[11] = 50i*sin(exp(6.283185307179586i*t1)**2-exp(6.283185307179586i*t2)**2)\npoly[14] = 3\npoly[17] = 100*(cos(exp(6.283185307179586i*t1))+1i*sin(exp(6.283185307179586i*t2)))\npoly[19] = -4\npoly[24] = 50*(exp(6.283185307179586i*t1)**3-exp(6.283185307179586i*t2)**3+1i*exp(6.283185307179586i*t1)*exp(6.283185307179586i*t2))\npoly[26] = 5\npoly[29] = 200*exp(1i*exp(6.283185307179586i*t1))+50*exp(-1i*exp(6.283185307179586i*t2))\npoly[34] = -6\npoly = rev(poly)\nemit\n"
+}

@@ -163,6 +163,10 @@ def handle_cancel(params):
         # 'running', and it retries) rather than reporting a false success.
         raise RuntimeError(
             "cancel could not be confirmed: run.json unreachable — retry")
+    # round-15 finding 2: reap the generation's scaffolding through the single
+    # owner (fail-closed; re-runnable, so the client's cancel-retry loop
+    # re-reaps stragglers written between frames).
+    _reap_terminal_generation(sheet_id, generation)
     return ok_response({"sheet_id": sheet_id, "generation": generation,
                         "status": final, "cancelled": final == "cancelled"})
 
@@ -177,6 +181,7 @@ def handle_abandon(params):
     if final is None:
         raise RuntimeError(
             "abandon could not be confirmed: run.json unreachable — retry")
+    _reap_terminal_generation(sheet_id, generation)   # round-15 finding 2
     return ok_response({"sheet_id": sheet_id, "generation": generation,
                         "status": final})
 
@@ -887,6 +892,74 @@ def _reap_sheet_scaffolding(sheet_id, generation, steps, winner_prefix):
     return ok
 
 
+def _reap_terminal_generation(sheet_id, generation):
+    """The SINGLE cleanup owner (round-15 findings 1/2). Idempotent and
+    re-runnable — so it doubles as a GC that catches stragglers written after
+    the terminal transition — and it keys EVERY decision off the CURRENT
+    run.json, FAILING CLOSED on anything but an explicit same-generation
+    terminal failure:
+
+      - generation MISMATCH (a newer begin owns run.json, possibly carrying
+        THIS generation's published pointer forward) -> SKIP. Reaping here is
+        the round-14/15 winner-deletion race; the new generation's cleanup
+        owns those objects now.
+      - status 'done' (same generation) -> winner sweep keyed on the
+        published pointer; SKIP if the winner is not definitively known.
+      - status 'failed'/'cancelled'/'abandoned' (same generation) -> no
+        winner exists -> reap tiles + marker + ALL attempts.
+      - status 'running', or unreadable/malformed -> SKIP (not terminal /
+        unconfirmed). Fail closed.
+
+    Best-effort; returns True on a clean sweep, False on a delete/list error,
+    None when nothing was reaped (skipped)."""
+    try:
+        resp = s3.get_object(Bucket=BUCKET, Key=_run_json_key(sheet_id))
+        run = json.loads(resp["Body"].read())
+    except Exception:
+        return None                                   # unreadable -> fail closed
+    if run.get("generation") != generation:
+        return None                                   # superseded -> fail closed
+    status = run.get("status")
+    try:
+        steps = int(run.get("steps") or 0)
+    except (TypeError, ValueError):
+        return None
+    if status == "done":
+        winner = _winner_prefix_from_run(run, generation)
+        if winner is None:
+            return None                               # winner unknown -> skip
+        return _reap_sheet_scaffolding(sheet_id, generation, steps, winner)
+    if status in ("failed", "cancelled", "abandoned"):
+        return _reap_sheet_scaffolding(sheet_id, generation, steps, None)
+    return None                                       # running/unknown -> skip
+
+
+def _reap_superseded_generation(sheet_id, prior):
+    """Round-15 finding 2 (the delayed GC): when a new begin SUPERSEDES a
+    prior generation, reap that prior generation's scaffolding — tiles, cancel
+    marker, and non-winner attempts. By begin-time the prior generation can no
+    longer publish (its workers/stitch fail the generation-bound admission),
+    so this catches stragglers written after the prior run went terminal. The
+    carried-forward published winner is PRESERVED when it lives under the
+    prior generation's prefix (otherwise it lives under an even-older
+    generation and is untouched by reaping this one)."""
+    if not isinstance(prior, dict):
+        return
+    prior_gen = prior.get("generation")
+    if not prior_gen:
+        return
+    try:
+        steps = int(prior.get("steps") or 0)
+    except (TypeError, ValueError):
+        steps = 0
+    winner = None
+    png = prior.get("published_png_key")
+    if (prior.get("published_generation") == prior_gen
+            and isinstance(png, str) and png.endswith("sheet.png")):
+        winner = png[:-len("sheet.png")]      # the winner IS under prior_gen
+    _reap_sheet_scaffolding(sheet_id, prior_gen, steps, winner)
+
+
 def _prune_losing_attempts(sheet_id, generation, winning_prefix):
     """Round-9 finding 8: reap the artifacts of LOSING same-generation
     stitch attempts. Each attempt writes under sheets/{id}/{gen}/{token}/
@@ -1083,7 +1156,7 @@ def _task_status_for(resolved):
 
 
 def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
-                              exc, *, phase_label, on_terminal=None):
+                              exc, *, phase_label):
     """Shared error path for the worker and the stitch. Ordered so no shared
     state is mutated on unconfirmed ownership, and the DDB task is finalized
     only AFTER the authoritative run.json transition is confirmed (round-8
@@ -1106,15 +1179,11 @@ def _finalize_failure_or_exit(job_id, task_id, owner, sheet_id, generation,
     final, run = _mark_run_terminal(sheet_id, generation, "failed")
     if final is None:
         raise exc                      # unconfirmed run -> don't finalize; raise
-    # round-13 finding 3 + round-14 finding 1: reconcile cleanup NOW that the
-    # terminal outcome is known, keyed off the SAME run record that resolved
-    # the status (never a second read, which could catch a concurrent new
-    # generation and delete the real winner).
-    if on_terminal is not None:
-        try:
-            on_terminal(final, run)
-        except Exception:
-            pass
+    # round-15 findings 1/2: reconcile cleanup through the SINGLE owner, which
+    # keys off run.json and FAILS CLOSED on superseded/unknown (never
+    # reap-all a superseded generation whose winner a newer begin carried
+    # forward). Idempotent + re-runnable, so stragglers are caught later.
+    _reap_terminal_generation(sheet_id, generation)
     # round-12 finding 4: record the DDB task at the ACTUAL resolved status.
     # If a concurrent attempt published (final == 'done') the run SUCCEEDED,
     # so the task is 'done' — not a false 'error'.
@@ -1378,6 +1447,12 @@ def handle_begin(params):
             run.pop("published_manifest_key", None)
         try:
             _cas_put_run(sheet_id, etag, run)
+            # round-15 finding 2 (delayed GC): the prior generation is now
+            # superseded and can never publish — reap its stragglers,
+            # preserving the winner we just carried forward. Guarded so a
+            # (degenerate) same-generation re-begin never reaps itself.
+            if isinstance(prior, dict) and prior.get("generation") not in (None, generation):
+                _reap_superseded_generation(sheet_id, prior)
             return ok_response(run)
         except RuntimeError:
             continue   # a concurrent commit changed run.json; re-read
@@ -1443,6 +1518,7 @@ def handle_frames(params):
                 if final is None:
                     raise RuntimeError(
                         "cancel could not be confirmed: run.json unreachable")
+                _reap_terminal_generation(sheet_id, generation)   # round-15 finding 2
                 # round-12 finding 4: record the DDB task at the ACTUAL
                 # resolved status — if a publish beat the cancel (final ==
                 # 'done') the task succeeded, not errored.
@@ -1555,6 +1631,7 @@ def handle_stitch(params):
             if final is None:
                 raise RuntimeError(
                     "cancel could not be confirmed: run.json unreachable")
+            _reap_terminal_generation(sheet_id, generation)   # round-15 finding 2
             # round-12 finding 4: DDB task at the ACTUAL resolved status
             task_status = _task_status_for(final)
             try:
@@ -1674,32 +1751,12 @@ def handle_stitch(params):
         # PRE-commit failures mark the run failed — but only when ownership
         # is CONFIRMED (round-8 finding 3). A stale stitch that lost its
         # lease exits benignly; DDB-uncertain ownership never authorizes
-        # failing the successor's run. round-13 finding 3: cleanup is
-        # reconciled AFTER the terminal outcome is known (a single deferred
-        # prune while the run was still 'running' would otherwise leak the
-        # orphan forever, and an ambiguous publication would skip the
-        # winner sweep).
-        def _reconcile(final_status, run):
-            if final_status == "done":
-                # the run IS published (possibly by our own ambiguous CAS) —
-                # run the winner sweep keyed on the winner from the SAME
-                # record that resolved the status. round-14 finding 1: if the
-                # winner cannot be DEFINITIVELY identified (both published
-                # keys present + consistent + our generation), SKIP the
-                # family sweep — NEVER substitute gen_prefix, which is our
-                # OWN (possibly losing) prefix and would delete the winner.
-                winner = _winner_prefix_from_run(run, generation)
-                if winner is not None:
-                    _reap_sheet_scaffolding(sheet_id, generation, cfg["steps"], winner)
-            else:
-                # terminal non-done: no winner exists -> reap tiles + marker
-                # + ALL attempt artifacts (round-14 finding 4: the old path
-                # removed only our stitch attempt and left the tiles + cancel
-                # marker indefinitely).
-                _reap_sheet_scaffolding(sheet_id, generation, cfg["steps"], None)
+        # failing the successor's run. Cleanup is reconciled inside
+        # _finalize_failure_or_exit through the single _reap_terminal_
+        # generation owner (round-15).
         return _finalize_failure_or_exit(
             job_id, task_id, owner, sheet_id, generation, e,
-            phase_label="Stitch failed", on_terminal=_reconcile)
+            phase_label="Stitch failed")
     finally:
         hb.stop()
 

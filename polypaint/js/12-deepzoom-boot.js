@@ -1218,6 +1218,13 @@ _initJobsRail();
 
 _syncRenderColorInterpretationUi();
 
+// round-15 finding 4: resumePersistedCancels at BOOT (not only when the
+// Sheets tab opens) — Compute is the default tab, so a reload must still
+// re-issue cancels the user requested. Runs here in the boot block because
+// it references js/16; the dispatch-until-fired retry covers config not yet
+// being loaded.
+if (typeof _sheetResumePersistedCancels === 'function') void _sheetResumePersistedCancels();
+
 document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible') {
         resumeActiveRenderObserver();

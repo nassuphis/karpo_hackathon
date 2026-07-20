@@ -828,3 +828,71 @@ test.describe('Round-14 cancellation durability + rail integration', () => {
     expect(out.detail.toLowerCase()).toContain('cancelled');
   });
 });
+
+test.describe('Round-15 cancellation completion', () => {
+  test('a DELAYED cancel retry resolves the rail card (finding 3)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      let runStatus = 'running';   // starts running, later goes cancelled
+      window.lambdaPost = async () => ({ fired: 1 });
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gD', status: runStatus }) }
+        : realFetch(url));
+      _sheetRunClear();
+      _jobsRailJobs.length = 0;
+      _jobsRailJobs.push({ id: 'sheet:ds', kind: 'sheet', jobId: 'ds', generation: 'gD',
+                           state: 'running', label: 'Sheet ds', startedAt: Date.now(),
+                           detail: '' });
+      // first cancel: run.json still 'running' -> PENDING, card stays running
+      await _cancelSheetRun('ds', 'gD', { direct: true });
+      const midState = _jobsRailJobs.find(j => j.id === 'sheet:ds').state;
+      // the run goes terminal; the durable RETRY observes it and must resolve
+      runStatus = 'cancelled';
+      await _cancelSheetRun('ds', 'gD');   // a deferred retry (intent active)
+      window.fetch = realFetch;
+      const job = _jobsRailJobs.find(j => j.id === 'sheet:ds');
+      const out = { midState, finalState: job.state, killRequested: !!job.killRequested };
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
+      localStorage.removeItem('polypaint_sheet_cancel_intents_v1');
+      _jobsRailJobs.length = 0;
+      return out;
+    });
+    // pending kept the card running; the LATER retry resolved it
+    expect(out.midState).toBe('running');
+    expect(out.finalState).not.toBe('running');
+    expect(out.killRequested).toBe(false);
+  });
+
+  test('boot RE-ISSUES a persisted cancel, not just loads it (finding 4)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      let dispatched = [];
+      window.lambdaPost = async (name, body) => {
+        const job = body && body.jobs && body.jobs[0];
+        if (job && job.action === 'cancel') dispatched.push(job.generation);
+        return { fired: 1 };
+      };
+      const realFetch = window.fetch;
+      window.fetch = async (url) => (String(url).includes('run.json')
+        ? { ok: true, json: async () => ({ generation: 'gB', status: 'running' }) }
+        : realFetch(url));
+      // a persisted intent exists (a prior session's cancel) but the in-memory
+      // set + timers were lost on reload
+      _sheetCancelIntents.clear();
+      _sheetCancelIntents.add('bootsheet::gB');
+      localStorage.setItem('polypaint_sheet_cancel_intents_v1',
+                           JSON.stringify(['bootsheet::gB']));
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      // the BOOT resume must actually RE-DISPATCH (not merely load storage)
+      await _sheetResumePersistedCancels();
+      window.fetch = realFetch;
+      const out = { dispatched };
+      _sheetCancelTimers.forEach(h => clearTimeout(h)); _sheetCancelTimers.clear();
+      _sheetCancelIntents.clear();
+      localStorage.removeItem('polypaint_sheet_cancel_intents_v1');
+      return out;
+    });
+    // the persisted intent was re-issued as an actual cancel dispatch
+    expect(out.dispatched).toContain('gB');
+  });
+});

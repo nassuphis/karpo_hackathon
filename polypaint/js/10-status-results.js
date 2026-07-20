@@ -1961,6 +1961,20 @@ function _jobsRailDismiss(id) {
     _renderJobsRail();
 }
 
+function _jobsRailResolveSheet(sheetId, status) {
+    // round-15 finding 3: resolve a sheet rail card when a DURABLE cancel
+    // RETRY (not the original _jobsRailKill call) later observes a terminal
+    // run.json status. Called by _cancelSheetRun from js/16.
+    const job = _jobsRailJobs.find(j => j.id === 'sheet:' + sheetId);
+    if (!job || job.state !== 'running') return;
+    job.killRequested = false;
+    job.state = status === 'done' ? 'done' : 'error';
+    job.detail = status === 'done'
+        ? 'published before cancel' : `cancelled (${status})`;
+    job.updatedAt = Date.now();
+    _renderJobsRail();
+}
+
 async function _jobsRailKill(id) {
     const job = _jobsRailJobs.find(j => j.id === id);
     if (!job || job.state !== 'running') return;

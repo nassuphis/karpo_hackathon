@@ -852,6 +852,10 @@ async function _cancelSheetRun(sheetId, generation, opts) {
         _sheetAbandonedGenerations.add(generation);
         _sheetRunClear();
     }
+    // round-15 finding 3: resolve any sheet rail card for this run — a
+    // DURABLE retry (not the original _jobsRailKill call) that reaches
+    // terminal here must clear the card, not leave it "cancelling…" forever.
+    if (typeof _jobsRailResolveSheet === 'function') _jobsRailResolveSheet(sheetId, status);
     if (statusEl) {
         if (status === 'cancelled') {
             statusEl.textContent = `Sheet ${sheetId}: cancelled.`;
@@ -1337,5 +1341,9 @@ function _sheetPopulateFrame() {
         statusEl.className = 'status ok';
     }
 }
+
+// round-15 finding 4: the boot call that resumes persisted cancellation
+// intents lives in the js/12 boot block (parts are declarations-only;
+// see tests/test_frontend_parts_contract.py) — search "resumePersistedCancels".
 
 ;(window.__ppParts = window.__ppParts || []).push('16-poly-sheets');

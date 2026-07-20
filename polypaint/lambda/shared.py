@@ -107,6 +107,40 @@ def read_task_status(job_id, task_id):
     return item.get("task_status", {}).get("S")
 
 
+def claim_task(job_id, task_id, *, from_statuses=("started", "accepted")):
+    """Atomically claim a task for execution (CR35 round-5 finding 3).
+    A conditional UpdateItem transitions the row to 'running' ONLY when
+    its current status is one of from_statuses (the state begin left it
+    in). Concurrent or duplicate invocations of the same task see a
+    non-claimable status and lose the claim — the ONLY winner executes.
+    Returns True when claimed, False when the task is already running,
+    done, errored, or absent. Never raises on a lost claim."""
+    now_ms = int(time.time() * 1000)
+    placeholders = {f":s{i}": {"S": st} for i, st in enumerate(from_statuses)}
+    cond = "attribute_exists(task_status) AND task_status IN (" +         ",".join(placeholders) + ")"
+    try:
+        _get_ddb().update_item(
+            TableName=JOBS_TABLE,
+            Key={"job_id": {"S": str(job_id)}, "task_id": {"S": str(task_id)}},
+            UpdateExpression="SET task_status = :running, updated_at_ms = :now",
+            ConditionExpression=cond,
+            ExpressionAttributeValues={
+                ":running": {"S": "running"},
+                ":now": {"N": str(now_ms)},
+                **placeholders,
+            },
+        )
+        return True
+    except Exception as exc:
+        code = ""
+        resp = getattr(exc, "response", None)
+        if isinstance(resp, dict):
+            code = resp.get("Error", {}).get("Code", "")
+        if code == "ConditionalCheckFailedException" or                 "ConditionalCheckFailed" in str(type(exc).__name__):
+            return False
+        raise
+
+
 def report_status(job_id, task_id, status, error_msg=None, result_data=None):
     """Write task completion status to DynamoDB. TTL = 24h auto-cleanup.
     Optional result_data dict is stored as JSON string for later retrieval."""

@@ -8,6 +8,9 @@
 let _sheetsInventory = [];
 let _activeSheetRun = null;   // {sheetId, jobId, taskId}
 let _sheetResumeTimer = null;
+// generations this client just abandoned — discovery must not re-grab
+// them in the window before the server's terminal mark propagates
+const _sheetAbandonedGenerations = new Set();
 
 function _sheetNewId() {
     return 'sheet_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
@@ -313,8 +316,9 @@ async function resumeSheetRun() {
      * workers are redispatched. */
     const desc = _sheetRunLoad();
     if (!desc || _activeSheetRun) return;
-    const now = Date.now();
-    if (desc.nextResumeAt && now < desc.nextResumeAt) return;
+    // give-up check FIRST (round-5 finding 4: the max-attempt gate must
+    // not sit behind the backoff early-return, or a stranded run never
+    // reaches it)
     if ((desc.resumeAttempts || 0) >= SHEET_RESUME_MAX_ATTEMPTS) {
         const statusEl = document.getElementById('sheets-status');
         if (statusEl) {
@@ -322,7 +326,9 @@ async function resumeSheetRun() {
             statusEl.className = 'status error';
         }
         // finding 5: tell the server so /list-sheets discovery stops
-        // rediscovering this run and restarting it with a fresh counter
+        // rediscovering this run, plus a local guard for the propagation
+        // window (the mark is async and may not have landed yet)
+        _sheetAbandonedGenerations.add(desc.generation);
         try {
             await lambdaPost('dispatch', {
                 target: 'poly_sheet',
@@ -332,6 +338,16 @@ async function resumeSheetRun() {
             });
         } catch (e) { /* best-effort */ }
         _sheetRunClear();
+        return;
+    }
+    const now = Date.now();
+    if (desc.nextResumeAt && now < desc.nextResumeAt) {
+        // round-5 finding 4: a reload during backoff destroyed the only
+        // retry timer. Rebuild it from the persisted deadline so the run
+        // resumes automatically without waiting for a manual refresh.
+        if (_sheetResumeTimer) clearTimeout(_sheetResumeTimer);
+        _sheetResumeTimer = setTimeout(() => { void resumeSheetRun(); },
+                                       Math.max(0, desc.nextResumeAt - now));
         return;
     }
     desc.resumeAttempts = (desc.resumeAttempts || 0) + 1;
@@ -557,7 +573,8 @@ async function _sheetDiscoverServerRun(rows) {
      * carries the admitted payload — rebuild the descriptor from the
      * server record and resume. */
     if (_sheetRunLoad() || _activeSheetRun) return;
-    const running = (rows || []).find(r => r.run_status === 'running' && r.run_key);
+    const running = (rows || []).find(r => r.run_status === 'running' && r.run_key
+        && !_sheetAbandonedGenerations.has(r.run_generation));
     if (!running) return;
     try {
         const resp = await fetch(_publicStorageUrl(running.run_key) + '?t=' + Date.now());

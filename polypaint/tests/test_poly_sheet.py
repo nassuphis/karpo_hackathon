@@ -174,6 +174,7 @@ class TestPolySheetUnits(unittest.TestCase):
 
         orig = mod.report_status
         mod.report_status = lambda *a, **k: None
+        mod.claim_task = lambda *a, **k: True
         try:
             with self.assertRaises(RuntimeError) as ctx:
                 mod.handle_run(_run_params(
@@ -192,6 +193,7 @@ class TestPolySheetUnits(unittest.TestCase):
 
         orig = mod.report_status
         mod.report_status = lambda *a, **k: None
+        mod.claim_task = lambda *a, **k: True
         try:
             with self.assertRaises(RuntimeError) as ctx:
                 mod.handle_run(_run_params(
@@ -211,6 +213,9 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         mod.s3 = s3stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda *a, **k: None
+        # atomic claim always wins in these S3-focused tests; claim
+        # semantics have their own DDB-backed test
+        mod.claim_task = lambda *a, **k: True
 
     def test_run_renders_a_bilevel_mosaic(self):
         import handler_poly_sheet as mod
@@ -409,6 +414,7 @@ class TestPolySheetEndToEnd(unittest.TestCase):
         mod.s3 = _S3Stub()
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda job, task, status, *a, **k: rows.append(status)
+        mod.claim_task = lambda *a, **k: True
         try:
             with self.assertRaises(RuntimeError):
                 mod.handle_frames({**_run_params("nogen-sheet"),
@@ -525,6 +531,7 @@ class TestPolySheetEndToEnd(unittest.TestCase):
 
         orig = mod.report_status
         mod.report_status = lambda *a, **k: None
+        mod.claim_task = lambda *a, **k: True
         try:
             p = _run_params("dup-sheet")
             del p["scan"]
@@ -643,6 +650,9 @@ class TestAdmissionEnforcement(unittest.TestCase):
         mod.s3 = s3stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda *a, **k: None
+        # atomic claim always wins in these S3-focused tests; claim
+        # semantics have their own DDB-backed test
+        mod.claim_task = lambda *a, **k: True
 
     def test_unadmitted_and_mismatched_requests_are_refused(self):
         import handler_poly_sheet as mod
@@ -749,6 +759,9 @@ class TestRound4Lifecycle(unittest.TestCase):
         mod.s3 = s3stub
         mod.SWEEP_COEFFGEN = SWEEP_TEST
         mod.report_status = lambda *a, **k: None
+        # atomic claim always wins in these S3-focused tests; claim
+        # semantics have their own DDB-backed test
+        mod.claim_task = lambda *a, **k: True
 
     def _render_generation(self, mod, stub, sheet_id, gen):
         p = _run_params(sheet_id)
@@ -928,3 +941,154 @@ class TestRunBinaryDeadline(unittest.TestCase):
             mod._run_binary("/bin/true", "/tmp/x", {}, "probe",
                             deadline_s=__import__("time").time() - 1)
         self.assertIn("budget", str(ctx.exception))
+
+
+class TestClaimTask(unittest.TestCase):
+    """Round-5 finding 3: the atomic claim. A DDB-backed conditional
+    update — only one invocation transitions accepted->running."""
+
+    def _fake_ddb(self):
+        class _FakeDDB:
+            def __init__(self):
+                self.items = {}   # (job, task) -> status
+
+            def _key(self, Key):
+                return (Key["job_id"]["S"], Key["task_id"]["S"])
+
+            def update_item(self, TableName, Key, UpdateExpression,
+                            ConditionExpression, ExpressionAttributeValues):
+                from botocore.exceptions import ClientError
+                k = self._key(Key)
+                cur = self.items.get(k)
+                allowed = {v["S"] for name, v in ExpressionAttributeValues.items()
+                           if name.startswith(":s")}
+                if cur not in allowed:
+                    raise ClientError(
+                        {"Error": {"Code": "ConditionalCheckFailedException"}},
+                        "UpdateItem")
+                self.items[k] = "running"
+        return _FakeDDB()
+
+    def test_only_one_of_two_claims_wins(self):
+        import shared
+
+        ddb = self._fake_ddb()
+        ddb.items[("j", "t")] = "started"   # begin left it here
+        orig = shared._ddb
+        shared._ddb = ddb
+        try:
+            self.assertTrue(shared.claim_task("j", "t"))
+            # a concurrent/duplicate invocation now loses (status running)
+            self.assertFalse(shared.claim_task("j", "t"))
+            # a task already 'done' cannot be reclaimed
+            ddb.items[("j", "t2")] = "done"
+            self.assertFalse(shared.claim_task("j", "t2"))
+            # an absent row cannot be claimed
+            self.assertFalse(shared.claim_task("j", "missing"))
+        finally:
+            shared._ddb = orig
+
+
+@unittest.skipUnless(os.path.exists(SWEEP_TEST), "sweep_test binary not built")
+class TestRound5(unittest.TestCase):
+    def _patched(self, mod, s3stub):
+        mod.s3 = s3stub
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.report_status = lambda *a, **k: None
+        mod.claim_task = lambda *a, **k: True
+
+    def test_terminal_run_refuses_late_work(self):
+        """Finding 1: a cancelled/abandoned run must reject a late worker
+        or stitch — a straggler cannot resurrect it to 'done'."""
+        import handler_poly_sheet as mod
+
+        gen = "g1a1a1a1a1a1a"
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status,
+                getattr(mod, "claim_task", None))
+        self._patched(mod, stub)
+        try:
+            p = _run_params("term2-sheet")
+            _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+            # cancel marks the run terminal
+            mod.handle_cancel({"action": "cancel", "sheet_id": "term2-sheet",
+                               "generation": gen})
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handle_frames({**p, "action": "frames", "generation": gen,
+                                   "task_id": f"sheet_tiles_term2-sheet_{gen}_w0",
+                                   "frame_indices": [0, 1]})
+            self.assertIn("terminal", str(ctx.exception))
+            with self.assertRaises(RuntimeError):
+                mod.handle_stitch({**p, "action": "stitch", "generation": gen,
+                                   "task_id": f"sheet_stitch_term2-sheet_{gen}"})
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status, mod.claim_task) = orig
+
+    def test_status_write_failure_after_commit_keeps_sheet_published(self):
+        """Finding 2: a DDB status-write failure AFTER the pointer commit
+        must not report a published sheet as failed."""
+        import handler_poly_sheet as mod
+
+        gen = "g2b2b2b2b2b2b"
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status,
+                getattr(mod, "claim_task", None))
+        mod.s3 = stub
+        mod.SWEEP_COEFFGEN = SWEEP_TEST
+        mod.claim_task = lambda *a, **k: True
+
+        # fail ONLY the stitch's terminal 'done' write (post-commit),
+        # not the workers' done reports
+        def flaky_status(job, task, status, *a, **k):
+            if status == "done" and "stitch" in task:
+                raise RuntimeError("DDB throttled")
+        mod.report_status = flaky_status
+        try:
+            p = _run_params("commit-sheet")
+            _admit(mod, stub, p, gen, [[0, 1], [2, 3]])
+            for w, frames in ((0, [0, 1]), (1, [2, 3])):
+                mod.handle_frames({**p, "action": "frames", "generation": gen,
+                                   "task_id": f"sheet_tiles_commit-sheet_{gen}_w{w}",
+                                   "frame_indices": frames})
+            # the done-report raises internally but the stitch must SUCCEED
+            resp = mod.handle_stitch({**p, "action": "stitch", "generation": gen,
+                                      "task_id": f"sheet_stitch_commit-sheet_{gen}"})
+            self.assertEqual(resp["statusCode"], 200)
+            run = json.loads(stub.objects["sheets/commit-sheet/run.json"])
+            self.assertEqual(run["status"], "done")
+            self.assertEqual(run["published_generation"], gen)
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status, mod.claim_task) = orig
+
+    def test_begin_carries_forward_prior_publication(self):
+        """Finding 7: a new begin keeps the previous published pointer so
+        the last-good sheet stays reachable until the new one commits."""
+        import handler_poly_sheet as mod
+
+        gen_a, gen_b = "g3c3c3c3c3c3c", "g4d4d4d4d4d4d"
+        stub = _S3Stub()
+        orig = (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status,
+                getattr(mod, "claim_task", None))
+        self._patched(mod, stub)
+        try:
+            p = _run_params("carry-sheet")
+            _admit(mod, stub, p, gen_a, [[0, 1], [2, 3]])
+            for w, frames in ((0, [0, 1]), (1, [2, 3])):
+                mod.handle_frames({**p, "action": "frames", "generation": gen_a,
+                                   "task_id": f"sheet_tiles_carry-sheet_{gen_a}_w{w}",
+                                   "frame_indices": frames})
+            mod.handle_stitch({**p, "action": "stitch", "generation": gen_a,
+                               "task_id": f"sheet_stitch_carry-sheet_{gen_a}"})
+            # a fresh begin for gen_b must retain gen_a's pointer
+            begin_params = {**p, "action": "begin", "job_id": "sheet_job",
+                            "generation": gen_b}
+            # bypass the probe by calling handle_begin (renders the probe
+            # frame via the real binary — fine)
+            mod.handle_begin(begin_params)
+            run = json.loads(stub.objects["sheets/carry-sheet/run.json"])
+            self.assertEqual(run["status"], "running")   # new gen in flight
+            self.assertEqual(run["published_generation"], gen_a)   # still A
+            self.assertEqual(run["published_png_key"],
+                             f"sheets/carry-sheet/{gen_a}/sheet.png")
+        finally:
+            (mod.s3, mod.SWEEP_COEFFGEN, mod.report_status, mod.claim_task) = orig

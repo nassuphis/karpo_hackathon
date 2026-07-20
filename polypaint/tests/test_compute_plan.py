@@ -90,6 +90,7 @@ class TestComputePlan(unittest.TestCase):
                     request["params"]["execution_method"] = "fused_chunk_pipeline"
                     request["probe"] = {
                         "probe_stable": True,
+                "probe_signature_spec_version": mod.PROBE_SIGNATURE_SPEC_VERSION,
                         "degree": 10,
                         "n_coeffs": 11,
                         "probe_signature": mod.build_probe_signature(
@@ -512,6 +513,7 @@ class TestComputePlan(unittest.TestCase):
             "task_id": "compute_run_aberth_mt_run_fused",
             "probe": {
                 "probe_stable": True,
+                "probe_signature_spec_version": mod.PROBE_SIGNATURE_SPEC_VERSION,
                 "degree": 10,
                 "n_coeffs": 11,
                 "probe_signature": mod.build_probe_signature(
@@ -561,6 +563,7 @@ class TestComputePlan(unittest.TestCase):
                 "task_id": "compute_run_aberth_mt_run_fused",
                 "probe": {
                     "probe_stable": True,
+                "probe_signature_spec_version": mod.PROBE_SIGNATURE_SPEC_VERSION,
                     "degree": 70,
                     "n_coeffs": 71,
                     "probe_signature": mod.build_probe_signature(
@@ -594,6 +597,7 @@ class TestComputePlan(unittest.TestCase):
             "task_id": "compute_run_companion_matrix_run_fused_cm",
             "probe": {
                 "probe_stable": True,
+                "probe_signature_spec_version": mod.PROBE_SIGNATURE_SPEC_VERSION,
                 "degree": 10,
                 "n_coeffs": 11,
                 "probe_signature": mod.build_probe_signature(
@@ -1172,6 +1176,7 @@ class TestClassicMemoryFloor(unittest.TestCase):
             "task_id": "compute_run_x_run_mem",
             "probe": {
                 "probe_stable": True,
+                "probe_signature_spec_version": mod.PROBE_SIGNATURE_SPEC_VERSION,
                 "degree": 70,
                 "n_coeffs": 71,
                 "probe_signature": mod.build_probe_signature(

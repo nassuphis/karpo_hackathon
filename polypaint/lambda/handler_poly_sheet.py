@@ -57,6 +57,7 @@ from shared import (
     is_missing_s3_error,
     ok_response,
     parse_body,
+    claim_task,
     read_task_status,
     report_status,
 )
@@ -782,6 +783,12 @@ def _commit_run_publication(sheet_id, generation, gen_prefix):
     if run.get("generation") != generation:
         raise RuntimeError(
             f"publish refused: run superseded by {run.get('generation')}")
+    # round-5 finding 1: re-check the terminal state at commit time — a
+    # cancel/abandon that landed AFTER _bind_to_run (a TOCTOU window) must
+    # still block the publish so a straggler cannot resurrect a killed run
+    if run.get("status") in ("cancelled", "abandoned", "failed"):
+        raise RuntimeError(
+            f"publish refused: run is {run.get('status')}")
     run["status"] = "done"
     run["finished_at_s"] = time.time()
     run["published_generation"] = generation
@@ -866,6 +873,14 @@ def _bind_to_run(params, sheet_id, generation, task_id, *, frame_indices=None,
         raise RuntimeError(
             f"generation {generation} is not the admitted run "
             f"({run.get('generation')}); superseded or forged request")
+    # round-5 finding 1: a terminal run is CLOSED. A late worker or stitch
+    # for a cancelled/abandoned/failed/done generation must be refused —
+    # otherwise a straggler stitch could undo a cancellation by driving
+    # the run back to 'done'.
+    if run.get("status") in ("cancelled", "abandoned", "failed", "done"):
+        raise RuntimeError(
+            f"run {sheet_id}/{generation} is terminal ({run.get('status')}); "
+            "no further work is accepted")
     # round-3 finding 7: job identity is part of the admission — a
     # correctly-hashed payload must not redirect status writes to a
     # different DDB partition, and the hash itself is mandatory
@@ -980,6 +995,16 @@ def handle_begin(params):
         "payload": {k: params.get(k) for k in _HASHED_PARAM_FIELDS
                     if params.get(k) is not None},
     }
+    # round-5 finding 7: carry forward the PREVIOUS publication pointer so
+    # the last-good sheet stays reachable until this new generation
+    # commits. Without this, /list-sheets would fabricate fixed keys that
+    # do not exist between begin and commit, and a failed new run would
+    # leave the prior valid sheet permanently unreachable.
+    prior = _load_run(sheet_id)
+    if isinstance(prior, dict) and prior.get("published_png_key"):
+        run["published_generation"] = prior.get("published_generation")
+        run["published_png_key"] = prior.get("published_png_key")
+        run["published_manifest_key"] = prior.get("published_manifest_key")
     s3.put_object(Bucket=BUCKET, Key=_run_json_key(sheet_id),
                   Body=json.dumps(run, indent=1).encode("utf-8"),
                   ContentType="application/json")
@@ -1011,11 +1036,13 @@ def handle_frames(params):
             f"frame_indices out of range 0..{cfg['steps'] - 1}: {indices}")
     run = _bind_to_run(params, sheet_id, generation, task_id,
                        frame_indices=indices)
-    # duplicate/replayed worker: if this exact task already finished this
-    # generation, do not regress its row (round-3 finding 7 secondary)
-    if _worker_already_done(job_id, task_id):
+    # round-5 finding 3: atomically CLAIM the task. Only one invocation
+    # wins the accepted->running transition; a concurrent duplicate or a
+    # redispatch of an already-running/done worker loses the claim and
+    # no-ops, so it can never overwrite a terminal row.
+    if not claim_task(job_id, task_id):
         return ok_response({"sheet_id": sheet_id, "frames_done": len(indices),
-                            "already_done": True})
+                            "not_claimed": True})
     try:
         _budget_check(cfg, len(indices) + (1 if cfg["vp_mode"] == "frozen" else 0),
                       "worker share",
@@ -1093,8 +1120,8 @@ def handle_stitch(params):
     cfg = _parse_sheet_config(params)
     sheet_id = cfg["sheet_id"]
     _bind_to_run(params, sheet_id, generation, task_id, stitch=True)
-    if _worker_already_done(job_id, task_id):
-        return ok_response({"sheet_id": sheet_id, "already_done": True})
+    if not claim_task(job_id, task_id):
+        return ok_response({"sheet_id": sheet_id, "not_claimed": True})
     try:
         t0 = float(params.get("started_at_s") or time.time())
 
@@ -1155,24 +1182,37 @@ def handle_stitch(params):
                       Body=json.dumps(manifest, indent=1).encode("utf-8"),
                       ContentType="application/json")
         _commit_run_publication(sheet_id, generation, gen_prefix)   # <- COMMIT
+    except Exception as e:
+        # PRE-commit failures mark the task/run failed. The commit above
+        # is the only line that publishes; everything before it is safe
+        # to fail loudly.
+        report_status(job_id, task_id, "error", str(e), result_data={
+            "phase": "error", "phase_label": "Stitch failed", "task_id": task_id,
+        })
+        _mark_run_terminal(sheet_id, generation, "failed")
+        raise
 
-        cleanup_ok = True
-        try:
-            delete_keys = []
-            for k in range(cfg["steps"]):
-                key = _tile_key(sheet_id, generation, k)
-                delete_keys.append({"Key": key})
-                delete_keys.append({"Key": key.replace(".bin", ".json")})
-            delete_keys.append({"Key": _cancel_key(sheet_id, generation)})
-            for i in range(0, len(delete_keys), 1000):
-                resp = s3.delete_objects(
-                    Bucket=BUCKET,
-                    Delete={"Objects": delete_keys[i:i + 1000], "Quiet": True})
-                if resp.get("Errors"):
-                    cleanup_ok = False
-        except Exception:
-            cleanup_ok = False
-
+    # round-5 finding 2: past the commit the sheet IS published. Cleanup
+    # and the done-report are best-effort — a failed DDB status write (or
+    # a delete error) must NEVER mark a published sheet as failed. The
+    # authoritative 'done' already lives in run.json.
+    cleanup_ok = True
+    try:
+        delete_keys = []
+        for k in range(cfg["steps"]):
+            key = _tile_key(sheet_id, generation, k)
+            delete_keys.append({"Key": key})
+            delete_keys.append({"Key": key.replace(".bin", ".json")})
+        delete_keys.append({"Key": _cancel_key(sheet_id, generation)})
+        for i in range(0, len(delete_keys), 1000):
+            resp = s3.delete_objects(
+                Bucket=BUCKET,
+                Delete={"Objects": delete_keys[i:i + 1000], "Quiet": True})
+            if resp.get("Errors"):
+                cleanup_ok = False
+    except Exception:
+        cleanup_ok = False
+    try:
         report_status(job_id, task_id, "done", result_data={
             "phase": "done", "phase_label": "Done",
             "sheet_id": sheet_id, "generation": generation,
@@ -1180,13 +1220,9 @@ def handle_stitch(params):
             "frames": cfg["steps"], "elapsed_ms": manifest["elapsed_ms"],
             "cleanup_ok": cleanup_ok,
         })
-        return ok_response(manifest)
-    except Exception as e:
-        report_status(job_id, task_id, "error", str(e), result_data={
-            "phase": "error", "phase_label": "Stitch failed", "task_id": task_id,
-        })
-        _mark_run_terminal(sheet_id, generation, "failed")
-        raise
+    except Exception:
+        pass   # published; the status row is a convenience, not the truth
+    return ok_response(manifest)
 
 
 def handle_run(params):

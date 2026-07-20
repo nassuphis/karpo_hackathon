@@ -283,9 +283,12 @@ def handle_build_plan(params):
         got_signature = str(probe.get("probe_signature") or "").strip()
         if not got_signature or got_signature != expected_signature:
             raise RuntimeError(f"{label} probe signature mismatch")
-        probe_signature_spec_version = int(
-            probe.get("probe_signature_spec_version", PROBE_SIGNATURE_SPEC_VERSION) or PROBE_SIGNATURE_SPEC_VERSION
-        )
+        # round-5 finding 8: the spec version is REQUIRED, not defaulted —
+        # a probe that omits it must not be silently treated as current.
+        if probe.get("probe_signature_spec_version") is None:
+            raise RuntimeError(
+                f"{label} probe is missing probe_signature_spec_version")
+        probe_signature_spec_version = int(probe.get("probe_signature_spec_version"))
         if probe_signature_spec_version != PROBE_SIGNATURE_SPEC_VERSION:
             raise RuntimeError(
                 f"unsupported probe_signature_spec_version {probe_signature_spec_version}"

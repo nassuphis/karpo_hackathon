@@ -305,3 +305,53 @@ test.describe('Round-4 resume + publish regressions', () => {
     expect(out.cleared).toBe(true);
   });
 });
+
+test.describe('Round-5 resume hardening', () => {
+  test('reload during backoff reschedules a retry (finding 4)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      window.lambdaPost = async () => ({ fired: 1 });
+      // a persisted descriptor mid-backoff, no live timer (simulates reload)
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 's', jobId: 'j', generation: 'g', steps: 4,
+                      workers: [], stitchTask: 't', payload: {},
+                      resumeAttempts: 1, nextResumeAt: Date.now() + 60000 });
+      if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
+      await resumeSheetRun();
+      const scheduled = _sheetResumeTimer !== null;
+      if (_sheetResumeTimer) { clearTimeout(_sheetResumeTimer); _sheetResumeTimer = null; }
+      _sheetRunClear();
+      return { scheduled };
+    });
+    // a timer is rebuilt from the persisted deadline
+    expect(out.scheduled).toBe(true);
+  });
+
+  test('give-up abandons and discovery does not re-grab it (finding 5)', async ({ page }) => {
+    const out = await page.evaluate(async () => {
+      let abandoned = null;
+      window.lambdaPost = async (name, body) => {
+        if (body && body.jobs && body.jobs[0] && body.jobs[0].action === 'abandon') {
+          abandoned = body.jobs[0];
+        }
+        return { fired: 1 };
+      };
+      _activeSheetRun = null;
+      _sheetRunSave({ sheetId: 'gv', jobId: 'j', generation: 'gg', steps: 4,
+                      workers: [], stitchTask: 't', payload: {},
+                      resumeAttempts: 5 });
+      await resumeSheetRun();
+      // the run is now abandoned locally + server dispatch sent
+      const cleared = _sheetRunLoad() === null;
+      // discovery must skip a row for the just-abandoned generation
+      _sheetsInventory = [];
+      const before = _sheetRunLoad();
+      await _sheetDiscoverServerRun([{ sheet_id: 'gv', run_status: 'running',
+                                       run_generation: 'gg', run_key: 'sheets/gv/run.json' }]);
+      const rediscovered = _sheetRunLoad() !== before;
+      return { abandoned, cleared, rediscovered };
+    });
+    expect(out.abandoned).toEqual({ action: 'abandon', sheet_id: 'gv', generation: 'gg' });
+    expect(out.cleared).toBe(true);
+    expect(out.rediscovered).toBe(false);
+  });
+});

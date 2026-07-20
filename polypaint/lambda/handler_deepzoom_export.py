@@ -14,6 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import boto3
+from botocore.exceptions import ClientError
 
 from color_artifact_meta import load_color_artifact_head
 from shared import (BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status,
@@ -345,13 +346,19 @@ def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
         params.get("export_id", f"dz_{int(time.time())}"), "export_id")
     # round-3 finding 2: follow the publication pointer to the current
     # generation's immutable PNG (fall back to the legacy fixed key)
+    # round-5 finding 6: fall back to the legacy fixed key ONLY on a
+    # confirmed-missing run.json — a transient S3 error must not silently
+    # point the export at a key that may not exist.
     source_key = f"sheets/{sheet_id}/sheet.png"
     try:
         run = json.loads(s3.get_object(
             Bucket=BUCKET, Key=f"sheets/{sheet_id}/run.json")["Body"].read())
         if isinstance(run, dict) and run.get("published_png_key"):
             source_key = run["published_png_key"]
-    except Exception:
+    except ClientError as exc:
+        if not is_missing_s3_error(exc):
+            raise
+    except (ValueError, TypeError):
         pass
     source_path = ""
     try:

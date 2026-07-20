@@ -6652,7 +6652,12 @@ def handle_list_sheets(event):
             run_obj = s3.get_object(Bucket=BUCKET, Key=prefix + "run.json")
             run = json.loads(run_obj["Body"].read())
             run_modified = run_obj["LastModified"].isoformat()
-        except ClientError:
+        except ClientError as exc:
+            # round-5 finding 6: a transient S3 error must NOT be read as
+            # "no run record" (which would fabricate legacy fixed keys for
+            # a pointer-only sheet). Only a confirmed-missing key is a miss.
+            if not is_missing_s3_error(exc):
+                raise
             run = None
         except (ValueError, TypeError):
             run = None

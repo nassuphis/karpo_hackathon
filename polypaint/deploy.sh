@@ -1049,18 +1049,6 @@ TIFTEST
         fi
         echo "  dz_export: .dzi + $TILE_COUNT tiles OK"
 
-        # Sheet mode must preserve the 1-bit contract through the pyramid,
-        # not merely make an 8-bit grayscale image that looks bilevel.
-        /src/dz_export /tmp/test_8x8.tif /tmp/dz_sheet_test/image --bilevel || \
-            { echo "FATAL: dz_export --bilevel failed on the smoke-test image"; exit 1; }
-        SHEET_DZ_TILE=$(find /tmp/dz_sheet_test/image_files -name "*.png" -print -quit)
-        [ -n "$SHEET_DZ_TILE" ] || { echo "FATAL: bilevel dz_export produced no tiles"; exit 1; }
-        [ "$(od -An -tu1 -j24 -N1 "$SHEET_DZ_TILE" | tr -d " ")" = "1" ] || \
-            { echo "FATAL: sheet DeepZoom tile IHDR is not 1-bit"; exit 1; }
-        [ "$(od -An -tu1 -j25 -N1 "$SHEET_DZ_TILE" | tr -d " ")" = "0" ] || \
-            { echo "FATAL: sheet DeepZoom tile is not grayscale"; exit 1; }
-        echo "  dz_export --bilevel: 1-bit grayscale tiles OK"
-
         # 3b. Smoke test wall_dz (composite wall pyramid, deepzoom-speed.md 7.1)
         printf "/tmp/test_8x8.tif\n/tmp/test_8x8.tif\n/tmp/test_8x8.tif\n" > /tmp/wall_list.txt
         mkdir -p /tmp/wall_test
@@ -1078,14 +1066,26 @@ TIFTEST
         printf "/tmp/sheet_tile_0.raw\n/tmp/sheet_tile_1.raw\n/tmp/sheet_tile_2.raw\n" > /tmp/sheet_tiles.txt
         SHEET_META=$(/src/sheet_stitch /tmp/sheet_tiles.txt /tmp/sheet_test.png 8 2 2 1 0) || \
             { echo "FATAL: sheet_stitch failed on raw tiles"; exit 1; }
-        echo "$SHEET_META" | grep -q '"width":19' || { echo "FATAL: sheet_stitch width wrong: $SHEET_META"; exit 1; }
-        echo "$SHEET_META" | grep -q '"height":19' || { echo "FATAL: sheet_stitch height wrong: $SHEET_META"; exit 1; }
-        echo "$SHEET_META" | grep -q '"bitdepth":1' || { echo "FATAL: sheet_stitch did not report 1-bit output: $SHEET_META"; exit 1; }
+        [[ "$SHEET_META" == *\"width\":19* ]] || { echo "FATAL: sheet_stitch width wrong: $SHEET_META"; exit 1; }
+        [[ "$SHEET_META" == *\"height\":19* ]] || { echo "FATAL: sheet_stitch height wrong: $SHEET_META"; exit 1; }
+        [[ "$SHEET_META" == *\"bitdepth\":1* ]] || { echo "FATAL: sheet_stitch did not report 1-bit output: $SHEET_META"; exit 1; }
         [ "$(od -An -tu1 -j24 -N1 /tmp/sheet_test.png | tr -d " ")" = "1" ] || \
             { echo "FATAL: sheet_stitch PNG IHDR is not 1-bit"; exit 1; }
         [ "$(od -An -tu1 -j25 -N1 /tmp/sheet_test.png | tr -d " ")" = "0" ] || \
             { echo "FATAL: sheet_stitch PNG is not grayscale"; exit 1; }
         echo "  sheet_stitch: 19x19 1-bit grayscale PNG OK"
+
+        # Keep the downloadable sheet 1-bit, but preserve pixel coverage in
+        # reduced DeepZoom levels with ordinary 8-bit grayscale PNG tiles.
+        /src/dz_export /tmp/sheet_test.png /tmp/dz_sheet_test/image || \
+            { echo "FATAL: dz_export failed on stitched 1-bit sheet"; exit 1; }
+        SHEET_DZ_TILE=$(find /tmp/dz_sheet_test/image_files -name "*.png" -print -quit)
+        [ -n "$SHEET_DZ_TILE" ] || { echo "FATAL: sheet dz_export produced no tiles"; exit 1; }
+        [ "$(od -An -tu1 -j24 -N1 "$SHEET_DZ_TILE" | tr -d " ")" = "8" ] || \
+            { echo "FATAL: sheet DeepZoom tile IHDR is not 8-bit"; exit 1; }
+        [ "$(od -An -tu1 -j25 -N1 "$SHEET_DZ_TILE" | tr -d " ")" = "0" ] || \
+            { echo "FATAL: sheet DeepZoom tile is not grayscale"; exit 1; }
+        echo "  sheet DeepZoom: 1-bit source -> 8-bit grayscale tiles OK"
 
         # 4. Smoke test png_export
         /src/png_export /tmp/test_8x8.tif /tmp/test_out.png || \
@@ -2035,10 +2035,9 @@ ensure_poly_sheet_gc_queue() {
         --region "$REGION" --query 'Attributes.QueueArn' --output text)
 
     local SOURCE_ATTRIBUTES
-    SOURCE_ATTRIBUTES=$(
-        printf '{"VisibilityTimeout":"6000","MessageRetentionPeriod":"345600","RedrivePolicy":"{\"deadLetterTargetArn\":\"%s\",\"maxReceiveCount\":\"5\"}"}' \
-            "$POLY_SHEET_GC_DLQ_ARN"
-    )
+    SOURCE_ATTRIBUTES=$("${TEST_PYTHON[@]}" \
+        "$SCRIPT_DIR/scripts/aws_cli_json.py" poly-sheet-gc-attributes \
+        "$POLY_SHEET_GC_DLQ_ARN")
     POLY_SHEET_GC_QUEUE_URL=$(aws sqs get-queue-url \
         --queue-name "$POLY_SHEET_GC_QUEUE_NAME" \
         --region "$REGION" --query 'QueueUrl' --output text 2>/dev/null || true)

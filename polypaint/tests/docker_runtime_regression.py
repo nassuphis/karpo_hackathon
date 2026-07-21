@@ -2914,8 +2914,8 @@ def test_sheet_stitch_runtime():
     print("=== sheet_stitch runtime PASSED ===")
 
 
-def test_sheet_deepzoom_bilevel_runtime():
-    print("\n--- sheet DeepZoom bilevel runtime ---")
+def test_sheet_deepzoom_grayscale_runtime():
+    print("\n--- sheet DeepZoom grayscale-pyramid runtime ---")
 
     stitch = "/src/sheet_stitch"
     dz_export = "/src/dz_export"
@@ -2940,26 +2940,26 @@ def test_sheet_deepzoom_bilevel_runtime():
         capture_output=True, text=True, timeout=20, env=env)
     assert r.returncode == 0, "sheet_stitch fixture failed: " + r.stderr[:300]
     r = subprocess.run(
-        [dz_export, sheet_png, dz_base, "--bilevel"],
+        [dz_export, sheet_png, dz_base],
         capture_output=True, text=True, timeout=20, env=env)
-    assert r.returncode == 0, "bilevel dz_export failed: " + r.stderr[:300]
+    assert r.returncode == 0, "sheet dz_export failed: " + r.stderr[:300]
     meta = json.loads(r.stdout)
-    assert meta["bitdepth"] == 1, meta
+    assert meta["bitdepth"] == 8, meta
     tile_paths = []
     for root, _dirs, files in os.walk(dz_base + "_files"):
         tile_paths.extend(os.path.join(root, name) for name in files
                           if name.endswith(".png"))
-    assert tile_paths, "bilevel dz_export produced no PNG tiles"
+    assert tile_paths, "sheet dz_export produced no PNG tiles"
     for path in tile_paths:
         _w, _h, bitdepth, color_type = read_png_ihdr(path)
-        assert (bitdepth, color_type) == (1, 0), (
-            "DeepZoom tile is not 1-bit grayscale", path,
+        assert (bitdepth, color_type) == (8, 0), (
+            "DeepZoom tile is not 8-bit grayscale", path,
             (bitdepth, color_type))
 
     import shutil
     cleanup(raw_path, list_path, sheet_png, dz_base + ".dzi")
     shutil.rmtree(dz_base + "_files", ignore_errors=True)
-    print("=== sheet DeepZoom bilevel runtime PASSED ===")
+    print("=== sheet DeepZoom grayscale-pyramid runtime PASSED ===")
 
 
 def test_color_to_bilevel_handler_runtime():
@@ -3843,7 +3843,7 @@ if __name__ == "__main__":
     test_bilevel_merge_assemble_runtime()
     test_raw_to_bilevel_runtime()
     test_sheet_stitch_runtime()
-    test_sheet_deepzoom_bilevel_runtime()
+    test_sheet_deepzoom_grayscale_runtime()
     test_color_to_bilevel_handler_runtime()
     test_bilevel_handler_sparse_finalize_runtime()
     test_solve_proximity_stats()

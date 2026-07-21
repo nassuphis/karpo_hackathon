@@ -79,6 +79,38 @@ test.describe('Sheets frame picking', () => {
 });
 
 test.describe('Sheets admission boundary', () => {
+  test('inherits and submits the Compute Preview 2K resolution without a 1K clamp', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+      _sheetRunClear();
+      _jobsRailJobs.length = 0;
+      document.getElementById('render-function').value = 'const';
+      document.getElementById('sheet-token').value = '$T';
+      document.getElementById('sheet-token2').value = '';
+      document.getElementById('sheet-steps').value = '4';
+      document.getElementById('compute-preview-size').value = '2048';
+      document.getElementById('sheet-margin').value = '4';
+      let submittedTilePx = null;
+      const realPost = window.lambdaPost;
+      window.lambdaPost = async (_functionName, body) => {
+        submittedTilePx = body?.frame?.tile_px;
+        return {};
+      };
+
+      const inheritedTilePx = _sheetInheritedFrame().tile_px;
+      _sheetGeometryChanged();
+      const layout = document.getElementById('sheet-layout-summary').textContent;
+      await runPolySheet();
+
+      window.lambdaPost = realPost;
+      _jobsRailJobs.length = 0;
+      return { inheritedTilePx, submittedTilePx, layout };
+    });
+
+    expect(result.inheritedTilePx).toBe(2048);
+    expect(result.submittedTilePx).toBe(2048);
+    expect(result.layout).toContain('2048px tiles');
+  });
+
   test('a 16x16 1000px sheet reaches server admission and is described truthfully', async ({ page }) => {
     const result = await page.evaluate(async () => {
       _sheetRunClear();
@@ -206,6 +238,38 @@ test.describe('Sheets admission boundary', () => {
     expect(result.status).toContain('Sheet admission failed:');
     expect(result.status).not.toContain('will retry');
     expect(result.mutationClassified).toBe(true);
+  });
+});
+
+test.describe('Sheets DeepZoom selection', () => {
+  test('skips thresholded 1-bit pyramids but accepts legacy and current grayscale exports', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+      const realPost = window.lambdaPost;
+      window.lambdaPost = async () => ({
+        exports: [
+          { job_id: 'sheet_bad_only', dzi_url: 'bad-only.dzi', tile_bitdepth: 1 },
+          { job_id: 'sheet_mixed', dzi_url: 'bad.dzi', tile_bitdepth: 1 },
+          { job_id: 'sheet_mixed', dzi_url: 'good.dzi', tile_bitdepth: 8 },
+          { job_id: 'sheet_legacy', dzi_url: 'legacy.dzi' },
+        ],
+      });
+      delete _sheetDzExports.sheet_bad_only;
+      delete _sheetDzExports.sheet_mixed;
+      delete _sheetDzExports.sheet_legacy;
+      try {
+        return {
+          badOnly: await _sheetFindDeepZoom('sheet_bad_only'),
+          mixed: await _sheetFindDeepZoom('sheet_mixed'),
+          legacy: await _sheetFindDeepZoom('sheet_legacy'),
+        };
+      } finally {
+        window.lambdaPost = realPost;
+      }
+    });
+
+    expect(result.badOnly).toBeNull();
+    expect(result.mixed.dzi_url).toBe('good.dzi');
+    expect(result.legacy.dzi_url).toBe('legacy.dzi');
   });
 });
 

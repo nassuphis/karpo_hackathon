@@ -99,12 +99,26 @@ function _sheetActiveScans() {
     return ['', '2'].map(_sheetScanLine).filter(Boolean);
 }
 
+function _sheetPreviewTilePx() {
+    /* The Compute Preview input owns the browser-side pixel range. Reading
+     * its declared bounds keeps Sheet inheritance aligned with the control
+     * instead of maintaining a second, stale resolution ceiling here. */
+    const input = document.getElementById('compute-preview-size');
+    const parsed = Number.parseInt(input?.value ?? '', 10);
+    const parsedMin = Number.parseInt(input?.min ?? '', 10);
+    const parsedMax = Number.parseInt(input?.max ?? '', 10);
+    const value = Number.isFinite(parsed) ? parsed : 1000;
+    const min = Number.isFinite(parsedMin) ? parsedMin : 64;
+    const max = Number.isFinite(parsedMax) ? parsedMax : 4096;
+    return Math.max(min, Math.min(max, value));
+}
+
 function _sheetInheritedFrame() {
     /* N, pixels, viewport mode/bounds, and rotation all come from the
      * COMPUTE preview controls — the sheet renders what Preview shows.
      * Throws with a user-facing message when explicit bounds are missing. */
     const n = Math.max(8, Math.min(256, parseInt(_sheetVal('compute-preview-n', 96), 10) || 96));
-    const tile = Math.max(32, Math.min(1024, parseInt(_sheetVal('compute-preview-size', 256), 10) || 256));
+    const tile = _sheetPreviewTilePx();
     const rotate = parseInt(_sheetVal('compute-preview-rotate', 0), 10) || 0;
     const previewMode = (typeof _computePreviewViewportMode !== 'undefined') ? _computePreviewViewportMode : 'quantile';
     const freeze = !!document.getElementById('sheet-freeze')?.checked;
@@ -208,8 +222,7 @@ function _sheetGeometryChanged() {
         return;
     }
     const frame = {
-        tile_px: Math.max(32, Math.min(1024,
-            parseInt(_sheetVal('compute-preview-size', 256), 10) || 256)),
+        tile_px: _sheetPreviewTilePx(),
         margin_px: Math.max(0, Math.min(64,
             parseInt(_sheetVal('sheet-margin', 4), 10) || 0)),
     };
@@ -819,7 +832,14 @@ async function _sheetFindDeepZoom(sheetId) {
         if (attempt) await new Promise(r => setTimeout(r, 1500 * attempt));
         try {
             const resp = await lambdaPost('storage', {}, '/list-deepzoom');
-            const hit = (resp.exports || []).find(e => e.job_id === sheetId && e.dzi_url);
+            const hit = (resp.exports || []).find(e => {
+                if (e.job_id !== sheetId || !e.dzi_url) return false;
+                // The short-lived 1-bit pyramid format thresholded reduced
+                // levels and made sparse sheets coarse and slow. Exclude it
+                // so affected immutable exports regenerate once. Exports
+                // predating tile_bitdepth used the correct 8-bit default.
+                return e.tile_bitdepth == null || Number(e.tile_bitdepth) === 8;
+            });
             if (hit) {
                 _sheetDzExports[sheetId] = { dzi_url: hit.dzi_url, share_url: hit.share_url };
                 return _sheetDzExports[sheetId];

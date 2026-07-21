@@ -23,6 +23,8 @@ HANDLER_STORAGE_TEXT = (LAMBDA_DIR / "handler_storage.py").read_text()
 API_MANIFEST_PATH = ROOT / "api_manifest.json"
 PREDEPLOY_SCRIPT_PATH = ROOT / "scripts" / "predeploy_check.sh"
 WORKFLOW_RENDERER_PATH = ROOT / "workflow_template_render.py"
+AWS_CLI_JSON_PATH = ROOT / "scripts" / "aws_cli_json.py"
+AWS_CLI_JSON_TEXT = AWS_CLI_JSON_PATH.read_text()
 
 
 def _joined_shell_lines(text):
@@ -117,13 +119,13 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('POLY_SHEET_GC_QUEUE_NAME="polypaint-poly-sheet-gc"', DEPLOY_TEXT)
         self.assertIn(
             'POLY_SHEET_GC_DLQ_NAME="polypaint-poly-sheet-gc-dlq"', DEPLOY_TEXT)
-        self.assertIn('"VisibilityTimeout":"6000"', DEPLOY_TEXT)
-        self.assertIn('"MessageRetentionPeriod":"345600"', DEPLOY_TEXT)
+        self.assertIn('"VisibilityTimeout": "6000"', AWS_CLI_JSON_TEXT)
+        self.assertIn('"MessageRetentionPeriod": "345600"', AWS_CLI_JSON_TEXT)
         self.assertIn('"MessageRetentionPeriod":"1209600"', DEPLOY_TEXT)
-        self.assertIn('"RedrivePolicy"', DEPLOY_TEXT)
-        self.assertIn('deadLetterTargetArn', DEPLOY_TEXT)
+        self.assertIn('"RedrivePolicy"', AWS_CLI_JSON_TEXT)
+        self.assertIn('deadLetterTargetArn', AWS_CLI_JSON_TEXT)
         self.assertIn('$POLY_SHEET_GC_DLQ_ARN', DEPLOY_TEXT)
-        self.assertIn('maxReceiveCount', DEPLOY_TEXT)
+        self.assertIn('maxReceiveCount', AWS_CLI_JSON_TEXT)
         for action in ("sqs:SendMessage", "sqs:ReceiveMessage",
                        "sqs:DeleteMessage", "sqs:GetQueueAttributes"):
             self.assertIn(action, DEPLOY_TEXT)
@@ -135,6 +137,25 @@ class TestDeployPackaging(unittest.TestCase):
             r"(?m)^    apply_poly_sheet_gc_policy$", DEPLOY_TEXT)), 2)
         self.assertEqual(len(re.findall(
             r"(?m)^    ensure_poly_sheet_gc_event_source$", DEPLOY_TEXT)), 2)
+
+    def test_poly_sheet_gc_queue_attributes_are_valid_nested_json(self):
+        dlq_arn = "arn:aws:sqs:us-east-1:710848990594:polypaint-poly-sheet-gc-dlq"
+        result = subprocess.run(
+            [sys.executable, str(AWS_CLI_JSON_PATH),
+             "poly-sheet-gc-attributes", dlq_arn],
+            capture_output=True, text=True, check=True,
+        )
+        attributes = json.loads(result.stdout)
+        self.assertEqual(attributes["VisibilityTimeout"], "6000")
+        self.assertEqual(attributes["MessageRetentionPeriod"], "345600")
+        self.assertEqual(json.loads(attributes["RedrivePolicy"]), {
+            "deadLetterTargetArn": dlq_arn,
+            "maxReceiveCount": "5",
+        })
+        self.assertIn(
+            '"$SCRIPT_DIR/scripts/aws_cli_json.py" poly-sheet-gc-attributes',
+            _joined_shell_lines(DEPLOY_TEXT),
+        )
 
     def test_poly_sheet_packages_libvips_stitcher_and_both_required_layers(self):
         fn = self._manifest_fn("poly_sheet")
@@ -151,6 +172,21 @@ class TestDeployPackaging(unittest.TestCase):
             '"BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,POLY_SHEET_GC_QUEUE_URL=',
             GEN_TEXT,
         )
+
+    def test_poly_sheet_stitch_smoke_assertions_survive_docker_shell_quoting(self):
+        self.assertIn('[[ "$SHEET_META" == *\\"width\\":19* ]]', DEPLOY_TEXT)
+        self.assertIn('[[ "$SHEET_META" == *\\"height\\":19* ]]', DEPLOY_TEXT)
+        self.assertIn('[[ "$SHEET_META" == *\\"bitdepth\\":1* ]]', DEPLOY_TEXT)
+        self.assertNotIn("grep -q '\"width\":19'", DEPLOY_TEXT)
+        self.assertIn(
+            "/src/dz_export /tmp/sheet_test.png /tmp/dz_sheet_test/image",
+            DEPLOY_TEXT,
+        )
+        self.assertNotIn(
+            "/src/dz_export /tmp/sheet_test.png /tmp/dz_sheet_test/image --bilevel",
+            DEPLOY_TEXT,
+        )
+        self.assertIn("sheet DeepZoom tile IHDR is not 8-bit", DEPLOY_TEXT)
 
     def test_render_workflow_definition_uses_shared_renderer_in_deploy_and_tests(self):
         self.assertTrue(WORKFLOW_RENDERER_PATH.exists(), "workflow_template_render.py should exist")

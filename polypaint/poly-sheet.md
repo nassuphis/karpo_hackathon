@@ -31,6 +31,7 @@ plus the sheet configuration:
 | spacing | linear/log (from..to), angle (end excluded), or STEP: from + k*step — the discrete form; step=1 walks integers (degrees, counts), and integral values substitute as integer literals so they compile in count positions |
 | frames | number of tiles (= scan steps) |
 | N | per-frame grid (preview-class, e.g. 64..192) |
+| tile resolution | inherited exactly from Compute Preview's pixel resolution (64..4096px) |
 | solver | any of the 7 solver modes (fused trio preferred) |
 | viewport | ALL preview modes: per-frame quantile/q-shim (DEFAULT — each tile optimally framed, like the scrub popups) \| marquee (exact explicit bounds) \| square (side selector) \| frozen-from-first-frame |
 | rotate | 0/90/180/270 (quarter turns — lossless on bilevel) |
@@ -84,9 +85,10 @@ client-driven fan-out (v2, the CR35 durability rework):
    Lambda's 10 GB `/tmp`, then `sheet_stitch` uses libvips `rawload` +
    lazy `arrayjoin` + `pngsave(bitdepth=1)` to stream the mosaic to a
    true 1-bit grayscale PNG. It never allocates a full Python canvas.
-   The sheet-only `dz_export --bilevel` mode also writes every DeepZoom
-   PNG tile at grayscale bit depth 1; ordinary image/color DeepZoom
-   exports keep their existing format.
+   DeepZoom reads that stitched 1-bit PNG but writes ordinary 8-bit
+   grayscale pyramid tiles. Reduced levels therefore preserve fractional
+   pixel coverage instead of thresholding sparse detail back to 1 bit.
+   The downloadable mosaic remains the compact true 1-bit PNG.
    PUBLICATION IS THE COMMIT POINT — cleanup is best-effort GC that can
    never turn a published sheet into an error.
 

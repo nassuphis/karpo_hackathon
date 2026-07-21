@@ -51,7 +51,7 @@ from botocore.exceptions import ClientError, ParamValidationError
 
 from compute_fused import _solve_us_per_step
 from cp437_font import FONT_ROWS
-from handler_compute_preview import _compile_compute_inputs
+from handler_compute_preview import MAX_PREVIEW_PIX, _compile_compute_inputs
 from shared import (
     BUCKET,
     JOBS_TABLE,
@@ -93,7 +93,9 @@ COMMENT_RE = re.compile(r"#[^\n]*")
 
 MAX_STEPS = 256
 MIN_N, MAX_N = 8, 256
-MIN_TILE, MAX_TILE = 32, 1024
+# Saved manifests may contain older 32px tiles. New Sheet runs inherit the
+# Compute Preview pixel resolution and therefore share its upper bound.
+MIN_TILE, MAX_TILE = 32, MAX_PREVIEW_PIX
 MAX_COLS = 32
 BUDGET_US = 720_000_000  # ~12 of the lambda's 15 minutes
 SHEET_STITCH_TIMEOUT_S = 600

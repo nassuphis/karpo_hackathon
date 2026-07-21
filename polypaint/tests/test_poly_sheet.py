@@ -248,6 +248,31 @@ class TestPolySheetUnits(_LeaseIsoTestCase):
         self.assertEqual((cfg["canvas_w"], cfg["canvas_h"]), (30528, 10944))
         self.assertEqual(cfg["canvas_w"] * cfg["canvas_h"], 334_098_432)
 
+    def test_sheet_accepts_2k_tiles_and_shares_compute_preview_ceiling(self):
+        import handler_compute_preview as preview
+        import handler_poly_sheet as mod
+
+        self.assertEqual(mod.MAX_TILE, preview.MAX_PREVIEW_PIX)
+        cfg = mod._parse_sheet_config(_run_params(
+            "two-k-preview", steps=4, solver="ae64",
+            extra={"frame": {
+                "n": 8, "tile_px": 2048, "margin_px": 4,
+                "solver_mode": "ae64",
+                "viewport": {"mode": "quantile"},
+                "rotate": 0,
+            }}))
+        self.assertEqual(cfg["tile_px"], 2048)
+        self.assertEqual((cfg["canvas_w"], cfg["canvas_h"]), (4108, 4108))
+
+        with self.assertRaisesRegex(RuntimeError, r"tile_px must be in 32\.\.4096"):
+            mod._parse_sheet_config(_run_params(
+                "over-preview-limit", steps=1,
+                extra={"frame": {
+                    "n": 8, "tile_px": preview.MAX_PREVIEW_PIX + 1,
+                    "solver_mode": "ae64",
+                    "viewport": {"mode": "quantile"},
+                }}))
+
     def test_16x16_1000px_canvas_is_accepted(self):
         import handler_poly_sheet as mod
 

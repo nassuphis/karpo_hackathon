@@ -339,7 +339,9 @@ def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
     constructed SERVER-SIDE from the validated sheet_id — the caller
     never supplies a key, so the renders/ source pinning does not
     apply. Non-square sources are allowed (sheet mosaics are
-    cols x rows grids; OpenSeadragon handles any aspect)."""
+    cols x rows grids; OpenSeadragon handles any aspect). The published
+    source stays 1-bit, but pyramid tiles are 8-bit grayscale so reduced
+    levels preserve pixel coverage instead of thresholding it away."""
     sheet_id = assert_safe_id(params.get("sheet_id"), "sheet_id")
     job_id = assert_safe_id(str(params.get("job_id") or sheet_id), "job_id")
     export_id = assert_safe_id(
@@ -378,7 +380,7 @@ def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
         os.makedirs("/tmp/dz", exist_ok=True)
         t1 = time.time()
         result = subprocess.run(
-            [DZ_EXPORT, source_path, dz_base, "--bilevel"],
+            [DZ_EXPORT, source_path, dz_base],
             capture_output=True, text=True, timeout=600,
             env=imgpipe_env())
         if result.returncode != 0:
@@ -386,8 +388,11 @@ def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
         meta = json.loads(result.stdout)
         width = int(meta["width"])
         height = int(meta["height"])
-        if int(meta.get("bitdepth") or 0) != 1:
-            raise RuntimeError("sheet dz_export did not produce bilevel tiles")
+        tile_bitdepth = int(meta.get("bitdepth") or 0)
+        if tile_bitdepth != 8:
+            raise RuntimeError(
+                f"sheet dz_export must produce 8-bit grayscale pyramid tiles, "
+                f"got bitdepth={tile_bitdepth}")
         gen_ms = int((time.time() - t1) * 1000)
         os.remove(source_path)
         source_path = ""
@@ -442,7 +447,7 @@ def handle_sheet_deepzoom(params, task_id="sheet_deepzoom"):
             "pix": max(width, height),
             "width": width,
             "height": height,
-            "tile_bitdepth": 1,
+            "tile_bitdepth": tile_bitdepth,
             "tiles_uploaded": uploaded,
         }
         s3.put_object(Bucket=BUCKET, Key=f"{s3_prefix}/meta.json",

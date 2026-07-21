@@ -120,7 +120,7 @@ function _sheetInheritedFrame() {
         if (!b) {
             throw new Error(previewMode === 'marquee'
                 ? 'Marquee viewport: drag a rectangle on the Compute preview image first.'
-                : 'Square viewport: enter a positive side length on the Compute preview.');
+                : 'Square viewport: enter a positive extent on the Compute preview.');
         }
         viewport = { mode: 'explicit', min_re: b.min_re, max_re: b.max_re, min_im: b.min_im, max_im: b.max_im };
     }

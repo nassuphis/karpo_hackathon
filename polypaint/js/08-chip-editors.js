@@ -3594,6 +3594,13 @@ function _parseCoeffProgramPayload(raw) {
     };
 }
 
+// Persistent "what did I load?" label next to the Clear-program button.
+// Status lines scroll away; this stays until the next load/clear.
+function _setCoeffProgramLoadedName(name) {
+    const el = document.getElementById('coeff-program-loaded-name');
+    if (el) el.textContent = String(name || '').trim();
+}
+
 function _applyCoeffProgram(rawProgram) {
     const program = _parseCoeffProgramPayload(rawProgram);
     _coeffProgramChain.splice(0, _coeffProgramChain.length, ...program.chain);
@@ -3606,6 +3613,7 @@ function _applyCoeffProgram(rawProgram) {
         _setCoeffProgramEditorMode('text');
     }
     if (_paramProgramModeSelected()) _markComputePreviewStale();
+    _setCoeffProgramLoadedName(program.name || '');
     _coeffProgramStatus(program.name ? `Loaded ${program.name}` : 'Loaded coeff program');
     return program;
 }
@@ -3613,6 +3621,7 @@ function _applyCoeffProgram(rawProgram) {
 function _clearCoeffProgramChain() {
     _coeffProgramChain.splice(0, _coeffProgramChain.length);
     _setCoeffProgramSourceText('');
+    _setCoeffProgramLoadedName('');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
 }
 

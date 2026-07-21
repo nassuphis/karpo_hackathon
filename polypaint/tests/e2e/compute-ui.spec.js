@@ -129,11 +129,11 @@ test.describe('Compute UI', () => {
       function: 'poly_1',
     });
 
-    // SQUARE viewport mode: centered side-S box in the payload
+    // SQUARE viewport mode: extent = half-side (Render's convention), bounds +-extent
     await page.check('input[name="compute-preview-viewport-mode"][value="square"]');
-    await page.fill('#compute-preview-square-side', '10');
+    await page.fill('#compute-preview-square-extent', '5');
     await page.click('#btn-compute-preview');
-    await expect(page.locator('#compute-preview-info')).toContainText('view: square side=10');
+    await expect(page.locator('#compute-preview-info')).toContainText('view: square extent=5');
     const squareCall = await page.evaluate(() => window._computePreviewCalls[1]);
     expect(squareCall).toMatchObject({
       viewport_mode: 'explicit',
@@ -157,6 +157,23 @@ test.describe('Compute UI', () => {
     expect(marqueeCall.view_max_re).toBeCloseTo(2, 1);    // 0.75
     expect(marqueeCall.view_max_im).toBeCloseTo(2, 1);    // y=0.25 from top
     expect(marqueeCall.view_min_im).toBeCloseTo(0, 1);    // y=0.50
+  });
+
+  test('coeff program loaded-name label follows load and clear', async ({ page }) => {
+    await page.click('.tab-btn:text("Compute")');
+    // Blank until something is loaded
+    await expect(page.locator('#coeff-program-loaded-name')).toHaveText('');
+    // _applyCoeffProgram is the single funnel behind modal Load and file
+    // upload — driving it directly exercises the same label wiring.
+    await page.evaluate(() => {
+      _applyCoeffProgram({ version: 1, program_kind: 'coeff_program', name: 'giga_test_label', chain: [], source_text: 'cf\nrev\nemit\n' });
+    });
+    await expect(page.locator('#coeff-program-loaded-name')).toHaveText('giga_test_label');
+    await expect(page.locator('#cp-source-text')).toHaveValue('cf\nrev\nemit\n');
+    // Clear program blanks both the editor and the label
+    await page.click('#coeff-program-clear');
+    await expect(page.locator('#coeff-program-loaded-name')).toHaveText('');
+    await expect(page.locator('#cp-source-text')).toHaveValue('');
   });
 
   test('function picker works from compute tab', async ({ page }) => {

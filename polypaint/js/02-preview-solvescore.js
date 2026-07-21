@@ -6,7 +6,7 @@
 // keys (assets/<BUILD_ID>/...), so a deploy flips atomically via index.html.
 // --- Preview viewport modes -----------------------------------------------
 // quantile (Q%/Shim% auto view), marquee (drag-select on the preview image,
-// translated to complex-plane bounds), square (centered side-S box).
+// translated to complex-plane bounds), square (centered box of half-side "extent").
 let _computePreviewViewportMode = 'quantile';
 let _computePreviewMarqueeBounds = null;   // {min_re,max_re,min_im,max_im}
 
@@ -42,9 +42,10 @@ function _setComputePreviewViewportMode(mode) {
 }
 
 function _computePreviewSquareBounds() {
-    const side = Math.abs(parseFloat(document.getElementById('compute-preview-square-side')?.value)) || 0;
-    if (!(side > 0)) return null;
-    return { min_re: -side / 2, max_re: side / 2, min_im: -side / 2, max_im: side / 2 };
+    // extent = half-side (Render's square-viewport convention): bounds are +-extent
+    const extent = Math.abs(parseFloat(document.getElementById('compute-preview-square-extent')?.value)) || 0;
+    if (!(extent > 0)) return null;
+    return { min_re: -extent, max_re: extent, min_im: -extent, max_im: extent };
 }
 
 // sel: fractional image coords {x0,y0,x1,y1} in [0,1] (y down);
@@ -241,7 +242,7 @@ function _applyComputePreviewResult(result) {
     const viewportLines = _computePreviewViewportInfoLines(result);
     const viewLine = result.viewport_mode === 'explicit'
         ? (_computePreviewViewportMode === 'square'
-            ? `view: square side=${document.getElementById('compute-preview-square-side')?.value || '?'}`
+            ? `view: square extent=${document.getElementById('compute-preview-square-extent')?.value || '?'}`
             : 'view: marquee')
         : `view: q=${((Number(result.quantile) || 0) * 100).toFixed(1)}% · shim=${((Number(result.shim) || 0) * 100).toFixed(1)}%`;
     const infoLines = [
@@ -436,7 +437,7 @@ async function runComputePreview() {
     }
     if (_computePreviewViewportMode === 'square' && !explicitBounds) {
         if (statusEl) {
-            statusEl.textContent = 'Square viewport: enter a positive side length.';
+            statusEl.textContent = 'Square viewport: enter a positive extent.';
             statusEl.className = 'status error';
         }
         return;
@@ -555,6 +556,8 @@ function _populateComputeFromDetail(jobId, detail) {
     _setChainFromSaved('cp', savedCoeffProgramChain);
     _setCoeffProgramSourceText(savedCoeffProgramSourceText);
     _setCoeffProgramEditorMode('text');
+    // Loaded-name context: this populate IS a program load — credit the source job.
+    _setCoeffProgramLoadedName(savedCoeffProgramSourceText.trim() ? jobId : '');
     _setParamPipelineMode('program');
 
     const savedCfpv = Array.isArray(pipeline.cfpv) ? pipeline.cfpv : [];

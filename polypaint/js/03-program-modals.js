@@ -1393,6 +1393,9 @@ async function _saveCurrentCoeffProgramFromModal() {
         const message = resp.overwritten ? `Saved ${program.name} (overwrote existing entry)` : `Saved ${program.name}`;
         _setCoeffProgramModalStatus(message, false);
         _coeffProgramStatus(message, false);
+        // The live editor content is now this named program — refresh the
+        // persistent loaded-name label so it doesn't show a stale prior load.
+        _setCoeffProgramLoadedName(program.name || payload.name);
         await _refreshCoeffProgramRows({ preserveSelection: true, keepStatus: true });
     } catch (e) {
         _setCoeffProgramModalStatus(e && e.message ? e.message : String(e), true);

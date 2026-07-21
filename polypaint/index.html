@@ -491,6 +491,9 @@ button {
 .autolevel-stage-text {
     color: #9aa3b2; font-size: 11px; min-width: 210px;
 }
+.coeff-program-loaded-name {
+    color: #9aa3b2; font-size: 11px; align-self: center;
+}
 .autolevel-inline-fields {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
 }
@@ -1755,6 +1758,7 @@ button {
                 <div class="solve-score-program-toolbar param-program-toolbar">
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-manage" onclick="openCoeffProgramModal()">Coeff Programs...</button>
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-clear" onclick="_clearCoeffProgramChain()">Clear program</button>
+                    <span id="coeff-program-loaded-name" class="coeff-program-loaded-name" title="Last program loaded into this editor"></span>
                 </div>
                 <div id="cp-text-panel" class="coeff-program-editor-panel active">
                     <div class="program-source-grid">
@@ -1827,7 +1831,7 @@ button {
                             </div>
                             <div class="color-mode-row">
                                 <label class="color-mode-choice"><input type="radio" name="compute-preview-viewport-mode" value="square" onchange="_setComputePreviewViewportMode(this.value)"><span class="color-mode-name">Square</span></label>
-                                <div class="color-mode-detail"><span class="autolevel-stage-text">side <input id="compute-preview-square-side" type="number" value="10" min="0.000001" step="0.5" style="width:5.5em" onchange="_markComputePreviewStale()"> centered on 0</span></div>
+                                <div class="color-mode-detail"><span class="autolevel-stage-text">extent <input id="compute-preview-square-extent" type="number" value="5" min="0.000001" step="0.1" style="width:5.5em" onchange="_markComputePreviewStale()"> centered on 0 (half-side, as in Render)</span></div>
                             </div>
                         </div>
                     </div>

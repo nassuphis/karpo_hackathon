@@ -1,8 +1,9 @@
 """Book Maker prepare/compose lambda (book-maker-design.md §5/§6).
 
-One container-image function, two dispatch ops:
+One container-image function, three dispatch ops:
 - prepare: freeze one entry — cache the ≤5000px JPEG asset + provenance
   snapshot under polypaint/books/{book_id}/assets/. Idempotent.
+- prepare_cover: normalize a frozen AllCol wall through the same libvips path.
 - compose: render book.tex/cover.tex from the book doc + snapshots, run
   lualatex, upload cover.pdf/content.pdf/source.zip + out/latest.json.
 """
@@ -47,6 +48,17 @@ def _phase(job_id, task_id, status, phase, phase_label, **extra):
 
 def _asset_keys(book_id, entry_id):
     base = f"{BOOKS_PREFIX}{book_id}/assets/{entry_id}"
+    return f"{base}.jpg", f"{base}.provenance.json"
+
+
+def _allcol_cover_source_key(book_id, refresh_id):
+    return f"{BOOKS_PREFIX}{book_id}/cover/allcol-{refresh_id}.jpg"
+
+
+def _allcol_cover_asset_keys(book_id, refresh_id):
+    # Keep wall covers in a subdirectory that entry_id (which cannot contain
+    # '/') can never alias.
+    base = f"{BOOKS_PREFIX}{book_id}/assets/cover/allcol-{refresh_id}"
     return f"{base}.jpg", f"{base}.provenance.json"
 
 
@@ -199,13 +211,72 @@ def _jpeg_dimensions(path):
     raise RuntimeError(f"no SOF marker found: {path}")
 
 
+def _cover_panel_boxes(raster_width, raster_height, page_width, page_height):
+    """Crop boxes for back/front pages from the printable jacket spread.
+
+    cover.pdf is laid out as outer-bleed | back | spine | front |
+    outer-bleed. The flipbook pages use the content-page dimensions, so each
+    299mm cover panel is center-trimmed to the content's 293mm width; the
+    10mm top/bottom jacket bleed drops naturally when the 296mm page height
+    is centered in the 316mm spread raster.
+    """
+    raster_width = int(raster_width)
+    raster_height = int(raster_height)
+    page_width = int(page_width)
+    page_height = int(page_height)
+    if min(raster_width, raster_height, page_width, page_height) <= 0:
+        raise ValueError("cover and content raster dimensions must be positive")
+
+    outer_bleed_mm = (
+        book_tex.COVER_W_MM
+        - 2 * book_tex.COVER_PANEL_MM
+        - book_tex.COVER_SPINE_MM
+    ) / 2.0
+    back_center_mm = outer_bleed_mm + book_tex.COVER_PANEL_MM / 2.0
+    front_center_mm = (
+        outer_bleed_mm
+        + book_tex.COVER_PANEL_MM
+        + book_tex.COVER_SPINE_MM
+        + book_tex.COVER_PANEL_MM / 2.0
+    )
+    top = int(round((raster_height - page_height) / 2.0))
+
+    def centered_box(center_mm):
+        center_px = center_mm * raster_width / float(book_tex.COVER_W_MM)
+        left = int(round(center_px - page_width / 2.0))
+        box = (left, top, left + page_width, top + page_height)
+        if box[0] < 0 or box[1] < 0 or box[2] > raster_width or box[3] > raster_height:
+            raise RuntimeError(
+                "cover spread is too small for content-page crops: "
+                f"spread={raster_width}x{raster_height}, page={page_width}x{page_height}")
+        return box
+
+    return centered_box(back_center_mm), centered_box(front_center_mm)
+
+
 def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_cb=None):
-    """Rasterize book.pdf into flip/p%04d.jpg + flip.json under out_prefix.
-    Returns the additive latest.json fields. Raises on failure — the caller
-    isolates errors so the compile still succeeds without a flipbook."""
+    """Rasterize a physically paginated cover-to-cover flipbook.
+
+    cover.pdf is one printable back|spine|front spread, so its right and left
+    panels are cropped into page 1 and the final page respectively. Blank
+    inside-cover pages keep the odd-page content title on the right and every
+    report/image pair on one landscape spread under StPageFlip showCover.
+    Returns additive latest.json fields. Raises on failure; the caller isolates
+    the error so the print PDFs still publish normally.
+    """
     flip_dir = os.path.join(build_dir, "flip")
     os.makedirs(flip_dir, exist_ok=True)
     pdf_path = os.path.join(build_dir, "book.pdf")
+    cover_pdf_path = os.path.join(build_dir, "cover.pdf")
+    # StPageFlip showCover lays out [front], then pairs starting at index 1,
+    # then [back]. The two blank inside covers preserve the content PDF's own
+    # recto/verso parity instead of shifting every entry by one page.
+    inside_front_page = 2
+    content_first_page = 3
+    content_last_page = content_pages + 2
+    inside_back_page = content_pages + 3
+    back_cover_page = content_pages + 4
+    flip_page_count = back_cover_page
 
     per = max(1, math.ceil(content_pages / FLIP_WORKERS))
     ranges = [(first, min(first + per - 1, content_pages))
@@ -230,8 +301,20 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_
             progress_done[0] += 1
             done = progress_done[0]
         # every page on small books, ~20 updates on large ones
-        if done == content_pages or done % max(1, content_pages // 20) == 0:
-            progress_cb(done, content_pages)
+        if done == flip_page_count or done % max(1, flip_page_count // 20) == 0:
+            progress_cb(done, flip_page_count)
+
+    def save_jpeg(img, dest):
+        converted = None
+        if img.mode != "RGB":
+            converted = img.convert("RGB")
+            img = converted
+        try:
+            img.save(dest, format="JPEG",
+                     quality=FLIP_QUALITY, subsampling=0, optimize=True)
+        finally:
+            if converted is not None:
+                converted.close()
 
     def convert_png(src, dest, tolerant=False):
         # tolerant decode is a PIL GLOBAL: serialize those attempts
@@ -242,12 +325,9 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_
                     return convert_png(src, dest)
                 finally:
                     ImageFile.LOAD_TRUNCATED_IMAGES = False
-        img = Image.open(src)
-        img.load()
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.save(dest, format="JPEG",
-                 quality=FLIP_QUALITY, subsampling=0, optimize=True)
+        with Image.open(src) as img:
+            img.load()
+            save_jpeg(img, dest)
 
     def render_and_convert(rng):
         """Render->convert->delete one page at a time: at 200dpi a noisy-art
@@ -282,7 +362,8 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_
                 if not matches:
                     raise RuntimeError(f"pdftoppm page {number}: output missing")
                 src = os.path.join(flip_dir, matches[0])
-            canonical = "p%04d.jpg" % number
+            # p0001 is the front cover and p0002 its blank inside face.
+            canonical = "p%04d.jpg" % (number + 2)
             try:
                 convert_png(src, os.path.join(flip_dir, canonical))
             except Exception as exc:  # noqa: BLE001
@@ -314,10 +395,63 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_
         return done
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=FLIP_WORKERS) as pool:
-        pages = [name for chunk in pool.map(render_and_convert, ranges) for name in chunk]
-    if len(pages) != content_pages:
-        raise RuntimeError(f"rendered {len(pages)} pages, expected {content_pages}")
-    width_px, height_px = _jpeg_dimensions(os.path.join(flip_dir, pages[0]))
+        content_names = [name for chunk in pool.map(render_and_convert, ranges) for name in chunk]
+    if len(content_names) != content_pages:
+        raise RuntimeError(f"rendered {len(content_names)} content pages, expected {content_pages}")
+    width_px, height_px = _jpeg_dimensions(os.path.join(flip_dir, content_names[0]))
+
+    # Render the jacket once, then split its right/front and left/back panels.
+    # Cropping after rasterization avoids rewriting either print PDF and gives
+    # every StPageFlip page identical dimensions.
+    cover_prefix = os.path.join(flip_dir, "cover-page")
+    cover_run = subprocess.run(
+        ["pdftoppm", "-png", "-r", str(FLIP_DPI),
+         "-f", "1", "-l", "1", cover_pdf_path, cover_prefix],
+        capture_output=True, text=True, timeout=120)
+    if cover_run.returncode != 0:
+        raise RuntimeError(
+            f"pdftoppm cover failed: {cover_run.stderr.strip()[:300]}")
+    cover_src = cover_prefix + "-1.png"
+    if not os.path.exists(cover_src):
+        matches = [f for f in os.listdir(flip_dir)
+                   if re.fullmatch(r"cover-page-0*1\.png", f)]
+        if not matches:
+            raise RuntimeError("pdftoppm cover: output missing")
+        cover_src = os.path.join(flip_dir, matches[0])
+    front_name = "p0001.jpg"
+    inside_front_name = "p%04d.jpg" % inside_front_page
+    inside_back_name = "p%04d.jpg" % inside_back_page
+    back_name = "p%04d.jpg" % back_cover_page
+    with Image.open(cover_src) as spread:
+        spread.load()
+        back_box, front_box = _cover_panel_boxes(
+            spread.width, spread.height, width_px, height_px)
+        with spread.crop(front_box) as front:
+            save_jpeg(front, os.path.join(flip_dir, front_name))
+        _tick_progress()
+        with spread.crop(back_box) as back:
+            save_jpeg(back, os.path.join(flip_dir, back_name))
+        _tick_progress()
+    os.remove(cover_src)
+
+    # Both inside faces are intentionally blank. The content PDF begins with
+    # an odd recto title page; placing it after the inside-front blank restores
+    # the print ordering: blank|title, then report|image for every entry.
+    with Image.new("RGB", (width_px, height_px), (26, 26, 46)) as blank:
+        save_jpeg(blank, os.path.join(flip_dir, inside_front_name))
+        _tick_progress()
+        save_jpeg(blank, os.path.join(flip_dir, inside_back_name))
+        _tick_progress()
+
+    pages = [
+        front_name,
+        inside_front_name,
+        *content_names,
+        inside_back_name,
+        back_name,
+    ]
+    if len(pages) != flip_page_count:
+        raise RuntimeError(f"rendered {len(pages)} flipbook pages, expected {flip_page_count}")
 
     def upload_page(name):
         with open(os.path.join(flip_dir, name), "rb") as fh:
@@ -332,7 +466,14 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_
         "book_id": book.get("id") or book.get("name") or "",
         "compile_id": out_prefix.rstrip("/").split("/")[-1],
         "title": book.get("title") or book.get("name") or "PolyPaint",
-        "page_count": content_pages,
+        "page_count": flip_page_count,
+        "content_page_count": content_pages,
+        "front_cover_page": 1,
+        "inside_front_cover_page": inside_front_page,
+        "content_first_page": content_first_page,
+        "content_last_page": content_last_page,
+        "inside_back_cover_page": inside_back_page,
+        "back_cover_page": back_cover_page,
         "width_px": width_px,
         "height_px": height_px,
         "pages": pages,
@@ -343,7 +484,7 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_
                   ContentType="application/json",
                   CacheControl=CACHE_IMMUTABLE)
     shutil.rmtree(flip_dir, ignore_errors=True)
-    return {"flip_key": flip_key, "flip_page_count": content_pages}
+    return {"flip_key": flip_key, "flip_page_count": flip_page_count}
 
 
 _ID_RE = None
@@ -512,6 +653,105 @@ def handle_prepare(params):
                 pass
 
 
+def handle_prepare_cover(params):
+    """Normalize one frozen AllCol wall into a generation-keyed Book asset."""
+    job_id = params["job_id"]
+    task_id = params["task_id"]
+    book_id = _safe_id(params["book_id"], "book_id")
+    refresh_id = _safe_id(params["cover_refresh_id"], "cover_refresh_id")
+    expected_saved_at = str(params.get("expected_saved_at") or "")
+    progress = {
+        "family": "book",
+        "book_id": book_id,
+        "entry_id": "cover",
+        "op": "prepare_cover",
+        "cover_refresh_id": refresh_id,
+    }
+
+    book_obj = s3.get_object(Bucket=BUCKET, Key=f"{BOOKS_PREFIX}{book_id}.json")
+    book = json.loads(book_obj["Body"].read())
+    if expected_saved_at and str(book.get("saved_at") or "") != expected_saved_at:
+        raise RuntimeError(
+            f"book {book_id} was saved mid-cover-prepare; recompile to use the new cover")
+    cover_source = book.get("cover_source") or {}
+    if (not isinstance(cover_source, dict)
+            or cover_source.get("kind") != "allcol_wall"
+            or str(cover_source.get("refresh_id") or "") != refresh_id):
+        raise RuntimeError(
+            f"book {book_id} no longer selects AllCol wall {refresh_id}; recompile")
+    source_image_key = str(cover_source.get("image_key") or "")
+    expected_source_key = _allcol_cover_source_key(book_id, refresh_id)
+    if source_image_key != expected_source_key:
+        raise ValueError(
+            f"book cover source must be the frozen Book wall {expected_source_key!r}")
+
+    asset_key, prov_key = _allcol_cover_asset_keys(book_id, refresh_id)
+    if not params.get("force") and _key_exists(asset_key) and _key_exists(prov_key):
+        _phase(job_id, task_id, "done", "done", "Cached cover", **progress, cached=True)
+        return ok_response({"book_id": book_id, "cover_refresh_id": refresh_id, "cached": True})
+
+    source_local = f"/tmp/book_cover_src_{refresh_id}.jpg"
+    prepared_local = f"/tmp/book_cover_{refresh_id}.jpg"
+    try:
+        _phase(job_id, task_id, "started", "load_source", "Load cover source", **progress)
+        source_obj = s3.get_object(Bucket=BUCKET, Key=source_image_key)
+        with open(source_local, "wb") as fh:
+            for chunk in source_obj["Body"].iter_chunks(chunk_size=1024 * 1024):
+                fh.write(chunk)
+
+        _phase(job_id, task_id, "processing", "prepare_image", "Prepare cover image", **progress)
+        info = prepare_pdf_image(
+            source_local,
+            prepared_local,
+            max_px=ASSET_MAX_PX,
+            quality=92,
+            image_format="jpeg",
+        )
+        snapshot = {
+            "version": 1,
+            "kind": "allcol_wall",
+            "source_image_key": source_image_key,
+            "refresh_id": refresh_id,
+            "prepared": {k: info[k] for k in (
+                "source_width", "source_height", "prepared_width", "prepared_height")},
+            "created_at": _utc_now_iso(),
+        }
+        with open(prepared_local, "rb") as fh:
+            s3.upload_fileobj(
+                fh,
+                BUCKET,
+                asset_key,
+                ExtraArgs={"ContentType": "image/jpeg"},
+            )
+        s3.put_object(
+            Bucket=BUCKET,
+            Key=prov_key,
+            Body=json.dumps(snapshot).encode("utf-8"),
+            ContentType="application/json",
+        )
+        _phase(
+            job_id,
+            task_id,
+            "done",
+            "done",
+            "Cover ready",
+            **progress,
+            prepared_width=info["prepared_width"],
+            prepared_height=info["prepared_height"],
+        )
+        return ok_response({
+            "book_id": book_id,
+            "cover_refresh_id": refresh_id,
+            "cached": False,
+        })
+    finally:
+        for path in (source_local, prepared_local):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
 def _run_lualatex(build_dir, name):
     """Two passes, halt-on-error; surfaces the log tail on failure."""
     for _ in range(2):
@@ -576,6 +816,25 @@ def handle_compose(params, latex_runner=_run_lualatex):
         if missing:
             raise RuntimeError(f"book {book_id} is missing prepared assets for entries: "
                                f"{', '.join(missing[:10])} — run prepare first")
+        cover_rel = None
+        cover_source = book.get("cover_source") or {}
+        if isinstance(cover_source, dict) and cover_source.get("kind") == "allcol_wall":
+            refresh_id = _safe_id(cover_source.get("refresh_id"), "cover refresh_id")
+            expected_source_key = _allcol_cover_source_key(book_id, refresh_id)
+            if str(cover_source.get("image_key") or "") != expected_source_key:
+                raise RuntimeError(f"book {book_id} has an invalid frozen AllCol cover source")
+            cover_asset_key, _ = _allcol_cover_asset_keys(book_id, refresh_id)
+            cover_rel = f"{book_tex.ASSET_DIR}/cover.jpg"
+            try:
+                s3.download_file(BUCKET, cover_asset_key, os.path.join(build_dir, cover_rel))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"book {book_id} is missing its prepared AllCol cover for {refresh_id} — "
+                    "run prepare first") from exc
+        else:
+            cover_id = str(book.get("cover_entry_id") or "")
+            if cover_id and cover_id in provenance:
+                cover_rel = f"{book_tex.ASSET_DIR}/{cover_id}.jpg"
         # fonts are installed in the image's texmf tree (stable path -> stable
         # luaotfload cache); no per-build-dir copy needed for the compile.
 
@@ -583,10 +842,6 @@ def handle_compose(params, latex_runner=_run_lualatex):
         content_tex, content_pages = book_tex.render_content_tex(
             book, provenance,
             pdf_url=book_tex.S3_PUBLIC_BASE + out_prefix + "content.pdf")
-        cover_rel = None
-        cover_id = str(book.get("cover_entry_id") or "")
-        if cover_id and cover_id in provenance:
-            cover_rel = f"{book_tex.ASSET_DIR}/{cover_id}.jpg"
         cover_tex = book_tex.render_cover_tex(book, cover_rel)
         with open(os.path.join(build_dir, "book.tex"), "w") as fh:
             fh.write(content_tex)
@@ -616,6 +871,8 @@ def handle_compose(params, latex_runner=_run_lualatex):
             for entry_id in provenance:
                 zf.write(os.path.join(build_dir, book_tex.ASSET_DIR, f"{entry_id}.jpg"),
                          f"{book_tex.ASSET_DIR}/{entry_id}.jpg")
+            if cover_rel == f"{book_tex.ASSET_DIR}/cover.jpg":
+                zf.write(os.path.join(build_dir, cover_rel), cover_rel)
             # Bundle ONLY the fonts the template actually references, and never
             # a trial/demo face (code-review-25 F7): the tracked fonts/ dir
             # carries trial licences that don't permit redistribution, but the
@@ -633,8 +890,9 @@ def handle_compose(params, latex_runner=_run_lualatex):
         # in latest.json instead of failing the compile
         flip_fields = {}
         try:
+            flip_page_count = content_pages + 4
             _phase(job_id, task_id, "processing", "flipbook",
-                   f"Flipbook pages 0/{content_pages}", **progress)
+                   f"Flipbook pages 0/{flip_page_count}", **progress)
             flip_fields = _render_flipbook_pages(
                 build_dir, out_prefix, book, content_pages,
                 progress_cb=lambda done, total: _phase(
@@ -679,6 +937,8 @@ def handler(event, context):
     try:
         if op == "prepare":
             return handle_prepare(params)
+        if op == "prepare_cover":
+            return handle_prepare_cover(params)
         if op == "compose":
             return handle_compose(params)
         if op == "describe":

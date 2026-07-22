@@ -87,6 +87,7 @@
       "/save-solve-score-program",
       "/save-vision-config",
       "/share-mosaic",
+      "/snapshot-book-cover",
       "/solve-score-chain-to-source"
     ]
   },
@@ -166,6 +167,7 @@
       "/save-vision-config",
       "/share-mosaic",
       "/sheet-begin",
+      "/snapshot-book-cover",
       "/solve-proximity",
       "/solve-score-chain-to-source",
       "/sweep-cm",
@@ -287,6 +289,7 @@
       "/save-solve-score-program",
       "/save-vision-config",
       "/share-mosaic",
+      "/snapshot-book-cover",
       "/solve-score-chain-to-source"
     ]
   },

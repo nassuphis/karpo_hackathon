@@ -14,6 +14,7 @@ let _bookState = {
     dirty: false,
     hydrated: {},         // entry_id -> {preview_url, missing}
     selectedEntryId: '',
+    coverSourceMode: 'entry', // pending Cover-tab choice; survives hydration rerenders
     subtab: 'content',    // 'content' | 'cover'
     compile: null,        // {runId, phase, expected, done}
 };
@@ -24,6 +25,20 @@ function _bookStatus(msg, isError = false) {
 }
 
 function _bookLog(msg, cls = '') { log(msg, cls, 'book-log'); }
+
+function _bookPublicUrl(key) {
+    return 'https://polypaint.s3.us-east-1.amazonaws.com/' + encodeURI(String(key || ''));
+}
+
+function _bookCoverSource(doc) {
+    const source = doc && doc.cover_source;
+    if (source && typeof source === 'object') {
+        const kind = String(source.kind || 'none');
+        if (kind === 'entry' || kind === 'allcol_wall' || kind === 'none') return source;
+    }
+    const entryId = String(doc && doc.cover_entry_id || '');
+    return entryId ? {kind: 'entry', entry_id: entryId} : {kind: 'none'};
+}
 
 async function _bookRefreshList(force = false) {
     if (_bookState.listLoaded && !force) return;
@@ -43,11 +58,14 @@ async function _bookLoadActive() {
     _bookState.latestOutput = null;
     _bookState.hydrated = {};
     _bookState.selectedEntryId = '';
+    _bookState.coverSourceMode = 'entry';
     _bookState.dirty = false;
     if (!_bookState.activeId) return;
     try {
         const resp = await lambdaPost('storage', { id: _bookState.activeId }, '/fetch-book');
         _bookState.doc = resp.book;
+        _bookState.coverSourceMode = _bookCoverSource(resp.book).kind === 'allcol_wall'
+            ? 'allcol_wall' : 'entry';
         _bookState.latestOutput = resp.latest_output || null;
     } catch (e) {
         _bookStatus(`fetch-book: ${e.message}`, true);
@@ -236,20 +254,45 @@ function _renderBookTab() {
             ? doc.entries.map((e, i) => _bookEntryRow(e, i)).join('')
             : '<div style="padding:14px;color:#888">No entries. Right-click a tile in AllCol, or use Add to Book on the Render/Favorites tabs.</div>';
     }
-    // Cover sub-tab: preview of the selected cover artifact + book title fields
-    const coverEntry = doc ? (doc.entries || []).find(e => e.entry_id === doc.cover_entry_id) : null;
+    // Cover sub-tab: the source is either one content entry or a Book-owned
+    // snapshot of the current AllCol flat wall.
+    const coverSource = _bookCoverSource(doc);
+    const coverEntry = doc && coverSource.kind === 'entry'
+        ? (doc.entries || []).find(e => e.entry_id === coverSource.entry_id)
+        : null;
     const coverPrev = document.getElementById('book-cover-preview');
     if (coverPrev) {
         const hyd = coverEntry ? (_bookState.hydrated[coverEntry.entry_id] || {}) : {};
-        coverPrev.innerHTML = coverEntry && hyd.preview_url
-            ? `<img src="${_escapeHtml(hyd.preview_url)}" style="width:100%;height:100%;object-fit:contain">`
-            : (coverEntry ? '…' : 'No cover selected.<br>Pick a row in Content and press Cover.');
+        const wallPreview = coverSource.kind === 'allcol_wall' && coverSource.preview_key
+            ? _bookPublicUrl(coverSource.preview_key) : '';
+        coverPrev.innerHTML = wallPreview
+            ? `<img src="${_escapeHtml(wallPreview)}" style="width:100%;height:100%;object-fit:contain">`
+            : (coverEntry && hyd.preview_url
+                ? `<img src="${_escapeHtml(hyd.preview_url)}" style="width:100%;height:100%;object-fit:contain">`
+                : (coverSource.kind === 'allcol_wall'
+                    ? 'AllCol wall selected.<br>Preview unavailable.'
+                    : (coverEntry ? '…' : 'No cover selected.')));
     }
     const hint = document.getElementById('book-cover-hint');
     if (hint) {
-        hint.textContent = coverEntry
-            ? `Cover: ${_bookEntryLabel(coverEntry)}`
-            : (doc ? 'No cover chosen — the cover page will be typographic.' : '');
+        hint.textContent = coverSource.kind === 'allcol_wall'
+            ? `Cover: AllCol wall ${coverSource.refresh_id || ''} · ${Number(coverSource.width || 0).toLocaleString()}×${Number(coverSource.height || 0).toLocaleString()} px · Book scales it to 5K with libvips.`
+            : (coverEntry
+                ? `Cover: ${_bookEntryLabel(coverEntry)}`
+                : (doc ? 'No cover chosen — the cover page will be typographic.' : ''));
+    }
+    const sourceMode = document.getElementById('book-cover-source-mode');
+    if (sourceMode && doc) {
+        sourceMode.value = _bookState.coverSourceMode;
+    }
+    const sourceDetail = document.getElementById('book-cover-source-detail');
+    if (sourceDetail) {
+        const selected = doc
+            ? (doc.entries || []).find(e => e.entry_id === _bookState.selectedEntryId)
+            : null;
+        sourceDetail.textContent = selected
+            ? `Selected Content image: ${_bookEntryLabel(selected)}`
+            : 'Select a Content row before choosing “Selected image”. AllCol uses the current ready default wall.';
     }
     for (const [id, key] of [['book-title-input', 'title'], ['book-subtitle-input', 'subtitle'], ['book-author-input', 'author']]) {
         const el = document.getElementById(id);
@@ -380,7 +423,12 @@ function _bookRemoveEntry(entryId) {
     const doc = _bookState.doc;
     if (!doc) return;
     doc.entries = (doc.entries || []).filter(e => e.entry_id !== entryId);
-    if (doc.cover_entry_id === entryId) doc.cover_entry_id = '';
+    const coverSource = _bookCoverSource(doc);
+    if (doc.cover_entry_id === entryId ||
+            (coverSource.kind === 'entry' && coverSource.entry_id === entryId)) {
+        doc.cover_entry_id = '';
+        doc.cover_source = {kind: 'none'};
+    }
     if (_bookState.selectedEntryId === entryId) _bookState.selectedEntryId = '';
     _bookState.dirty = true;
     _renderBookTab();
@@ -391,10 +439,56 @@ function bookSetCover() {
     if (!doc) { _bookStatus('No book loaded', true); return; }
     if (!_bookState.selectedEntryId) { _bookStatus('Select a row first, then press Cover', true); return; }
     const entry = (doc.entries || []).find(e => e.entry_id === _bookState.selectedEntryId);
+    if (!entry) { _bookStatus('The selected Content row no longer exists', true); return; }
     doc.cover_entry_id = _bookState.selectedEntryId;
+    doc.cover_source = {kind: 'entry', entry_id: _bookState.selectedEntryId};
+    _bookState.coverSourceMode = 'entry';
     _bookState.dirty = true;
     _renderBookTab();
     _bookStatus(`Cover set to "${entry ? _bookEntryLabel(entry) : '?'}" (row turns red). Save to keep it.`);
+}
+
+function bookCoverSourceModeChanged() {
+    const mode = String(document.getElementById('book-cover-source-mode')?.value || 'entry');
+    _bookState.coverSourceMode = mode === 'allcol_wall' ? 'allcol_wall' : 'entry';
+    _renderBookTab();
+}
+
+async function bookApplyCoverSource() {
+    const doc = _bookState.doc;
+    if (!doc) { _bookStatus('No book loaded', true); return; }
+    const mode = _bookState.coverSourceMode;
+    if (mode === 'entry') {
+        bookSetCover();
+        return;
+    }
+    if (mode !== 'allcol_wall') {
+        _bookStatus(`Unknown cover source: ${mode}`, true);
+        return;
+    }
+    _bookBtnBusy('btn-book-apply-cover', true, 'Copying…');
+    try {
+        const resp = await lambdaPost(
+            'storage',
+            {book_id: _bookState.activeId},
+            '/snapshot-book-cover',
+        );
+        if (!resp.cover_source || resp.cover_source.kind !== 'allcol_wall') {
+            throw new Error('snapshot-book-cover returned no AllCol cover source');
+        }
+        doc.cover_entry_id = '';
+        doc.cover_source = resp.cover_source;
+        _bookState.coverSourceMode = 'allcol_wall';
+        _bookState.dirty = true;
+        _renderBookTab();
+        _bookStatus(
+            `AllCol wall ${resp.cover_source.refresh_id} selected as cover. Save to keep it; Compile scales it to 5K.`,
+        );
+    } catch (e) {
+        _bookStatus(`AllCol cover failed: ${e.message}`, true);
+    } finally {
+        _bookBtnBusy('btn-book-apply-cover', false);
+    }
 }
 
 async function bookGoRender() {
@@ -555,12 +649,24 @@ async function bookCompile() {
         const jobId = 'book#' + _bookState.activeId;
         const startedAt = Date.now();
         const jobs = _bookState.doc.entries.map(entry => ({
-            op: 'prepare', job_id: jobId, task_id: `bookprep_${runId}_${entry.entry_id}`,
+            op: 'prepare', job_id: jobId, task_id: `bookprep_${runId}_entry_${entry.entry_id}`,
             book_id: _bookState.activeId, entry_id: entry.entry_id,
             source_job_id: entry.job_id, source_artifact_id: entry.artifact_id,
             source_image_key: entry.image_key,
             force: true,   // Compile = fresh: re-prepare every entry, never reuse stale assets
         }));
+        const coverSource = _bookCoverSource(_bookState.doc);
+        if (coverSource.kind === 'allcol_wall') {
+            jobs.push({
+                op: 'prepare_cover',
+                job_id: jobId,
+                task_id: `bookprep_${runId}_allcol_cover`,
+                book_id: _bookState.activeId,
+                cover_refresh_id: coverSource.refresh_id,
+                expected_saved_at: _bookState.doc.saved_at,
+                force: true,
+            });
+        }
         const disp = await lambdaPost('dispatch', { target: 'book_pdf', jobs, expected_keys: [] });
         if ((disp.fired || 0) !== jobs.length) throw new Error(`dispatch fired ${disp.fired}/${jobs.length}`);
         _bookState.compile = { runId, jobId, phase: 'prepare', expected: jobs.length,

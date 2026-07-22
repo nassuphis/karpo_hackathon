@@ -75,6 +75,20 @@ def _prepare_params(**over):
     return params
 
 
+def _prepare_cover_params(**over):
+    params = {
+        "op": "prepare_cover",
+        "job_id": "book#test",
+        "task_id": "bookprep_r1_allcol_cover",
+        "book_id": "test-book",
+        "cover_refresh_id": "mosaic_20260722T120000Z_abcdef01",
+        "expected_saved_at": "2026-07-06T00:00:00Z",
+        "force": True,
+    }
+    params.update(over)
+    return params
+
+
 class TestBookPdfHandler(unittest.TestCase):
     def setUp(self):
         import book_pdf
@@ -208,6 +222,49 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertFalse(snap["report"]["has_palette"])   # unsafe key dropped
         self.assertNotIn("polypaint/books/test-book/assets/e1.palette.jpg", self.fake.objects)
 
+    def test_prepare_allcol_cover_uses_same_5k_libvips_path(self):
+        refresh_id = "mosaic_20260722T120000Z_abcdef01"
+        source_key = f"polypaint/books/test-book/cover/allcol-{refresh_id}.jpg"
+        self.fake.objects["polypaint/books/test-book.json"] = json.dumps({
+            "book_kind": "book",
+            "id": "test-book",
+            "name": "Wall Book",
+            "saved_at": "2026-07-06T00:00:00Z",
+            "cover_source": {
+                "kind": "allcol_wall",
+                "refresh_id": refresh_id,
+                "image_key": source_key,
+            },
+        }).encode()
+        self.fake.objects[source_key] = _tiny_jpeg()
+
+        resp = self.book_pdf.handle_prepare_cover(_prepare_cover_params())
+        body = json.loads(resp["body"])
+        self.assertFalse(body["cached"])
+        asset_key = f"polypaint/books/test-book/assets/cover/allcol-{refresh_id}.jpg"
+        prov_key = f"polypaint/books/test-book/assets/cover/allcol-{refresh_id}.provenance.json"
+        self.assertIn(asset_key, self.fake.objects)
+        self.assertIn(prov_key, self.fake.objects)
+        self.assertEqual(self.prepare_calls, [{
+            "max_px": 5000,
+            "image_format": "jpeg",
+        }])
+        provenance = json.loads(self.fake.objects[prov_key])
+        self.assertEqual(provenance["source_image_key"], source_key)
+        self.assertEqual(provenance["kind"], "allcol_wall")
+
+    def test_prepare_allcol_cover_is_pinned_to_saved_book_source(self):
+        refresh_id = "mosaic_20260722T120000Z_abcdef01"
+        self.fake.objects["polypaint/books/test-book.json"] = json.dumps({
+            "book_kind": "book",
+            "id": "test-book",
+            "name": "Wall Book",
+            "saved_at": "2026-07-06T00:00:00Z",
+            "cover_source": {"kind": "entry", "entry_id": "e1"},
+        }).encode()
+        with self.assertRaisesRegex(RuntimeError, "no longer selects AllCol wall"):
+            self.book_pdf.handle_prepare_cover(_prepare_cover_params())
+
     def _seed_book(self, saved_at="2026-07-06T00:00:00Z", entries=2):
         book = {
             "book_kind": "book", "id": "test-book", "name": "T", "title": "T",
@@ -251,6 +308,35 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertIn("book.tex", zf.namelist())
         self.assertIn("assets/e0.jpg", zf.namelist())
 
+    def test_compose_uses_generation_keyed_allcol_cover_asset(self):
+        self._seed_book()
+        refresh_id = "mosaic_20260722T120000Z_abcdef01"
+        book_key = "polypaint/books/test-book.json"
+        book = json.loads(self.fake.objects[book_key])
+        book["cover_entry_id"] = ""
+        book["cover_source"] = {
+            "kind": "allcol_wall",
+            "refresh_id": refresh_id,
+            "image_key": f"polypaint/books/test-book/cover/allcol-{refresh_id}.jpg",
+        }
+        self.fake.objects[book_key] = json.dumps(book).encode()
+        prepared_key = f"polypaint/books/test-book/assets/cover/allcol-{refresh_id}.jpg"
+        self.fake.objects[prepared_key] = _tiny_jpeg()
+
+        resp = self.book_pdf.handle_compose({
+            "op": "compose", "job_id": "book#test", "task_id": "bookcomp_wall",
+            "book_id": "test-book", "compile_id": "cwall",
+            "expected_saved_at": "2026-07-06T00:00:00Z",
+        }, latex_runner=_fake_latex)
+        self.assertEqual(json.loads(resp["body"])["compile_id"], "cwall")
+        import zipfile
+        zf = zipfile.ZipFile(io.BytesIO(
+            self.fake.objects["polypaint/books/test-book/out/cwall/source.zip"]))
+        self.assertIn("assets/cover.jpg", zf.namelist())
+        cover_tex = zf.read("cover.tex").decode()
+        self.assertIn(r"{assets/cover.jpg}", cover_tex)
+        self.assertNotIn(r"{assets/e0.jpg}", cover_tex)
+
     def test_compose_rejects_saved_at_mismatch_and_missing_assets(self):
         self._seed_book(saved_at="2026-07-06T00:00:00Z")
         with self.assertRaises(RuntimeError) as ctx:
@@ -272,7 +358,7 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertIn("e1", str(ctx.exception))
 
     def _fake_pdftoppm(self, total_pages):
-        from PIL import Image
+        from PIL import Image, ImageDraw
 
         def run(cmd, capture_output=False, text=False, timeout=None, **_kw):
             if os.path.basename(cmd[0]) != "pdftoppm":
@@ -281,12 +367,26 @@ class TestBookPdfHandler(unittest.TestCase):
             first = int(cmd[cmd.index("-f") + 1])
             last = int(cmd[cmd.index("-l") + 1])
             prefix = cmd[-1]
+            is_cover = os.path.basename(cmd[-2]) == "cover.pdf"
             # poppler pads to the digits of the DOCUMENT page count, NOT the
             # -l value (a 16-page book writes page-01.png for -f 1 -l 1)
-            digits = len(str(total_pages))
+            digits = 1 if is_cover else len(str(total_pages))
             for n in range(first, last + 1):
                 buf = io.BytesIO()
-                Image.new("RGB", (2307, 2331), (18, 24, 41)).save(buf, format="PNG")
+                if is_cover:
+                    # Printable jacket geometry: red back on the left, blue
+                    # front on the right, black bleed/spine between them.
+                    image = Image.new("RGB", (4953, 2489), (0, 0, 0))
+                    draw = ImageDraw.Draw(image)
+                    scale = image.width / 629.0
+                    draw.rectangle((round(10 * scale), 0, round(309 * scale), image.height),
+                                   fill=(180, 20, 30))
+                    draw.rectangle((round(320 * scale), 0, round(619 * scale), image.height),
+                                   fill=(20, 40, 190))
+                else:
+                    image = Image.new("RGB", (2307, 2331), (18, 24, 41))
+                image.save(buf, format="PNG")
+                image.close()
                 with open(f"{prefix}-{str(n).zfill(digits)}.png", "wb") as fh:
                     fh.write(buf.getvalue())
             return MagicMock(returncode=0, stdout="", stderr="")
@@ -302,10 +402,10 @@ class TestBookPdfHandler(unittest.TestCase):
                 "expected_saved_at": "2026-07-06T00:00:00Z",
             }, latex_runner=_fake_latex)
         body = json.loads(resp["body"])
-        self.assertEqual(body["flip_page_count"], 8)
+        self.assertEqual(body["flip_page_count"], 12)
 
         immutable = "public, max-age=31536000, immutable"
-        for n in range(1, 9):
+        for n in range(1, 13):
             key = f"polypaint/books/test-book/out/c9/flip/p{n:04d}.jpg"
             self.assertIn(key, self.fake.objects)
             self.assertEqual(self.fake.put_headers[key]["ContentType"], "image/jpeg")
@@ -313,16 +413,75 @@ class TestBookPdfHandler(unittest.TestCase):
 
         flip_key = "polypaint/books/test-book/out/c9/flip/flip.json"
         flip = json.loads(self.fake.objects[flip_key])
-        self.assertEqual(flip["page_count"], 8)
+        self.assertEqual(flip["page_count"], 12)
+        self.assertEqual(flip["content_page_count"], 8)
+        self.assertEqual(flip["front_cover_page"], 1)
+        self.assertEqual(flip["inside_front_cover_page"], 2)
+        self.assertEqual(flip["content_first_page"], 3)
+        self.assertEqual(flip["content_last_page"], 10)
+        self.assertEqual(flip["inside_back_cover_page"], 11)
+        self.assertEqual(flip["back_cover_page"], 12)
         self.assertEqual(flip["book_id"], "test-book")  # the "id" field, not name
-        self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 9)])
+        self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 13)])
         self.assertEqual(flip["width_px"], 2307)
         self.assertEqual(flip["height_px"], 2331)
         self.assertEqual(self.fake.put_headers[flip_key]["CacheControl"], immutable)
 
+        # The printable spread is back|spine|front. Flip page 1 must come
+        # from its right/blue panel; the final page from its left/red panel.
+        from PIL import Image
+        front = Image.open(io.BytesIO(
+            self.fake.objects["polypaint/books/test-book/out/c9/flip/p0001.jpg"]))
+        inside_front = Image.open(io.BytesIO(
+            self.fake.objects["polypaint/books/test-book/out/c9/flip/p0002.jpg"]))
+        first_content = Image.open(io.BytesIO(
+            self.fake.objects["polypaint/books/test-book/out/c9/flip/p0003.jpg"]))
+        inside_back = Image.open(io.BytesIO(
+            self.fake.objects["polypaint/books/test-book/out/c9/flip/p0011.jpg"]))
+        back = Image.open(io.BytesIO(
+            self.fake.objects["polypaint/books/test-book/out/c9/flip/p0012.jpg"]))
+        self.assertEqual(front.size, (2307, 2331))
+        self.assertEqual(inside_front.size, (2307, 2331))
+        self.assertEqual(first_content.size, (2307, 2331))
+        self.assertEqual(inside_back.size, (2307, 2331))
+        self.assertEqual(back.size, (2307, 2331))
+        front_pixel = front.getpixel((front.width // 2, front.height // 2))
+        inside_front_pixel = inside_front.getpixel(
+            (inside_front.width // 2, inside_front.height // 2))
+        first_content_pixel = first_content.getpixel(
+            (first_content.width // 2, first_content.height // 2))
+        inside_back_pixel = inside_back.getpixel(
+            (inside_back.width // 2, inside_back.height // 2))
+        back_pixel = back.getpixel((back.width // 2, back.height // 2))
+        self.assertGreater(front_pixel[2], front_pixel[0] * 3)
+        for actual, expected in (
+                (inside_front_pixel, (26, 26, 46)),
+                (first_content_pixel, (18, 24, 41)),
+                (inside_back_pixel, (26, 26, 46))):
+            self.assertTrue(all(abs(a - e) <= 2 for a, e in zip(actual, expected)),
+                            (actual, expected))
+        self.assertGreater(back_pixel[0], back_pixel[2] * 3)
+        front.close()
+        inside_front.close()
+        first_content.close()
+        inside_back.close()
+        back.close()
+
+        # This is StPageFlip's showCover landscape algorithm: first and last
+        # stand alone, and all intervening pages pair from index 1. The blank
+        # inside-front must sit left of the title; content report/image pages
+        # must then remain together on each subsequent spread.
+        pages = flip["pages"]
+        spreads = [[pages[0]]]
+        for idx in range(1, len(pages), 2):
+            spreads.append(pages[idx:idx + 2])
+        self.assertEqual(spreads[1], ["p0002.jpg", "p0003.jpg"])
+        self.assertEqual(spreads[2], ["p0004.jpg", "p0005.jpg"])
+        self.assertEqual(spreads[-1], ["p0012.jpg"])
+
         latest = json.loads(self.fake.objects["polypaint/books/test-book/out/latest.json"])
         self.assertEqual(latest["flip_key"], flip_key)
-        self.assertEqual(latest["flip_page_count"], 8)
+        self.assertEqual(latest["flip_page_count"], 12)
         self.assertNotIn("flip_error", latest)
         # the mutable pointer the public viewer polls must never cache
         self.assertEqual(
@@ -340,9 +499,9 @@ class TestBookPdfHandler(unittest.TestCase):
                 "expected_saved_at": "2026-07-06T00:00:00Z",
             }, latex_runner=_fake_latex)
         body = json.loads(resp["body"])
-        self.assertEqual(body.get("flip_page_count"), 16, body.get("flip_error"))
+        self.assertEqual(body.get("flip_page_count"), 20, body.get("flip_error"))
         flip = json.loads(self.fake.objects["polypaint/books/test-book/out/c11/flip/flip.json"])
-        self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 17)])
+        self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 21)])
 
     def test_flip_convert_survives_high_entropy_pages(self):
         # book2 page 17: a perfectly valid PNG whose optimized JPEG encode
@@ -373,8 +532,13 @@ class TestBookPdfHandler(unittest.TestCase):
         def noisy_pdftoppm(cmd, capture_output=False, text=False, timeout=None, **_kw):
             first = int(cmd[cmd.index("-f") + 1])
             prefix = cmd[-1]
-            page = PILImage.frombytes("RGB", (1024, 1024), _os.urandom(1024 * 1024 * 3))
+            if os.path.basename(cmd[-2]) == "cover.pdf":
+                # Same physical spread/page ratio at a smaller fixture size.
+                page = PILImage.new("RGB", (2200, 1094), (20, 30, 80))
+            else:
+                page = PILImage.frombytes("RGB", (1024, 1024), _os.urandom(1024 * 1024 * 3))
             page.save(f"{prefix}-{first}.png", format="PNG")
+            page.close()
             return MagicMock(returncode=0, stdout="", stderr="")
 
         with patch.object(self.book_pdf.subprocess, "run", side_effect=noisy_pdftoppm):
@@ -384,7 +548,7 @@ class TestBookPdfHandler(unittest.TestCase):
                 "expected_saved_at": "2026-07-06T00:00:00Z",
             }, latex_runner=_fake_latex)
         body = json.loads(resp["body"])
-        self.assertEqual(body.get("flip_page_count"), 8, body.get("flip_error"))
+        self.assertEqual(body.get("flip_page_count"), 12, body.get("flip_error"))
 
     def test_flip_page_convert_retries_with_fresh_render(self):
         # a truncated PNG on the first render must heal via re-render, not
@@ -401,9 +565,13 @@ class TestBookPdfHandler(unittest.TestCase):
             prefix = cmd[-1]
             calls["n"] += 1
             buf = io.BytesIO()
-            Image.new("RGB", (2307, 2331), (18, 24, 41)).save(buf, format="PNG")
+            is_cover = os.path.basename(cmd[-2]) == "cover.pdf"
+            size = (4953, 2489) if is_cover else (2307, 2331)
+            page = Image.new("RGB", size, (18, 24, 41))
+            page.save(buf, format="PNG")
+            page.close()
             data = buf.getvalue()
-            if first == 3 and calls["n"] < 20:
+            if not is_cover and first == 3 and calls["n"] < 20:
                 # first render of page 3: truncated png (strict decode fails)
                 data = data[: len(data) // 2]
                 calls["n"] = 99  # only once
@@ -418,7 +586,7 @@ class TestBookPdfHandler(unittest.TestCase):
                 "expected_saved_at": "2026-07-06T00:00:00Z",
             }, latex_runner=_fake_latex)
         body = json.loads(resp["body"])
-        self.assertEqual(body.get("flip_page_count"), 8, body.get("flip_error"))
+        self.assertEqual(body.get("flip_page_count"), 12, body.get("flip_error"))
         from PIL import ImageFile
         self.assertFalse(ImageFile.LOAD_TRUNCATED_IMAGES)
 

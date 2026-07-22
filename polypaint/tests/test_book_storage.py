@@ -42,6 +42,17 @@ class _FakeS3:
         self.etags[Key] = etag
         return {"ETag": etag}
 
+    def copy_object(self, Bucket=None, CopySource=None, Key=None, ContentType=None,
+                    Metadata=None, MetadataDirective=None, **_kw):
+        source_key = (CopySource or {}).get("Key")
+        if source_key not in self.objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "CopyObject")
+        self.objects[Key] = self.objects[source_key]
+        self.metadata[Key] = dict(Metadata or {})
+        self._seq += 1
+        self.etags[Key] = f'"e{self._seq}"'
+        return {"CopyObjectResult": {"ETag": self.etags[Key]}}
+
     def head_object(self, Bucket=None, Key=None):
         if Key not in self.objects:
             raise Exception("NoSuchKey")
@@ -64,7 +75,7 @@ class _FakeS3:
 
 
 def _patch_s3(mock_s3, fake_s3):
-    for name in ("get_object", "put_object", "head_object", "delete_object", "delete_objects", "list_objects_v2"):
+    for name in ("get_object", "put_object", "copy_object", "head_object", "delete_object", "delete_objects", "list_objects_v2"):
         getattr(mock_s3, name).side_effect = getattr(fake_s3, name)
 
 
@@ -117,6 +128,121 @@ class TestBookStorage(unittest.TestCase):
         self.assertEqual(json.loads(fetched["body"])["latest_output"]["compile_id"], "c1")
 
     @patch("handler_storage.s3")
+    def test_legacy_entry_cover_upgrades_to_cover_source(self, mock_s3):
+        import handler_storage
+
+        _patch_s3(mock_s3, _FakeS3())
+        resp = handler_storage.handler(_event("/save-book", {"book": {
+            "name": "Legacy Cover",
+            "entries": [_entry(1, entry_id="front")],
+            "cover_entry_id": "front",
+        }}), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        book = json.loads(resp["body"])["book"]
+        self.assertEqual(book["version"], 2)
+        self.assertEqual(book["cover_entry_id"], "front")
+        self.assertEqual(book["cover_source"], {
+            "version": 1,
+            "kind": "entry",
+            "entry_id": "front",
+        })
+
+    @patch("handler_storage.s3")
+    def test_snapshot_current_allcol_wall_into_book_cover_source(self, mock_s3):
+        import handler_storage
+
+        fake = _FakeS3()
+        _patch_s3(mock_s3, fake)
+        book_id = "wall-book"
+        refresh_id = "mosaic_20260722T120000Z_abcdef01"
+        wall_prefix = f"renders/_index/color_mosaic/{refresh_id}/"
+        fake.put_object(
+            Key=f"polypaint/books/{book_id}.json",
+            Body=json.dumps({
+                "book_kind": "book", "id": book_id, "name": "Wall Book", "entries": [],
+            }),
+        )
+        fake.objects[wall_prefix + "wall.jpg"] = b"full-resolution-wall"
+        fake.objects[wall_prefix + "wall_files/8/0_0.jpg"] = b"small-dzi-overview"
+        fake.objects[wall_prefix + "wall.json"] = json.dumps({
+            "manifest_type": "artifact_wall_pyramid",
+            "kind": "color",
+            "refresh_id": refresh_id,
+            "image_key": wall_prefix + "wall.jpg",
+            "dzi_key": wall_prefix + "wall.dzi",
+            "flat_jpeg": True,
+            "width": 32768,
+            "height": 16384,
+        }).encode()
+        status = {
+            "state": "ready",
+            "wall_state": "ready",
+            "wall_refresh_id": refresh_id,
+            "wall_json_key": wall_prefix + "wall.json",
+        }
+        with patch.object(handler_storage, "_read_mosaic_status", return_value=status):
+            resp = handler_storage.handler(
+                _event("/snapshot-book-cover", {"book_id": book_id}), None)
+
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        source = body["cover_source"]
+        frozen_key = f"polypaint/books/{book_id}/cover/allcol-{refresh_id}.jpg"
+        preview_key = f"polypaint/books/{book_id}/cover/allcol-{refresh_id}-preview.jpg"
+        self.assertEqual(source["kind"], "allcol_wall")
+        self.assertEqual(source["image_key"], frozen_key)
+        self.assertEqual(source["preview_key"], preview_key)
+        self.assertEqual(fake.objects[frozen_key], b"full-resolution-wall")
+        self.assertEqual(fake.objects[preview_key], b"small-dzi-overview")
+
+        # The returned descriptor is accepted by the book schema and remains
+        # the authoritative source after a normal Save.
+        saved = handler_storage.handler(_event("/save-book", {"book": {
+            "id": book_id,
+            "name": "Wall Book",
+            "entries": [],
+            "cover_source": source,
+        }}), None)
+        self.assertEqual(saved["statusCode"], 200, saved["body"])
+        saved_book = json.loads(saved["body"])["book"]
+        self.assertEqual(saved_book["cover_source"], source)
+        self.assertEqual(saved_book["cover_entry_id"], "")
+
+    @patch("handler_storage.s3")
+    def test_snapshot_book_cover_rejects_wall_without_flat_jpeg(self, mock_s3):
+        import handler_storage
+
+        fake = _FakeS3()
+        _patch_s3(mock_s3, fake)
+        book_id = "wall-book"
+        refresh_id = "mosaic_20260722T120000Z_abcdef01"
+        wall_prefix = f"renders/_index/color_mosaic/{refresh_id}/"
+        fake.put_object(
+            Key=f"polypaint/books/{book_id}.json",
+            Body=json.dumps({"book_kind": "book", "id": book_id, "name": "Wall Book"}),
+        )
+        fake.objects[wall_prefix + "wall.json"] = json.dumps({
+            "manifest_type": "artifact_wall_pyramid",
+            "kind": "color",
+            "refresh_id": refresh_id,
+            "image_key": "",
+            "flat_jpeg": False,
+            "width": 70000,
+            "height": 70000,
+        }).encode()
+        status = {
+            "state": "ready",
+            "wall_state": "ready",
+            "wall_refresh_id": refresh_id,
+            "wall_json_key": wall_prefix + "wall.json",
+        }
+        with patch.object(handler_storage, "_read_mosaic_status", return_value=status):
+            resp = handler_storage.handler(
+                _event("/snapshot-book-cover", {"book_id": book_id}), None)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("no flat JPEG", json.loads(resp["body"])["error"])
+
+    @patch("handler_storage.s3")
     def test_validation_rejects_bad_payloads(self, mock_s3):
         import handler_storage
 
@@ -136,6 +262,13 @@ class TestBookStorage(unittest.TestCase):
             ({"book": {"name": 'a</option><img src=x onerror=alert(1)>'}}, None),  # printable, allowed but escaped in UI
             ({"book": {"name": "x", "title": "line\nbreak"}}, "title must be printable"),
             ({"book": {"name": "x", "author": "bad\ttab"}}, "author must be printable"),
+            ({"book": {"name": "x", "cover_source": {
+                "kind": "allcol_wall",
+                "refresh_id": "mosaic_20260722T120000Z_abcdef01",
+                "image_key": "config/secret.jpg",
+                "width": 1000,
+                "height": 1000,
+            }}}, "frozen book source"),
         ]
         for payload, needle in cases:
             resp = handler_storage.handler(_event("/save-book", payload), None)

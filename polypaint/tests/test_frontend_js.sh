@@ -2999,8 +2999,31 @@ if (label({artifact_id: 'color_run_1'}) !== 'color_run_1')
   { console.error('FATAL: undescribed entries must keep the artifact id'); process.exit(1); }
 if (!js.includes('_escapeHtml(_bookEntryLabel(entry))'))
   { console.error('FATAL: book row must render the label escaped'); process.exit(1); }
+// Cover sources are additive: old books still derive an entry source, while
+// the AllCol descriptor remains intact for the prepare-cover fan-out.
+const coverMatch = js.match(/function _bookCoverSource\([^)]*\) \{[\s\S]*?\n\}/);
+if (!coverMatch) { console.error('FATAL: _bookCoverSource missing'); process.exit(1); }
+vm.runInContext(coverMatch[0], ctx);
+const oldCover = ctx._bookCoverSource({cover_entry_id: 'legacy-entry'});
+if (oldCover.kind !== 'entry' || oldCover.entry_id !== 'legacy-entry')
+  { console.error('FATAL: legacy Book covers must remain entry sources'); process.exit(1); }
+const wallCover = {kind: 'allcol_wall', refresh_id: 'mosaic_x_abcdef'};
+if (ctx._bookCoverSource({cover_source: wallCover}) !== wallCover)
+  { console.error('FATAL: AllCol cover descriptor must remain authoritative'); process.exit(1); }
 // Clear buttons: whole-book reset (after Describe) + per-row in the editor
 const html = fs.readFileSync(path.join(process.argv[2], 'index.html'), 'utf8');
+for (const id of ['book-cover-source-mode', 'btn-book-apply-cover', 'book-cover-source-detail']) {
+  if (!html.includes(`id="${id}"`))
+    { console.error('FATAL: Book Cover UI missing ' + id); process.exit(1); }
+}
+if (!html.includes('<option value="allcol_wall">Current AllCol wall</option>'))
+  { console.error('FATAL: Book Cover UI must expose Current AllCol wall'); process.exit(1); }
+if (!js.includes("'/snapshot-book-cover'"))
+  { console.error('FATAL: AllCol cover selection must use the snapshot-book-cover route'); process.exit(1); }
+if (!/op: 'prepare_cover'[\s\S]{0,350}cover_refresh_id: coverSource\.refresh_id/.test(js))
+  { console.error('FATAL: Book Compile must fan out the AllCol prepare-cover worker'); process.exit(1); }
+if (!/coverSourceMode:[^\n]*entry[\s\S]*?function bookCoverSourceModeChanged/.test(js))
+  { console.error('FATAL: Book Cover source choice must survive hydration rerenders'); process.exit(1); }
 const iDesc = html.indexOf('id="btn-book-describe"');
 const iClear = html.indexOf('id="btn-book-cleardesc"');
 if (iClear < 0 || iDesc < 0 || iClear < iDesc)

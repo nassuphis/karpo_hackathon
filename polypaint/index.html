@@ -2260,6 +2260,15 @@ button {
         <div style="display:flex; gap:16px; align-items:flex-start">
             <div id="book-cover-preview" style="width:260px; height:260px; background:#121829; border:1px solid #2b3a5e; border-radius:4px; display:flex; align-items:center; justify-content:center; color:#666; font-size:12px; text-align:center; flex-shrink:0">No cover selected</div>
             <div style="flex:1; min-width:0">
+                <label style="color:#9aa0b4">Cover image source</label>
+                <div style="display:flex; gap:8px; align-items:center; margin-bottom:5px">
+                    <select id="book-cover-source-mode" onchange="bookCoverSourceModeChanged()" style="flex:1; min-width:180px">
+                        <option value="entry">Selected image from Content</option>
+                        <option value="allcol_wall">Current AllCol wall</option>
+                    </select>
+                    <button id="btn-book-apply-cover" type="button" class="btn-secondary" onclick="void bookApplyCoverSource()" style="padding:5px 12px">Use Source</button>
+                </div>
+                <div id="book-cover-source-detail" style="color:#727b94; font-size:11px; margin-bottom:12px"></div>
                 <label style="color:#9aa0b4">Book title (printed on the cover + title page)</label>
                 <input id="book-title-input" type="text" placeholder="e.g. Polynomiography" style="width:100%; margin-bottom:10px" oninput="bookMetaChanged()">
                 <label style="color:#9aa0b4">Subtitle (optional)</label>

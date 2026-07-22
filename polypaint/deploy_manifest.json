@@ -157,6 +157,7 @@
     "/list-books",
     "/fetch-book",
     "/save-book",
+    "/snapshot-book-cover",
     "/delete-book",
     "/fetch-vision-config",
     "/save-vision-config"

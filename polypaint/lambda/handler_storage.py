@@ -17,8 +17,10 @@ Routes:
   POST /check-status   — query DynamoDB for task completion counts (replaces check-keys)
   POST /presign        — generate a presigned URL for an S3 key
   POST /share-mosaic   — snapshot the current AllCol/AllPal manifest and return a standalone share URL
+  POST /snapshot-book-cover — freeze the current AllCol flat wall as a Book cover source
 """
 import json
+import math
 import os
 import re
 import time
@@ -179,6 +181,8 @@ BOOK_META_ENTRY_COUNT = "book_entry_count"
 BOOK_META_SAVED_AT = "book_saved_at"
 MAX_BOOK_NAME_LEN = 120
 MAX_BOOK_ENTRIES = 200
+BOOK_COVER_SOURCE_VERSION = 1
+_BOOK_WALL_REFRESH_RE = re.compile(r"mosaic_[0-9A-Za-z]+_[0-9a-f]{6,12}")
 ROOT_PROGRAM_VERSION = 1
 ROOT_PROGRAM_META_NAME = "root_program_name"
 ROOT_PROGRAM_META_STATEMENT_COUNT = "root_program_statement_count"
@@ -1565,6 +1569,8 @@ def handler(event, context):
         return _handle_storage_route(handle_fetch_book, event)
     elif path.endswith("/save-book"):
         return _handle_storage_route(handle_save_book, event)
+    elif path.endswith("/snapshot-book-cover"):
+        return _handle_storage_route(handle_snapshot_book_cover, event)
     elif path.endswith("/delete-book"):
         return _handle_storage_route(handle_delete_book, event)
     elif path.endswith("/fetch-vision-config"):
@@ -2277,6 +2283,75 @@ def _book_key(book_id):
     return f"{BOOKS_PREFIX}{_normalize_program_id(book_id)}.json"
 
 
+def _book_allcol_cover_source_key(book_id, refresh_id):
+    return f"{BOOKS_PREFIX}{book_id}/cover/allcol-{refresh_id}.jpg"
+
+
+def _book_allcol_cover_preview_key(book_id, refresh_id):
+    return f"{BOOKS_PREFIX}{book_id}/cover/allcol-{refresh_id}-preview.jpg"
+
+
+def _validate_book_cover_source(raw_source, *, book_id, entry_ids, legacy_cover=""):
+    """Normalize the additive cover-source union while preserving v1 books."""
+    if raw_source is None:
+        if legacy_cover:
+            raw_source = {"kind": "entry", "entry_id": legacy_cover}
+        else:
+            raw_source = {"kind": "none"}
+    if not isinstance(raw_source, dict):
+        raise ValueError("book cover_source must be an object")
+
+    kind = str(raw_source.get("kind") or "none").strip().lower()
+    if kind == "none":
+        return {"version": BOOK_COVER_SOURCE_VERSION, "kind": "none"}, ""
+    if kind == "entry":
+        entry_id = str(raw_source.get("entry_id") or legacy_cover or "").strip()
+        if not entry_id or entry_id not in entry_ids:
+            raise ValueError("book entry cover_source does not match any entry")
+        return {
+            "version": BOOK_COVER_SOURCE_VERSION,
+            "kind": "entry",
+            "entry_id": entry_id,
+        }, entry_id
+    if kind != "allcol_wall":
+        raise ValueError("book cover_source kind must be none, entry, or allcol_wall")
+
+    refresh_id = str(raw_source.get("refresh_id") or "").strip()
+    if not _BOOK_WALL_REFRESH_RE.fullmatch(refresh_id):
+        raise ValueError("book AllCol cover refresh_id is invalid")
+    image_key = str(raw_source.get("image_key") or "").strip()
+    expected_image_key = _book_allcol_cover_source_key(book_id, refresh_id)
+    if image_key != expected_image_key:
+        raise ValueError(
+            f"book AllCol cover image_key must be the frozen book source {expected_image_key!r}")
+    preview_key = str(raw_source.get("preview_key") or "").strip()
+    expected_preview_key = _book_allcol_cover_preview_key(book_id, refresh_id)
+    if preview_key and preview_key != expected_preview_key:
+        raise ValueError(
+            f"book AllCol cover preview_key must be {expected_preview_key!r}")
+    try:
+        width = int(raw_source.get("width") or 0)
+        height = int(raw_source.get("height") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("book AllCol cover dimensions must be integers")
+    if width <= 0 or height <= 0:
+        raise ValueError("book AllCol cover dimensions must be positive")
+    selected_at = str(raw_source.get("selected_at") or "")
+    if (len(selected_at) > 64 or any(ch in "\r\n\t" for ch in selected_at)
+            or not all(ch.isprintable() for ch in selected_at)):
+        raise ValueError("book AllCol cover selected_at must be printable single-line text")
+    return {
+        "version": BOOK_COVER_SOURCE_VERSION,
+        "kind": "allcol_wall",
+        "refresh_id": refresh_id,
+        "image_key": image_key,
+        "preview_key": preview_key,
+        "width": width,
+        "height": height,
+        "selected_at": selected_at,
+    }, ""
+
+
 def _slugify_book_id(name):
     slug = _slugify_coeff_program_id(name)
     return "book" if slug == "coeff-program" else slug
@@ -2301,6 +2376,9 @@ def _validate_book_payload(raw):
     if len(name) > MAX_BOOK_NAME_LEN:
         raise ValueError(f"book name must be at most {MAX_BOOK_NAME_LEN} characters")
     _single_line(name, "name")
+    book_id = str(raw.get("id") or _slugify_book_id(name)).strip()
+    if not re.fullmatch(r"[a-z0-9-]{1,64}", book_id):
+        raise ValueError("book id must be a lowercase slug [a-z0-9-]{1,64}")
     entries_raw = raw.get("entries")
     if entries_raw is None:
         entries_raw = []
@@ -2339,21 +2417,27 @@ def _validate_book_payload(raw):
             raise ValueError(f"book entry {idx} has a duplicate entry_id")
         seen_entry_ids.add(entry["entry_id"])
         entries.append(entry)
-    cover = str(raw.get("cover_entry_id") or "")
-    if cover and cover not in seen_entry_ids:
+    legacy_cover = str(raw.get("cover_entry_id") or "")
+    if legacy_cover and legacy_cover not in seen_entry_ids:
         raise ValueError("cover_entry_id does not match any entry")
-    book_id = str(raw.get("id") or _slugify_book_id(name)).strip()
-    if not re.fullmatch(r"[a-z0-9-]{1,64}", book_id):
-        raise ValueError("book id must be a lowercase slug [a-z0-9-]{1,64}")
+    cover_source, cover_entry_id = _validate_book_cover_source(
+        raw.get("cover_source"),
+        book_id=book_id,
+        entry_ids=seen_entry_ids,
+        legacy_cover=legacy_cover,
+    )
     return {
-        "version": 1,
+        "version": 2,
         "book_kind": "book",
         "id": book_id,
         "name": name,
         "title": _single_line(raw.get("title"), "title"),
         "subtitle": _single_line(raw.get("subtitle"), "subtitle"),
         "author": _single_line(raw.get("author"), "author"),
-        "cover_entry_id": cover,
+        # cover_entry_id remains for old clients and source archives; the
+        # discriminated cover_source is authoritative for new code.
+        "cover_entry_id": cover_entry_id,
+        "cover_source": cover_source,
         "entries": entries,
         "saved_at": _utc_now_iso(),
     }
@@ -2504,6 +2588,111 @@ def handle_save_book(event):
         raise
     new_rev = str((resp or {}).get("ETag") or "").strip('"')
     return ok_response({"book": book, "overwritten": overwritten, "revision": new_rev})
+
+
+def handle_snapshot_book_cover(event):
+    """Freeze the current full-resolution AllCol wall under one book.
+
+    This is intentionally a byte-for-byte S3 copy. The Book prepare worker,
+    not the mosaic worker, owns the later 5K libvips normalization.
+    """
+    params = parse_body(event)
+    book_id = str(params.get("book_id") or "").strip()
+    if not re.fullmatch(r"[a-z0-9-]{1,64}", book_id):
+        raise ValueError("snapshot-book-cover requires a valid book_id")
+    _read_book_object(book_id)  # fail before copying into a nonexistent book
+
+    status = _read_mosaic_status("color", consistent=True)
+    refresh_id = str(status.get("wall_refresh_id") or "").strip()
+    wall_json_key = str(status.get("wall_json_key") or "").strip()
+    if (status.get("state") != "ready" or status.get("wall_state") != "ready"
+            or not _BOOK_WALL_REFRESH_RE.fullmatch(refresh_id)):
+        raise ValueError(
+            "Current AllCol wall is not ready; open AllCol, Refresh, and wait for the wall pyramid")
+    wall_prefix = f"renders/_index/color_mosaic/{refresh_id}/"
+    expected_wall_json_key = wall_prefix + "wall.json"
+    if wall_json_key != expected_wall_json_key:
+        raise ValueError("Current AllCol wall metadata does not match its refresh")
+
+    wall_obj = s3.get_object(Bucket=BUCKET, Key=wall_json_key)
+    wall = json.loads(wall_obj["Body"].read() or b"{}")
+    if (not isinstance(wall, dict)
+            or wall.get("manifest_type") != "artifact_wall_pyramid"
+            or wall.get("kind") != "color"
+            or str(wall.get("refresh_id") or "") != refresh_id):
+        raise ValueError("Current AllCol wall metadata is malformed")
+    source_key = str(wall.get("image_key") or "").strip()
+    expected_source_key = wall_prefix + "wall.jpg"
+    if not wall.get("flat_jpeg") or source_key != expected_source_key:
+        raise ValueError(
+            "Current AllCol wall has no flat JPEG (it exceeds the JPEG dimension limit); "
+            "this wall cannot be used as a Book cover source")
+    try:
+        width = int(wall.get("width") or 0)
+        height = int(wall.get("height") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("Current AllCol wall dimensions are malformed")
+    if width <= 0 or height <= 0:
+        raise ValueError("Current AllCol wall dimensions are missing")
+
+    selected_at = _utc_now_iso()
+    frozen_key = _book_allcol_cover_source_key(book_id, refresh_id)
+    try:
+        s3.copy_object(
+            Bucket=BUCKET,
+            CopySource={"Bucket": BUCKET, "Key": source_key},
+            Key=frozen_key,
+            ContentType="image/jpeg",
+            CacheControl=CACHE_IMMUTABLE,
+            MetadataDirective="REPLACE",
+            Metadata={
+                "source_kind": "allcol_wall",
+                "source_refresh_id": refresh_id,
+                "source_width": str(width),
+                "source_height": str(height),
+            },
+        )
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise ValueError("Current AllCol wall image disappeared; refresh AllCol and retry")
+        raise
+
+    # Level <= 8 is a one-tile overview of the whole DZI (tile size 256).
+    # Copying it avoids making the 260px Book preview download the full wall.
+    max_level = int(math.ceil(math.log2(max(width, height)))) if max(width, height) > 1 else 0
+    preview_level = min(8, max_level)
+    wall_preview_key = wall_prefix + f"wall_files/{preview_level}/0_0.jpg"
+    frozen_preview_key = _book_allcol_cover_preview_key(book_id, refresh_id)
+    preview_key = ""
+    try:
+        s3.copy_object(
+            Bucket=BUCKET,
+            CopySource={"Bucket": BUCKET, "Key": wall_preview_key},
+            Key=frozen_preview_key,
+            ContentType="image/jpeg",
+            CacheControl=CACHE_IMMUTABLE,
+            MetadataDirective="REPLACE",
+            Metadata={"source_kind": "allcol_wall_preview", "source_refresh_id": refresh_id},
+        )
+        preview_key = frozen_preview_key
+    except Exception as exc:
+        print(f"Book AllCol cover preview copy skipped for {book_id}/{refresh_id}: {exc}")
+
+    cover_source = {
+        "version": BOOK_COVER_SOURCE_VERSION,
+        "kind": "allcol_wall",
+        "refresh_id": refresh_id,
+        "image_key": frozen_key,
+        "preview_key": preview_key,
+        "width": width,
+        "height": height,
+        "selected_at": selected_at,
+    }
+    return ok_response({
+        "book_id": book_id,
+        "cover_source": cover_source,
+        "preview_url": _s3_public_url(preview_key) if preview_key else "",
+    })
 
 
 def handle_fetch_book(event):

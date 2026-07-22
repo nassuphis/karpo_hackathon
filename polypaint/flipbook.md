@@ -4,9 +4,11 @@ Replace the FlowPaper workflow (download content.pdf → run pdf_compress.sh →
 upload to their converter) with a native flipbook: the book compile renders
 web-sized page images once, server-side, and a standalone viewer on the
 public bucket serves the page-turn experience. No third-party service, no
-manual compression step, app look and feel.
+manual compression step, app look and feel. The web edition is complete:
+front cover, blank inside-front cover, every content page, blank inside-back
+cover, then the back cover.
 
-Rev 2 after adversarial review: every path, budget, and tool below is
+Rev 4 adds correct physical cover parity. Every path, budget, and tool below is
 verified against the code or tested live; the verification notes say how.
 
 ## 0. Why FlowPaper hurt (and what it actually does)
@@ -26,16 +28,27 @@ flipbook path never touches it.
   whole print-grade PDF (or a linearized one) before first paint: the
   FlowPaper pain again, on a slow line. Pre-rendered pages stream a spread
   at a time.
-- **Rasterize inside the existing compose op** (book_pdf.handle_compose,
-  book_pdf.py:300 — the PDF is already at
-  `/tmp/book_build_{compile_id}/book.pdf` when the upload phase runs).
+- **Rasterize inside the existing compose op** — both `book.pdf` (content)
+  and `cover.pdf` (one printable `back | spine | front` jacket spread) are
+  already in `/tmp/book_build_{compile_id}/` when the upload phase runs.
   No new Lambda, no new job type; the compile's jobs-rail card covers it.
+- **Split the cover by physical trim geometry, not by halving pixels.** The
+  right 299 mm panel is the front cover and the left panel is the back;
+  10 mm outer bleed and the 11 mm spine are excluded. Each panel is
+  center-trimmed from 299 mm to the content page's 293 mm width, producing
+  exactly the same raster dimensions as every interior page. This is why
+  StPageFlip can display the first and final covers without stretching.
+- **Represent both inside covers as blank pages.** With `showCover: true`,
+  StPageFlip displays page 1 alone, then pairs pages 2|3, 4|5, and so on.
+  The inside-front blank therefore places the content PDF's title page on
+  the right; every following `report | image` pair stays on one opening.
+  The inside-back blank keeps the final back cover as a standalone cover.
 - **pdftoppm as the rasterizer** — VERIFIED LIVE: `dnf install -y
   poppler-utils` succeeds on `public.ecr.aws/lambda/python:3.12` arm64 and
-  installs pdftoppm 24.08.0 (tested 2026-07-08 in docker). Needed because
+  installs pdftoppm 24.08.0 (tested 2026-07-08 in docker). It renders PNG
+  intermediates at 200 DPI; Pillow then writes q88 4:4:4 JPEGs. Needed because
   the image's libvips is built `-Dpoppler=disabled`
-  (book_pdf.Dockerfile:24) and cannot load PDFs. `-jpegopt quality=85` is
-  supported (poppler ≥ 0.63).
+  (book_pdf.Dockerfile:24) and cannot load PDFs.
 - **StPageFlip (page-flip, MIT) vendored at `vendor/page-flip.browser.js`**
   — NOT under `js/`: `deployed_asset_key` (deploy.sh:201-208) rewrites
   `js/*` to build-versioned `assets/${BUILD_ID}/…` keys and ONLY index.html
@@ -59,13 +72,19 @@ polypaint/books/{book_id}/out/{compile_id}/flip/p0001.jpg …
 polypaint/books/{book_id}/out/{compile_id}/flip/flip.json
 ```
 
-- Pages: `pdftoppm -jpeg -r 120 -jpegopt quality=85 book.pdf <prefix>`.
-  Output naming quirk: pdftoppm emits `<prefix>-NN.jpg` zero-padded to the
+- Page order: `p0001.jpg` is the front panel cropped from `cover.pdf`;
+  `p0002.jpg` is the blank inside-front cover; `p0003.jpg…` are all pages
+  from `content.pdf`; the penultimate JPEG is the blank inside-back cover;
+  the final JPEG is the back panel cropped from `cover.pdf`. The content PDF
+  itself is unchanged.
+- Pages: `pdftoppm -png -r 200 ...`, followed by Pillow q88 4:4:4 JPEG
+  encoding. Output naming quirk: pdftoppm emits `<prefix>-NN.png` padded to the
   digit count of the LAST page (74 pages → `-01…-74`); the handler globs
   and renames to deterministic `p%04d.jpg` before upload.
-- Geometry: content MediaBox is 830.55×838.98 bp → at 120 dpi (×120/72)
-  = 1384×1398 px. A 35-spread book = 1 title + 70 entry pages + ≤3 pads
-  ≈ 74 pages ≈ 74 × ~150–350 KB ≈ **15–25 MB**, fetched ~2 pages per turn.
+- Geometry: the 293×296 mm content page is approximately 2307×2331 px at
+  200 DPI. A 35-spread book has 1 title + 70 entry pages + ≤3 pads + 4 cover
+  and inside-cover pages. Pages stream approximately two at a time rather than downloading
+  either print-grade PDF.
 - Headers: `flip/*.jpg` + `flip.json` are compile-id-scoped = immutable →
   `CacheControl=CACHE_IMMUTABLE` (shared.py, already COPY'd into the book
   image). **latest.json is the mutable pointer and today ships with NO
@@ -73,9 +92,12 @@ polypaint/books/{book_id}/out/{compile_id}/flip/flip.json
   pointers after a recompile. Fix in the same commit: add
   `CacheControl="no-cache, max-age=0"` to that put.** (The Book tab never
   noticed because it reads latest via the storage route, not HTTP cache.)
-- `flip.json`: `{book_id, compile_id, title, page_count, width_px,
-  height_px, pages: ["p0001.jpg", …]}` (names relative to the flip/
-  prefix). `latest.json` gains additive `flip_key` + `flip_page_count` —
+- `flip.json`: `{book_id, compile_id, title, page_count,
+  content_page_count, front_cover_page:1, inside_front_cover_page:2,
+  content_first_page:3, content_last_page, inside_back_cover_page,
+  back_cover_page, width_px, height_px, pages:["p0001.jpg", …]}` (names
+  relative to the flip/ prefix).
+  `latest.json` gains additive `flip_key` + `flip_page_count` —
   and on rasterization failure, `flip_error` instead (see §5.2).
 
 ## 3. Budgets (derived from live config)
@@ -85,7 +107,8 @@ Function `polypaint-book-pdf` (deploy_manifest.json): 4096 MB memory,
 
 - Disk at peak (inside the existing build_dir lifecycle, cleaned in
   `finally`): entry assets ~100–250 MB + book.pdf + cover.pdf ~100–350 MB
-  + flip pages ~25 MB ≈ **≤ 650 MB < 2048** ✓.
+  + flip pages and one temporary cover-spread PNG remain below the 2048 MB
+  allocation for the supported Book sizes.
 - Time: real compiles run ~2–3 min of the 900 s budget. pdftoppm at ~1–2
   s/page serial ≈ 75–150 s for 74 pages; run **4 parallel workers over
   `-f/-l` page ranges** (4096 MB comfortably holds 4 × ~200–400 MB
@@ -101,9 +124,11 @@ Function `polypaint-book-pdf` (deploy_manifest.json): 4096 MB memory,
 - Flow: fetch `polypaint/books/{id}/out/latest.json` (public) → if no
   `flip_key`: show "No flipbook for this compile yet — recompile the book"
   (+ surface `flip_error` if present) → else fetch flip.json → StPageFlip
-  with `showCover: true`: p1 (title, a recto in the print plan) stands
-  alone, then pages turn as true verso/recto openings — the same pairing
-  the print page plan guarantees (front matter odd, book_tex.page_plan).
+  with `showCover: true`: p1 is the front cover and stands alone; the first
+  opening is `blank inside-front | title`; every item is then
+  `report/palette | image`; the last opening ends with a blank inside-back,
+  and the final back cover stands alone. The inside-cover blanks preserve
+  the interior page pairing guaranteed by `book_tex.page_plan`.
 - Deep-blue chrome (#1A1A2E), title from flip.json, "page x / y", arrows +
   keys + swipe (library-native), fullscreen button. Preload next spread on
   turn.
@@ -114,7 +139,9 @@ Function `polypaint-book-pdf` (deploy_manifest.json): 4096 MB memory,
    stage (book_pdf.Dockerfile:33 block); scripts/test-book-docker.sh
    renders page 1 of the fixture book at `-r 120` and asserts JPEG magic +
    width 1384±1 px, and times the full-book rasterization.
-2. **Compose op** (book_pdf.py, upload phase): rasterize → rename →
+2. **Compose op** (book_pdf.py, upload phase): rasterize content, rasterize
+   and split the jacket cover, insert both blank inside covers, preserve the
+   front/blank/content/blank/back order, then rename →
    parallel-upload flip/*.jpg + flip.json (immutable) → extend latest
    dict additively → **latest.json put gains no-cache** (§2). Failure
    isolation: the flip block is try/except; on error latest.json carries
@@ -147,6 +174,6 @@ Function `polypaint-book-pdf` (deploy_manifest.json): 4096 MB memory,
 ## 7. Deferred
 
 - 2× zoom tier for tablets (page-flip supports source swapping).
-- Cover PDF as a jacket wrap-around view.
+- Separate jacket wrap-around viewer for inspecting the unsplit cover PDF.
 - QR of the flip link on a printed colophon page (the printed book linking
   to its digital twin).

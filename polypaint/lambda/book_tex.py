@@ -13,7 +13,7 @@ the script's own comments are wrong):
 Page plan: front matter must be an ODD page count so entry text lands on
 versos (left) and images on rectos (right) of the same opening
 (make_polypaint_book.py:905-916 is the reference). p1 = title recto, then
-2 pages per entry, then black pads to a multiple of 4.
+2 pages per entry, then selected-background pads to a multiple of 4.
 """
 
 CONTENT_W_MM = 293
@@ -22,6 +22,7 @@ COVER_W_MM = 629
 COVER_H_MM = 316
 COVER_PANEL_MM = 299
 COVER_SPINE_MM = 11
+DEFAULT_BOOK_BACKGROUND_COLOR = "1A1A2E"
 
 # The compose build dir lays prepared images out under assets/.
 ASSET_DIR = "assets"
@@ -54,6 +55,53 @@ def tex_escape(text):
     return "".join(out)
 
 
+def book_background_color(book):
+    """Canonical six-digit HTML colour embedded into both Book PDFs."""
+    raw = (book or {}).get("background_color") if isinstance(book, dict) else None
+    text = str(raw or DEFAULT_BOOK_BACKGROUND_COLOR).strip()
+    if text.startswith("#"):
+        text = text[1:]
+    if len(text) == 3 and all(ch.lower() in "0123456789abcdef" for ch in text):
+        text = "".join(ch + ch for ch in text)
+    if len(text) != 6 or any(ch.lower() not in "0123456789abcdef" for ch in text):
+        raise ValueError(f"book background_color must be 6-digit hex, got {raw!r}")
+    return text.upper()
+
+
+def _relative_luminance(hex_color):
+    channels = [int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+
+    def linear(channel):
+        return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (linear(channel) for channel in channels)
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _book_color_scheme(book):
+    background = book_background_color(book)
+    # Select whichever foreground has the stronger WCAG contrast against the
+    # chosen page colour. QR colours remain fixed separately below.
+    light_background = _relative_luminance(background) > 0.179
+    if light_background:
+        return {
+            "pagebg": background,
+            "bodytext": "111827",
+            "monotext": "4B5563",
+            "panelbg": "F3F4F6",
+            "panelborder": "CBD5E1",
+            "rulecol": "6B7280",
+        }
+    return {
+        "pagebg": background,
+        "bodytext": "F2F2F7",
+        "monotext": "9AA0B4",
+        "panelbg": "121829",
+        "panelborder": "2B3A5E",
+        "rulecol": "5F6678",
+    }
+
+
 def page_plan(n_entries):
     """Return (total_pages, pad_pages): 1 title recto + 2 per entry + pad,
     total ≡ 0 (mod 4). Even N -> pad 3, odd N -> pad 1."""
@@ -83,9 +131,10 @@ def _font_setup():
     ])
 
 
-def _content_preamble():
-    # Colours ported from spread_pdf.py so the book verso matches the
-    # ColorSpread PDF report page (deep blue that matches the app).
+def _content_preamble(book):
+    # The default scheme matches the app/ColorSpread deep blue; a Book may
+    # replace the page colour and gets a contrast-safe light/dark text scheme.
+    colors = _book_color_scheme(book)
     return "\n".join([
         r"\documentclass{article}",
         # vertical margins are 1mm: vertical placement is EXPLICIT (title at
@@ -101,17 +150,19 @@ def _content_preamble():
         _font_setup(),
         r"\pagestyle{empty}",
         r"\setlength{\parindent}{0pt}",
-        r"\definecolor{pagebg}{HTML}{1A1A2E}",   # PAGE_BG
+        r"\definecolor{pagebg}{HTML}{%s}" % colors["pagebg"],
         r"\definecolor{accent}{HTML}{E94560}",   # ACCENT
-        r"\definecolor{bodytext}{HTML}{F2F2F7}", # TEXT
-        r"\definecolor{monotext}{HTML}{9AA0B4}", # MUTED
-        r"\definecolor{panelbg}{HTML}{121829}",  # PANEL_BG
-        r"\definecolor{panelborder}{HTML}{2B3A5E}",  # PANEL_BORDER
-        r"\definecolor{rulecol}{HTML}{5F6678}",  # RULE
+        r"\definecolor{bodytext}{HTML}{%s}" % colors["bodytext"],
+        r"\definecolor{monotext}{HTML}{%s}" % colors["monotext"],
+        r"\definecolor{panelbg}{HTML}{%s}" % colors["panelbg"],
+        r"\definecolor{panelborder}{HTML}{%s}" % colors["panelborder"],
+        r"\definecolor{rulecol}{HTML}{%s}" % colors["rulecol"],
+        r"\definecolor{qrbg}{HTML}{FFFFFF}",
+        r"\definecolor{qrfg}{HTML}{111827}",
     ])
 
 
-def _black_page():
+def _background_page():
     return "\n".join([
         r"\newpage",
         r"\pagecolor{pagebg}",
@@ -190,7 +241,7 @@ def _verso_report_page(entry, provenance):
         # -3.8mm centers the 17mm chip on the caps' midline (~3.2mm above
         # baseline at 26pt); the top \vspace* gives back the extra depth
         title += (r"\hfill\raisebox{0.3mm}{\setlength{\fboxsep}{1.5mm}"
-                  r"\colorbox{bodytext}{\color{pagebg}\qrcode[height=14mm,level=L]{%s}}}" % url)
+                  r"\colorbox{qrbg}{\color{qrfg}\qrcode[height=14mm,level=L]{%s}}}" % url)
     artifact = tex_escape(str(report.get("artifact_id") or entry.get("artifact_id") or ""))
     rows = _report_rows(entry, provenance)
     body_override = str(entry.get("body_override") or "").strip()
@@ -255,7 +306,7 @@ def render_content_tex(book, provenance_by_entry=None, pdf_url=None):
     entries = list(book.get("entries") or [])
     total, pad = page_plan(len(entries))
     parts = [
-        _content_preamble(),
+        _content_preamble(book),
         r"\begin{document}",
         # p1: title page (recto)
         r"\pagecolor{pagebg}\color{bodytext}",
@@ -277,7 +328,7 @@ def render_content_tex(book, provenance_by_entry=None, pdf_url=None):
             r"\vfill",
             r"\begin{center}",
             r"{\setlength{\fboxsep}{1.5mm}"
-            r"\colorbox{bodytext}{\color{pagebg}\qrcode[height=14mm,level=M]{%s}}\par}" % pdf_url,
+            r"\colorbox{qrbg}{\color{qrfg}\qrcode[height=14mm,level=M]{%s}}\par}" % pdf_url,
             r"\vspace{2.5mm}",
             r"{\monofont\footnotesize\color{monotext} download pdf\par}",
             r"\end{center}",
@@ -288,7 +339,7 @@ def render_content_tex(book, provenance_by_entry=None, pdf_url=None):
         parts.append(_verso_report_page(entry, prov))
         parts.append(_full_bleed_image(f"{ASSET_DIR}/{entry.get('entry_id')}.jpg"))
     for _ in range(pad):
-        parts.append(_black_page())
+        parts.append(_background_page())
     parts.append(r"\end{document}")
     return "\n".join(parts) + "\n", total
 
@@ -296,6 +347,7 @@ def render_content_tex(book, provenance_by_entry=None, pdf_url=None):
 def render_cover_tex(book, cover_asset_rel=None):
     """Emit the cover PDF source: one 629x316 mm page, back|spine|front."""
     title = tex_escape(book.get("title") or book.get("name") or "PolyPaint")
+    colors = _book_color_scheme(book)
     parts = [
         r"\documentclass{article}",
         r"\usepackage[paperwidth=%dmm, paperheight=%dmm, margin=0mm]{geometry}"
@@ -306,11 +358,13 @@ def render_cover_tex(book, cover_asset_rel=None):
         r"\usetikzlibrary{calc}",
         _font_setup(),
         r"\pagestyle{empty}",
+        r"\definecolor{pagebg}{HTML}{%s}" % colors["pagebg"],
+        r"\definecolor{bodytext}{HTML}{%s}" % colors["bodytext"],
         r"\begin{document}",
-        r"\pagecolor{black}\color{white}",
+        r"\pagecolor{pagebg}\color{bodytext}",
         r"\begin{tikzpicture}[remember picture, overlay]",
         # spine text, centered on the spread
-        r"\node[rotate=90, text=white] at ($(current page.center)$) {\displayfont %s};" % title,
+        r"\node[rotate=90, text=bodytext] at ($(current page.center)$) {\displayfont %s};" % title,
     ]
     # front panel: right half; image at 2/3 panel width above the title
     if cover_asset_rel:
@@ -319,7 +373,7 @@ def render_cover_tex(book, cover_asset_rel=None):
             r" {\includegraphics[width=%.1fmm]{%s}};"
             % (COVER_SPINE_MM / 2 + COVER_PANEL_MM / 2, COVER_PANEL_MM * 2 / 3, cover_asset_rel))
     parts.append(
-        r"\node[anchor=center] at ($(current page.center)+(%.1fmm, -110mm)$)"
+        r"\node[anchor=center, text=bodytext] at ($(current page.center)+(%.1fmm, -110mm)$)"
         r" {\displayfont\fontsize{36}{40}\selectfont %s};"
         % (COVER_SPINE_MM / 2 + COVER_PANEL_MM / 2, title))
     parts.extend([

@@ -437,7 +437,9 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_
     # Both inside faces are intentionally blank. The content PDF begins with
     # an odd recto title page; placing it after the inside-front blank restores
     # the print ordering: blank|title, then report|image for every entry.
-    with Image.new("RGB", (width_px, height_px), (26, 26, 46)) as blank:
+    background_hex = book_tex.book_background_color(book)
+    background_rgb = tuple(int(background_hex[i:i + 2], 16) for i in (0, 2, 4))
+    with Image.new("RGB", (width_px, height_px), background_rgb) as blank:
         save_jpeg(blank, os.path.join(flip_dir, inside_front_name))
         _tick_progress()
         save_jpeg(blank, os.path.join(flip_dir, inside_back_name))
@@ -466,6 +468,7 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_
         "book_id": book.get("id") or book.get("name") or "",
         "compile_id": out_prefix.rstrip("/").split("/")[-1],
         "title": book.get("title") or book.get("name") or "PolyPaint",
+        "background_color": background_hex.lower(),
         "page_count": flip_page_count,
         "content_page_count": content_pages,
         "front_cover_page": 1,

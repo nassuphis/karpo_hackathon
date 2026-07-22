@@ -2275,6 +2275,18 @@ button {
                 <input id="book-subtitle-input" type="text" style="width:100%; margin-bottom:10px" oninput="bookMetaChanged()">
                 <label style="color:#9aa0b4">Author (optional)</label>
                 <input id="book-author-input" type="text" style="width:100%; margin-bottom:10px" oninput="bookMetaChanged()">
+                <label for="book-background-color" style="color:#9aa0b4">Book background</label>
+                <div class="render-background-controls" style="margin-bottom:5px">
+                    <input type="color" id="book-background-color" class="render-background-color" value="#1a1a2e"
+                           oninput="bookBackgroundChanged(this.value)" title="Choose the background for the complete book">
+                    <input type="text" id="book-background-hex" class="render-background-hex" value="1A1A2E" maxlength="7" spellcheck="false"
+                           onchange="bookBackgroundHexCommitted()"
+                           onkeydown="if(event.key==='Enter'){event.preventDefault();bookBackgroundHexCommitted()}"
+                           aria-label="Book background hex color">
+                    <button type="button" class="render-background-swatch" style="background:#1a1a2e" title="Default deep blue" onclick="bookBackgroundChanged('1a1a2e')"></button>
+                    <span id="book-background-status" class="render-background-status">#1A1A2E</span>
+                </div>
+                <div style="color:#727b94; font-size:11px; margin-bottom:10px">Applied to the cover, title/report pages, padding, and both blank inside covers. Deep blue is the default.</div>
                 <div id="book-cover-hint" style="color:#9aa0b4; font-size:12px"></div>
             </div>
         </div>

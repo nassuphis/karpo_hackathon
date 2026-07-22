@@ -110,6 +110,7 @@ class TestBookStorage(unittest.TestCase):
         self.assertFalse(body["overwritten"])
         self.assertEqual(body["book"]["id"], "my-first-book")
         self.assertEqual(len(body["book"]["entries"]), 2)
+        self.assertEqual(body["book"]["background_color"], "1a1a2e")
         self.assertTrue(all(e["entry_id"] for e in body["book"]["entries"]))
         self.assertTrue(body["book"]["saved_at"])
 
@@ -146,6 +147,19 @@ class TestBookStorage(unittest.TestCase):
             "kind": "entry",
             "entry_id": "front",
         })
+
+    @patch("handler_storage.s3")
+    def test_book_background_color_is_canonical_and_persisted(self, mock_s3):
+        import handler_storage
+
+        _patch_s3(mock_s3, _FakeS3())
+        resp = handler_storage.handler(_event("/save-book", {"book": {
+            "name": "Warm Book",
+            "background_color": "#AbC",
+            "entries": [],
+        }}), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        self.assertEqual(json.loads(resp["body"])["book"]["background_color"], "aabbcc")
 
     @patch("handler_storage.s3")
     def test_snapshot_current_allcol_wall_into_book_cover_source(self, mock_s3):
@@ -262,6 +276,8 @@ class TestBookStorage(unittest.TestCase):
             ({"book": {"name": 'a</option><img src=x onerror=alert(1)>'}}, None),  # printable, allowed but escaped in UI
             ({"book": {"name": "x", "title": "line\nbreak"}}, "title must be printable"),
             ({"book": {"name": "x", "author": "bad\ttab"}}, "author must be printable"),
+            ({"book": {"name": "x", "background_color": "midnight"}},
+             "background_color must be 6-digit hex"),
             ({"book": {"name": "x", "cover_source": {
                 "kind": "allcol_wall",
                 "refresh_id": "mosaic_20260722T120000Z_abcdef01",

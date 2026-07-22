@@ -395,6 +395,10 @@ class TestBookPdfHandler(unittest.TestCase):
 
     def test_compose_renders_flipbook_pages_and_manifest(self):
         self._seed_book()
+        book_key = "polypaint/books/test-book.json"
+        book = json.loads(self.fake.objects[book_key])
+        book["background_color"] = "345678"
+        self.fake.objects[book_key] = json.dumps(book).encode()
         with patch.object(self.book_pdf.subprocess, "run", side_effect=self._fake_pdftoppm(total_pages=8)):
             resp = self.book_pdf.handle_compose({
                 "op": "compose", "job_id": "book#test", "task_id": "bookcomp_r9",
@@ -422,6 +426,7 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertEqual(flip["inside_back_cover_page"], 11)
         self.assertEqual(flip["back_cover_page"], 12)
         self.assertEqual(flip["book_id"], "test-book")  # the "id" field, not name
+        self.assertEqual(flip["background_color"], "345678")
         self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 13)])
         self.assertEqual(flip["width_px"], 2307)
         self.assertEqual(flip["height_px"], 2331)
@@ -455,9 +460,9 @@ class TestBookPdfHandler(unittest.TestCase):
         back_pixel = back.getpixel((back.width // 2, back.height // 2))
         self.assertGreater(front_pixel[2], front_pixel[0] * 3)
         for actual, expected in (
-                (inside_front_pixel, (26, 26, 46)),
+                (inside_front_pixel, (52, 86, 120)),
                 (first_content_pixel, (18, 24, 41)),
-                (inside_back_pixel, (26, 26, 46))):
+                (inside_back_pixel, (52, 86, 120))):
             self.assertTrue(all(abs(a - e) <= 2 for a, e in zip(actual, expected)),
                             (actual, expected))
         self.assertGreater(back_pixel[0], back_pixel[2] * 3)

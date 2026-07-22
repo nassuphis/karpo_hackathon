@@ -126,6 +126,7 @@ Document schema (v1):
   "title": "PolyPaint",             // printed title page / cover
   "subtitle": "",
   "author": "",
+  "background_color": "1a1a2e",  // whole-book page/jacket background; default deep blue
   "cover_entry_id": "",             // "" = typographic cover
   "entries": [
     {
@@ -326,10 +327,11 @@ a 2-page front matter would shift every spread across two openings.
 ```
 p1  title page (recto; blank-vs-title is a template choice, §9.1)
 per entry, in order:  verso text page | recto full-bleed image page  (2 pages each)
-tail: black pads to reach a multiple of 4   (pad = 3 for even N, 1 for odd N)
+tail: selected-background pads to reach a multiple of 4   (pad = 3 for even N, 1 for odd N)
 ```
 36 entries → 1 + 72 + 3 pad = 76 pages. **One spread per entry — no appendix
-spreads.** Verso layout follows the printed book style (black page, display serif
+spreads.** Verso layout follows the printed book style (selected page background,
+contrast-selected display serif
 title, body text, mono pipeline + artifact-id lines, optional palette strip), with
 text resolved as: override if set, else auto title + auto body from the provenance
 snapshot — summary lines plus the pipeline string, program names/fingerprints, and
@@ -338,7 +340,9 @@ not on the page.
 
 **Cover PDF:** back / spine / front on one page; front panel carries the cover
 entry's image at the local book's 2/3-above-title layout, or a typographic cover
-when `cover_entry_id` is empty. Spine text = title. The 609×316-net template is the
+when `cover_entry_id` is empty. The same `background_color` drives the jacket,
+content title/report/pad pages, and web flipbook inside covers; deep blue
+(`#1A1A2E`) is the default. Spine text = title. The 609×316-net template is the
 28-page A3-square WhiteWall product the local book was built for; spine width
 varies with page count on other products — V1 pins this template and records
 `content_pages` in `latest.json` so mismatches are visible (open question §9.3).

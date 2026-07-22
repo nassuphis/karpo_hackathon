@@ -43,6 +43,11 @@ flipbook path never touches it.
   The inside-front blank therefore places the content PDF's title page on
   the right; every following `report | image` pair stays on one opening.
   The inside-back blank keeps the final back cover as a standalone cover.
+- **One Book background selection.** The persisted six-digit
+  `background_color` defaults to `1a1a2e` and drives the printable jacket,
+  title/report/pad pages, and both generated inside-cover JPEGs. Full-bleed
+  artwork pages remain untouched. Typography switches between light and dark
+  automatically; QR codes retain fixed dark-on-white contrast.
 - **pdftoppm as the rasterizer** — VERIFIED LIVE: `dnf install -y
   poppler-utils` succeeds on `public.ecr.aws/lambda/python:3.12` arm64 and
   installs pdftoppm 24.08.0 (tested 2026-07-08 in docker). It renders PNG

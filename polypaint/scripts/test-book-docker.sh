@@ -26,6 +26,7 @@ BOOK = {
     "name": "Gate Fixture",
     "title": "Gate & Fixture 100%",   # escaping must survive compile
     "subtitle": "three entries",
+    "background_color": "f4e8d0",    # exercise dynamic page/cover + dark text
     "entries": [
         {"entry_id": f"e{i}", "job_id": f"j{i}", "artifact_id": f"a{i}",
          "image_key": f"renders/j{i}/color/a{i}/image.jpeg",
@@ -75,6 +76,10 @@ assert "\\qrcode[height=14mm,level=M]{https://" in content.split("\\newpage", 1)
 assert content.count("\\qrcode[") == 1 + len(BOOK["entries"]), \
     "every spread must carry an image QR (titled or not) + the title-page PDF QR"
 cover = book_tex.render_cover_tex(BOOK, "assets/e1.jpg")
+for source in (content, cover):
+    assert "\\definecolor{pagebg}{HTML}{F4E8D0}" in source, "selected background missing"
+    assert "\\definecolor{bodytext}{HTML}{111827}" in source, "light-background contrast missing"
+assert "\\pagecolor{black}" not in cover, "cover regressed to hardcoded black"
 # test-only: keep objects uncompressed so the assertions can grep the PDF
 prologue = "\\pdfvariable objcompresslevel 0\n\\pdfvariable compresslevel 0\n"
 open("/build/book.tex", "w").write(prologue + content)

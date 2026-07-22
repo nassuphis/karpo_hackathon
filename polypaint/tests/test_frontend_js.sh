@@ -3010,9 +3010,39 @@ if (oldCover.kind !== 'entry' || oldCover.entry_id !== 'legacy-entry')
 const wallCover = {kind: 'allcol_wall', refresh_id: 'mosaic_x_abcdef'};
 if (ctx._bookCoverSource({cover_source: wallCover}) !== wallCover)
   { console.error('FATAL: AllCol cover descriptor must remain authoritative'); process.exit(1); }
+const bgNormalizeMatch = js.match(/function _normalizeBookBackgroundColor\([^)]*\) \{[\s\S]*?\n\}/);
+const bgReadMatch = js.match(/function _bookBackgroundColor\([^)]*\) \{[\s\S]*?\n\}/);
+if (!bgNormalizeMatch || !bgReadMatch)
+  { console.error('FATAL: Book background normalization helpers missing'); process.exit(1); }
+vm.runInContext("const BOOK_DEFAULT_BACKGROUND_COLOR = '1a1a2e';\n" + bgNormalizeMatch[0] + '\n' + bgReadMatch[0], ctx);
+if (ctx._bookBackgroundColor({}) !== '1a1a2e' || ctx._bookBackgroundColor({background_color: '#AbC'}) !== 'aabbcc')
+  { console.error('FATAL: Book background must default to deep blue and normalize selected hex'); process.exit(1); }
+if (!js.includes('doc.background_color = normalized;'))
+  { console.error('FATAL: Book background selection must persist on the Book document'); process.exit(1); }
+const bgForegroundMatch = js.match(/function _bookBackgroundForeground\([^)]*\) \{[\s\S]*?\n\}/);
+const bgSyncMatch = js.match(/function _syncBookBackgroundUi\([^)]*\) \{[\s\S]*?\n\}/);
+const bgChangeMatch = js.match(/function bookBackgroundChanged\([^)]*\) \{[\s\S]*?\n\}/);
+if (!bgForegroundMatch || !bgSyncMatch || !bgChangeMatch)
+  { console.error('FATAL: Book background UI command helpers missing'); process.exit(1); }
+const bgEls = {
+  'book-background-color': {value: '', disabled: false},
+  'book-background-hex': {value: '', disabled: false},
+  'book-background-status': {textContent: ''},
+  'book-cover-preview': {style: {}},
+  'book-info': {textContent: '0 entries'},
+};
+ctx.document = {getElementById(id) { return bgEls[id] || null; }};
+ctx._bookState = {doc: {entries: []}, dirty: false};
+vm.runInContext(bgForegroundMatch[0] + '\n' + bgSyncMatch[0] + '\n' + bgChangeMatch[0], ctx);
+if (!ctx.bookBackgroundChanged('#345678') || ctx._bookState.doc.background_color !== '345678' || !ctx._bookState.dirty)
+  { console.error('FATAL: Book picker must mutate the Book document and mark it unsaved'); process.exit(1); }
+if (bgEls['book-background-color'].value !== '#345678' || bgEls['book-background-hex'].value !== '345678'
+    || bgEls['book-cover-preview'].style.backgroundColor !== '#345678')
+  { console.error('FATAL: Book background controls and cover preview must stay synchronized'); process.exit(1); }
 // Clear buttons: whole-book reset (after Describe) + per-row in the editor
 const html = fs.readFileSync(path.join(process.argv[2], 'index.html'), 'utf8');
-for (const id of ['book-cover-source-mode', 'btn-book-apply-cover', 'book-cover-source-detail']) {
+for (const id of ['book-cover-source-mode', 'btn-book-apply-cover', 'book-cover-source-detail',
+                  'book-background-color', 'book-background-hex', 'book-background-status']) {
   if (!html.includes(`id="${id}"`))
     { console.error('FATAL: Book Cover UI missing ' + id); process.exit(1); }
 }

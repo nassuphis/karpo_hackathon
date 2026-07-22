@@ -80,6 +80,21 @@ class TestGeometryAndStructure(unittest.TestCase):
         self.assertIn("paperheight=316mm", tex)
         self.assertNotIn("629.4", tex)
         self.assertIn("assets/e1.jpg", tex)
+        self.assertIn(r"\definecolor{pagebg}{HTML}{1A1A2E}", tex)
+        self.assertIn(r"\pagecolor{pagebg}\color{bodytext}", tex)
+        self.assertNotIn(r"\pagecolor{black}", tex)
+
+    def test_selected_background_drives_content_cover_and_contrast(self):
+        book = _book(2, background_color="#f4e8d0")
+        content, _ = book_tex.render_content_tex(book)
+        cover = book_tex.render_cover_tex(book, "assets/e1.jpg")
+        for tex in (content, cover):
+            self.assertIn(r"\definecolor{pagebg}{HTML}{F4E8D0}", tex)
+            self.assertIn(r"\definecolor{bodytext}{HTML}{111827}", tex)
+            self.assertIn(r"\pagecolor{pagebg}\color{bodytext}", tex)
+        self.assertEqual(book_tex.book_background_color({}), "1A1A2E")
+        with self.assertRaisesRegex(ValueError, "6-digit hex"):
+            book_tex.book_background_color({"background_color": "not-a-colour"})
 
     def test_pad_pages_are_deep_blue(self):
         tex, total = book_tex.render_content_tex(_book(2))  # 1+4 -> pad 3, total 8
@@ -145,7 +160,7 @@ class TestReportPage(unittest.TestCase):
         self.assertIn(r"\usepackage{qrcode}", tex)
         self.assertIn(r"\qrcode[height=14mm,level=L]{https://polypaint.s3.us-east-1.amazonaws.com/renders/j0/color/a0/image.jpeg}", tex)
         # dark-on-light chip: inverted QRs scan unreliably
-        self.assertIn(r"\colorbox{bodytext}{\color{pagebg}\qrcode", tex)
+        self.assertIn(r"\colorbox{qrbg}{\color{qrfg}\qrcode", tex)
 
     def test_qr_on_every_spread_even_without_a_title(self):
         tex, _ = book_tex.render_content_tex(
@@ -172,7 +187,7 @@ class TestReportPage(unittest.TestCase):
         self.assertIn(r"\qrcode[height=14mm,level=M]{%s}" % pdf_url, title_page)
         # bottom-centered: fill above, fixed inset below, same chip idiom
         self.assertIn(r"\vfill", title_page)
-        self.assertIn(r"\colorbox{bodytext}{\color{pagebg}\qrcode", title_page)
+        self.assertIn(r"\colorbox{qrbg}{\color{qrfg}\qrcode", title_page)
         self.assertIn(r"\vspace*{14mm}", title_page)
         self.assertIn("download pdf", title_page)
 

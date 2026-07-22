@@ -30,6 +30,70 @@ function _bookPublicUrl(key) {
     return 'https://polypaint.s3.us-east-1.amazonaws.com/' + encodeURI(String(key || ''));
 }
 
+const BOOK_DEFAULT_BACKGROUND_COLOR = '1a1a2e';
+
+function _normalizeBookBackgroundColor(value, fallback = '') {
+    let text = String(value == null ? '' : value).trim().toLowerCase();
+    if (text.startsWith('#')) text = text.slice(1);
+    if (/^[0-9a-f]{3}$/.test(text)) text = text.split('').map(ch => ch + ch).join('');
+    return /^[0-9a-f]{6}$/.test(text) ? text : fallback;
+}
+
+function _bookBackgroundColor(doc) {
+    return _normalizeBookBackgroundColor(
+        doc && doc.background_color,
+        BOOK_DEFAULT_BACKGROUND_COLOR,
+    );
+}
+
+function _bookBackgroundForeground(background) {
+    const channels = [0, 2, 4].map(i => parseInt(background.slice(i, i + 2), 16) / 255);
+    const linear = channels.map(c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    const luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+    return luminance > 0.179 ? '#111827' : '#f2f2f7';
+}
+
+function _syncBookBackgroundUi(doc) {
+    const background = _bookBackgroundColor(doc);
+    const colorEl = document.getElementById('book-background-color');
+    const hexEl = document.getElementById('book-background-hex');
+    const statusEl = document.getElementById('book-background-status');
+    const previewEl = document.getElementById('book-cover-preview');
+    if (colorEl) { colorEl.value = '#' + background; colorEl.disabled = !doc; }
+    if (hexEl) { hexEl.value = background.toUpperCase(); hexEl.disabled = !doc; }
+    if (statusEl) statusEl.textContent = '#' + background.toUpperCase();
+    if (previewEl) {
+        previewEl.style.backgroundColor = '#' + background;
+        previewEl.style.color = _bookBackgroundForeground(background);
+    }
+}
+
+function bookBackgroundChanged(value) {
+    const doc = _bookState.doc;
+    if (!doc) return false;
+    const normalized = _normalizeBookBackgroundColor(value, '');
+    const statusEl = document.getElementById('book-background-status');
+    if (!normalized) {
+        if (statusEl) statusEl.textContent = 'Use 6-digit hex';
+        return false;
+    }
+    doc.background_color = normalized;
+    _bookState.dirty = true;
+    _syncBookBackgroundUi(doc);
+    const info = document.getElementById('book-info');
+    if (info && !info.textContent.includes('(unsaved)')) {
+        info.textContent = `${(doc.entries || []).length} entries (unsaved)`;
+    }
+    return true;
+}
+
+function bookBackgroundHexCommitted() {
+    const hexEl = document.getElementById('book-background-hex');
+    if (!bookBackgroundChanged(hexEl ? hexEl.value : '')) {
+        hexEl?.focus();
+    }
+}
+
 function _bookCoverSource(doc) {
     const source = doc && doc.cover_source;
     if (source && typeof source === 'object') {
@@ -298,6 +362,7 @@ function _renderBookTab() {
         const el = document.getElementById(id);
         if (el && doc && el.value !== (doc[key] || '')) el.value = doc[key] || '';
     }
+    _syncBookBackgroundUi(doc);
     const dl = document.getElementById('book-download-row');
     if (dl) dl.style.display = _bookState.latestOutput ? 'flex' : 'none';
     const out = _bookState.latestOutput;

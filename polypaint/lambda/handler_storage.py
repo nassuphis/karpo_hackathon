@@ -182,6 +182,7 @@ BOOK_META_SAVED_AT = "book_saved_at"
 MAX_BOOK_NAME_LEN = 120
 MAX_BOOK_ENTRIES = 200
 BOOK_COVER_SOURCE_VERSION = 1
+BOOK_DEFAULT_BACKGROUND_COLOR = "1a1a2e"
 _BOOK_WALL_REFRESH_RE = re.compile(r"mosaic_[0-9A-Za-z]+_[0-9a-f]{6,12}")
 ROOT_PROGRAM_VERSION = 1
 ROOT_PROGRAM_META_NAME = "root_program_name"
@@ -2357,6 +2358,17 @@ def _slugify_book_id(name):
     return "book" if slug == "coeff-program" else slug
 
 
+def _normalize_book_background_color(value):
+    text = str(value or BOOK_DEFAULT_BACKGROUND_COLOR).strip().lower()
+    if text.startswith("#"):
+        text = text[1:]
+    if len(text) == 3 and all(ch in "0123456789abcdef" for ch in text):
+        text = "".join(ch + ch for ch in text)
+    if len(text) != 6 or any(ch not in "0123456789abcdef" for ch in text):
+        raise ValueError("book background_color must be 6-digit hex")
+    return text
+
+
 def _validate_book_payload(raw):
     """Validate + normalize a book document (see book-maker-design.md §4)."""
     if not isinstance(raw, dict):
@@ -2434,6 +2446,7 @@ def _validate_book_payload(raw):
         "title": _single_line(raw.get("title"), "title"),
         "subtitle": _single_line(raw.get("subtitle"), "subtitle"),
         "author": _single_line(raw.get("author"), "author"),
+        "background_color": _normalize_book_background_color(raw.get("background_color")),
         # cover_entry_id remains for old clients and source archives; the
         # discriminated cover_source is authoritative for new code.
         "cover_entry_id": cover_entry_id,

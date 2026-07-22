@@ -380,6 +380,9 @@ def _draw_tracking_text(c, x, y, text, font_spec, color, char_space=1.0):
     t.setFont(font_spec[0], font_spec[1])
     t.setCharSpace(char_space)
     t.textLine(_safe_pdf_text(text))
+    # PDF text-state parameters survive BT/ET boundaries. Restore tracking
+    # here so a section heading cannot widen later code or metadata text.
+    t.setCharSpace(0)
     c.drawText(t)
 
 
@@ -582,11 +585,16 @@ def _draw_code_block(c, x, y, width, lines, *, max_lines=None, caption=""):
     c.roundRect(x, y0, width, panel_h, 2 * mm, fill=1, stroke=1)
 
     c.setFillColor(CODE_TEXT)
-    _set_pdf_font(c, F_CODE)
     text_y = y - CODE_PAD_Y - F_CODE[1]
+    text = c.beginText(x + CODE_PAD_X, text_y)
+    text.setFont(F_CODE[0], F_CODE[1])
+    text.setLeading(CODE_LEADING)
+    # Set this explicitly even though tracked headings restore their state.
+    # Code-panel containment depends on the zero-tracking width calculation.
+    text.setCharSpace(0)
     for line in shown:
-        c.drawString(x + CODE_PAD_X, text_y, _safe_pdf_text(line))
-        text_y -= CODE_LEADING
+        text.textLine(_safe_pdf_text(line))
+    c.drawText(text)
 
     y = y0 - 4
     if truncated or caption:

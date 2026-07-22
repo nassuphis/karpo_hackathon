@@ -320,6 +320,14 @@ class TestSpreadPdf(unittest.TestCase):
             self.assertNotIn("Source Appendix 1", stream_text)
             self.assertIn("PARAM PROGRAM", stream_text)
             self.assertIn("UNIQ_PROG_LINE_42", stream_text)
+            # ReportLab/PDF character spacing survives BT/ET boundaries. A
+            # tracked heading must restore zero tracking, and the following
+            # code text object must establish zero tracking independently.
+            self.assertRegex(
+                stream_text,
+                r"1 Tc \(COEFF PROGRAM\) Tj T\* 0 Tc ET",
+            )
+            self.assertRegex(stream_text, r"13 TL 0 Tc \(cf\) Tj")
 
     def test_long_program_flows_across_appendix_spreads_without_truncation(self):
         from PIL import Image

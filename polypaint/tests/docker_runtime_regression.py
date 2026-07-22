@@ -2528,7 +2528,9 @@ def test_render_preview():
     print("\n--- Render preview (vipsthumbnail) ---")
 
     vt_path = "/opt/bin/vipsthumbnail"
+    vh_path = "/opt/bin/vipsheader"
     assert os.path.exists(vt_path), "vipsthumbnail not found at %s" % vt_path
+    assert os.path.exists(vh_path), "vipsheader not found at %s" % vh_path
     r = subprocess.run([vt_path, "--vips-version"], capture_output=True, text=True, timeout=5)
     print("  vipsthumbnail: %s" % (r.stdout.strip() or r.stderr.strip()))
 
@@ -2549,6 +2551,12 @@ def test_render_preview():
     jpeg_size = os.path.getsize(test_jpeg)
     assert jpeg_size > 0, "test JPEG is empty"
     print("  test JPEG: %d bytes" % jpeg_size)
+
+    r = subprocess.run([vh_path, "-f", "width", test_jpeg],
+                       capture_output=True, text=True, timeout=10, env=env)
+    assert r.returncode == 0, "vipsheader failed: " + r.stderr[:200]
+    assert r.stdout.strip() == "8", "vipsheader width mismatch: %r" % r.stdout
+    print("  vipsheader: width=8")
 
     r = subprocess.run([vt_path, test_jpeg, "-s", "4x4", "-o", test_png + "[strip]"],
                        capture_output=True, text=True, timeout=10, env=env)

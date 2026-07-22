@@ -195,15 +195,8 @@ def _draw_text_page(c, title, body, is_right, filename=None, meta=None, palette_
 # The public renderer still supports the old report=None call shape for local
 # previews, while the Lambda path passes a richer provenance report.
 
-PDF_TARGET_DPI = int(os.getenv("PDF_TARGET_DPI", "300") or "300")
-PDF_IMAGE_MAX_PX = int(os.getenv("PDF_IMAGE_MAX_PX", "3600") or "3600")
+PDF_IMAGE_MAX_PX = int(os.getenv("PDF_IMAGE_MAX_PX", "5000") or "5000")
 PDF_PALETTE_MAX_PX = int(os.getenv("PDF_PALETTE_MAX_PX", "800") or "800")
-PDF_MAX_SOURCE_PIXELS = int(os.getenv("PDF_MAX_SOURCE_PIXELS", "500000000") or "500000000")
-PDF_IMAGE_FORMAT = str(os.getenv("PDF_IMAGE_FORMAT", "png") or "png").lower()
-PDF_USE_VIPS = str(os.getenv("PDF_USE_VIPS", "1") or "1").strip().lower() not in {"0", "false", "no"}
-
-if PILImage.MAX_IMAGE_PIXELS is None or PILImage.MAX_IMAGE_PIXELS < PDF_MAX_SOURCE_PIXELS:
-    PILImage.MAX_IMAGE_PIXELS = PDF_MAX_SOURCE_PIXELS
 
 PAGE_BG = HexColor("#1a1a2e")
 ACCENT = HexColor("#e94560")
@@ -234,18 +227,23 @@ CODE_MAX_LINES_TOTAL = 2000
 SECTION_GAP = 9 * mm
 CODE_PAD_X = 6 * mm
 CODE_PAD_Y = 5 * mm
+# Keep a small measured-width reserve beyond the nominal right padding. This
+# avoids placing the final glyph directly against the panel edge in PDF viewers.
+CODE_WRAP_GUTTER = 2 * mm
 TITLE_RULE_W = 0.8
 HEADER_RULE_W = 0.5
 PANEL_BORDER_W = 0.75
 
 
-def _resample_filter():
-    resampling = getattr(PILImage, "Resampling", PILImage)
-    return getattr(resampling, "LANCZOS", getattr(PILImage, "BICUBIC", 3))
-
-
 def _vipsthumbnail_path():
     for path in ("/opt/bin/vipsthumbnail", shutil.which("vipsthumbnail")):
+        if path and os.path.exists(path):
+            return path
+    return ""
+
+
+def _vipsheader_path():
+    for path in ("/opt/bin/vipsheader", shutil.which("vipsheader")):
         if path and os.path.exists(path):
             return path
     return ""
@@ -260,11 +258,9 @@ def _vips_env():
 
 
 def _prepare_pdf_image_with_vips(input_path, output_path, *, max_px, fmt, quality):
-    if not PDF_USE_VIPS:
-        return False
     vipsthumbnail = _vipsthumbnail_path()
     if not vipsthumbnail:
-        return False
+        raise RuntimeError("vipsthumbnail is required for PDF image preparation")
     options = ["strip"]
     if fmt == "jpeg":
         options.append(f"Q={int(quality)}")
@@ -286,87 +282,80 @@ def _prepare_pdf_image_with_vips(input_path, output_path, *, max_px, fmt, qualit
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"vipsthumbnail failed while preparing PDF image: {stderr or 'unknown error'}")
-    return True
 
 
-def prepare_pdf_image(input_path, output_path, *, max_px, quality=90, image_format=None, max_source_pixels=PDF_MAX_SOURCE_PIXELS):
-    """Prepare a source raster for PDF embedding and return dimension metadata."""
-    input_path = Path(input_path)
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    max_source_pixels = int(max_source_pixels)
-    if max_source_pixels <= 0:
-        raise ValueError(f"PDF max_source_pixels must be positive, got {max_source_pixels}")
-    # Pillow raises DecompressionBombError at 2 * MAX_IMAGE_PIXELS during
-    # Image.open(), before we can inspect dimensions and downsample. The PDF
-    # path has its own explicit cap because saved render artifacts can be
-    # large but are immediately resized to PDF_IMAGE_MAX_PX before embedding.
-    if PILImage.MAX_IMAGE_PIXELS is not None and PILImage.MAX_IMAGE_PIXELS < max_source_pixels:
-        PILImage.MAX_IMAGE_PIXELS = max_source_pixels
-    fmt = str(image_format or PDF_IMAGE_FORMAT or "png").strip().lower()
-    if fmt == "jpg":
-        fmt = "jpeg"
-    if fmt not in {"png", "jpeg"}:
-        fmt = "png"
-    max_px = int(max_px)
-    if max_px <= 0:
-        raise ValueError(f"PDF image max_px must be positive, got {max_px}")
+def _vips_dimensions(path):
+    vipsheader = _vipsheader_path()
+    if not vipsheader:
+        raise RuntimeError("vipsheader is required for libvips-only PDF image preparation")
+    dims = []
+    for field in ("width", "height"):
+        result = subprocess.run(
+            [vipsheader, "-f", field, str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=_vips_env(),
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(
+                f"vipsheader failed reading {field} from {path}: {stderr or 'unknown error'}")
+        try:
+            value = int((result.stdout or "").strip())
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"vipsheader returned an invalid {field} for {path}: {result.stdout!r}") from exc
+        if value <= 0:
+            raise RuntimeError(f"vipsheader returned non-positive {field}={value} for {path}")
+        dims.append(value)
+    return tuple(dims)
 
-    try:
-        with PILImage.open(input_path) as img:
-            source_w, source_h = img.size
-            source_pixels = int(source_w) * int(source_h)
-            if source_pixels > max_source_pixels:
-                raise ValueError(
-                    f"PDF source image is too large: {source_w}x{source_h} "
-                    f"({source_pixels} pixels), limit is {max_source_pixels}"
-                )
-            resized = max(source_w, source_h) > max_px
-        if _prepare_pdf_image_with_vips(input_path, output_path, max_px=max_px, fmt=fmt, quality=quality):
-            with PILImage.open(output_path) as prepared:
-                prepared_w, prepared_h = prepared.size
-            return {
-                "source_width": int(source_w),
-                "source_height": int(source_h),
-                "prepared_width": int(prepared_w),
-                "prepared_height": int(prepared_h),
-                "resized": bool(resized),
-                "image_max_px": int(max_px),
-                "prepared_path": str(output_path),
-                "prepared_format": fmt,
-            }
-        with PILImage.open(input_path) as img:
-            if resized:
-                try:
-                    img.draft("RGB", (max_px, max_px))
-                except Exception:
-                    pass
-            work = img
-            if resized:
-                work.thumbnail((max_px, max_px), _resample_filter())
-            if work.mode != "RGB":
-                work = work.convert("RGB")
-            prepared_w, prepared_h = work.size
-            if fmt == "jpeg":
-                work.save(output_path, format="JPEG", quality=int(quality), optimize=True)
-            else:
-                work.save(output_path, format="PNG", optimize=True)
-    except PILImage.DecompressionBombError as exc:
-        raise ValueError(
-            "PDF source image exceeds the configured safety limit; "
-            f"set PDF_MAX_SOURCE_PIXELS deliberately if this image is expected: {exc}"
-        ) from exc
 
+def _prepare_pdf_image_vips(input_path, output_path, *, max_px, fmt, quality):
+    source_w, source_h = _vips_dimensions(input_path)
+    _prepare_pdf_image_with_vips(
+        input_path, output_path, max_px=max_px, fmt=fmt, quality=quality)
+    prepared_w, prepared_h = _vips_dimensions(output_path)
+    if max(prepared_w, prepared_h) > max_px:
+        raise RuntimeError(
+            f"vipsthumbnail output exceeds max_px={max_px}: {prepared_w}x{prepared_h}")
     return {
         "source_width": int(source_w),
         "source_height": int(source_h),
         "prepared_width": int(prepared_w),
         "prepared_height": int(prepared_h),
-        "resized": bool(resized),
+        "resized": max(source_w, source_h) > max_px,
         "image_max_px": int(max_px),
         "prepared_path": str(output_path),
         "prepared_format": fmt,
     }
+
+
+def prepare_pdf_image(input_path, output_path, *, max_px, quality=90, image_format=None):
+    """Prepare a source raster with libvips and return dimension metadata."""
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fmt = str(image_format or "").strip().lower()
+    if not fmt:
+        fmt = "jpeg" if output_path.suffix.lower() in {".jpg", ".jpeg"} else "png"
+    if fmt == "jpg":
+        fmt = "jpeg"
+    if fmt not in {"png", "jpeg"}:
+        raise ValueError(f"unsupported PDF image format: {fmt!r}")
+    valid_suffixes = {"jpeg": {".jpg", ".jpeg"}, "png": {".png"}}[fmt]
+    if output_path.suffix.lower() not in valid_suffixes:
+        raise ValueError(
+            f"PDF image format {fmt!r} does not match output path {output_path}")
+    max_px = int(max_px)
+    if max_px <= 0:
+        raise ValueError(f"PDF image max_px must be positive, got {max_px}")
+
+    # libvips reads and shrinks demand-wise. Pillow must never decode the full
+    # render artifact merely to discover dimensions before this normalization.
+    return _prepare_pdf_image_vips(
+        input_path, output_path, max_px=max_px, fmt=fmt, quality=quality)
 
 
 def _safe_pdf_text(value):
@@ -417,25 +406,124 @@ def _draw_kv_grid(c, x, y, rows, *, label_w=46 * mm, max_value_chars=90):
     return y
 
 
-def _code_chars_for_width(width):
-    return max(20, int((float(width) - 2 * CODE_PAD_X) / (0.6 * F_CODE[1])))
+def _code_string_width(text):
+    return pdfmetrics.stringWidth(
+        _safe_pdf_text(text), F_CODE[0], F_CODE[1])
 
 
-def _wrap_monospace_line(line, max_chars):
-    max_chars = max(2, int(max_chars))
+def _max_code_prefix(text, max_width):
+    """Return the longest non-empty prefix that fits the measured width."""
+    if not text:
+        return 0
+    lo = 1
+    hi = len(text)
+    best = 0
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if _code_string_width(text[:mid]) <= max_width:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return max(1, best)
+
+
+def _preferred_program_break(text, hard_limit):
+    """Choose a readable, quote-aware break no later than hard_limit."""
+    commas = []
+    spaces = []
+    operators = []
+    depth = 0
+    quote = ""
+    escaped = False
+    i = 0
+    operator_chars = "+-*/%=<>|&^"
+    while i < min(len(text), hard_limit):
+        ch = text[i]
+        if quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        elif ch == ",":
+            commas.append((i + 1, depth))
+        elif ch.isspace():
+            spaces.append(i)
+        elif ch in operator_chars:
+            end = i + 1
+            while end < min(len(text), hard_limit) and text[end] in operator_chars:
+                end += 1
+            operators.append(end)
+            i = end - 1
+        i += 1
+
+    # A comma at the shallowest available nesting level is normally a function
+    # argument boundary. Prefer it even when it produces a short introductory
+    # line such as ``poly = scan(23, 0,``.
+    useful_commas = [(index, item_depth) for index, item_depth in commas if index >= 8]
+    if useful_commas:
+        shallowest = min(item_depth for _, item_depth in useful_commas)
+        return max(index for index, item_depth in useful_commas if item_depth == shallowest)
+
+    min_soft_break = max(4, int(hard_limit * 0.45))
+    useful_spaces = [index for index in spaces if index >= min_soft_break]
+    if useful_spaces:
+        return max(useful_spaces)
+    useful_operators = [index for index in operators if index >= min_soft_break]
+    if useful_operators:
+        return max(useful_operators)
+    return hard_limit
+
+
+def _wrap_program_line(line, max_width):
+    """Wrap one source line using measured width and source-aware breakpoints."""
     raw = _safe_pdf_text(line).expandtabs(4)
     if raw == "":
         return [""]
+    max_width = max(float(max_width), _code_string_width("W"))
     out = []
     rest = raw
-    prefix = ""
-    while len(prefix) + len(rest) > max_chars:
-        take = max(1, max_chars - len(prefix))
-        out.append(prefix + rest[:take])
-        rest = rest[take:]
-        prefix = "  " if max_chars > 2 else ""
-    out.append(prefix + rest)
-    return out
+    continuation = ""
+    while rest:
+        available = max_width - _code_string_width(continuation)
+        if available < _code_string_width("W"):
+            continuation = ""
+            available = max_width
+        if _code_string_width(rest) <= available:
+            out.append(continuation + rest)
+            break
+        hard_limit = _max_code_prefix(rest, available)
+        split_at = _preferred_program_break(rest, hard_limit)
+        split_at = max(1, min(int(split_at), len(rest)))
+        piece = rest[:split_at].rstrip()
+        if not piece:
+            piece = rest[:hard_limit]
+            split_at = hard_limit
+        out.append(continuation + piece)
+        rest = rest[split_at:].lstrip()
+        continuation = "  "
+    return out or [""]
+
+
+def _wrap_code_lines(lines, width):
+    max_width = max(
+        _code_string_width("W"),
+        float(width) - 2 * CODE_PAD_X - CODE_WRAP_GUTTER,
+    )
+    wrapped = []
+    for line in lines:
+        wrapped.extend(_wrap_program_line(line, max_width))
+    return wrapped or [""]
 
 
 def _split_program_statement_line(line):
@@ -479,10 +567,7 @@ def _program_source_display_lines(source):
 
 
 def _draw_code_block(c, x, y, width, lines, *, max_lines=None, caption=""):
-    max_chars = _code_chars_for_width(width)
-    wrapped = []
-    for line in lines:
-        wrapped.extend(_wrap_monospace_line(line, max_chars))
+    wrapped = _wrap_code_lines(lines, width)
     total = len(wrapped)
     shown = wrapped if max_lines is None else wrapped[:max_lines]
     truncated = total > len(shown)
@@ -558,10 +643,8 @@ def _appendix_start_y():
 
 
 def _wrapped_program_lines(program, width=CONTENT_W):
-    wrapped = []
-    for line in _program_source_display_lines(program.get("source") or ""):
-        wrapped.extend(_wrap_monospace_line(line, _code_chars_for_width(width)))
-    return wrapped
+    return _wrap_code_lines(
+        _program_source_display_lines(program.get("source") or ""), width)
 
 
 def _assign_appendix_pages(report):

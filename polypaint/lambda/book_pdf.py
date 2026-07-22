@@ -1,7 +1,7 @@
 """Book Maker prepare/compose lambda (book-maker-design.md §5/§6).
 
 One container-image function, two dispatch ops:
-- prepare: freeze one entry — cache the ≤3600px JPEG asset + provenance
+- prepare: freeze one entry — cache the ≤5000px JPEG asset + provenance
   snapshot under polypaint/books/{book_id}/assets/. Idempotent.
 - compose: render book.tex/cover.tex from the book doc + snapshots, run
   lualatex, upload cover.pdf/content.pdf/source.zip + out/latest.json.

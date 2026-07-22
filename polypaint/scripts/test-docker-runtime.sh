@@ -97,7 +97,7 @@ docker run --rm --platform linux/arm64 \
     done
     # vips binaries + layer CLI tools: libarchive crypto chain must resolve
     # from /opt/vipsdeps, never the container system.
-    for b in /src/raw2jpeg /src/score_raw_render /src/bilevel_merge /src/raw_to_bilevel /src/tiff_compat /src/png_export /src/dz_export /src/sheet_stitch /src/autolevels_render /opt/bin/vips /opt/bin/vipsthumbnail; do
+    for b in /src/raw2jpeg /src/score_raw_render /src/bilevel_merge /src/raw_to_bilevel /src/tiff_compat /src/png_export /src/dz_export /src/sheet_stitch /src/autolevels_render /opt/bin/vips /opt/bin/vipsthumbnail /opt/bin/vipsheader; do
         [ -f "$b" ] || { echo "FATAL: missing $b"; exit 1; }
         BAD=$(ldd "$b" 2>/dev/null | grep -E "libcrypto|liblzma|libzstd|liblz4" | grep -vc "/opt/vipsdeps" || true)
         if [ "$BAD" != "0" ]; then

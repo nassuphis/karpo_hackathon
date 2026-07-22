@@ -149,12 +149,12 @@ class TestPdfArtifactHandler(unittest.TestCase):
             {
                 "source_width": 10000,
                 "source_height": 10000,
-                "prepared_width": 3600,
-                "prepared_height": 3600,
+                "prepared_width": 5000,
+                "prepared_height": 5000,
                 "resized": True,
-                "image_max_px": 3600,
-                "prepared_path": "/tmp/pdf_source_prepared.png",
-                "prepared_format": "png",
+                "image_max_px": 5000,
+                "prepared_path": "/tmp/pdf_source_prepared.jpg",
+                "prepared_format": "jpeg",
             },
             {
                 "source_width": 1000,
@@ -163,14 +163,14 @@ class TestPdfArtifactHandler(unittest.TestCase):
                 "prepared_height": 800,
                 "resized": True,
                 "image_max_px": 800,
-                "prepared_path": "/tmp/pdf_palette_prepared.png",
-                "prepared_format": "png",
+                "prepared_path": "/tmp/pdf_palette_prepared.jpg",
+                "prepared_format": "jpeg",
             },
         ]
 
         def fake_build(image_path, output_path, title, body=None, filename=None, meta=None, palette_image_path=None, report=None):
-            self.assertTrue(str(image_path).endswith("pdf_source_prepared.png"))
-            self.assertTrue(str(palette_image_path).endswith("pdf_palette_prepared.png"))
+            self.assertTrue(str(image_path).endswith("pdf_source_prepared.jpg"))
+            self.assertTrue(str(palette_image_path).endswith("pdf_palette_prepared.jpg"))
             self.assertEqual(title, "job1 / color_src")
             self.assertIsNone(meta)
             self.assertIsNotNone(report)
@@ -237,10 +237,10 @@ class TestPdfArtifactHandler(unittest.TestCase):
         self.assertEqual(meta["times"], "3")
         self.assertEqual(meta["source_width"], "10000")
         self.assertEqual(meta["source_height"], "10000")
-        self.assertEqual(meta["prepared_width"], "3600")
-        self.assertEqual(meta["prepared_height"], "3600")
+        self.assertEqual(meta["prepared_width"], "5000")
+        self.assertEqual(meta["prepared_height"], "5000")
         self.assertEqual(meta["image_resized"], "true")
-        self.assertEqual(meta["image_max_px"], "3600")
+        self.assertEqual(meta["image_max_px"], "5000")
         self.assertEqual(meta["palette_source_width"], "1000")
         self.assertEqual(meta["palette_prepared_width"], "800")
         for key, value in meta.items():
@@ -254,7 +254,17 @@ class TestPdfArtifactHandler(unittest.TestCase):
             for call in mock_report.call_args_list
             if call.kwargs.get("result_data", {}).get("phase") == "prepare_image"
         ]
-        self.assertTrue(any(row.get("prepared_width") == 3600 for row in prepare_rows))
+        self.assertTrue(any(row.get("prepared_width") == 5000 for row in prepare_rows))
+        self.assertEqual(mock_prepare.call_args_list[0].kwargs, {
+            "max_px": 5000,
+            "quality": 92,
+            "image_format": "jpeg",
+        })
+        self.assertEqual(mock_prepare.call_args_list[1].kwargs, {
+            "max_px": 800,
+            "quality": 92,
+            "image_format": "jpeg",
+        })
 
     @patch("handler_pdf_artifact.report_status")
     @patch("handler_pdf_artifact.s3")
@@ -320,9 +330,9 @@ class TestPdfArtifactHandler(unittest.TestCase):
                 "prepared_width": 100,
                 "prepared_height": 100,
                 "resized": False,
-                "image_max_px": 3600,
-                "prepared_path": "/tmp/pdf_source_prepared.png",
-                "prepared_format": "png",
+                "image_max_px": 5000,
+                "prepared_path": "/tmp/pdf_source_prepared.jpg",
+                "prepared_format": "jpeg",
             },
             {
                 "source_width": 64,
@@ -331,13 +341,13 @@ class TestPdfArtifactHandler(unittest.TestCase):
                 "prepared_height": 64,
                 "resized": False,
                 "image_max_px": 800,
-                "prepared_path": "/tmp/pdf_palette_prepared.png",
-                "prepared_format": "png",
+                "prepared_path": "/tmp/pdf_palette_prepared.jpg",
+                "prepared_format": "jpeg",
             },
         ]
 
         def fake_build(image_path, output_path, title, body=None, filename=None, meta=None, palette_image_path=None, report=None):
-            self.assertTrue(str(palette_image_path).endswith("pdf_palette_prepared.png"))
+            self.assertTrue(str(palette_image_path).endswith("pdf_palette_prepared.jpg"))
             self.assertEqual(report["palette_label"], "pal_sidecar")
             with open(output_path, "wb") as fh:
                 fh.write(b"%PDF-1.4 fake pdf")

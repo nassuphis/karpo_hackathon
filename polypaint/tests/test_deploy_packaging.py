@@ -25,6 +25,9 @@ PREDEPLOY_SCRIPT_PATH = ROOT / "scripts" / "predeploy_check.sh"
 WORKFLOW_RENDERER_PATH = ROOT / "workflow_template_render.py"
 AWS_CLI_JSON_PATH = ROOT / "scripts" / "aws_cli_json.py"
 AWS_CLI_JSON_TEXT = AWS_CLI_JSON_PATH.read_text()
+BOOK_DOCKER_TEXT = (LAMBDA_DIR / "book_pdf.Dockerfile").read_text()
+LIBVIPS_BUILD_TEXT = (LAMBDA_DIR / "build-libvips-layer.sh").read_text()
+DOCKER_RUNTIME_TEXT = (ROOT / "scripts" / "test-docker-runtime.sh").read_text()
 
 
 def _joined_shell_lines(text):
@@ -98,6 +101,21 @@ def _local_dependencies(py_name, seen=None):
 
 
 class TestDeployPackaging(unittest.TestCase):
+    def test_book_pdf_image_carries_strict_libvips_prepare_tools(self):
+        self.assertIn(
+            "COPY --from=vipsbuild /opt/bin/vipsthumbnail /opt/bin/vipsthumbnail",
+            BOOK_DOCKER_TEXT,
+        )
+        self.assertIn(
+            "COPY --from=vipsbuild /opt/bin/vipsheader /opt/bin/vipsheader",
+            BOOK_DOCKER_TEXT,
+        )
+
+    def test_shared_libvips_layer_carries_pdf_dimension_tool(self):
+        self.assertIn("for vbin in vipsthumbnail vips vipsheader", LIBVIPS_BUILD_TEXT)
+        self.assertIn("/out/bin/vipsheader", LIBVIPS_BUILD_TEXT)
+        self.assertIn("/opt/bin/vipsheader", DOCKER_RUNTIME_TEXT)
+
     def _manifest_fn(self, key):
         return next(fn for fn in DEPLOY_MANIFEST["functions"] if fn["key"] == key)
 

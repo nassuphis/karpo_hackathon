@@ -84,6 +84,9 @@ RUN test -s /opt/book-fonts/TiemposText-Regular-Trial.ttf \
 
 # --- python deps + handler code ---
 RUN pip install --no-cache-dir "boto3>=1.34" "Pillow>=10,<12" "reportlab>=4,<5"
+# Keep additions to the libvips CLI surface below the expensive, pinned TeX
+# layers so they do not force an unrelated network rebuild of TeX Live.
+COPY --from=vipsbuild /opt/bin/vipsheader /opt/bin/vipsheader
 COPY lambda/book_tex.py lambda/book_pdf.py lambda/book_describe.py lambda/spread_pdf.py lambda/shared.py ${LAMBDA_TASK_ROOT}/
 
 CMD ["book_pdf.handler"]

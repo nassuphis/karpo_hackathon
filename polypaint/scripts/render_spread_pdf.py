@@ -120,7 +120,7 @@ def build_local_pdf(
     base = out_dir / f"{job_id}_{artifact_id}"
     image_ext = "." + image_key.rsplit(".", 1)[-1].lower()
     image_path = base.with_suffix(image_ext)
-    prepared_image_path = base.with_name(base.name + "_prepared.png")
+    prepared_image_path = base.with_name(base.name + "_prepared.jpg")
     pdf_path = base.with_suffix(".pdf")
     color_meta_path = base.with_name(base.name + "_color_meta.json")
     calc_path = base.with_name(base.name + "_calc.json")
@@ -139,15 +139,19 @@ def build_local_pdf(
     if palette_key:
         palette_ext = "." + palette_key.rsplit(".", 1)[-1].lower()
         palette_path = base.with_name(base.name + "_palette").with_suffix(palette_ext)
-        prepared_palette_path = base.with_name(base.name + "_palette_prepared.png")
+        prepared_palette_path = base.with_name(base.name + "_palette_prepared.jpg")
         _download(s3, bucket, palette_key, palette_path)
 
     image_max_px = int(os.environ.get("PDF_IMAGE_MAX_PX", PDF_IMAGE_MAX_PX))
     palette_max_px = int(os.environ.get("PDF_PALETTE_MAX_PX", PDF_PALETTE_MAX_PX))
-    source_image = prepare_pdf_image(image_path, prepared_image_path, max_px=image_max_px)
+    source_image = prepare_pdf_image(
+        image_path, prepared_image_path, max_px=image_max_px,
+        quality=92, image_format="jpeg")
     palette_image = None
     if palette_path and prepared_palette_path:
-        palette_image = prepare_pdf_image(palette_path, prepared_palette_path, max_px=palette_max_px)
+        palette_image = prepare_pdf_image(
+            palette_path, prepared_palette_path, max_px=palette_max_px,
+            quality=92, image_format="jpeg")
 
     report = build_pdf_report_model(job_id, calc, src_meta, artifact_id)
     result = build_color_spread_pdf(

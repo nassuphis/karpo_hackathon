@@ -81,15 +81,42 @@ class TestBookPdfHandler(unittest.TestCase):
         self.book_pdf = book_pdf
         self.fake = _FakeS3()
         self.statuses = []
+        self.prepare_calls = []
         self.p_s3 = patch.object(book_pdf, "s3", self.fake)
         self.p_status = patch.object(
             book_pdf, "report_status",
             lambda job, task, status, error_msg=None, result_data=None:
                 self.statuses.append((status, (result_data or {}).get("phase"))))
+        def fake_prepare(input_path, output_path, *, max_px, quality=90,
+                         image_format=None, **_kwargs):
+            from PIL import Image
+            with Image.open(input_path) as source:
+                source_w, source_h = source.size
+                prepared = source.convert("RGB")
+                prepared.thumbnail((int(max_px), int(max_px)))
+                prepared_w, prepared_h = prepared.size
+                prepared.save(output_path, format="JPEG", quality=int(quality))
+            self.prepare_calls.append({
+                "max_px": int(max_px),
+                "image_format": image_format,
+            })
+            return {
+                "source_width": source_w,
+                "source_height": source_h,
+                "prepared_width": prepared_w,
+                "prepared_height": prepared_h,
+                "resized": max(source_w, source_h) > int(max_px),
+                "image_max_px": int(max_px),
+                "prepared_path": str(output_path),
+                "prepared_format": "jpeg",
+            }
+        self.p_prepare = patch.object(book_pdf, "prepare_pdf_image", side_effect=fake_prepare)
         self.p_s3.start()
         self.p_status.start()
+        self.p_prepare.start()
         self.addCleanup(self.p_s3.stop)
         self.addCleanup(self.p_status.stop)
+        self.addCleanup(self.p_prepare.stop)
 
     def test_prepare_rejects_mismatched_source_triple(self):
         # code-review-26 F3: the page image can't come from a different
@@ -122,6 +149,10 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertEqual(snap["report"]["compute_id"], "srcjob")
         self.assertFalse(snap["report"]["has_palette"])      # no associated palette
         self.assertEqual([s for s, _ in self.statuses][-1], "done")
+        self.assertEqual(self.prepare_calls[0], {
+            "max_px": 5000,
+            "image_format": "jpeg",
+        })
 
         # second call without force: cache short-circuit, no source read needed
         self.statuses.clear()
@@ -156,6 +187,8 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertEqual(snap["report"]["palette_label"], "tri_ember")
         # the prepared palette swatch was uploaded next to the image asset
         self.assertIn("polypaint/books/test-book/assets/e1.palette.jpg", self.fake.objects)
+        self.assertEqual([call["image_format"] for call in self.prepare_calls],
+                         ["jpeg", "jpeg"])
 
     def test_prepare_skips_unsafe_associated_palette_key(self):
         # code-review-26 F13: a malformed overlay must not make Book PDF fetch

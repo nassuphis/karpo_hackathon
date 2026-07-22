@@ -4,7 +4,7 @@ Status: implemented.
 
 ## Current Implementation Contract
 
-The Render PDF artifact path creates an immutable `pdf` artifact from an existing saved Color artifact. The live backend is Lambda + Pillow + ReportLab:
+The Render PDF artifact path creates an immutable `pdf` artifact from an existing saved Color artifact. The live backend is Lambda + libvips + ReportLab:
 
 `Render PDF ColorSpread UI -> handler_dispatch.py -> handler_pdf_artifact.py -> spread_pdf.py`
 
@@ -19,14 +19,17 @@ V1 supports one PDF subtype:
 - first spread, right page: selected Color artifact image
 - optional appendix spreads: full program source listings
 
-Large source rasters are downsampled before ReportLab sees them. `spread_pdf.prepare_pdf_image(...)` inspects dimensions, enforces a deliberate Pillow decompression-bomb limit, optionally uses decoder `draft(...)`, resizes with LANCZOS, writes a prepared temporary image, and returns original/prepared dimensions.
+Large source rasters are downsampled before ReportLab sees them.
+`spread_pdf.prepare_pdf_image(...)` requires libvips: `vipsheader` reads source
+dimensions without decoding through Pillow, and `vipsthumbnail` shrinks the full
+artifact demand-wise to a bounded JPEG. The same preparation contract is used by
+Book construction and `scripts/render_spread_pdf.py`.
 
 Default preparation caps:
 
-- main image: `PDF_IMAGE_MAX_PX=3600`
+- main image: `PDF_IMAGE_MAX_PX=5000`
 - palette/reference image: `PDF_PALETTE_MAX_PX=800`
-- target DPI: `PDF_TARGET_DPI=300`
-- prepared format: lossless PNG by default
+- prepared format: JPEG q92
 
 `handler_pdf_artifact.py` reports `prepare_image` before `compose_pdf`, and the final metadata/status rows include:
 

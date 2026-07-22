@@ -2,8 +2,8 @@
 # Build libvips 8.16.1 ARM64 Lambda layer
 # Produces: libvips-layer.zip ready to publish as a Lambda layer
 #
-# Layer structure: lib/ and include/ at zip root
-# Lambda extracts into /opt/, so files end up at /opt/lib/ and /opt/include/
+# Layer structure: lib/, vipsdeps/, bin/, and include/ at zip root.
+# Lambda extracts into /opt/, so the CLI tools end up under /opt/bin/.
 set -euo pipefail
 
 VIPS_VERSION=8.16.1
@@ -80,9 +80,9 @@ docker run --rm --platform linux/arm64 \
       cp "$GLIBCONFIG" /out/lib/glib-2.0/include/
     fi
 
-    # Copy vipsthumbnail CLI binary (used for preview generation)
+    # Copy libvips CLI binaries used by handlers and PDF preparation.
     mkdir -p /out/bin
-    for vbin in vipsthumbnail vips; do
+    for vbin in vipsthumbnail vips vipsheader; do
       VBIN_PATH=$(find /staging/opt -name "$vbin" -type f 2>/dev/null | head -1)
       if [ -n "$VBIN_PATH" ]; then
         cp "$VBIN_PATH" /out/bin/
@@ -143,12 +143,12 @@ docker run --rm --platform linux/arm64 \
       fi
     done
 
-    echo "--- Patching CLI tool RPATH (vips, vipsthumbnail) ---"
+    echo "--- Patching CLI tool RPATH (vips, vipsthumbnail, vipsheader) ---"
     # The layer CLI tools ship with empty RPATH; handlers exec them with only
     # LD_LIBRARY_PATH=/opt/lib, which would resolve libarchive'"'"'s crypto
     # chain from the pinned runtime system — the CR10/CR11 coupling class.
     dnf install -y patchelf 2>&1 | tail -1
-    for tool in /out/bin/vips /out/bin/vipsthumbnail; do
+    for tool in /out/bin/vips /out/bin/vipsthumbnail /out/bin/vipsheader; do
       [ -f "$tool" ] || continue
       patchelf --remove-rpath "$tool" 2>/dev/null || true
       patchelf --force-rpath --set-rpath /opt/lib:/opt/vipsdeps "$tool"

@@ -47,7 +47,7 @@ item; full program listings belong in the exported source bundle, not the printe
 | Block | Where | What it gives us |
 |---|---|---|
 | Provenance model | `lambda/handler_pdf_artifact.py:327` `build_pdf_report_model` | Summary rows + programs[] with 3-level fallback (stored source text → chain decompiled → legacy transforms bridged via `pipeline_programs`). Works for program-era AND legacy artifacts. Feeds the verso template. |
-| Image prep | `lambda/spread_pdf.py` `prepare_pdf_image` | vipsthumbnail (`/opt/bin`) or PIL fallback, decompression-bomb guard, format/quality control. Reused verbatim by the prepare op. |
+| Image prep | `lambda/spread_pdf.py` `prepare_pdf_image` | Shared Book/ColorSpread/local contract: `vipsheader` inspects the source and `vipsthumbnail` normalizes it to a bounded JPEG before any PDF engine sees it. There is no Pillow source-decoding fallback. |
 | Print geometry + book layout | `make_polypaint_book.py:246-262` | Content 290 mm net → 293×296 mm gross (bleed 3 sides) verified. Cover: the script's own comments are arithmetically wrong — `COVER_GROSS_W = 609 + 2×10 = 629.0 mm` (comment says 629.4) and `PANEL_W = (609−11)/2 = 299 mm` (comment says ~296). Use the computed values; confirm against the WhiteWall product spec (§9). Cover title layout, black-page padding, metadata-line conventions port to the LaTeX template. |
 | Dispatch fan-out | `lambda/handler_dispatch.py:22-41,48-64` (response `{fired, total}` at :101-104) | `{target, jobs[]}` → async Event invoke per job via the `FUNCTIONS` env map; response `{fired, total}`. |
 | Progress | `lambda/shared.py:31-46` `report_status` → DDB; `/check-status` (`handler_storage.py:3945`); observer `js/10-status-results.js:1535` | Phase labels, `expected` fan-in counting, hard-stale abandon (PDF runs already have it). |
@@ -107,7 +107,7 @@ modal UX for free. Ordering is the array order — reorder = save the doc.
 
 ```
 polypaint/books/{book_id}.json                      # the document (source of truth)
-polypaint/books/{book_id}/assets/{entry_id}.jpg     # prepared image cache (≤3600px, jpeg)
+polypaint/books/{book_id}/assets/{entry_id}.jpg     # prepared image cache (≤5000px, jpeg)
 polypaint/books/{book_id}/assets/{entry_id}.provenance.json
 polypaint/books/{book_id}/out/{compile_id}/cover.pdf
 polypaint/books/{book_id}/out/{compile_id}/content.pdf
@@ -164,7 +164,7 @@ compile **freezes** what matters:
 
 This is deliberately *not* copy-on-add: sources can be hundreds of MB and add-time
 copies would double storage for entries the user may remove; prepare-time caching
-copies only the ≤3600 px derivative it actually needs (~3–7 MB each).
+copies only the ≤5000 px derivative it actually needs (~6–14 MB each).
 
 ### Deletion
 
@@ -219,7 +219,8 @@ the same image (libvips baked in) to keep one deploy artifact.
 - **op `prepare`** — payload
   `{op: "prepare", job_id, task_id, book_id, entry_id, source_job_id, source_artifact_id, source_image_key}`.
   Idempotent: if `assets/{entry_id}.jpg` + `.provenance.json` exist, report done
-  immediately. Else: download source, `prepare_pdf_image` (jpeg, q92, max 3600 px),
+  immediately. Else: download source, `prepare_pdf_image` in required-libvips mode
+  (jpeg, q92, max 5000 px),
   read `renders/{source_job_id}/calc.json` + color meta, write both asset objects.
   Phases: `load_source → prepare_image → snapshot → done`.
 - **op `compose`** — payload
@@ -233,6 +234,13 @@ the same image (libvips baked in) to keep one deploy artifact.
   (`{compile_id, cover_key, content_key, source_key, content_pages, spread_count, compiled_at}`).
   Phases: `load_assets → compose_tex → latex_cover → latex_content → upload → done`.
   A LaTeX failure uploads the `.log` tail into the error status — never a silent die.
+
+**Pipeline boundary:** PDF asset preparation and web-flipbook rasterization are
+separate operations. The prepare op shrinks each full render artifact to a 5000 px
+JPEG before LuaLaTeX builds `content.pdf`. Only after that PDF exists does the
+flipbook stage rasterize PDF pages with `pdftoppm` (currently 200 DPI) and encode
+the viewer JPEGs. `BOOK_ASSET_MAX_PX` therefore controls print-PDF inputs only; it
+must not be reused as a flipbook resolution setting.
 
 `deploy_manifest.json` entry (initial sizing, rationale in §7):
 `memory_mb: 4096`, `tmp: 2048`, `package_type: image` (schema extension — see
@@ -357,15 +365,15 @@ byte-comparable.
 
 | Quantity | Derivation | Result |
 |---|---|---|
-| Asset size | 3600² JPEG q92, dense content | ~3–7 MB |
-| 300 DPI need | 296 mm / 25.4 × 300 = 3496 px; cover panel 299 mm → 3532 px | 3600 cap ✓ (309 DPI full-bleed) |
+| Asset size | 5000² JPEG q92, dense content | ~6–14 MB |
+| Print resolution | 5000 px / (296 mm / 25.4) | ~429 DPI full-bleed; LuaLaTeX never sees the original 30K-class raster |
 | Prepare wall/entry | source download (up to a few hundred MB) + vips shrink-on-load | ~5–20 s, parallel fan-out |
 | Container image | lambda python arm64 base (~250 MB) + TinyTeX-style pinned TeX (~250–350 MB, matches user's local 334 MB TinyTeX) + libvips (~30 MB) + fonts | ~0.7–1 GB (cap 10 GB) |
 | Cold start | ~1 GB image pull, Lambda-cached after first | +1–3 s vs zip; irrelevant at these run lengths |
-| Compose /tmp peak | 36 assets ×7 MB + tex build dir + content.pdf ~250 MB + source.zip (~250 MB, JPEGs don't compress) | ~1 GB → `tmp: 2048` |
+| Compose /tmp peak | 36 assets ×14 MB + tex build dir + content.pdf up to ~500 MB + source.zip (~500 MB, JPEGs don't compress) | ~1.5 GB worst case → `tmp: 2048` |
 | Compose memory | lualatex on a 76-page image book + vips absent from this op | 4096 MB, headroom |
-| Compose wall | 250 MB S3 down + 2 lualatex passes (image-heavy but images are includes) | ~1–2 min |
-| Content PDF | 36×~5 MB JPEG pass-through + text | ~200 MB ≪ 1 GB WhiteWall cap |
+| Compose wall | 250–500 MB S3 down + 2 lualatex passes (image-heavy but images are includes) | ~1–2 min |
+| Content PDF | 36 prepared JPEGs pass-through + text | ~250–500 MB ≪ 1 GB WhiteWall cap |
 | Book doc | 36 entries × overrides | ~50–300 KB |
 
 Timeout is the global 900 s — compose fits with margin; a fully-cold 40-entry
@@ -422,7 +430,7 @@ prepare fan-out is bounded by the slowest single source, not the sum.
 5. S3-JSON book docs via the programs CRUD pattern; DDB only for run status. §4.
 6. Frontend-chained two-phase compile in V1, idempotent stages as the recovery
    story. §5.
-7. JPEG q92 / 3600 px assets, embedded pass-through. §6/§7.
+7. JPEG q92 / 5000 px assets, prepared strictly with libvips and embedded pass-through. §6/§7.
 8. Fonts are git-tracked in `polypaint/fonts/` and licensing is a non-issue: the
    project is strictly non-commercial (gifts, zero revenue), within trial /
    free-for-non-commercial terms; open-source equivalents exist as swap-ins. §6.

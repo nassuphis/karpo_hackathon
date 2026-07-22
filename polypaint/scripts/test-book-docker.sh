@@ -14,6 +14,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 cat > "$WORK/fixture.py" <<'PYEOF'
 import re
+import shutil
 import subprocess
 import sys
 
@@ -51,17 +52,21 @@ os.makedirs("/build/assets", exist_ok=True)
 # palette swatch for the report page (verifies the \includegraphics panel)
 Image.new("RGB", (1600, 1600), (60, 20, 90)).save("/build/assets/e1.palette.jpg", quality=90)
 
-# exercise the vips prepare path end to end (design uses it to resize
-# sources to <=3600px). A broken vips layer raises here rather than
-# silently degrading, so this asserts vipsthumbnail + its .so's work.
+# Exercise the strict libvips Book prepare path end to end with the exact
+# regression class: 30000^2 exceeds the old 500M Pillow source-pixel guard,
+# but must normalize to a 5000px PDF asset without decoding through Pillow.
 import spread_pdf
 big = "/build/big_source.png"
-Image.new("RGB", (5000, 5000), (12, 40, 80)).save(big)
-for i in range(3):
-    info = spread_pdf.prepare_pdf_image(big, f"/build/assets/e{i}.jpg",
-                                        max_px=3600, quality=90, image_format="jpeg")
-    assert max(info["prepared_width"], info["prepared_height"]) == 3600, info
+Image.new("1", (30000, 30000), 0).save(big, optimize=True)
+info = spread_pdf.prepare_pdf_image(
+    big, "/build/assets/e0.jpg", max_px=5000, quality=92,
+    image_format="jpeg")
+assert (info["source_width"], info["source_height"]) == (30000, 30000), info
+assert max(info["prepared_width"], info["prepared_height"]) == 5000, info
+for i in (1, 2):
+    shutil.copyfile("/build/assets/e0.jpg", f"/build/assets/e{i}.jpg")
 assert spread_pdf._vipsthumbnail_path(), "vipsthumbnail not on PATH in image"
+assert spread_pdf._vipsheader_path(), "vipsheader not on PATH in image"
 content, expected_pages = book_tex.render_content_tex(
     BOOK, PROV,
     pdf_url=book_tex.S3_PUBLIC_BASE + "books/gate/out/cmp_gate/content.pdf")
@@ -90,8 +95,8 @@ m = re.search(r"Output written on book\.pdf \((\d+) page", log)
 assert m, "no page count in log"
 assert int(m.group(1)) == expected_pages, (m.group(1), expected_pages)
 
-# flipbook rasterization (flipbook.md §5.1): poppler-utils must be in the
-# image, and a 120dpi page must come out at the geometry the viewer assumes
+# Separate post-PDF flipbook rasterization (flipbook.md §5.1): poppler-utils
+# must be in the image, and a 200dpi page must match the viewer geometry.
 import struct
 import time as _time
 t0 = _time.time()

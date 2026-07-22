@@ -435,7 +435,7 @@ def handler(event, context):
     created_at = _utc_now_iso()
     source_ext = source_image_key.rsplit(".", 1)[-1].lower()
     source_local = f"/tmp/pdf_source.{source_ext}"
-    prepared_source_local = "/tmp/pdf_source_prepared.png"
+    prepared_source_local = "/tmp/pdf_source_prepared.jpg"
     output_local = "/tmp/pdf_document.pdf"
     palette_local = None
     prepared_palette_local = None
@@ -496,14 +496,18 @@ def handler(event, context):
             source_local,
             prepared_source_local,
             max_px=int(os.getenv("PDF_IMAGE_MAX_PX", PDF_IMAGE_MAX_PX)),
+            quality=92,
+            image_format="jpeg",
         )
         palette_image_info = {}
         if palette_local:
-            prepared_palette_local = "/tmp/pdf_palette_prepared.png"
+            prepared_palette_local = "/tmp/pdf_palette_prepared.jpg"
             palette_image_info = prepare_pdf_image(
                 palette_local,
                 prepared_palette_local,
                 max_px=int(os.getenv("PDF_PALETTE_MAX_PX", PDF_PALETTE_MAX_PX)),
+                quality=92,
+                image_format="jpeg",
             )
         image_progress = {
             "source_width": source_image_info["source_width"],

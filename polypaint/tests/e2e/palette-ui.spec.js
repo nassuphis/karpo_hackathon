@@ -113,6 +113,22 @@ test.describe('Palette UI', () => {
     await expect(pageDisplay).toHaveText(/^50 \/ \d\d+$/);
     await expect(page.locator('#mic-popup-overlay')).toBeVisible();   // Enter jumped, did not pick
 
+    // drag-selecting the filter text and releasing over the backdrop must
+    // NOT close the popup (the click lands on the overlay — press-origin guard)
+    await page.fill('#mic-popup-filter', 'drag me');
+    const filterBox = await page.locator('#mic-popup-filter').boundingBox();
+    await page.mouse.move(filterBox.x + filterBox.width - 8, filterBox.y + filterBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(8, 8, { steps: 4 });   // release over the dimmed backdrop
+    await page.mouse.up();
+    await expect(page.locator('#mic-popup-overlay')).toBeVisible();
+
+    // Clear button empties the filter and returns to page 1 of the full list
+    await page.click('#mic-popup-clear');
+    await expect(page.locator('#mic-popup-filter')).toHaveValue('');
+    await expect(pageDisplay).toHaveText(/^1 \/ \d\d+$/);
+    await expect(page.locator('#mic-popup-overlay')).toBeVisible();
+
     // filtering resets to page 1 of the filtered set
     await page.fill('#mic-popup-filter', 'kandinsky points');
     await expect(pageDisplay).toHaveText(/^1 \/ \d+$/);

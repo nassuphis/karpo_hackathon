@@ -444,6 +444,10 @@ button {
 .mic-popup-status {
     color: #9aa3b2; font-size: 11px; padding: 2px 2px 6px;
 }
+.mic-popup-filter-wrap {
+    display: flex; align-items: center; gap: 8px;
+}
+.mic-popup-filter-wrap input { flex: 1 1 auto; }
 .mic-popup-selected {
     display: flex; align-items: center; gap: 10px; padding: 0 2px 6px;
 }
@@ -2837,8 +2841,9 @@ button {
             <div id="mic-popup-selected-strip" class="mic-popup-selected-strip" style="display:none"></div>
             <button id="mic-popup-copy2hex" type="button" class="btn-secondary btn-inline mic-popup-copy2hex" disabled title="Save the selected artwork palette as a named HEX custom palette">Copy to HEX</button>
         </div>
-        <div class="tri-popup-filter-wrap">
+        <div class="tri-popup-filter-wrap mic-popup-filter-wrap">
             <input id="mic-popup-filter" type="text" placeholder="Filter by artist or title">
+            <button id="mic-popup-clear" type="button" class="btn-secondary btn-inline">Clear</button>
         </div>
         <div class="mic-popup-pager">
             <button id="mic-popup-prev" type="button" class="btn-secondary btn-inline" title="Previous page">&#9664;</button>

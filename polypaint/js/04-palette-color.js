@@ -2092,6 +2092,11 @@ function _initMicPalettePopup() {
             if (entry) _micApplyEntry(_micPopupState.mode, entry);
         },
     });
+    const clearBtn = document.getElementById('mic-popup-clear');
+    if (clearBtn) clearBtn.addEventListener('click', () => {
+        _applyMicPopupFilter('');
+        if (filterEl && typeof filterEl.focus === 'function') filterEl.focus();
+    });
     if (filterEl) filterEl.addEventListener('input', (ev) => _applyMicPopupFilter(ev.target.value));
     if (filterEl) filterEl.addEventListener('keydown', (ev) => {
         if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
@@ -2128,8 +2133,16 @@ function _bindPopupShell({ overlayId, closeId, cancelId, isOpen, onClose, onEnte
     const closeBtn = closeId ? document.getElementById(closeId) : null;
     const cancelBtn = cancelId ? document.getElementById(cancelId) : null;
     if (overlay) {
+        let pressOnOverlay = false;
+        overlay.addEventListener('pointerdown', (ev) => {
+            pressOnOverlay = ev.target === overlay;
+        });
         overlay.addEventListener('click', (ev) => {
-            if (ev.target === overlay) onClose();
+            // A text-selection drag that starts in an input and releases over
+            // the backdrop fires its click on the overlay (common ancestor).
+            // Only a press that STARTED on the backdrop may close the popup.
+            if (ev.target === overlay && pressOnOverlay) onClose();
+            pressOnOverlay = false;
         });
     }
     if (closeBtn) closeBtn.addEventListener('click', onClose);

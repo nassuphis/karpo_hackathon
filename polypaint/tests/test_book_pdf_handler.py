@@ -267,7 +267,7 @@ class TestBookPdfHandler(unittest.TestCase):
             "saved_at": "2026-07-06T00:00:00Z",
             "cover_source": {"kind": "entry", "entry_id": "e1"},
         }).encode()
-        with self.assertRaisesRegex(RuntimeError, "no longer selects AllCol wall"):
+        with self.assertRaisesRegex(RuntimeError, "no longer selects wall"):
             self.book_pdf.handle_prepare_cover(_prepare_cover_params())
 
     def _seed_book(self, saved_at="2026-07-06T00:00:00Z", entries=2):

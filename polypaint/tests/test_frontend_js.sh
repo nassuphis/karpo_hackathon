@@ -3037,6 +3037,7 @@ if (!js.includes('_escapeHtml(_bookEntryLabel(entry))'))
 // the AllCol descriptor remains intact for the prepare-cover fan-out.
 const coverMatch = js.match(/function _bookCoverSource\([^)]*\) \{[\s\S]*?\n\}/);
 if (!coverMatch) { console.error('FATAL: _bookCoverSource missing'); process.exit(1); }
+vm.runInContext("const BOOK_COVER_MODES = ['entry', 'entry_palette', 'allcol_wall', 'allpal_wall', 'none'];", ctx);
 vm.runInContext(coverMatch[0], ctx);
 const oldCover = ctx._bookCoverSource({cover_entry_id: 'legacy-entry'});
 if (oldCover.kind !== 'entry' || oldCover.entry_id !== 'legacy-entry')
@@ -3044,6 +3045,12 @@ if (oldCover.kind !== 'entry' || oldCover.entry_id !== 'legacy-entry')
 const wallCover = {kind: 'allcol_wall', refresh_id: 'mosaic_x_abcdef'};
 if (ctx._bookCoverSource({cover_source: wallCover}) !== wallCover)
   { console.error('FATAL: AllCol cover descriptor must remain authoritative'); process.exit(1); }
+const palWallCover = {kind: 'allpal_wall', refresh_id: 'mosaic_x_abcdef'};
+if (ctx._bookCoverSource({cover_source: palWallCover}) !== palWallCover)
+  { console.error('FATAL: AllPal cover descriptor must remain authoritative'); process.exit(1); }
+const entryPalCover = {kind: 'entry_palette', entry_id: 'e9'};
+if (ctx._bookCoverSource({cover_source: entryPalCover}) !== entryPalCover)
+  { console.error('FATAL: entry_palette cover descriptor must remain authoritative'); process.exit(1); }
 const bgNormalizeMatch = js.match(/function _normalizeBookBackgroundColor\([^)]*\) \{[\s\S]*?\n\}/);
 const bgReadMatch = js.match(/function _bookBackgroundColor\([^)]*\) \{[\s\S]*?\n\}/);
 if (!bgNormalizeMatch || !bgReadMatch)

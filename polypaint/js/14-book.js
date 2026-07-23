@@ -94,11 +94,13 @@ function bookBackgroundHexCommitted() {
     }
 }
 
+const BOOK_COVER_MODES = ['entry', 'entry_palette', 'allcol_wall', 'allpal_wall', 'none'];
+
 function _bookCoverSource(doc) {
     const source = doc && doc.cover_source;
     if (source && typeof source === 'object') {
         const kind = String(source.kind || 'none');
-        if (kind === 'entry' || kind === 'allcol_wall' || kind === 'none') return source;
+        if (BOOK_COVER_MODES.includes(kind)) return source;
     }
     const entryId = String(doc && doc.cover_entry_id || '');
     return entryId ? {kind: 'entry', entry_id: entryId} : {kind: 'none'};
@@ -128,8 +130,9 @@ async function _bookLoadActive() {
     try {
         const resp = await lambdaPost('storage', { id: _bookState.activeId }, '/fetch-book');
         _bookState.doc = resp.book;
-        _bookState.coverSourceMode = _bookCoverSource(resp.book).kind === 'allcol_wall'
-            ? 'allcol_wall' : 'entry';
+        const loadedKind = _bookCoverSource(resp.book).kind;
+        _bookState.coverSourceMode = BOOK_COVER_MODES.includes(loadedKind) && loadedKind !== 'none'
+            ? loadedKind : 'entry';
         _bookState.latestOutput = resp.latest_output || null;
     } catch (e) {
         _bookStatus(`fetch-book: ${e.message}`, true);
@@ -341,28 +344,34 @@ function _renderBookTab() {
     // Cover sub-tab: the source is either one content entry or a Book-owned
     // snapshot of the current AllCol flat wall.
     const coverSource = _bookCoverSource(doc);
-    const coverEntry = doc && coverSource.kind === 'entry'
+    const coverIsWall = coverSource.kind === 'allcol_wall' || coverSource.kind === 'allpal_wall';
+    const coverWallLabel = coverSource.kind === 'allpal_wall' ? 'AllPal' : 'AllCol';
+    const coverEntry = doc && (coverSource.kind === 'entry' || coverSource.kind === 'entry_palette')
         ? (doc.entries || []).find(e => e.entry_id === coverSource.entry_id)
         : null;
     const coverPrev = document.getElementById('book-cover-preview');
     if (coverPrev) {
         const hyd = coverEntry ? (_bookState.hydrated[coverEntry.entry_id] || {}) : {};
-        const wallPreview = coverSource.kind === 'allcol_wall' && coverSource.preview_key
+        const wallPreview = coverIsWall && coverSource.preview_key
             ? _bookPublicUrl(coverSource.preview_key) : '';
+        const entryPreview = coverSource.kind === 'entry_palette'
+            ? (hyd.palette_url || '') : (hyd.preview_url || '');
         coverPrev.innerHTML = wallPreview
             ? `<img src="${_escapeHtml(wallPreview)}" style="width:100%;height:100%;object-fit:contain">`
-            : (coverEntry && hyd.preview_url
-                ? `<img src="${_escapeHtml(hyd.preview_url)}" style="width:100%;height:100%;object-fit:contain">`
-                : (coverSource.kind === 'allcol_wall'
-                    ? 'AllCol wall selected.<br>Preview unavailable.'
+            : (coverEntry && entryPreview
+                ? `<img src="${_escapeHtml(entryPreview)}" style="width:100%;height:100%;object-fit:contain">`
+                : (coverIsWall
+                    ? `${coverWallLabel} wall selected.<br>Preview unavailable.`
                     : (coverEntry ? '…' : 'No cover selected.')));
     }
     const hint = document.getElementById('book-cover-hint');
     if (hint) {
-        hint.textContent = coverSource.kind === 'allcol_wall'
-            ? `Cover: AllCol wall ${coverSource.refresh_id || ''} · ${Number(coverSource.width || 0).toLocaleString()}×${Number(coverSource.height || 0).toLocaleString()} px · Book scales it to 5K with libvips.`
+        hint.textContent = coverIsWall
+            ? `Cover: ${coverWallLabel} wall ${coverSource.refresh_id || ''} · ${Number(coverSource.width || 0).toLocaleString()}×${Number(coverSource.height || 0).toLocaleString()} px · Book scales it to 5K with libvips.`
             : (coverEntry
-                ? `Cover: ${_bookEntryLabel(coverEntry)}`
+                ? (coverSource.kind === 'entry_palette'
+                    ? `Cover: palette of ${_bookEntryLabel(coverEntry)}`
+                    : `Cover: ${_bookEntryLabel(coverEntry)}`)
                 : (doc ? 'No cover chosen — the cover page will be typographic.' : ''));
     }
     const sourceMode = document.getElementById('book-cover-source-mode');
@@ -675,7 +684,7 @@ function bookSetCover() {
 
 function bookCoverSourceModeChanged() {
     const mode = String(document.getElementById('book-cover-source-mode')?.value || 'entry');
-    _bookState.coverSourceMode = mode === 'allcol_wall' ? 'allcol_wall' : 'entry';
+    _bookState.coverSourceMode = BOOK_COVER_MODES.includes(mode) ? mode : 'entry';
     _renderBookTab();
 }
 
@@ -687,30 +696,57 @@ async function bookApplyCoverSource() {
         bookSetCover();
         return;
     }
-    if (mode !== 'allcol_wall') {
+    if (mode === 'entry_palette') {
+        const entry = _bookFirstSelectedEntry();
+        if (!entry) { _bookStatus('Select a Content row first, then Use Source', true); return; }
+        const hyd = _bookState.hydrated[entry.entry_id] || {};
+        if (!String(hyd.palette_preview_key || '').trim() && !hyd.palette_url) {
+            _bookStatus(`"${_bookEntryLabel(entry)}" has no associated palette — pick another row`, true);
+            return;
+        }
+        doc.cover_entry_id = '';
+        doc.cover_source = {kind: 'entry_palette', entry_id: entry.entry_id};
+        _bookState.coverSourceMode = 'entry_palette';
+        _bookState.dirty = true;
+        _renderBookTab();
+        _bookStatus(`Palette of "${_bookEntryLabel(entry)}" selected as cover. Save to keep it.`);
+        return;
+    }
+    if (mode === 'none') {
+        doc.cover_entry_id = '';
+        doc.cover_source = {kind: 'none'};
+        _bookState.coverSourceMode = 'none';
+        _bookState.dirty = true;
+        _renderBookTab();
+        _bookStatus('No cover image — the cover page will be typographic. Save to keep it.');
+        return;
+    }
+    if (mode !== 'allcol_wall' && mode !== 'allpal_wall') {
         _bookStatus(`Unknown cover source: ${mode}`, true);
         return;
     }
+    const wall = mode === 'allpal_wall' ? 'allpal' : 'allcol';
+    const wallLabel = mode === 'allpal_wall' ? 'AllPal' : 'AllCol';
     _bookBtnBusy('btn-book-apply-cover', true, 'Copying…');
     try {
         const resp = await lambdaPost(
             'storage',
-            {book_id: _bookState.activeId},
+            {book_id: _bookState.activeId, wall},
             '/snapshot-book-cover',
         );
-        if (!resp.cover_source || resp.cover_source.kind !== 'allcol_wall') {
-            throw new Error('snapshot-book-cover returned no AllCol cover source');
+        if (!resp.cover_source || resp.cover_source.kind !== mode) {
+            throw new Error(`snapshot-book-cover returned no ${wallLabel} cover source`);
         }
         doc.cover_entry_id = '';
         doc.cover_source = resp.cover_source;
-        _bookState.coverSourceMode = 'allcol_wall';
+        _bookState.coverSourceMode = mode;
         _bookState.dirty = true;
         _renderBookTab();
         _bookStatus(
-            `AllCol wall ${resp.cover_source.refresh_id} selected as cover. Save to keep it; Compile scales it to 5K.`,
+            `${wallLabel} wall ${resp.cover_source.refresh_id} selected as cover. Save to keep it; Compile scales it to 5K.`,
         );
     } catch (e) {
-        _bookStatus(`AllCol cover failed: ${e.message}`, true);
+        _bookStatus(`${wallLabel} cover failed: ${e.message}`, true);
     } finally {
         _bookBtnBusy('btn-book-apply-cover', false);
     }
@@ -881,11 +917,11 @@ async function bookCompile() {
             force: true,   // Compile = fresh: re-prepare every entry, never reuse stale assets
         }));
         const coverSource = _bookCoverSource(_bookState.doc);
-        if (coverSource.kind === 'allcol_wall') {
+        if (coverSource.kind === 'allcol_wall' || coverSource.kind === 'allpal_wall') {
             jobs.push({
                 op: 'prepare_cover',
                 job_id: jobId,
-                task_id: `bookprep_${runId}_allcol_cover`,
+                task_id: `bookprep_${runId}_wall_cover`,
                 book_id: _bookState.activeId,
                 cover_refresh_id: coverSource.refresh_id,
                 expected_saved_at: _bookState.doc.saved_at,

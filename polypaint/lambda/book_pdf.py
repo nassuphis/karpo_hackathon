@@ -51,15 +51,27 @@ def _asset_keys(book_id, entry_id):
     return f"{base}.jpg", f"{base}.provenance.json"
 
 
+def _wall_cover_slug(cover_kind):
+    return "allpal" if cover_kind == "allpal_wall" else "allcol"
+
+
+def _wall_cover_source_key(book_id, cover_kind, refresh_id):
+    return f"{BOOKS_PREFIX}{book_id}/cover/{_wall_cover_slug(cover_kind)}-{refresh_id}.jpg"
+
+
+def _wall_cover_asset_keys(book_id, cover_kind, refresh_id):
+    # Keep wall covers in a subdirectory that entry_id (which cannot contain
+    # '/') can never alias.
+    base = f"{BOOKS_PREFIX}{book_id}/assets/cover/{_wall_cover_slug(cover_kind)}-{refresh_id}"
+    return f"{base}.jpg", f"{base}.provenance.json"
+
+
 def _allcol_cover_source_key(book_id, refresh_id):
-    return f"{BOOKS_PREFIX}{book_id}/cover/allcol-{refresh_id}.jpg"
+    return _wall_cover_source_key(book_id, "allcol_wall", refresh_id)
 
 
 def _allcol_cover_asset_keys(book_id, refresh_id):
-    # Keep wall covers in a subdirectory that entry_id (which cannot contain
-    # '/') can never alias.
-    base = f"{BOOKS_PREFIX}{book_id}/assets/cover/allcol-{refresh_id}"
-    return f"{base}.jpg", f"{base}.provenance.json"
+    return _wall_cover_asset_keys(book_id, "allcol_wall", refresh_id)
 
 
 def _key_exists(key):
@@ -700,18 +712,19 @@ def handle_prepare_cover(params):
         raise RuntimeError(
             f"book {book_id} was saved mid-cover-prepare; recompile to use the new cover")
     cover_source = book.get("cover_source") or {}
+    cover_kind = str((cover_source or {}).get("kind") or "") if isinstance(cover_source, dict) else ""
     if (not isinstance(cover_source, dict)
-            or cover_source.get("kind") != "allcol_wall"
+            or cover_kind not in ("allcol_wall", "allpal_wall")
             or str(cover_source.get("refresh_id") or "") != refresh_id):
         raise RuntimeError(
-            f"book {book_id} no longer selects AllCol wall {refresh_id}; recompile")
+            f"book {book_id} no longer selects wall {refresh_id}; recompile")
     source_image_key = str(cover_source.get("image_key") or "")
-    expected_source_key = _allcol_cover_source_key(book_id, refresh_id)
+    expected_source_key = _wall_cover_source_key(book_id, cover_kind, refresh_id)
     if source_image_key != expected_source_key:
         raise ValueError(
             f"book cover source must be the frozen Book wall {expected_source_key!r}")
 
-    asset_key, prov_key = _allcol_cover_asset_keys(book_id, refresh_id)
+    asset_key, prov_key = _wall_cover_asset_keys(book_id, cover_kind, refresh_id)
     if not params.get("force") and _key_exists(asset_key) and _key_exists(prov_key):
         _phase(job_id, task_id, "done", "done", "Cached cover", **progress, cached=True)
         return ok_response({"book_id": book_id, "cover_refresh_id": refresh_id, "cached": True})
@@ -735,7 +748,7 @@ def handle_prepare_cover(params):
         )
         snapshot = {
             "version": 1,
-            "kind": "allcol_wall",
+            "kind": cover_kind,
             "source_image_key": source_image_key,
             "refresh_id": refresh_id,
             "prepared": {k: info[k] for k in (
@@ -844,19 +857,33 @@ def handle_compose(params, latex_runner=_run_lualatex):
                                f"{', '.join(missing[:10])} — run prepare first")
         cover_rel = None
         cover_source = book.get("cover_source") or {}
-        if isinstance(cover_source, dict) and cover_source.get("kind") == "allcol_wall":
+        cover_kind = str(cover_source.get("kind") or "") if isinstance(cover_source, dict) else ""
+        if cover_kind in ("allcol_wall", "allpal_wall"):
+            wall_label = "AllPal" if cover_kind == "allpal_wall" else "AllCol"
             refresh_id = _safe_id(cover_source.get("refresh_id"), "cover refresh_id")
-            expected_source_key = _allcol_cover_source_key(book_id, refresh_id)
+            expected_source_key = _wall_cover_source_key(book_id, cover_kind, refresh_id)
             if str(cover_source.get("image_key") or "") != expected_source_key:
-                raise RuntimeError(f"book {book_id} has an invalid frozen AllCol cover source")
-            cover_asset_key, _ = _allcol_cover_asset_keys(book_id, refresh_id)
+                raise RuntimeError(f"book {book_id} has an invalid frozen {wall_label} cover source")
+            cover_asset_key, _ = _wall_cover_asset_keys(book_id, cover_kind, refresh_id)
             cover_rel = f"{book_tex.ASSET_DIR}/cover.jpg"
             try:
                 s3.download_file(BUCKET, cover_asset_key, os.path.join(build_dir, cover_rel))
             except Exception as exc:
                 raise RuntimeError(
-                    f"book {book_id} is missing its prepared AllCol cover for {refresh_id} — "
+                    f"book {book_id} is missing its prepared {wall_label} cover for {refresh_id} — "
                     "run prepare first") from exc
+        elif cover_kind == "entry_palette":
+            entry_id = str(cover_source.get("entry_id") or "")
+            report = (provenance.get(entry_id) or {}).get("report") or {}
+            if entry_id not in provenance:
+                raise RuntimeError(
+                    f"book {book_id} cover entry {entry_id} is not in the book; re-select the cover")
+            if not report.get("has_palette"):
+                raise RuntimeError(
+                    f"book {book_id} cover entry {entry_id} has no associated palette — "
+                    "pick another cover source")
+            # the palette page-asset is already prepared (full resolution)
+            cover_rel = f"{book_tex.ASSET_DIR}/{entry_id}.palette.jpg"
         else:
             cover_id = str(book.get("cover_entry_id") or "")
             if cover_id and cover_id in provenance:
@@ -899,6 +926,12 @@ def handle_compose(params, latex_runner=_run_lualatex):
             for entry_id in provenance:
                 zf.write(os.path.join(build_dir, book_tex.ASSET_DIR, f"{entry_id}.jpg"),
                          f"{book_tex.ASSET_DIR}/{entry_id}.jpg")
+                # the verso squares reference the palette jpgs — without them
+                # the shipped source zip never compiled for palette-bearing
+                # books (pre-existing gap; entry_palette covers need it too)
+                palette_asset = os.path.join(build_dir, book_tex.ASSET_DIR, f"{entry_id}.palette.jpg")
+                if os.path.exists(palette_asset):
+                    zf.write(palette_asset, f"{book_tex.ASSET_DIR}/{entry_id}.palette.jpg")
             if cover_rel == f"{book_tex.ASSET_DIR}/cover.jpg":
                 zf.write(os.path.join(build_dir, cover_rel), cover_rel)
             # Bundle ONLY the fonts the template actually references, and never

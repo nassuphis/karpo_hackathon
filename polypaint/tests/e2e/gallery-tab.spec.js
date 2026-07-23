@@ -468,6 +468,43 @@ test('book Layout tab: palette-primary radio marks dirty and saves the field', a
   expect(saves[0].book.spread_layout).toBe('palette_primary');
 });
 
+test('book Cover tab: palette-from-content and None cover sources', async ({ page }) => {
+  await bookSetup(page);
+  // hydration stub: e2 has an associated palette, e1 does not
+  await page.evaluate(() => {
+    _bookState.hydrated.e2 = { preview_url: '', missing: false,
+      palette_preview_key: 'renders/job_e2/palettes/p2/preview.png',
+      palette_url: 'https://polypaint.s3.us-east-1.amazonaws.com/renders/job_e2/palettes/p2/preview.png' };
+    _renderBookTab();
+  });
+  await page.click('#book-subtab-cover');
+  await page.selectOption('#book-cover-source-mode', 'entry_palette');
+  // no selection -> clear error, no state change
+  await page.click('#btn-book-apply-cover');
+  await expect(page.locator('#book-status')).toContainText('Select a Content row first');
+  // select a palette-less row -> refuses with the row named
+  await page.click('#book-subtab-content');
+  await page.locator('.book-entry-row[data-entry="e1"]').click();
+  await page.click('#book-subtab-cover');
+  await page.click('#btn-book-apply-cover');
+  await expect(page.locator('#book-status')).toContainText('has no associated palette');
+  // select the palette-bearing row -> cover_source lands + dirty
+  await page.click('#book-subtab-content');
+  await page.locator('.book-entry-row[data-entry="e1"]').click();   // deselect
+  await page.locator('.book-entry-row[data-entry="e2"]').click();
+  await page.click('#book-subtab-cover');
+  await page.click('#btn-book-apply-cover');
+  expect(await page.evaluate(() => _bookState.doc.cover_source)).toEqual(
+    { kind: 'entry_palette', entry_id: 'e2' });
+  expect(await page.evaluate(() => _bookState.dirty)).toBe(true);
+  await expect(page.locator('#book-cover-hint')).toContainText('palette of');
+  // None reverts to a typographic cover
+  await page.selectOption('#book-cover-source-mode', 'none');
+  await page.click('#btn-book-apply-cover');
+  expect(await page.evaluate(() => _bookState.doc.cover_source)).toEqual({ kind: 'none' });
+  await expect(page.locator('#book-cover-hint')).toContainText('typographic');
+});
+
 test('book rows: dragging reorders — single row and whole selected group', async ({ page }) => {
   await bookSetup(page);
   // single drag: e4 to the very top (no selection involved)

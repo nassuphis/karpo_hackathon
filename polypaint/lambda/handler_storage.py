@@ -2456,6 +2456,37 @@ def _book_allcol_cover_preview_key(book_id, refresh_id):
     return f"{BOOKS_PREFIX}{book_id}/cover/allcol-{refresh_id}-preview.jpg"
 
 
+def _book_allpal_cover_source_key(book_id, refresh_id):
+    return f"{BOOKS_PREFIX}{book_id}/cover/allpal-{refresh_id}.jpg"
+
+
+def _book_allpal_cover_preview_key(book_id, refresh_id):
+    return f"{BOOKS_PREFIX}{book_id}/cover/allpal-{refresh_id}-preview.jpg"
+
+
+# Both wall families share one snapshot/validate pipeline; this map is the
+# single source of the per-wall differences.
+BOOK_WALL_COVERS = {
+    "allcol": {
+        "cover_kind": "allcol_wall",
+        "mosaic_kind": "color",
+        "wall_prefix": "renders/_index/color_mosaic/",
+        "label": "AllCol",
+        "source_key": _book_allcol_cover_source_key,
+        "preview_key": _book_allcol_cover_preview_key,
+    },
+    "allpal": {
+        "cover_kind": "allpal_wall",
+        "mosaic_kind": "palette",
+        "wall_prefix": "renders/_index/palette_mosaic/",
+        "label": "AllPal",
+        "source_key": _book_allpal_cover_source_key,
+        "preview_key": _book_allpal_cover_preview_key,
+    },
+}
+BOOK_WALL_BY_COVER_KIND = {cfg["cover_kind"]: cfg for cfg in BOOK_WALL_COVERS.values()}
+
+
 def _validate_book_cover_source(raw_source, *, book_id, entry_ids, legacy_cover=""):
     """Normalize the additive cover-source union while preserving v1 books."""
     if raw_source is None:
@@ -2478,36 +2509,51 @@ def _validate_book_cover_source(raw_source, *, book_id, entry_ids, legacy_cover=
             "kind": "entry",
             "entry_id": entry_id,
         }, entry_id
-    if kind != "allcol_wall":
-        raise ValueError("book cover_source kind must be none, entry, or allcol_wall")
+    if kind == "entry_palette":
+        # cover = the ASSOCIATED PALETTE image of one content entry; the
+        # legacy cover_entry_id stays empty (it means "entry IMAGE cover")
+        entry_id = str(raw_source.get("entry_id") or "").strip()
+        if not entry_id or entry_id not in entry_ids:
+            raise ValueError("book entry_palette cover_source does not match any entry")
+        return {
+            "version": BOOK_COVER_SOURCE_VERSION,
+            "kind": "entry_palette",
+            "entry_id": entry_id,
+        }, ""
+    if kind not in BOOK_WALL_BY_COVER_KIND:
+        raise ValueError(
+            "book cover_source kind must be none, entry, entry_palette, "
+            "allcol_wall, or allpal_wall")
 
+    cfg = BOOK_WALL_BY_COVER_KIND[kind]
+    label = cfg["label"]
     refresh_id = str(raw_source.get("refresh_id") or "").strip()
     if not _BOOK_WALL_REFRESH_RE.fullmatch(refresh_id):
-        raise ValueError("book AllCol cover refresh_id is invalid")
+        raise ValueError(f"book {label} cover refresh_id is invalid")
     image_key = str(raw_source.get("image_key") or "").strip()
-    expected_image_key = _book_allcol_cover_source_key(book_id, refresh_id)
+    expected_image_key = cfg["source_key"](book_id, refresh_id)
     if image_key != expected_image_key:
         raise ValueError(
-            f"book AllCol cover image_key must be the frozen book source {expected_image_key!r}")
+            f"book {label} cover image_key must be the frozen book source {expected_image_key!r}")
     preview_key = str(raw_source.get("preview_key") or "").strip()
-    expected_preview_key = _book_allcol_cover_preview_key(book_id, refresh_id)
+    expected_preview_key = cfg["preview_key"](book_id, refresh_id)
     if preview_key and preview_key != expected_preview_key:
         raise ValueError(
-            f"book AllCol cover preview_key must be {expected_preview_key!r}")
+            f"book {label} cover preview_key must be {expected_preview_key!r}")
     try:
         width = int(raw_source.get("width") or 0)
         height = int(raw_source.get("height") or 0)
     except (TypeError, ValueError):
-        raise ValueError("book AllCol cover dimensions must be integers")
+        raise ValueError(f"book {label} cover dimensions must be integers")
     if width <= 0 or height <= 0:
-        raise ValueError("book AllCol cover dimensions must be positive")
+        raise ValueError(f"book {label} cover dimensions must be positive")
     selected_at = str(raw_source.get("selected_at") or "")
     if (len(selected_at) > 64 or any(ch in "\r\n\t" for ch in selected_at)
             or not all(ch.isprintable() for ch in selected_at)):
-        raise ValueError("book AllCol cover selected_at must be printable single-line text")
+        raise ValueError(f"book {label} cover selected_at must be printable single-line text")
     return {
         "version": BOOK_COVER_SOURCE_VERSION,
-        "kind": "allcol_wall",
+        "kind": kind,
         "refresh_id": refresh_id,
         "image_key": image_key,
         "preview_key": preview_key,
@@ -2783,43 +2829,48 @@ def handle_snapshot_book_cover(event):
     book_id = str(params.get("book_id") or "").strip()
     if not re.fullmatch(r"[a-z0-9-]{1,64}", book_id):
         raise ValueError("snapshot-book-cover requires a valid book_id")
+    wall = str(params.get("wall") or "allcol").strip().lower()
+    if wall not in BOOK_WALL_COVERS:
+        raise ValueError("snapshot-book-cover wall must be allcol or allpal")
+    cfg = BOOK_WALL_COVERS[wall]
+    label = cfg["label"]
     _read_book_object(book_id)  # fail before copying into a nonexistent book
 
-    status = _read_mosaic_status("color", consistent=True)
+    status = _read_mosaic_status(cfg["mosaic_kind"], consistent=True)
     refresh_id = str(status.get("wall_refresh_id") or "").strip()
     wall_json_key = str(status.get("wall_json_key") or "").strip()
     if (status.get("state") != "ready" or status.get("wall_state") != "ready"
             or not _BOOK_WALL_REFRESH_RE.fullmatch(refresh_id)):
         raise ValueError(
-            "Current AllCol wall is not ready; open AllCol, Refresh, and wait for the wall pyramid")
-    wall_prefix = f"renders/_index/color_mosaic/{refresh_id}/"
+            f"Current {label} wall is not ready; open {label}, Refresh, and wait for the wall pyramid")
+    wall_prefix = f"{cfg['wall_prefix']}{refresh_id}/"
     expected_wall_json_key = wall_prefix + "wall.json"
     if wall_json_key != expected_wall_json_key:
-        raise ValueError("Current AllCol wall metadata does not match its refresh")
+        raise ValueError(f"Current {label} wall metadata does not match its refresh")
 
     wall_obj = s3.get_object(Bucket=BUCKET, Key=wall_json_key)
     wall = json.loads(wall_obj["Body"].read() or b"{}")
     if (not isinstance(wall, dict)
             or wall.get("manifest_type") != "artifact_wall_pyramid"
-            or wall.get("kind") != "color"
+            or wall.get("kind") != cfg["mosaic_kind"]
             or str(wall.get("refresh_id") or "") != refresh_id):
-        raise ValueError("Current AllCol wall metadata is malformed")
+        raise ValueError(f"Current {label} wall metadata is malformed")
     source_key = str(wall.get("image_key") or "").strip()
     expected_source_key = wall_prefix + "wall.jpg"
     if not wall.get("flat_jpeg") or source_key != expected_source_key:
         raise ValueError(
-            "Current AllCol wall has no flat JPEG (it exceeds the JPEG dimension limit); "
+            f"Current {label} wall has no flat JPEG (it exceeds the JPEG dimension limit); "
             "this wall cannot be used as a Book cover source")
     try:
         width = int(wall.get("width") or 0)
         height = int(wall.get("height") or 0)
     except (TypeError, ValueError):
-        raise ValueError("Current AllCol wall dimensions are malformed")
+        raise ValueError(f"Current {label} wall dimensions are malformed")
     if width <= 0 or height <= 0:
-        raise ValueError("Current AllCol wall dimensions are missing")
+        raise ValueError(f"Current {label} wall dimensions are missing")
 
     selected_at = _utc_now_iso()
-    frozen_key = _book_allcol_cover_source_key(book_id, refresh_id)
+    frozen_key = cfg["source_key"](book_id, refresh_id)
     try:
         s3.copy_object(
             Bucket=BUCKET,
@@ -2829,7 +2880,7 @@ def handle_snapshot_book_cover(event):
             CacheControl=CACHE_IMMUTABLE,
             MetadataDirective="REPLACE",
             Metadata={
-                "source_kind": "allcol_wall",
+                "source_kind": cfg["cover_kind"],
                 "source_refresh_id": refresh_id,
                 "source_width": str(width),
                 "source_height": str(height),
@@ -2837,7 +2888,7 @@ def handle_snapshot_book_cover(event):
         )
     except Exception as exc:
         if _is_missing_s3_error(exc):
-            raise ValueError("Current AllCol wall image disappeared; refresh AllCol and retry")
+            raise ValueError(f"Current {label} wall image disappeared; refresh {label} and retry")
         raise
 
     # Level <= 8 is a one-tile overview of the whole DZI (tile size 256).
@@ -2845,7 +2896,7 @@ def handle_snapshot_book_cover(event):
     max_level = int(math.ceil(math.log2(max(width, height)))) if max(width, height) > 1 else 0
     preview_level = min(8, max_level)
     wall_preview_key = wall_prefix + f"wall_files/{preview_level}/0_0.jpg"
-    frozen_preview_key = _book_allcol_cover_preview_key(book_id, refresh_id)
+    frozen_preview_key = cfg["preview_key"](book_id, refresh_id)
     preview_key = ""
     try:
         s3.copy_object(
@@ -2855,15 +2906,15 @@ def handle_snapshot_book_cover(event):
             ContentType="image/jpeg",
             CacheControl=CACHE_IMMUTABLE,
             MetadataDirective="REPLACE",
-            Metadata={"source_kind": "allcol_wall_preview", "source_refresh_id": refresh_id},
+            Metadata={"source_kind": cfg["cover_kind"] + "_preview", "source_refresh_id": refresh_id},
         )
         preview_key = frozen_preview_key
     except Exception as exc:
-        print(f"Book AllCol cover preview copy skipped for {book_id}/{refresh_id}: {exc}")
+        print(f"Book {label} cover preview copy skipped for {book_id}/{refresh_id}: {exc}")
 
     cover_source = {
         "version": BOOK_COVER_SOURCE_VERSION,
-        "kind": "allcol_wall",
+        "kind": cfg["cover_kind"],
         "refresh_id": refresh_id,
         "image_key": frozen_key,
         "preview_key": preview_key,

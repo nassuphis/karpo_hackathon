@@ -2401,7 +2401,10 @@ button {
                 <div style="display:flex; gap:8px; align-items:center; margin-bottom:5px">
                     <select id="book-cover-source-mode" onchange="bookCoverSourceModeChanged()" style="flex:1; min-width:180px">
                         <option value="entry">Selected image from Content</option>
+                        <option value="entry_palette">Selected palette from Content</option>
                         <option value="allcol_wall">Current AllCol wall</option>
+                        <option value="allpal_wall">Current AllPal wall</option>
+                        <option value="none">None (typographic cover)</option>
                     </select>
                     <button id="btn-book-apply-cover" type="button" class="btn-secondary" onclick="void bookApplyCoverSource()" style="padding:5px 12px">Use Source</button>
                 </div>

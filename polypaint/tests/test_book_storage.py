@@ -259,6 +259,77 @@ class TestBookStorage(unittest.TestCase):
         self.assertEqual(saved_book["cover_entry_id"], "")
 
     @patch("handler_storage.s3")
+    def test_snapshot_allpal_wall_and_entry_palette_cover_sources(self, mock_s3):
+        import handler_storage
+
+        fake = _FakeS3()
+        _patch_s3(mock_s3, fake)
+        book_id = "pal-book"
+        refresh_id = "mosaic_20260722T130000Z_beefcaf1"
+        wall_prefix = f"renders/_index/palette_mosaic/{refresh_id}/"
+        fake.put_object(
+            Key=f"polypaint/books/{book_id}.json",
+            Body=json.dumps({
+                "book_kind": "book", "id": book_id, "name": "Pal Book", "entries": [],
+            }),
+        )
+        fake.objects[wall_prefix + "wall.jpg"] = b"pal-wall"
+        fake.objects[wall_prefix + "wall_files/8/0_0.jpg"] = b"pal-overview"
+        fake.objects[wall_prefix + "wall.json"] = json.dumps({
+            "manifest_type": "artifact_wall_pyramid",
+            "kind": "palette",
+            "refresh_id": refresh_id,
+            "image_key": wall_prefix + "wall.jpg",
+            "dzi_key": wall_prefix + "wall.dzi",
+            "flat_jpeg": True,
+            "width": 16384,
+            "height": 16384,
+        }).encode()
+        status = {
+            "state": "ready",
+            "wall_state": "ready",
+            "wall_refresh_id": refresh_id,
+            "wall_json_key": wall_prefix + "wall.json",
+        }
+        with patch.object(handler_storage, "_read_mosaic_status", return_value=status) as mock_status:
+            resp = handler_storage.handler(
+                _event("/snapshot-book-cover", {"book_id": book_id, "wall": "allpal"}), None)
+        mock_status.assert_called_once_with("palette", consistent=True)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        source = json.loads(resp["body"])["cover_source"]
+        frozen_key = f"polypaint/books/{book_id}/cover/allpal-{refresh_id}.jpg"
+        self.assertEqual(source["kind"], "allpal_wall")
+        self.assertEqual(source["image_key"], frozen_key)
+        self.assertEqual(
+            fake.objects[frozen_key], b"pal-wall",
+            "the AllPal cover must be a frozen byte copy of the wall")
+        # the frozen source round-trips through save-book validation
+        resp = handler_storage.handler(_event("/save-book", {"book": {
+            "name": "Pal Book", "id": book_id, "cover_source": source,
+        }}), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        saved = json.loads(resp["body"])["book"]
+        self.assertEqual(saved["cover_source"]["kind"], "allpal_wall")
+        self.assertEqual(saved["cover_entry_id"], "")
+
+        # entry_palette: valid entry round-trips with empty legacy cover id;
+        # unknown entry rejects
+        resp = handler_storage.handler(_event("/save-book", {"book": {
+            "name": "Pal Book", "id": book_id, "entries": [_entry(1, entry_id="front1")],
+            "cover_source": {"kind": "entry_palette", "entry_id": "front1"},
+        }}), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        saved = json.loads(resp["body"])["book"]
+        self.assertEqual(saved["cover_source"]["kind"], "entry_palette")
+        self.assertEqual(saved["cover_entry_id"], "")
+        resp = handler_storage.handler(_event("/save-book", {"book": {
+            "name": "Pal Book", "id": book_id, "entries": [_entry(1, entry_id="front1")],
+            "cover_source": {"kind": "entry_palette", "entry_id": "ghost"},
+        }}), None)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("entry_palette", json.loads(resp["body"])["error"])
+
+    @patch("handler_storage.s3")
     def test_snapshot_book_cover_rejects_wall_without_flat_jpeg(self, mock_s3):
         import handler_storage
 

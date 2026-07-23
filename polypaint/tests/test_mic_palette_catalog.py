@@ -33,11 +33,9 @@ def _stops_from_packed(packed):
 
 
 def _wire_from_packed(packed):
-    """Mirror of js _micPaletteWire: single-color palettes duplicate."""
-    stops = _stops_from_packed(packed)
-    if len(stops) == 1:
-        stops = stops * 2
-    return "custom:" + "-".join(stops)
+    """Mirror of js _micPaletteWire (the catalog floor is 3 stops, so the
+    js duplication branch never fires on catalog data)."""
+    return "custom:" + "-".join(_stops_from_packed(packed))
 
 
 class TestMicPaletteCatalog(unittest.TestCase):
@@ -85,15 +83,12 @@ class TestMicPaletteCatalog(unittest.TestCase):
                 normalize_palette_display_name(row["n"], wire), row["n"],
                 f"row {i} display name rejected")
 
-    def test_single_stop_palettes_exist_and_duplicate_to_valid_wire(self):
-        """The 1-color rows are the only path through the stop-duplication
-        branch — pin that they exist and produce a valid 2-stop wire."""
-        singles = [r for r in self.rows if len(r["c"]) == 6]
-        self.assertGreater(len(singles), 0, "no single-stop palettes left")
-        for row in singles:
-            wire = _wire_from_packed(row["c"])
-            self.assertRegex(wire, r"^custom:([0-9a-f]{6})-\1$")
-            self.assertTrue(is_valid_palette_name(wire))
+    def test_no_palettes_below_three_stops(self):
+        """1-2 color palettes were removed by user request (monochromes and
+        near-monochromes make no interesting image) — pin the floor so a
+        refetch can't silently reintroduce them."""
+        under = [r["n"] for r in self.rows if len(r["c"]) < 18]
+        self.assertEqual(under, [])
 
     def test_deploy_ships_the_catalog_as_frontend_asset(self):
         deploy_text = open(os.path.join(ROOT, "deploy.sh"), encoding="utf-8").read()

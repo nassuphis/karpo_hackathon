@@ -22,14 +22,14 @@ the user's call; site-level credit lives in the top-level fields and the
 picker footer. ~2.4 MB for ~20k rows):
   { schema_version: 2, fetched: "YYYY-MM-DD", origin, credit, count,
     palettes: [ { n: "Artist — Title (date)",   # display name, <= 80 chars
-                  c: "aabbcc112233..." } ] }     # 1..32 stops packed 6 chars each
+                  c: "aabbcc112233..." } ] }     # 3..32 stops packed 6 chars each
 Display names may repeat (series plates share titles); the (n, c) PAIR is
 unique. Source URLs/museum codes are parsed for dedup but not emitted.
 
-Wire mapping (client side): colors become a `custom:aabbcc-...` spec —
-single-color palettes duplicate their stop to satisfy the 2-stop minimum
-of CUSTOM_PALETTE_RE — and `n` travels as palette_display_name, so the
-render pipeline needs no new palette machinery at all.
+Wire mapping (client side): colors become a `custom:aabbcc-...` spec and
+`n` travels as palette_display_name, so the render pipeline needs no new
+palette machinery at all. (The js keeps a defensive single-stop
+duplication branch, but the catalog floor of 3 stops makes it dead data.)
 """
 from __future__ import annotations
 
@@ -52,6 +52,7 @@ SCHEMA_VERSION = 2
 
 MAX_NAME_LEN = 80          # lambda/palette_names.py MAX_PALETTE_DISPLAY_NAME_LEN
 MAX_STOPS = 32             # custom: wire cap (palette_lut.h / palette_names.py)
+MIN_STOPS = 3              # 1-2 color palettes make no interesting image (user call)
 MIN_EXPECTED_PALETTES = 20000
 HEX_RE = re.compile(r"^[0-9a-f]{6}$")
 
@@ -113,7 +114,7 @@ def _eval_artists(slice_js: str) -> list:
 def build_catalog(artists: list, fetched: str) -> dict:
     rows = []
     seen = set()
-    skipped_hex = skipped_empty = skipped_dup = 0
+    skipped_hex = skipped_empty = skipped_dup = skipped_short = 0
     for artist in artists:
         artist_name = _clean_text(artist.get("name"))
         for work in artist.get("works") or []:
@@ -123,6 +124,9 @@ def build_catalog(artists: list, fetched: str) -> dict:
                 continue
             if any(c is None for c in colors) or len(colors) > MAX_STOPS:
                 skipped_hex += 1
+                continue
+            if len(colors) < MIN_STOPS:
+                skipped_short += 1
                 continue
             url = _clean_text(work.get("pageUrl"))
             title = _clean_text(work.get("title"))
@@ -139,7 +143,7 @@ def build_catalog(artists: list, fetched: str) -> dict:
     rows.sort(key=lambda r: r["n"].lower())
     print(f"kept {len(rows)} palettes "
           f"(skipped: {skipped_dup} duplicate, {skipped_hex} bad-hex, "
-          f"{skipped_empty} empty)")
+          f"{skipped_short} under-{MIN_STOPS}-stops, {skipped_empty} empty)")
     return {
         "schema_version": SCHEMA_VERSION,
         "fetched": fetched,
@@ -177,7 +181,7 @@ def check_catalog() -> int:
         if any(not ch.isprintable() for ch in name):
             problems.append(f"row {i}: non-printable name")
         if (not isinstance(packed, str) or len(packed) % 6 != 0
-                or not (1 <= len(packed) // 6 <= MAX_STOPS)
+                or not (MIN_STOPS <= len(packed) // 6 <= MAX_STOPS)
                 or not re.fullmatch(r"[0-9a-f]+", packed)):
             problems.append(f"row {i}: invalid packed colors")
         # names repeat across series plates; the (name, palette) pair must not

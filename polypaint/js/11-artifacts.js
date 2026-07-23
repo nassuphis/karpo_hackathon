@@ -596,7 +596,7 @@ function populateSelectedRenderArtifact() {
         }
         _restoreSolveScoreSourceFromArtifact('render', art);
         restoreSolveScoreNormalize(art);
-        if (art.palette) setPaletteForMode('solve_score', art.palette);
+        if (art.palette) setPaletteForMode('solve_score', art.palette, art.palette_display_name);
         else warnings.push('palette');
         if (art.background_color) _setRenderBackgroundColor(art.background_color);
         _restoreRootSourceFromArtifact('render', art);
@@ -632,7 +632,7 @@ function populateSelectedRenderArtifact() {
     }
     _restoreSolveScoreSourceFromArtifact('render', art);
     restoreSolveScoreNormalize(art);
-    if (art.palette) setPaletteForMode('solve_score', art.palette);
+    if (art.palette) setPaletteForMode('solve_score', art.palette, art.palette_display_name);
     _noteSolveScorePopulate('render', art);
     finishPopulate(art.artifact_id || 'selected color artifact');
 }

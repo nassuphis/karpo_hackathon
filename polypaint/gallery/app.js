@@ -767,7 +767,12 @@ class GalleryViewer {
       }
       const p = this.pieces[index];
       hud.title = this._pieceTitle(p);
-      hud.sub = [p.job_id, p.degree != null ? 'deg ' + p.degree : '', p.N != null ? 'N=' + p.N : ''].filter(Boolean).join(' · ');
+      hud.sub = [
+        p.job_id,
+        p.palette_display_name || p.palette || '',
+        p.degree != null ? 'deg ' + p.degree : '',
+        p.N != null ? 'N=' + p.N : '',
+      ].filter(Boolean).join(' · ');
     }
     $('hud-title').textContent = hud.title;
     $('hud-sub').textContent = hud.sub;
@@ -930,6 +935,7 @@ class GalleryViewer {
     $('btn-prev').disabled = true; $('btn-next').disabled = true; $('btn-inspect').disabled = true;
 
     $('overlay-meta').textContent = [this._pieceTitle(p), p.job_id, p.artifact_id,
+      p.palette_display_name || p.palette || '',
       p.degree != null ? 'deg ' + p.degree : '', p.N != null ? 'N=' + p.N : '',
       p.times != null ? '×' + p.times : '', p.created_at].filter(Boolean).join('  ·  ');
     const img = $('overlay-img');

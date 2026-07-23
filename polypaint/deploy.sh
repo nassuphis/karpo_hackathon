@@ -1562,6 +1562,7 @@ PALETTE_FINALIZE_DIR=/tmp/polypaint-palette-finalize
 rm -rf "$PALETTE_FINALIZE_DIR"
 mkdir -p "$PALETTE_FINALIZE_DIR"
 cp lambda/handler_palette_finalize.py lambda/shared.py lambda/color_artifact_meta.py lambda/color_render_contract.py \
+   lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py \
    lambda/raw_score_render.py lambda/raw_sidecar.py lambda/solve_score_chain.py lambda/solve_score_pipeline_programs.py \
    lambda/solve_score_program_source.py lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
    "$PALETTE_FINALIZE_DIR/"

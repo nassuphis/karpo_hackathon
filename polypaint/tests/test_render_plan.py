@@ -164,6 +164,44 @@ class TestRenderPlan(unittest.TestCase):
                 self.assertEqual(plan["outputs"]["metadata"]["palette"], palette)
 
     @patch("handler_render_plan._storage_call")
+    def test_custom_palette_display_name_is_artifact_provenance(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        custom = "custom:879caa-aaa4a4-0e3057"
+        result = handler(_make_event(
+            palette=custom,
+            palette_display_name="Night reef",
+            save_associated_palette=True,
+        ), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["params"]["palette"], custom)
+        self.assertEqual(plan["params"]["palette_display_name"], "Night reef")
+        self.assertEqual(
+            plan["outputs"]["metadata"]["palette_display_name"],
+            "Night reef",
+        )
+        self.assertEqual(
+            plan["associated_palette"]["palette_display_name"],
+            "Night reef",
+        )
+        self.assertIn("Night reef", plan["associated_palette"]["display_name"])
+
+    @patch("handler_render_plan._storage_call")
+    def test_builtin_palette_drops_spurious_display_name(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        plan = json.loads(handler(_make_event(
+            palette="inferno",
+            palette_display_name="misleading",
+        ), None)["body"])
+
+        self.assertEqual(plan["params"]["palette_display_name"], "")
+        self.assertEqual(plan["outputs"]["metadata"]["palette_display_name"], "")
+
+    @patch("handler_render_plan._storage_call")
     def test_color_plan_accepts_custom_background_color(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
         from handler_render_plan import handler

@@ -14,7 +14,7 @@ import time
 
 import boto3
 
-from palette_names import is_valid_palette_name
+from palette_names import is_valid_palette_name, normalize_palette_display_name
 from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, parse_boolish, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
@@ -241,6 +241,10 @@ def handler(event, context):
     new_palette = str(params["new_palette"]).strip()
     if not is_valid_palette_name(new_palette):
         raise RuntimeError(f"Invalid palette: {new_palette}")
+    new_palette_display_name = normalize_palette_display_name(
+        params.get("new_palette_display_name"),
+        new_palette,
+    )
 
     progress = {"phase": "repalette", "family": "palette", "source_palette_id": source_palette_id}
     try:
@@ -350,9 +354,13 @@ def handler(event, context):
             "job_id": job_id,
             "palette_id": new_palette_id,
             "created_at": created_at,
-            "display_name": f"{metric} q={(q * 100):.1f}% {_omega_display(omega_enabled, omega)} {new_palette} {created_at}",
+            "display_name": (
+                f"{metric} q={(q * 100):.1f}% {_omega_display(omega_enabled, omega)} "
+                f"{new_palette_display_name or new_palette} {created_at}"
+            ),
             "metric": metric,
             "palette": new_palette,
+            "palette_display_name": new_palette_display_name,
             "solve_score_quantile": q,
             "solve_score_omega": omega,
             "solve_score_omega_enabled": omega_enabled,
@@ -400,6 +408,7 @@ def handler(event, context):
             "preview_key": preview_key,
             "source_palette_id": source_palette_id,
             "palette": new_palette,
+            "palette_display_name": new_palette_display_name,
             "render_reusable": render_reusable,
         }
         report_status(job_id, task_id, "done", result_data=result_data)

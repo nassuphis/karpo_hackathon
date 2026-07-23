@@ -12,7 +12,7 @@ from color_artifact_meta import (
     write_color_artifact_meta_overlay,
 )
 from color_render_contract import apply_channel_names, repalette_target_for_source
-from palette_names import is_valid_palette_name
+from palette_names import is_valid_palette_name, normalize_palette_display_name
 from raw_score_render import (
     histogram_from_raw_path,
     histogram_from_raw_path_channel0,
@@ -268,6 +268,7 @@ def _recolor_associated_palette(
     source_meta,
     palette_spec,
     new_palette,
+    new_palette_display_name,
     background_color,
     created_at,
     temp_paths,
@@ -401,7 +402,7 @@ def _recolor_associated_palette(
         _parse_score_chain(palette_spec["score_chain"]),
         palette_spec["metric"],
         palette_spec["quantile"],
-        new_palette,
+        new_palette_display_name or new_palette,
     )
     meta_body = {
         "job_id": job_id,
@@ -409,6 +410,7 @@ def _recolor_associated_palette(
         "created_at": created_at,
         "display_name": display_name or palette_id,
         "palette": str(new_palette),
+        "palette_display_name": str(new_palette_display_name or ""),
         "degree": int(_parse_int(palette_meta.get("degree"), _parse_int(source_meta.get("degree"), 0))),
         "N": width,
         "times": int(_parse_int(palette_meta.get("times"), 1)),
@@ -453,6 +455,7 @@ def _recolor_associated_palette(
         "palette_id": palette_id,
         "display_name": display_name or palette_id,
         "palette": str(new_palette),
+        "palette_display_name": str(new_palette_display_name or ""),
         "color_interpretation": target_interpretation,
         "metric": str(palette_spec["metric"] or ""),
         "score_chain": palette_spec["score_chain"],
@@ -477,6 +480,10 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
     new_palette = str(params["new_palette"]).strip()
     if not is_valid_palette_name(new_palette):
         raise RuntimeError(f"Invalid palette: {new_palette}")
+    new_palette_display_name = normalize_palette_display_name(
+        params.get("new_palette_display_name"),
+        new_palette,
+    )
 
     temp_paths = []
     temp_copy_keys = []
@@ -560,6 +567,7 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
             "family": "color",
             "created_at": created_at,
             "palette": new_palette,
+            "palette_display_name": new_palette_display_name,
             "derived_from_artifact_id": source_artifact_id,
             "derived_from_image_key": source_image_key,
             "derivation_kind": "color_repalette",
@@ -628,6 +636,7 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
                 source_meta=source_meta,
                 palette_spec=source_palette_spec,
                 new_palette=new_palette,
+                new_palette_display_name=new_palette_display_name,
                 background_color=background_color,
                 created_at=created_at,
                 temp_paths=temp_paths,

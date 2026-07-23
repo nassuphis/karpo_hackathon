@@ -15,6 +15,171 @@ def _event(path, body):
     return {"path": path, "body": json.dumps(body)}
 
 
+class _CatalogS3:
+    def __init__(self):
+        self.body = None
+        self.revision = ""
+        self.put_calls = []
+        self._next_revision = 1
+
+    def get_object(self, Bucket=None, Key=None):
+        if self.body is None:
+            raise ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "missing"}},
+                "GetObject",
+            )
+        return {
+            "Body": io.BytesIO(self.body),
+            "ETag": f'"{self.revision}"',
+        }
+
+    def put_object(self, **kwargs):
+        self.put_calls.append(dict(kwargs))
+        if kwargs.get("IfNoneMatch") == "*" and self.body is not None:
+            raise ClientError(
+                {"Error": {"Code": "PreconditionFailed", "Message": "exists"}},
+                "PutObject",
+            )
+        if "IfMatch" in kwargs and kwargs["IfMatch"] != self.revision:
+            raise ClientError(
+                {"Error": {"Code": "PreconditionFailed", "Message": "changed"}},
+                "PutObject",
+            )
+        self.body = bytes(kwargs["Body"])
+        self.revision = f"catalog-{self._next_revision}"
+        self._next_revision += 1
+        return {"ETag": f'"{self.revision}"'}
+
+    def head_object(self, Bucket=None, Key=None):
+        if self.body is None:
+            raise ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "missing"}},
+                "HeadObject",
+            )
+        return {"ETag": f'"{self.revision}"'}
+
+
+class TestCustomPaletteCatalog(unittest.TestCase):
+    def test_missing_catalog_lists_empty_and_first_save_is_create_only(self):
+        import handler_storage
+
+        fake = _CatalogS3()
+        with patch.object(handler_storage, "s3", fake):
+            listed = handler_storage.handler(
+                _event("/list-custom-palettes", {}),
+                None,
+            )
+            saved = handler_storage.handler(
+                _event("/save-custom-palettes", {
+                    "expected_revision": "",
+                    "palettes": [{
+                        "name": "Night reef",
+                        "stops": ["#879CAA", "0E3057"],
+                    }],
+                }),
+                None,
+            )
+
+        self.assertEqual(listed["statusCode"], 200)
+        self.assertEqual(json.loads(listed["body"])["palettes"], [])
+        self.assertEqual(saved["statusCode"], 200)
+        body = json.loads(saved["body"])
+        self.assertEqual(body["revision"], "catalog-1")
+        self.assertEqual(body["palettes"], [{
+            "name": "Night reef",
+            "stops": ["879caa", "0e3057"],
+            "palette": "custom:879caa-0e3057",
+        }])
+        self.assertEqual(fake.put_calls[0]["IfNoneMatch"], "*")
+        stored = json.loads(fake.body)
+        self.assertEqual(stored["schema_version"], 1)
+
+    def test_update_uses_etag_and_stale_writer_gets_409_without_overwrite(self):
+        import handler_storage
+
+        fake = _CatalogS3()
+        fake.body = json.dumps({
+            "schema_version": 1,
+            "updated_at": "2026-07-23T00:00:00Z",
+            "palettes": [{
+                "name": "Old",
+                "stops": ["000000", "ffffff"],
+                "palette": "custom:000000-ffffff",
+            }],
+        }).encode()
+        fake.revision = "catalog-7"
+        with patch.object(handler_storage, "s3", fake):
+            ok = handler_storage.handler(
+                _event("/save-custom-palettes", {
+                    "expected_revision": "catalog-7",
+                    "palettes": [{"name": "New", "stops": ["112233", "445566"]}],
+                }),
+                None,
+            )
+            accepted_body = fake.body
+            stale = handler_storage.handler(
+                _event("/save-custom-palettes", {
+                    "expected_revision": "catalog-7",
+                    "palettes": [{"name": "Stale", "stops": ["aabbcc", "ddeeff"]}],
+                }),
+                None,
+            )
+
+        self.assertEqual(ok["statusCode"], 200)
+        self.assertEqual(fake.put_calls[0]["IfMatch"], "catalog-7")
+        self.assertEqual(stale["statusCode"], 409)
+        self.assertEqual(
+            json.loads(stale["body"])["conflict"],
+            "custom_palette_revision",
+        )
+        self.assertEqual(fake.body, accepted_body)
+
+    def test_validation_rejects_duplicate_names_and_duplicate_color_sequences(self):
+        import handler_storage
+
+        fake = _CatalogS3()
+        with patch.object(handler_storage, "s3", fake):
+            duplicate_name = handler_storage.handler(
+                _event("/save-custom-palettes", {
+                    "palettes": [
+                        {"name": "Reef", "stops": ["000000", "ffffff"]},
+                        {"name": "reef", "stops": ["112233", "445566"]},
+                    ],
+                }),
+                None,
+            )
+            duplicate_colors = handler_storage.handler(
+                _event("/save-custom-palettes", {
+                    "palettes": [
+                        {"name": "One", "stops": ["000000", "ffffff"]},
+                        {"name": "Two", "stops": ["000000", "ffffff"]},
+                    ],
+                }),
+                None,
+            )
+
+        self.assertEqual(duplicate_name["statusCode"], 400)
+        self.assertIn("duplicate custom palette name", duplicate_name["body"])
+        self.assertEqual(duplicate_colors["statusCode"], 400)
+        self.assertIn("duplicates another row", duplicate_colors["body"])
+        self.assertEqual(fake.put_calls, [])
+
+    def test_corrupt_stored_catalog_fails_loudly(self):
+        import handler_storage
+
+        fake = _CatalogS3()
+        fake.body = b"{not-json"
+        fake.revision = "catalog-bad"
+        with patch.object(handler_storage, "s3", fake):
+            response = handler_storage.handler(
+                _event("/list-custom-palettes", {}),
+                None,
+            )
+
+        self.assertEqual(response["statusCode"], 500)
+        self.assertIn("stored custom palette catalog is invalid", response["body"])
+
+
 class TestStorageHandlerHardening(unittest.TestCase):
     @patch("handler_storage.s3")
     def test_cleanup_rejects_non_render_keys_before_s3_delete(self, mock_s3):
@@ -263,9 +428,17 @@ class TestComputeMigration(unittest.TestCase):
     def _store(self, fake, job_id, calc):
         fake.objects[f"renders/{job_id}/calc.json"] = json.dumps(calc).encode("utf-8")
 
+    @patch("handler_storage._results_catalog_write_batch", return_value=(0, 0))
+    @patch("handler_storage._read_results_catalog", return_value={})
     @patch("handler_storage._results_list_s3_client")
     @patch("handler_storage.s3")
-    def test_list_skips_preview_orphan_prefix_without_calc_json(self, mock_s3, mock_list_s3_client):
+    def test_list_skips_preview_orphan_prefix_without_calc_json(
+        self,
+        mock_s3,
+        mock_list_s3_client,
+        _mock_catalog_read,
+        _mock_catalog_write,
+    ):
         # Lazy Results preview writes renders/<job>/preview.png. If a compute is
         # deleted while that background write is in flight, a preview-only
         # prefix must not reappear as a broken Results row.
@@ -398,6 +571,10 @@ class TestComputeMigration(unittest.TestCase):
         mock_get_ddb.return_value = fake_ddb
         self._store(fake, "job", {"function": "g", "degree": 7, "N": 512, "times": 2})
         fake.objects["renders/job/color/color_a/image.jpeg"] = b"jpeg"
+        fake.objects["renders/job/color/color_a/meta.json"] = json.dumps({
+            "palette": "custom:879caa-0e3057",
+            "palette_display_name": "Night reef",
+        }).encode()
         fake.objects["renders/job/color/color_a/preview.png"] = (
             b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR"
             + (512).to_bytes(4, "big") + (512).to_bytes(4, "big")
@@ -435,6 +612,7 @@ class TestComputeMigration(unittest.TestCase):
         self.assertEqual(manifest["tiles"][0]["degree"], 7)
         self.assertEqual(manifest["tiles"][0]["N"], 512)
         self.assertEqual(manifest["tiles"][0]["times"], 2)
+        self.assertEqual(manifest["tiles"][0]["palette_display_name"], "Night reef")
         self.assertEqual(manifest["tiles"][0]["preview_width"], 512)
         self.assertEqual(manifest["tiles"][0]["preview_height"], 512)
         self.assertEqual(manifest["manifest_type"], "artifact_mosaic")
@@ -458,7 +636,8 @@ class TestComputeMigration(unittest.TestCase):
         fake.objects["renders/job/palettes/pal_a/meta.json"] = json.dumps({
             "palette_id": "pal_a",
             "metric": "spread",
-            "palette": "reef",
+            "palette": "custom:112233-445566",
+            "palette_display_name": "Archive dusk",
             "render_reusable": "true",
             "data_layout": "raw",
             "image_key": "renders/job/palettes/pal_a/image.jpeg",
@@ -500,7 +679,8 @@ class TestComputeMigration(unittest.TestCase):
         self.assertEqual(manifest["tiles"][0]["palette_id"], "pal_a")
         self.assertEqual(manifest["tiles"][0]["created_at"], "2026-02-03T04:05:06Z")
         self.assertEqual(manifest["tiles"][0]["metric"], "spread")
-        self.assertEqual(manifest["tiles"][0]["palette"], "reef")
+        self.assertEqual(manifest["tiles"][0]["palette"], "custom:112233-445566")
+        self.assertEqual(manifest["tiles"][0]["palette_display_name"], "Archive dusk")
         self.assertEqual(manifest["tiles"][0]["render_reusable"], True)
 
     @patch("handler_storage._get_ddb")

@@ -101,7 +101,10 @@ def _fmt_pct(value):
 
 def _color_summary(src_meta):
     color_mode = str(src_meta.get("color_mode") or "").strip()
-    palette = str(src_meta.get("palette") or "").strip()
+    palette = _first_text(
+        src_meta.get("palette_display_name"),
+        src_meta.get("palette"),
+    )
     if color_mode == "solve_score":
         metric = _first_text(src_meta.get("solve_metric"))
         return metric or "score"
@@ -161,7 +164,10 @@ def _build_report(calc, src_meta, source_job_id, source_artifact_id):
         ("Solver", _solver_label(calc.get("solver"))),
         ("Interpretation", _first_text(src_meta.get("color_interpretation"),
                                        src_meta.get("score_output_interpretation"))),
-        ("Palette", _first_text(src_meta.get("palette"))),
+        ("Palette", _first_text(
+            src_meta.get("palette_display_name"),
+            src_meta.get("palette"),
+        )),
         ("Output channels", _first_text(src_meta.get("score_output_channel_count"),
                                         src_meta.get("raw_channels"))),
         ("Viewport", _viewport_summary(src_meta)),
@@ -169,8 +175,13 @@ def _build_report(calc, src_meta, source_job_id, source_artifact_id):
     if color_mode != "solve_score":
         rows.insert(5, ("Color mode", color_summary or color_mode))
     palette_label = _first_text(
-        src_meta.get("associated_palette_id"), src_meta.get("palette_artifact_id"),
-        src_meta.get("palette_id"), src_meta.get("palette"))
+        src_meta.get("associated_palette_display_name"),
+        src_meta.get("palette_display_name"),
+        src_meta.get("associated_palette_id"),
+        src_meta.get("palette_artifact_id"),
+        src_meta.get("palette_id"),
+        src_meta.get("palette"),
+    )
     return {
         "compute_id": source_job_id,
         "artifact_id": source_artifact_id,
@@ -211,14 +222,16 @@ def _jpeg_dimensions(path):
     raise RuntimeError(f"no SOF marker found: {path}")
 
 
-def _cover_panel_boxes(raster_width, raster_height, page_width, page_height):
+def _cover_panel_boxes(raster_width, raster_height, page_width, page_height,
+                       content_pages):
     """Crop boxes for back/front pages from the printable jacket spread.
 
     cover.pdf is laid out as outer-bleed | back | spine | front |
     outer-bleed. The flipbook pages use the content-page dimensions, so each
-    299mm cover panel is center-trimmed to the content's 293mm width; the
+    296mm cover panel is center-trimmed to the content's 293mm width; the
     10mm top/bottom jacket bleed drops naturally when the 296mm page height
-    is centered in the 316mm spread raster.
+    is centered in the 316mm spread raster. Cover width and spine are derived
+    from the same content page count used to render cover.tex.
     """
     raster_width = int(raster_width)
     raster_height = int(raster_height)
@@ -227,22 +240,22 @@ def _cover_panel_boxes(raster_width, raster_height, page_width, page_height):
     if min(raster_width, raster_height, page_width, page_height) <= 0:
         raise ValueError("cover and content raster dimensions must be positive")
 
-    outer_bleed_mm = (
-        book_tex.COVER_W_MM
-        - 2 * book_tex.COVER_PANEL_MM
-        - book_tex.COVER_SPINE_MM
-    ) / 2.0
-    back_center_mm = outer_bleed_mm + book_tex.COVER_PANEL_MM / 2.0
+    geometry = book_tex.cover_geometry(content_pages)
+    outer_bleed_mm = geometry["bleed_mm"]
+    panel_mm = geometry["panel_mm"]
+    spine_mm = geometry["spine_mm"]
+    cover_width_mm = geometry["width_mm"]
+    back_center_mm = outer_bleed_mm + panel_mm / 2.0
     front_center_mm = (
         outer_bleed_mm
-        + book_tex.COVER_PANEL_MM
-        + book_tex.COVER_SPINE_MM
-        + book_tex.COVER_PANEL_MM / 2.0
+        + panel_mm
+        + spine_mm
+        + panel_mm / 2.0
     )
     top = int(round((raster_height - page_height) / 2.0))
 
     def centered_box(center_mm):
-        center_px = center_mm * raster_width / float(book_tex.COVER_W_MM)
+        center_px = center_mm * raster_width / cover_width_mm
         left = int(round(center_px - page_width / 2.0))
         box = (left, top, left + page_width, top + page_height)
         if box[0] < 0 or box[1] < 0 or box[2] > raster_width or box[3] > raster_height:
@@ -425,7 +438,7 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_
     with Image.open(cover_src) as spread:
         spread.load()
         back_box, front_box = _cover_panel_boxes(
-            spread.width, spread.height, width_px, height_px)
+            spread.width, spread.height, width_px, height_px, content_pages)
         with spread.crop(front_box) as front:
             save_jpeg(front, os.path.join(flip_dir, front_name))
         _tick_progress()
@@ -845,7 +858,9 @@ def handle_compose(params, latex_runner=_run_lualatex):
         content_tex, content_pages = book_tex.render_content_tex(
             book, provenance,
             pdf_url=book_tex.S3_PUBLIC_BASE + out_prefix + "content.pdf")
-        cover_tex = book_tex.render_cover_tex(book, cover_rel)
+        cover_geometry = book_tex.cover_geometry(content_pages)
+        cover_tex = book_tex.render_cover_tex(
+            book, cover_rel, content_pages=content_pages)
         with open(os.path.join(build_dir, "book.tex"), "w") as fh:
             fh.write(content_tex)
         with open(os.path.join(build_dir, "cover.tex"), "w") as fh:
@@ -911,6 +926,9 @@ def handle_compose(params, latex_runner=_run_lualatex):
             "content_key": out_prefix + "content.pdf",
             "source_key": out_prefix + "source.zip",
             "content_pages": content_pages,
+            "cover_width_mm": cover_geometry["width_mm"],
+            "cover_height_mm": cover_geometry["height_mm"],
+            "cover_spine_mm": cover_geometry["spine_mm"],
             "spread_count": len(entries),
             "compiled_at": _utc_now_iso(),
             **flip_fields,
@@ -924,6 +942,9 @@ def handle_compose(params, latex_runner=_run_lualatex):
                       CacheControl="no-cache, max-age=0")
         _phase(job_id, task_id, "done", "done", "Done", **progress,
                content_pages=content_pages,
+               cover_width_mm=cover_geometry["width_mm"],
+               cover_height_mm=cover_geometry["height_mm"],
+               cover_spine_mm=cover_geometry["spine_mm"],
                flip_page_count=latest.get("flip_page_count", 0),
                flip_error=latest.get("flip_error", ""),
                **{k: latest[k] for k in ("cover_key", "content_key", "source_key")})

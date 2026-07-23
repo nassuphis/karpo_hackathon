@@ -181,7 +181,10 @@ def _viewport_summary(src_meta):
 
 def _color_summary(src_meta):
     color_mode = str(src_meta.get("color_mode") or "").strip()
-    palette = str(src_meta.get("palette") or "").strip()
+    palette = _first_text(
+        src_meta.get("palette_display_name"),
+        src_meta.get("palette"),
+    )
     if color_mode == "solve_score":
         try:
             score = read_solve_score_metadata("solve", src_meta, default_metric="proximity")
@@ -356,8 +359,13 @@ def build_pdf_report_model(job_id, calc, src_meta, source_artifact_id):
     color_mode = _first_text(src_meta.get("color_mode"), color_summary)
     interpretation = _first_text(src_meta.get("color_interpretation"), src_meta.get("score_output_interpretation"))
     output_channels = _first_text(src_meta.get("score_output_channel_count"), src_meta.get("raw_channels"))
-    palette = _first_text(src_meta.get("palette"))
+    palette = _first_text(
+        src_meta.get("palette_display_name"),
+        src_meta.get("palette"),
+    )
     palette_label = _first_text(
+        src_meta.get("associated_palette_display_name"),
+        src_meta.get("palette_display_name"),
         src_meta.get("associated_palette_id"),
         src_meta.get("palette_artifact_id"),
         src_meta.get("palette_id"),
@@ -563,6 +571,7 @@ def handler(event, context):
             "source_display_name": source_display_name,
             "source_color_mode": src_meta.get("color_mode", ""),
             "source_palette": src_meta.get("palette", ""),
+            "source_palette_display_name": src_meta.get("palette_display_name", ""),
             "source_solve_metric": source_score["metric"] if source_score else "",
             "source_solve_score_quantile": _stringify_meta(source_score["quantile"] if source_score else ""),
             "source_solve_score_omega": _stringify_meta(source_score["omega"] if source_score else ""),

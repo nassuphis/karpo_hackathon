@@ -109,7 +109,7 @@ function openRepalettePopup() {
     _syncBuiltinDefaults();
     _syncTriDefaults();
     _syncLongDefaults();
-    if (art.palette) setPaletteForMode('repalette', art.palette);
+    if (art.palette) setPaletteForMode('repalette', art.palette, art.palette_display_name);
     _repalettePopupState = {
         open: true,
         sourcePaletteId: art.palette_id || art.artifact_id || '',
@@ -137,6 +137,7 @@ async function runRepaletteSelectedArtifact() {
                 task_id: taskId,
                 source_palette_id: art.palette_id,
                 new_palette: paletteName,
+                new_palette_display_name: _paletteDisplayNameForMode('repalette'),
             }],
             expected_keys: [],
         });
@@ -227,7 +228,7 @@ function openColorRepalettePopup() {
     _syncBuiltinDefaults();
     _syncTriDefaults();
     _syncLongDefaults();
-    if (art.palette) setPaletteForMode('color_repalette', art.palette);
+    if (art.palette) setPaletteForMode('color_repalette', art.palette, art.palette_display_name);
     _colorRepalettePopupState = {
         open: true,
         sourceArtifactId: art.artifact_id || '',
@@ -262,6 +263,7 @@ async function runColorRepaletteSelectedArtifact() {
                 source_artifact_id: art.artifact_id,
                 source_image_key: art.image_key,
                 new_palette: paletteName,
+                new_palette_display_name: _paletteDisplayNameForMode('color_repalette'),
                 ...(channels === 3 ? { new_interpretation: newInterpretation } : {}),
             }],
             expected_keys: [],

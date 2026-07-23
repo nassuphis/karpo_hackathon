@@ -25,7 +25,8 @@ metas) and offline-only (works on `snaps/` files, never talks to the backend).
   (the best whole-collection overview — primary collection surface), the
   Render→color tab action row, and the Favorites tab toolbar.
 - Server-side compile: per-entry image prep (cached), then a single LaTeX compose step
-  producing `cover.pdf` (629×316 mm gross) + `content.pdf` (293×296 mm gross pages,
+  producing a page-count-specific `cover.pdf` (626×316 mm gross for 44 content
+  pages) + `content.pdf` (293×296 mm gross pages,
   multiple of 4). **One spread per entry**: verso text page + recto full-bleed image.
   Verso text is program-aware via `build_pdf_report_model` provenance snapshots.
 - "Export book source": download the generated `.tex` + assets as a bundle for local
@@ -48,7 +49,7 @@ item; full program listings belong in the exported source bundle, not the printe
 |---|---|---|
 | Provenance model | `lambda/handler_pdf_artifact.py:327` `build_pdf_report_model` | Summary rows + programs[] with 3-level fallback (stored source text → chain decompiled → legacy transforms bridged via `pipeline_programs`). Works for program-era AND legacy artifacts. Feeds the verso template. |
 | Image prep | `lambda/spread_pdf.py` `prepare_pdf_image` | Shared Book/ColorSpread/local contract: `vipsheader` inspects the source and `vipsthumbnail` normalizes it to a bounded JPEG before any PDF engine sees it. There is no Pillow source-decoding fallback. |
-| Print geometry + book layout | `make_polypaint_book.py:246-262` | Content 290 mm net → 293×296 mm gross (bleed 3 sides) verified. Cover: the script's own comments are arithmetically wrong — `COVER_GROSS_W = 609 + 2×10 = 629.0 mm` (comment says 629.4) and `PANEL_W = (609−11)/2 = 299 mm` (comment says ~296). Use the computed values; confirm against the WhiteWall product spec (§9). Cover title layout, black-page padding, metadata-line conventions port to the LaTeX template. |
+| Print geometry + book layout | WhiteWall `cover_A3square_paper-fujiCrystal-semi-matte_28.idml` and `_44.idml` | Content 290 mm net → 293×296 mm gross (bleed on 3 sides). Each cover panel is 296 mm and outer bleed is 10 mm. Spine width follows content pages: 11 mm at 28 pages and 14 mm at 44 pages, increasing 0.75 mm per four pages. Therefore the 44-page cover is 606×296 mm trim and 626×316 mm gross. The old local script double-counted 3 mm on each panel and is not a geometry authority. |
 | Dispatch fan-out | `lambda/handler_dispatch.py:22-41,48-64` (response `{fired, total}` at :101-104) | `{target, jobs[]}` → async Event invoke per job via the `FUNCTIONS` env map; response `{fired, total}`. |
 | Progress | `lambda/shared.py:31-46` `report_status` → DDB; `/check-status` (`handler_storage.py:3945`); observer `js/10-status-results.js:1535` | Phase labels, `expected` fan-in counting, hard-stale abandon (PDF runs already have it). |
 | Named-object CRUD | `handler_storage.py` coeff/root program routes (:1373-1384, :1351-1360) | S3-JSON docs under a prefix, slugified ids, HEAD-metadata cheap list, `errors[]` non-fatal listing, `_XxxNotFound` → 404, saved_at-desc sort. |
@@ -310,12 +311,15 @@ microtype optical margins + font expansion, automatic font embedding via fontspe
 by the core-font workaround the reportlab path needed), and — decisive for
 maintenance — the user can art-direct the template directly.
 
-**Geometry (WhiteWall, verified against make_polypaint_book.py:246-262):**
+**Geometry (WhiteWall, verified against the publisher IDML templates):**
 content page 290 mm net → **293×296 mm gross** with bleed on 3 sides
 (`\geometry{paperwidth=293mm, paperheight=296mm}`, all margins explicit, full-bleed
 image pages via `eso-pic`/`tikz` overlay at page edges); cover a single
-**629×316 mm gross** page (609 net + 2×10 mm bleed; back panel / spine / front
-panel, `PANEL_W` = (609−11)/2 = **299 mm** — the script's ≈296 comment is wrong).
+page-count-specific gross page. Both panels are **296 mm**, with **10 mm** bleed
+on every outer edge. For 44 content pages the spine is **14 mm**, so the cover
+is `296 + 14 + 296 = 606 mm` trim and **626×316 mm gross**. The 28-page template
+has an 11 mm spine and is 623×316 mm gross. The measured progression is
+0.75 mm per four content pages.
 JPEG assets embed byte-for-byte (DCTDecode pass-through — no recompression, unlike
 any raster round-trip).
 
@@ -342,10 +346,10 @@ not on the page.
 entry's image at the local book's 2/3-above-title layout, or a typographic cover
 when `cover_entry_id` is empty. The same `background_color` drives the jacket,
 content title/report/pad pages, and web flipbook inside covers; deep blue
-(`#1A1A2E`) is the default. Spine text = title. The 609×316-net template is the
-28-page A3-square WhiteWall product the local book was built for; spine width
-varies with page count on other products — V1 pins this template and records
-`content_pages` in `latest.json` so mismatches are visible (open question §9.3).
+(`#1A1A2E`) is the default. Spine text = title. The old 609 mm trim width came
+from a local-script reconstruction that double-counted panel bleed and is not
+used. The generator derives the Fuji Crystal semi-matte spine and gross width
+from `content_pages`; `latest.json` records the cover width, height, and spine.
 
 **Fonts:** `polypaint/fonts/` TTFs (git-tracked — 13 files, ~840 KB; only the bulk
 font-family download folders stay gitignored for size/filecount) installed in the
@@ -451,9 +455,9 @@ prepare fan-out is bounded by the slowest single source, not the sum.
 **Genuinely open (user calls):**
 1. **Verso template style.** Default = port of the printed book's black/Canela verso.
    Confirm fonts + layout on the first template proof (a one-spread test book).
-2. **Spine/page-count coupling.** V1 pins the 28-page-template cover dims while
-   producing variable page counts. Confirm against WhiteWall's actual product specs
-   before the first real order (the local book had the same exposure).
+2. **Other paper stocks.** The implemented spine rule is specific to Fuji Crystal
+   semi-matte. Supporting another paper requires that paper's publisher templates;
+   do not reuse this spine rule.
 3. **Auto body text quality.** V1 auto text is mechanical (summary + pipeline). The
    "artsy description" layer stays a manual override pass — fine, or do we want an
    assisted-description flow later (V2 candidate)?
@@ -473,7 +477,8 @@ exact dispatched shapes; nothing here deploys — the user deploys.
   Pure Python, runs in the normal predeploy gate without TeX.
 - **Docker arm64 TeX gate** — extend the `test-docker-runtime.sh` pattern: build the
   book_pdf image locally, compile a 3-entry fixture book inside it, assert PDF
-  properties (page count, MediaBox 293×296 mm / 629×316 mm, computed from the script constants, not its comments, fonts embedded —
+  properties (page count, MediaBox 293×296 mm / page-count-specific cover,
+  including 626×316 mm for 44 pages, fonts embedded —
   this is the WhiteWall regression that matters, checkable by parsing the font
   resource dicts for FontFile streams). Required whenever the image/template changes,
   mirroring the sweep_cli.c rule.

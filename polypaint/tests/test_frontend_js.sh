@@ -102,8 +102,12 @@ assertIncludes("const RENDER_MAX_PIX = 32768;", 'render orchestration should cla
 assertIncludes("id=\"btn-palette-create\" class=\"btn-secondary btn-inline\" onclick=\"runPaletteArtifact()\">Generate Artifact</button>", 'palette tab action should be a clearly labeled generate artifact button');
 assertIncludes("function _parseCustomPaletteStops(text) {", 'custom hex-stop palette parser should exist');
 assertIncludes("'custom:' + stops.map(s => s.slice(1)).join('-')", 'custom palettes should canonicalize to the custom: wire name');
-assertIncludes("customInput.className = 'pal-custom-input';", 'palette rows should render the custom hex-stop text box');
-assertIncludes(".pal-custom-input.invalid", 'custom palette input should style invalid entries');
+assertIncludes('id="custom-palette-popup-overlay"', 'HEX should expose the named custom-palette manager');
+assertIncludes("lambdaPost('storage', {}, '/list-custom-palettes')", 'custom palette manager should load the shared catalog');
+assertIncludes("}, '/save-custom-palettes')", 'custom palette manager should conditionally save the full catalog');
+assertIncludes("expected_revision: _customPaletteCatalogRevision", 'custom palette saves should carry their CAS revision');
+assertIncludes("palette_display_name: _activeRenderPaletteDisplayName()", 'render requests should carry custom palette display provenance');
+assertNotIncludes("customInput.className = 'pal-custom-input';", 'the one-off inline HEX input should be retired');
 assertNotIncludes("btn-palette-create\" class=\"btn-inline-offset\"", 'palette generate action should not live in the compact stack row');
 assertIncludes("function _paletteRunBlocksNewRun() {", 'frontend should centralize active Palette/ExtractPalette lock checks');
 assertIncludes("function _blockPaletteActionIfActive(actionLabel) {", 'frontend should make active Palette/ExtractPalette locks visible instead of silently ignoring clicks');

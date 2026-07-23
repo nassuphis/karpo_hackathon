@@ -279,6 +279,9 @@ function normalizeGalleryPiece(row, index, trustedOrigin) {
       N: Number.isFinite(row.N) ? row.N : null,
       times: Number.isFinite(row.times) ? row.times : null,
       created_at: typeof row.created_at === 'string' ? row.created_at : '',
+      palette: typeof row.palette === 'string' ? row.palette : '',
+      palette_display_name: typeof row.palette_display_name === 'string'
+        ? row.palette_display_name.slice(0, 80) : '',
       title: typeof row.title === 'string' ? row.title : '',
       export_job_id: exportJobId,
       family,
@@ -316,6 +319,9 @@ function normalizeMosaicTile(row, index, trustedOrigin) {
       N: Number.isFinite(row.N) ? row.N : null,
       times: Number.isFinite(row.times) ? row.times : null,
       created_at: typeof row.created_at === 'string' ? row.created_at : '',
+      palette: typeof row.palette === 'string' ? row.palette : '',
+      palette_display_name: typeof row.palette_display_name === 'string'
+        ? row.palette_display_name.slice(0, 80) : '',
       title: '',       // artifact_mosaic tiles carry no curator title
       deepzoom: null,  // artifact_mosaic never carries a DZI (§4)
     },

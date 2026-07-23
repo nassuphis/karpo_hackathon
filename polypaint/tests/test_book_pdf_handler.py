@@ -191,6 +191,9 @@ class TestBookPdfHandler(unittest.TestCase):
         self.fake.objects["renders/srcjob/color/art1/meta.json"] = json.dumps({
             "associated_palette_image_key": "renders/srcjob/palette/p1/image.jpeg",
             "associated_palette_id": "tri_ember",
+            "associated_palette_display_name": "Night reef swatch",
+            "palette": "custom:879caa-aaa4a4-0e3057",
+            "palette_display_name": "Night reef",
         }).encode()
         self.fake.objects["renders/srcjob/palette/p1/image.jpeg"] = _tiny_jpeg()
 
@@ -198,7 +201,9 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertFalse(json.loads(resp["body"])["cached"])
         snap = json.loads(self.fake.objects["polypaint/books/test-book/assets/e1.provenance.json"])
         self.assertTrue(snap["report"]["has_palette"])
-        self.assertEqual(snap["report"]["palette_label"], "tri_ember")
+        self.assertEqual(snap["report"]["palette_label"], "Night reef swatch")
+        rows = dict(snap["report"]["summary_rows"])
+        self.assertEqual(rows["Palette"], "Night reef")
         # the prepared palette swatch was uploaded next to the image asset
         self.assertIn("polypaint/books/test-book/assets/e1.palette.jpg", self.fake.objects)
         self.assertEqual([call["image_format"] for call in self.prepare_calls],
@@ -293,6 +298,9 @@ class TestBookPdfHandler(unittest.TestCase):
         latest = json.loads(self.fake.objects["polypaint/books/test-book/out/latest.json"])
         self.assertEqual(latest["compile_id"], "c1")
         self.assertEqual(latest["spread_count"], 2)
+        self.assertEqual(latest["cover_width_mm"], 619.25)
+        self.assertEqual(latest["cover_height_mm"], 316)
+        self.assertEqual(latest["cover_spine_mm"], 7.25)
         # progress phases repeat (per-asset, per-flip-page): pin the SEQUENCE
         # of distinct stages, not the tick count
         phases = [p for _, p in self.statuses]
@@ -376,13 +384,27 @@ class TestBookPdfHandler(unittest.TestCase):
                 if is_cover:
                     # Printable jacket geometry: red back on the left, blue
                     # front on the right, black bleed/spine between them.
-                    image = Image.new("RGB", (4953, 2489), (0, 0, 0))
+                    geometry = self.book_pdf.book_tex.cover_geometry(total_pages)
+                    image = Image.new(
+                        "RGB",
+                        (round(geometry["width_mm"] * 200 / 25.4), 2489),
+                        (0, 0, 0),
+                    )
                     draw = ImageDraw.Draw(image)
-                    scale = image.width / 629.0
-                    draw.rectangle((round(10 * scale), 0, round(309 * scale), image.height),
-                                   fill=(180, 20, 30))
-                    draw.rectangle((round(320 * scale), 0, round(619 * scale), image.height),
-                                   fill=(20, 40, 190))
+                    scale = image.width / geometry["width_mm"]
+                    bleed = geometry["bleed_mm"]
+                    panel = geometry["panel_mm"]
+                    spine = geometry["spine_mm"]
+                    draw.rectangle(
+                        (round(bleed * scale), 0,
+                         round((bleed + panel) * scale), image.height),
+                        fill=(180, 20, 30),
+                    )
+                    draw.rectangle(
+                        (round((bleed + panel + spine) * scale), 0,
+                         round((bleed + 2 * panel + spine) * scale), image.height),
+                        fill=(20, 40, 190),
+                    )
                 else:
                     image = Image.new("RGB", (2307, 2331), (18, 24, 41))
                 image.save(buf, format="PNG")
@@ -392,6 +414,14 @@ class TestBookPdfHandler(unittest.TestCase):
             return MagicMock(returncode=0, stdout="", stderr="")
 
         return run
+
+    def test_cover_panel_crops_follow_44_page_idml(self):
+        # Use 10 px/mm so the expected 1.5 mm center trim on each 296 mm
+        # panel is exact and easy to audit.
+        back, front = self.book_pdf._cover_panel_boxes(
+            6260, 3160, 2930, 2960, 44)
+        self.assertEqual(back, (115, 100, 3045, 3060))
+        self.assertEqual(front, (3215, 100, 6145, 3060))
 
     def test_compose_renders_flipbook_pages_and_manifest(self):
         self._seed_book()

@@ -6,6 +6,8 @@ Routes:
   POST /list-favorites — list persisted favorite Color artifact refs
   POST /add-favorite   — add one favorite Color artifact ref
   POST /delete-favorite — delete one favorite Color artifact ref
+  POST /list-custom-palettes — fetch the named custom-palette catalog
+  POST /save-custom-palettes — conditionally replace the custom-palette catalog
   POST /list-palettes  — list saved palette variants for one job
   POST /delete-palette — delete one saved palette variant
   POST /delete-render-artifact — delete one immutable render artifact variant
@@ -126,6 +128,13 @@ MOSAIC_INTERNAL_ACTIONS = {
 }
 FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
 FAVORITES_DDB_JOB_ID = "favorites#color"
+CUSTOM_PALETTE_CATALOG_KEY = "polypaint/palettes/custom.json"
+CUSTOM_PALETTE_CATALOG_SCHEMA_VERSION = 1
+CUSTOM_PALETTE_MAX_ENTRIES = 256
+CUSTOM_PALETTE_MAX_NAME_LEN = 80
+CUSTOM_PALETTE_MIN_STOPS = 2
+CUSTOM_PALETTE_MAX_STOPS = 32
+_CUSTOM_PALETTE_HEX_RE = re.compile(r"^[0-9a-fA-F]{6}$")
 # Results catalog (results-list.md Phase 2): one DDB row per computed job with
 # the Results-table fields, so /list is a Query + cheap prefix listing instead
 # of a calc.json GET per job. Self-healing: rows are written the first time a
@@ -143,7 +152,7 @@ FAVORITES_DDB_TASK_PREFIX = "favorite#"
 # Bump when the persisted favorite display snapshot shape changes; a row whose
 # stored version != this is treated as legacy and re-resolved by exact key
 # (favorites-speedup.md Proposal 3).
-FAVORITE_SNAPSHOT_VERSION = 1
+FAVORITE_SNAPSHOT_VERSION = 2
 # Display-only fields projected from a resolved Color artifact entry into the
 # compact per-favorite snapshot. Enough to render the Favorites panel row
 # (Added / Job / Dims / Size / Summary + preview) without a /render-summary
@@ -151,7 +160,8 @@ FAVORITE_SNAPSHOT_VERSION = 1
 # would otherwise be stale one-hour presigns).
 _FAVORITE_SNAPSHOT_FIELDS = (
     "created_at", "image_key", "preview_key", "width", "height", "file_size", "size",
-    "content_type", "format", "color_mode", "palette", "color_interpretation",
+    "content_type", "format", "color_mode", "palette", "palette_display_name",
+    "color_interpretation",
     "postprocess_kind", "derivation_kind", "derived_from_artifact_id",
     "source_artifact_id", "source_color_artifact_id", "derived_from_color_artifact_id",
     "solve_score_chain", "solve_score_program_source_text", "score_source_text",
@@ -188,6 +198,16 @@ ROOT_PROGRAM_VERSION = 1
 ROOT_PROGRAM_META_NAME = "root_program_name"
 ROOT_PROGRAM_META_STATEMENT_COUNT = "root_program_statement_count"
 ROOT_PROGRAM_META_SAVED_AT = "root_program_saved_at"
+
+
+class CustomPaletteCatalogConflictError(Exception):
+    """The named custom-palette catalog changed after the caller read it."""
+
+
+class CustomPaletteCatalogReadError(Exception):
+    """The stored catalog exists but cannot be decoded safely."""
+
+
 MAX_ROOT_PROGRAM_NAME_LEN = 120
 COEFF_PROGRAMS_PREFIX = "polypaint/coeff-programs/"
 COEFF_PROGRAM_META_NAME = "coeff_program_name"
@@ -290,6 +310,8 @@ def _handle_storage_route(fn, event):
         return _json_error_response(409, {"error": str(exc), "conflict": "book_saved_at"})
     except GalleryConflictError as exc:
         return _json_error_response(409, {"error": str(exc), "conflict": "gallery_revision"})
+    except CustomPaletteCatalogConflictError as exc:
+        return _json_error_response(409, {"error": str(exc), "conflict": "custom_palette_revision"})
     except _MigrationMissingMacros as exc:
         return _json_error_response(422, {"error": "macro not migrated", "missing": exc.missing})
     except ClientError as exc:
@@ -1612,6 +1634,10 @@ def handler(event, context):
         return _handle_storage_route(handle_add_favorite, event)
     elif path.endswith("/delete-favorite"):
         return _handle_storage_route(handle_delete_favorite, event)
+    elif path.endswith("/list-custom-palettes"):
+        return _handle_storage_route(handle_list_custom_palettes, event)
+    elif path.endswith("/save-custom-palettes"):
+        return _handle_storage_route(handle_save_custom_palettes, event)
     elif path.endswith("/list-palettes"):
         return _handle_storage_route(handle_list_palettes, event)
     elif path.endswith("/delete-palette"):
@@ -1882,6 +1908,144 @@ def handle_delete_favorite(event):
     _ensure_favorites_store_ready()
     deleted = _delete_favorite_entry(job_id, artifact_id)
     return ok_response({"deleted": deleted, "job_id": job_id, "artifact_id": artifact_id})
+
+
+def _normalize_custom_palette_entries(raw_entries):
+    if not isinstance(raw_entries, list):
+        raise ValueError("custom palettes must be a list")
+    if len(raw_entries) > CUSTOM_PALETTE_MAX_ENTRIES:
+        raise ValueError(
+            f"custom palette catalog supports at most {CUSTOM_PALETTE_MAX_ENTRIES} entries"
+        )
+
+    entries = []
+    seen_names = set()
+    seen_palettes = set()
+    for idx, raw in enumerate(raw_entries):
+        if not isinstance(raw, dict):
+            raise ValueError(f"custom palette row {idx + 1} must be an object")
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            raise ValueError(f"custom palette row {idx + 1} requires a name")
+        if len(name) > CUSTOM_PALETTE_MAX_NAME_LEN:
+            raise ValueError(
+                f"custom palette name must be at most {CUSTOM_PALETTE_MAX_NAME_LEN} characters"
+            )
+        if any(not ch.isprintable() for ch in name):
+            raise ValueError("custom palette names must be printable single-line text")
+
+        raw_stops = raw.get("stops")
+        if not isinstance(raw_stops, list):
+            raise ValueError(f"custom palette {name!r} stops must be a list")
+        if not (CUSTOM_PALETTE_MIN_STOPS <= len(raw_stops) <= CUSTOM_PALETTE_MAX_STOPS):
+            raise ValueError(
+                f"custom palette {name!r} requires {CUSTOM_PALETTE_MIN_STOPS}.."
+                f"{CUSTOM_PALETTE_MAX_STOPS} colors"
+            )
+        stops = []
+        for stop in raw_stops:
+            value = str(stop or "").strip()
+            if value.startswith("#"):
+                value = value[1:]
+            if not _CUSTOM_PALETTE_HEX_RE.fullmatch(value):
+                raise ValueError(
+                    f"custom palette {name!r} contains invalid color {stop!r}"
+                )
+            stops.append(value.lower())
+
+        name_key = name.casefold()
+        palette = "custom:" + "-".join(stops)
+        if name_key in seen_names:
+            raise ValueError(f"duplicate custom palette name: {name!r}")
+        if palette in seen_palettes:
+            raise ValueError(
+                f"custom palette {name!r} duplicates another row's colors"
+            )
+        seen_names.add(name_key)
+        seen_palettes.add(palette)
+        entries.append({"name": name, "stops": stops, "palette": palette})
+    return entries
+
+
+def _custom_palette_catalog_response(doc, revision):
+    return {
+        "schema_version": CUSTOM_PALETTE_CATALOG_SCHEMA_VERSION,
+        "updated_at": str((doc or {}).get("updated_at") or ""),
+        "palettes": list((doc or {}).get("palettes") or []),
+        "revision": str(revision or ""),
+    }
+
+
+def _read_custom_palette_catalog():
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=CUSTOM_PALETTE_CATALOG_KEY)
+    except Exception as exc:
+        if is_missing_s3_error(exc):
+            return {
+                "schema_version": CUSTOM_PALETTE_CATALOG_SCHEMA_VERSION,
+                "updated_at": "",
+                "palettes": [],
+            }, ""
+        raise
+    try:
+        doc = json.loads(obj["Body"].read())
+        if not isinstance(doc, dict):
+            raise ValueError("catalog root is not an object")
+        if int(doc.get("schema_version") or 0) != CUSTOM_PALETTE_CATALOG_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported schema_version {doc.get('schema_version')!r}"
+            )
+        doc["palettes"] = _normalize_custom_palette_entries(doc.get("palettes"))
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise CustomPaletteCatalogReadError(
+            f"stored custom palette catalog is invalid: {exc}"
+        ) from exc
+    return doc, str(obj.get("ETag") or "").strip('"')
+
+
+def handle_list_custom_palettes(event):
+    parse_body(event)
+    doc, revision = _read_custom_palette_catalog()
+    return ok_response(_custom_palette_catalog_response(doc, revision))
+
+
+def handle_save_custom_palettes(event):
+    params = parse_body(event)
+    entries = _normalize_custom_palette_entries(params.get("palettes"))
+    expected_revision = str(params.get("expected_revision") or "").strip().strip('"')
+    doc = {
+        "schema_version": CUSTOM_PALETTE_CATALOG_SCHEMA_VERSION,
+        "updated_at": _utc_now_iso(),
+        "palettes": entries,
+    }
+    put_kwargs = {
+        "Bucket": BUCKET,
+        "Key": CUSTOM_PALETTE_CATALOG_KEY,
+        "Body": json.dumps(
+            doc, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8"),
+        "ContentType": "application/json",
+    }
+    if expected_revision:
+        put_kwargs["IfMatch"] = expected_revision
+    else:
+        put_kwargs["IfNoneMatch"] = "*"
+    try:
+        result = s3.put_object(**put_kwargs)
+    except ClientError as exc:
+        code = str((exc.response.get("Error") or {}).get("Code") or "")
+        if code in ("PreconditionFailed", "412", "ConditionalRequestConflict"):
+            raise CustomPaletteCatalogConflictError(
+                "custom palette catalog changed; close and reopen the popup before saving"
+            ) from exc
+        raise
+    revision = str((result or {}).get("ETag") or "").strip('"')
+    if not revision:
+        head = s3.head_object(Bucket=BUCKET, Key=CUSTOM_PALETTE_CATALOG_KEY)
+        revision = str(head.get("ETag") or "").strip('"')
+    if not revision:
+        raise RuntimeError("custom palette save did not return an object revision")
+    return ok_response(_custom_palette_catalog_response(doc, revision))
 
 
 def handle_list_solve_score_programs(event):
@@ -3709,6 +3873,7 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["color_mode"] = meta.get("color_mode", "")
         entry["match_mode"] = meta.get("match_mode", "")
         entry["palette"] = meta.get("palette", "")
+        entry["palette_display_name"] = meta.get("palette_display_name", "")
         entry["constant_color"] = meta.get("constant_color", "")
         entry["background_color"] = meta.get("background_color", "")
         entry["background_threshold"] = _parse_float(meta.get("background_threshold"))
@@ -3797,6 +3962,7 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["source_display_name"] = meta.get("source_display_name", "")
         entry["source_color_mode"] = meta.get("source_color_mode", "")
         entry["source_palette"] = meta.get("source_palette", "")
+        entry["source_palette_display_name"] = meta.get("source_palette_display_name", "")
         entry["source_solve_metric"] = meta.get("source_solve_metric", "")
         entry["source_solve_score_quantile"] = _parse_float(meta.get("source_solve_score_quantile"))
         entry["source_solve_score_omega"] = _parse_float(meta.get("source_solve_score_omega"))
@@ -4303,6 +4469,8 @@ def _mosaic_tile_from_entry(client, job_id, entry, calc_meta):
         "preview_width": width,
         "preview_height": height,
         "image_key": entry.get("image_key", ""),
+        "palette": entry.get("palette", ""),
+        "palette_display_name": entry.get("palette_display_name", ""),
     }
     return tile, "unknown" if dims is None else f"{width}x{height}"
 
@@ -4533,6 +4701,7 @@ def _build_palette_mosaic_manifest(refresh_id, *, progress_cb=None):
                 "palette_id": entry.get("palette_id", ""),
                 "metric": entry.get("metric", ""),
                 "palette": entry.get("palette", ""),
+                "palette_display_name": entry.get("palette_display_name", ""),
                 "render_reusable": bool(entry.get("render_reusable")),
                 "data_layout": entry.get("data_layout", ""),
                 "color_interpretation": entry.get("color_interpretation", ""),
@@ -5230,6 +5399,12 @@ def _dzi_piece_from_export(job_id, artifact_id, export_id, calc_cache, *, client
         "N": calc.get("N", 0),
         "times": calc.get("times", 1),
         "created_at": str(meta.get("created_at") or ""),
+        "palette": str(meta.get("palette") or meta.get("source_palette") or ""),
+        "palette_display_name": str(
+            meta.get("palette_display_name")
+            or meta.get("source_palette_display_name")
+            or ""
+        ),
         "deepzoom": {"export_id": export_id, "dzi_key": dzi_key,
                       "source_key": src_key or None,   # true provenance, opaque to the viewer
                       "source_artifact_id": artifact_id,
@@ -5277,6 +5452,8 @@ def _enrich_gallery_pick(job_id, artifact_id, export_id, calc_cache, *, client, 
         "N": tile.get("N", 0),
         "times": tile.get("times", 1),
         "created_at": tile.get("created_at", ""),
+        "palette": tile.get("palette", ""),
+        "palette_display_name": tile.get("palette_display_name", ""),
         "deepzoom": deepzoom,
     }
     return piece, None, False
@@ -5291,7 +5468,8 @@ def _write_gallery_share_manifest(pieces, *, source_kind, seed, settings=None):
         piece = {k: p.get(k) for k in (
             "job_id", "export_job_id", "family", "artifact_id", "preview_key",
             "image_key", "preview_width",
-            "preview_height", "function", "degree", "N", "times", "created_at", "deepzoom")}
+            "preview_height", "function", "degree", "N", "times", "created_at",
+            "palette", "palette_display_name", "deepzoom")}
         piece["ordinal"] = i
         title = str(p.get("title") or "").strip()
         if title:

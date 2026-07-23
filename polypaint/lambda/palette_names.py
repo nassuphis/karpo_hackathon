@@ -26,8 +26,29 @@ VALID_PALETTE_NAMES = BUILTIN_PALETTE_NAMES | set(TRI_PALETTE_NAMES) | set(LONG_
 import re
 
 CUSTOM_PALETTE_RE = re.compile(r"custom:[0-9a-fA-F]{6}(?:-[0-9a-fA-F]{6}){1,31}\Z")
+MAX_PALETTE_DISPLAY_NAME_LEN = 80
 
 
 def is_valid_palette_name(name):
     n = str(name or "")
     return n in VALID_PALETTE_NAMES or bool(CUSTOM_PALETTE_RE.match(n))
+
+
+def normalize_palette_display_name(value, palette):
+    """Validate the optional human label paired with a custom palette spec.
+
+    Built-ins already have stable names; only custom: specs need a separate
+    display label. Empty remains valid for legacy/ad-hoc custom palettes.
+    """
+    if not str(palette or "").lower().startswith("custom:"):
+        return ""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) > MAX_PALETTE_DISPLAY_NAME_LEN:
+        raise ValueError(
+            f"palette_display_name must be at most {MAX_PALETTE_DISPLAY_NAME_LEN} characters"
+        )
+    if any(not ch.isprintable() for ch in text):
+        raise ValueError("palette_display_name must be printable single-line text")
+    return text

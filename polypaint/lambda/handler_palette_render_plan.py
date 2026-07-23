@@ -19,7 +19,7 @@ from calc_chunks import (
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
 from color_render_contract import normalize_color_interpretation, validate_color_output_contract
 from logical_sections import build_physical_section_items, build_solve_source_manifest, write_solve_source_manifest
-from palette_names import is_valid_palette_name
+from palette_names import is_valid_palette_name, normalize_palette_display_name
 from param_source import chunk_items_have_params
 from pipeline_programs import root_program_for_run, solve_score_program_for_run
 from shared import BUCKET, parse_body, ok_response
@@ -216,9 +216,10 @@ def _palette_identity_payload(
     output_channels,
     palette,
     root_transforms,
+    palette_display_name="",
 ):
     mode = normalize_color_interpretation(color_interpretation)
-    return {
+    payload = {
         "scheme": "palette_variant_id_v2",
         "job_id": str(job_id),
         "solve_score_fingerprint": str(compiled_score_fingerprint),
@@ -233,6 +234,9 @@ def _palette_identity_payload(
         "palette": str(palette or "") if _interpretation_uses_palette(mode) else "none",
         "root_transforms": root_transforms or [],
     }
+    if palette_display_name:
+        payload["palette_display_name"] = str(palette_display_name)
+    return payload
 
 
 def _palette_variant_identity(**kwargs):
@@ -527,6 +531,7 @@ def _done_plan_for_existing_palette(
     meta,
     metric,
     palette,
+    palette_display_name,
     quantile,
     omega,
     omega_enabled,
@@ -564,6 +569,7 @@ def _done_plan_for_existing_palette(
     plan["params"] = {
         "metric": metric,
         "palette": palette,
+        "palette_display_name": palette_display_name,
         "solve_score_chain": score_chain,
         "solve_score_quantile": quantile,
         "solve_score_omega": omega,
@@ -708,6 +714,10 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
     palette = str(source.get("palette") or "").strip()
     if not is_valid_palette_name(palette):
         raise RuntimeError(f"Solve-score Color artifact {source['artifact_id']} has invalid palette {palette!r}")
+    palette_display_name = normalize_palette_display_name(
+        source.get("palette_display_name"),
+        palette,
+    )
     q = _artifact_meta_quantile(source, "solve_score_quantile")
     if q is None:
         raise RuntimeError(f"Solve-score Color artifact {source['artifact_id']} is missing solve_score_quantile")
@@ -757,12 +767,18 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         output_channels=output_channels,
         palette=palette,
         root_transforms=root_transforms,
+        palette_display_name=palette_display_name,
     )
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
     solve_prefix = prefix + "solve_score/"
     chunks_prefix = prefix + "chunks/"
     display_name = source.get("associated_palette_display_name") or _palette_display_name(
-        source_score_chain_internal, metric, q, omega, omega_enabled, palette
+        source_score_chain_internal,
+        metric,
+        q,
+        omega,
+        omega_enabled,
+        palette_display_name or palette,
     )
 
     plan = _base_extract_plan(
@@ -786,6 +802,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
     plan["params"] = {
         "metric": metric,
         "palette": palette,
+        "palette_display_name": palette_display_name,
         "solve_score_chain": source_score_chain_public,
         "solve_score_program_source_text": source_score_source_text,
         "solve_score_quantile": q,
@@ -940,6 +957,10 @@ def handler(event, context):
     metric = compiled_score["metric"]
     requested_palette = pp.get("palette", "inferno")
     palette = requested_palette if _interpretation_uses_palette(color_interpretation) else ""
+    palette_display_name = normalize_palette_display_name(
+        pp.get("palette_display_name"),
+        palette,
+    )
     root_params = {
         "root_transforms": pp.get("root_transforms", []),
         "root_program_source_text": pp.get("root_program_source_text", ""),
@@ -970,6 +991,7 @@ def handler(event, context):
         output_channels=output_channels,
         palette=palette,
         root_transforms=root_transforms,
+        palette_display_name=palette_display_name,
     )
     existing = _load_existing_palette_for_identity(job_id, palette_id, palette_variant_fingerprint)
     if existing:
@@ -982,6 +1004,7 @@ def handler(event, context):
                 meta=existing,
                 metric=metric,
                 palette=palette,
+                palette_display_name=palette_display_name,
                 quantile=q,
                 omega=omega,
                 omega_enabled=omega_enabled,
@@ -1068,6 +1091,7 @@ def handler(event, context):
         "params": {
             "metric": metric,
             "palette": palette,
+            "palette_display_name": palette_display_name,
             "requested_palette": requested_palette,
             "color_interpretation": color_interpretation,
             "score_output_interpretation": color_interpretation,

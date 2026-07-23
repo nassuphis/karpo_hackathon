@@ -29,7 +29,7 @@ from logical_sections import (
     validate_section_count,
     write_solve_source_manifest,
 )
-from palette_names import is_valid_palette_name
+from palette_names import is_valid_palette_name, normalize_palette_display_name
 from color_render_contract import DEFAULT_BACKGROUND_COLOR, normalize_background_color, validate_color_output_contract
 from shared import BUCKET, BILEVEL_SPARSE_PIPELINE, REF_SIZE, parse_body, ok_response
 from solve_score_chain import (
@@ -380,6 +380,7 @@ def _build_fused_color_plan(
         "root_program": None,
         "rotation": 0,
         "palette": "inferno",
+        "palette_display_name": "",
         "background_color": DEFAULT_BACKGROUND_COLOR,
         "match_mode": "none",
         "quality": 90,
@@ -417,6 +418,11 @@ def _build_fused_color_plan(
     if not is_valid_palette_name(palette):
         raise RuntimeError(f"Invalid palette: {palette}")
     fused_params["palette"] = palette
+    palette_display_name = normalize_palette_display_name(
+        fused_params.get("palette_display_name"),
+        palette,
+    )
+    fused_params["palette_display_name"] = palette_display_name
 
     background_color = normalize_background_color(fused_params.get("background_color"))
     fused_params["background_color"] = background_color
@@ -637,6 +643,7 @@ def _build_fused_color_plan(
         assoc_prefix = f"renders/{job_id}/palettes/{assoc_palette_id}/"
         assoc_uses_palette = _color_interpretation_uses_palette(solve_score_output_interpretation)
         assoc_palette_name = palette if assoc_uses_palette else ""
+        assoc_palette_label = palette_display_name or assoc_palette_name
         associated_palette = {
             "enabled": True,
             "mode": assoc_mode,
@@ -645,7 +652,7 @@ def _build_fused_color_plan(
                 solve_score_chain_internal,
                 solve_metric,
                 solve_score_quantile,
-                assoc_palette_name or solve_score_output_interpretation.upper(),
+                assoc_palette_label or solve_score_output_interpretation.upper(),
             ),
             "image_key": assoc_prefix + "image.jpeg",
             "preview_key": assoc_prefix + "preview.png",
@@ -656,6 +663,7 @@ def _build_fused_color_plan(
             "source_color_artifact_id": artifact_id,
             "metric": solve_metric,
             "palette": assoc_palette_name,
+            "palette_display_name": palette_display_name if assoc_uses_palette else "",
             "quantile": solve_score_quantile,
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
@@ -709,6 +717,7 @@ def _build_fused_color_plan(
         "render_warnings": json.dumps(render_warnings, separators=(",", ":")),
         "match_mode": "none",
         "palette": palette,
+        "palette_display_name": palette_display_name,
         "background_color": background_color,
         "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
         "repalette_capable": "true",

@@ -4,11 +4,11 @@ Pure string templating: the compose op renders book.tex / cover.tex from the
 book document + provenance snapshots, then runs lualatex. Everything here is
 testable without a TeX installation.
 
-Geometry (verified against make_polypaint_book.py:246-262, computed values —
-the script's own comments are wrong):
+Geometry (verified against the WhiteWall IDML templates):
   content page: 290 mm net -> 293 x 296 mm gross (bleed on 3 sides, none at
-  the binding edge); cover: 609 net + 2x10 bleed -> 629 x 316 mm gross,
-  panel (609-11)/2 = 299 mm.
+  the binding edge); cover panels are 296 mm square with 10 mm outer bleed.
+  The spine, and therefore the gross cover width, follows the content page
+  count. The 44-page template is 296 + 14 + 296 mm trim -> 626 x 316 mm gross.
 
 Page plan: front matter must be an ODD page count so entry text lands on
 versos (left) and images on rectos (right) of the same opening
@@ -18,10 +18,21 @@ versos (left) and images on rectos (right) of the same opening
 
 CONTENT_W_MM = 293
 CONTENT_H_MM = 296
-COVER_W_MM = 629
-COVER_H_MM = 316
-COVER_PANEL_MM = 299
-COVER_SPINE_MM = 11
+COVER_PANEL_MM = 296
+COVER_BLEED_MM = 10
+COVER_TRIM_H_MM = 296
+COVER_H_MM = COVER_TRIM_H_MM + 2 * COVER_BLEED_MM
+
+# WhiteWall Fuji Crystal semi-matte IDML measurements:
+#   28 pages: 603 mm trim = 296 + 11 + 296
+#   44 pages: 606 mm trim = 296 + 14 + 296
+# The paper block adds 0.75 mm per four content pages. WhiteWall supports
+# 28-112 pages for this paper; keeping the same linear geometry outside that
+# range preserves small app-only flipbook fixtures without claiming that the
+# publisher accepts their page count.
+COVER_SPINE_REFERENCE_PAGES = 28
+COVER_SPINE_REFERENCE_MM = 11
+COVER_SPINE_MM_PER_PAGE = 3 / 16
 DEFAULT_BOOK_BACKGROUND_COLOR = "1A1A2E"
 
 # The compose build dir lays prepared images out under assets/.
@@ -112,6 +123,39 @@ def page_plan(n_entries):
     pad = (4 - used % 4) % 4
     total = max(4, used + pad)
     return total, total - used
+
+
+def cover_geometry(content_pages):
+    """Return page-count-specific WhiteWall cover geometry in millimetres."""
+    if isinstance(content_pages, bool):
+        raise ValueError("cover content page count must be an integer")
+    try:
+        pages = int(content_pages)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("cover content page count must be an integer") from exc
+    if pages != content_pages or pages <= 0 or pages % 4:
+        raise ValueError("cover content page count must be a positive multiple of 4")
+    spine_mm = (
+        COVER_SPINE_REFERENCE_MM
+        + (pages - COVER_SPINE_REFERENCE_PAGES) * COVER_SPINE_MM_PER_PAGE
+    )
+    if spine_mm <= 0:
+        raise ValueError(f"cover spine width is invalid for {pages} content pages")
+    trim_width_mm = 2 * COVER_PANEL_MM + spine_mm
+    return {
+        "content_pages": pages,
+        "panel_mm": float(COVER_PANEL_MM),
+        "spine_mm": float(spine_mm),
+        "bleed_mm": float(COVER_BLEED_MM),
+        "trim_width_mm": float(trim_width_mm),
+        "trim_height_mm": float(COVER_TRIM_H_MM),
+        "width_mm": float(trim_width_mm + 2 * COVER_BLEED_MM),
+        "height_mm": float(COVER_H_MM),
+    }
+
+
+def _format_mm(value):
+    return f"{float(value):.6f}".rstrip("0").rstrip(".")
 
 
 def _font_setup():
@@ -344,14 +388,20 @@ def render_content_tex(book, provenance_by_entry=None, pdf_url=None):
     return "\n".join(parts) + "\n", total
 
 
-def render_cover_tex(book, cover_asset_rel=None):
-    """Emit the cover PDF source: one 629x316 mm page, back|spine|front."""
+def render_cover_tex(book, cover_asset_rel=None, content_pages=None):
+    """Emit one page-count-specific back|spine|front cover PDF source."""
+    if content_pages is None:
+        content_pages, _ = page_plan(len(book.get("entries") or []))
+    geometry = cover_geometry(content_pages)
+    panel_mm = geometry["panel_mm"]
+    spine_mm = geometry["spine_mm"]
+    front_center_mm = (spine_mm + panel_mm) / 2
     title = tex_escape(book.get("title") or book.get("name") or "PolyPaint")
     colors = _book_color_scheme(book)
     parts = [
         r"\documentclass{article}",
-        r"\usepackage[paperwidth=%dmm, paperheight=%dmm, margin=0mm]{geometry}"
-        % (COVER_W_MM, COVER_H_MM),
+        r"\usepackage[paperwidth=%smm, paperheight=%smm, margin=0mm]{geometry}"
+        % (_format_mm(geometry["width_mm"]), _format_mm(geometry["height_mm"])),
         r"\usepackage{graphicx}",
         r"\usepackage{xcolor}",
         r"\usepackage{tikz}",
@@ -371,11 +421,11 @@ def render_cover_tex(book, cover_asset_rel=None):
         parts.append(
             r"\node[anchor=center] at ($(current page.center)+(%.1fmm, 20mm)$)"
             r" {\includegraphics[width=%.1fmm]{%s}};"
-            % (COVER_SPINE_MM / 2 + COVER_PANEL_MM / 2, COVER_PANEL_MM * 2 / 3, cover_asset_rel))
+            % (front_center_mm, panel_mm * 2 / 3, cover_asset_rel))
     parts.append(
         r"\node[anchor=center, text=bodytext] at ($(current page.center)+(%.1fmm, -110mm)$)"
         r" {\displayfont\fontsize{36}{40}\selectfont %s};"
-        % (COVER_SPINE_MM / 2 + COVER_PANEL_MM / 2, title))
+        % (front_center_mm, title))
     parts.extend([
         r"\end{tikzpicture}",
         r"\null",

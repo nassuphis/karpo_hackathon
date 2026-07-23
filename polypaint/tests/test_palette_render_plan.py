@@ -69,6 +69,35 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertNotEqual(first[0], interpretation_changed[0])
         self.assertNotEqual(first[1], interpretation_changed[1])
 
+    def test_custom_palette_display_name_is_part_of_palette_artifact_identity(self):
+        from handler_palette_render_plan import _palette_variant_identity
+
+        base = {
+            "job_id": "j",
+            "compiled_score_fingerprint": "fp_custom",
+            "score_chain_public": [["proximity", "1"]],
+            "metric": "proximity",
+            "quantile": 0.01,
+            "omega": 1.0,
+            "omega_enabled": True,
+            "color_interpretation": "scalar_lut",
+            "output_channel_count": 1,
+            "output_channels": [],
+            "palette": "custom:112233-445566",
+            "root_transforms": [],
+        }
+
+        unlabeled = _palette_variant_identity(**base)
+        named = _palette_variant_identity(
+            **base,
+            palette_display_name="Twilight",
+        )
+
+        self.assertNotEqual(unlabeled[0], named[0])
+        self.assertNotEqual(unlabeled[1], named[1])
+        self.assertNotIn("palette_display_name", unlabeled[2])
+        self.assertEqual(named[2]["palette_display_name"], "Twilight")
+
     def test_palette_variant_identity_ignores_palette_for_direct_rgb(self):
         from handler_palette_render_plan import _palette_variant_identity
 

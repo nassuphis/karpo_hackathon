@@ -12,6 +12,7 @@ import boto3
 
 from color_artifact_meta import load_color_artifact_head
 from color_render_contract import normalize_color_interpretation
+from palette_names import normalize_palette_display_name
 from raw_score_render import histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
 from raw_sidecar import build_raw_sidecar
 from solve_score_chain import (
@@ -181,6 +182,10 @@ def handler(event, context):
     degree = int(params["degree"])
     metric = params["metric"]
     palette = params["palette"]
+    palette_display_name = normalize_palette_display_name(
+        params.get("palette_display_name"),
+        palette,
+    )
     solve_score_chain = contract_param(params, "solve_score_chain", "", contract_warnings)
     compile_params = dict(params)
     compile_params.setdefault("metric", metric)
@@ -535,8 +540,13 @@ def handler(event, context):
             "job_id": job_id,
             "palette_id": palette_id,
             "created_at": created_at,
-            "display_name": f"{metric} q={(float(q) * 100):.1f}% {_omega_display(omega_enabled, omega)} {palette} {created_at}",
+            "display_name": (
+                f"{metric} q={(float(q) * 100):.1f}% "
+                f"{_omega_display(omega_enabled, omega)} "
+                f"{palette_display_name or palette} {created_at}"
+            ),
             "palette": palette,
+            "palette_display_name": palette_display_name,
             "root_transforms": root_transforms or [],
             "degree": degree,
             "N": full_n,
@@ -629,6 +639,7 @@ def handler(event, context):
             "raw_channels": score_output_channel_count if raw_output_path else 1,
             "color_interpretation": color_interpretation,
             "render_reusable": not raw_output_path,
+            "palette_display_name": palette_display_name,
             **assemble_stats,
             "render_ms": render_ms,
             "encode_ms": encode_ms,

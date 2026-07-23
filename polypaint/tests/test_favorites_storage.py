@@ -191,13 +191,19 @@ class FavoritesStorageTests(unittest.TestCase):
 
     def test_legacy_row_resolves_by_exact_key_and_backfills(self):
         self._seed_fav("jobA", "cA")  # no snapshot -> legacy
-        self._seed_artifact("jobA", "cA", overlay={"color_mode": "solve_score", "created_at": "2026-03-01"})
+        self._seed_artifact("jobA", "cA", overlay={
+            "color_mode": "solve_score",
+            "created_at": "2026-03-01",
+            "palette": "custom:112233-445566",
+            "palette_display_name": "Archive dusk",
+        })
         body = json.loads(hs.handle_list_favorites(self._event({}))["body"])
         self.assertEqual(body["count"], 1)
         row = body["favorites"][0]
         self.assertEqual(row["hydration_state"], "ready")
         self.assertEqual(row["image_key"], "renders/jobA/color/cA/image.jpeg")
         self.assertEqual(row["color_mode"], "solve_score")
+        self.assertEqual(row["palette_display_name"], "Archive dusk")
         self.assertEqual(body["snapshot_backfills"], 1)
         # exact-key resolution, never a listing
         self.assertGreater(self.s3.head_calls, 0)

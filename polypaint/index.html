@@ -336,21 +336,6 @@ button {
 .pal-circle-custom {
     min-width: 44px;
 }
-.pal-custom-input {
-    height: 22px;
-    width: 200px;
-    padding: 0 8px;
-    border-radius: 999px;
-    border: 1px solid #0f3460;
-    background: #111827;
-    color: #dbe7ef;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 10px;
-    box-sizing: border-box;
-}
-.pal-custom-input.invalid {
-    border-color: #c0392b;
-}
 
 .tri-popup-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.6);
@@ -358,7 +343,8 @@ button {
 }
 #tri-popup-overlay,
 #builtin-popup-overlay,
-#long-popup-overlay {
+#long-popup-overlay,
+#custom-palette-popup-overlay {
     z-index: 1200;
 }
 .tri-popup {
@@ -453,6 +439,85 @@ button {
 }
 .tri-popup-empty td {
     color: #777; text-align: center; padding: 16px 8px;
+}
+.custom-palette-popup {
+    width: min(980px, calc(100vw - 32px));
+}
+.custom-palette-table-wrap {
+    flex: 1 1 auto;
+    min-height: 180px;
+    max-height: 44vh;
+}
+.custom-palette-table {
+    table-layout: fixed;
+}
+.custom-palette-table th:nth-child(1) { width: 24%; }
+.custom-palette-table th:nth-child(2) { width: 42%; }
+.custom-palette-table th:nth-child(3) { width: 34%; }
+.custom-palette-table .tri-popup-row.invalid {
+    color: #d98989;
+}
+.custom-palette-name {
+    color: #e4e8f2;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+.custom-palette-hex {
+    color: #a9b8ca;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+    overflow-wrap: anywhere;
+}
+.custom-palette-editor {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.7fr) minmax(280px, 1.3fr);
+    gap: 10px 14px;
+    padding: 12px 14px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+}
+.custom-palette-editor label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    color: #778599;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.custom-palette-editor input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    font-size: 12px;
+}
+#custom-palette-popup-hex {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.custom-palette-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px 14px;
+}
+.custom-palette-status {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #8ea0b6;
+    font-size: 11px;
+}
+.custom-palette-status.error {
+    color: #f08a8a;
+}
+@media (max-width: 720px) {
+    .custom-palette-editor {
+        grid-template-columns: 1fr;
+    }
+    .custom-palette-table th:nth-child(2),
+    .custom-palette-table td:nth-child(2) {
+        display: none;
+    }
+    .custom-palette-table th:nth-child(1) { width: 42%; }
+    .custom-palette-table th:nth-child(3) { width: 58%; }
 }
 .autolevel-pipeline {
     flex: 1 1 auto;
@@ -2693,6 +2758,40 @@ button {
                 </thead>
                 <tbody id="long-popup-body"></tbody>
             </table>
+        </div>
+    </div>
+</div>
+<div id="custom-palette-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup custom-palette-popup" role="dialog" aria-modal="true"
+         aria-labelledby="custom-palette-popup-title">
+        <div class="tri-popup-head">
+            <div id="custom-palette-popup-title" class="tri-popup-title">Custom palettes</div>
+            <button id="custom-palette-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div class="tri-popup-table-wrap custom-palette-table-wrap">
+            <table class="tri-popup-table custom-palette-table">
+                <thead>
+                    <tr><th>Name</th><th>HEX values</th><th>Palette</th></tr>
+                </thead>
+                <tbody id="custom-palette-popup-body"></tbody>
+            </table>
+        </div>
+        <div class="custom-palette-editor">
+            <label>Name
+                <input id="custom-palette-popup-name" type="text" maxlength="80"
+                       placeholder="Palette name" autocomplete="off" disabled>
+            </label>
+            <label>HEX values
+                <input id="custom-palette-popup-hex" type="text"
+                       placeholder="#879CAA, #AAA4A4, #0E3057" autocomplete="off"
+                       spellcheck="false" disabled>
+            </label>
+        </div>
+        <div class="custom-palette-actions">
+            <button id="custom-palette-popup-new" type="button" class="btn-secondary">New</button>
+            <button id="custom-palette-popup-delete" type="button" class="btn-secondary" disabled>Delete</button>
+            <div id="custom-palette-popup-status" class="custom-palette-status"></div>
+            <button id="custom-palette-popup-save" type="button" class="btn-primary" disabled>Save</button>
         </div>
     </div>
 </div>

@@ -75,7 +75,11 @@ assert "\\qrcode[height=14mm,level=M]{https://" in content.split("\\newpage", 1)
     "title-page QR missing from gate compile"
 assert content.count("\\qrcode[") == 1 + len(BOOK["entries"]), \
     "every spread must carry an image QR (titled or not) + the title-page PDF QR"
-cover = book_tex.render_cover_tex(BOOK, "assets/e1.jpg")
+cover = book_tex.render_cover_tex(
+    BOOK, "assets/e1.jpg", content_pages=expected_pages)
+idml_44 = book_tex.cover_geometry(44)
+assert idml_44["width_mm"] == 626 and idml_44["height_mm"] == 316, idml_44
+assert idml_44["panel_mm"] == 296 and idml_44["spine_mm"] == 14, idml_44
 for source in (content, cover):
     assert "\\definecolor{pagebg}{HTML}{F4E8D0}" in source, "selected background missing"
     assert "\\definecolor{bodytext}{HTML}{111827}" in source, "light-background contrast missing"
@@ -136,7 +140,18 @@ assert b"FontFile2" in pdf or b"FontFile3" in pdf or b"FontFile" in pdf, \
     "fonts not embedded (WhiteWall hard requirement)"
 
 cpdf = open("/build/cover.pdf", "rb").read()
-assert re.search(rb"/MediaBox\s*\[[^\]]*178[23]\.\d+\s+89[56]\.\d+", cpdf), "cover MediaBox wrong"
+cover_box = re.search(
+    rb"/MediaBox\s*\[\s*0\s+0\s+([0-9.]+)\s+([0-9.]+)\s*\]", cpdf)
+assert cover_box, "cover MediaBox missing"
+actual_cover_pt = tuple(float(value) for value in cover_box.groups())
+expected_geometry = book_tex.cover_geometry(expected_pages)
+expected_cover_pt = (
+    expected_geometry["width_mm"] * 72 / 25.4,
+    expected_geometry["height_mm"] * 72 / 25.4,
+)
+assert all(abs(actual - expected) < 0.1
+           for actual, expected in zip(actual_cover_pt, expected_cover_pt)), \
+    f"cover MediaBox {actual_cover_pt}, want {expected_cover_pt}"
 assert b"FontFile" in cpdf, "cover fonts not embedded"
 
 print(f"GATE OK: {expected_pages} pages, MediaBoxes + FontFile streams verified")

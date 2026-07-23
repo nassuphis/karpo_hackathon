@@ -121,6 +121,8 @@ class TestDeepZoomExportRaw(unittest.TestCase):
                 "min_im": "-0.75",
                 "max_im": "2.0",
                 "rotation": "0.125",
+                "palette": "custom:879caa-0e3057",
+                "palette_display_name": "Night reef",
             },
         }
 
@@ -184,6 +186,8 @@ class TestDeepZoomExportRaw(unittest.TestCase):
         self.assertEqual(manifest["viewport_min_im"], -0.75)
         self.assertEqual(manifest["viewport_max_im"], 2.0)
         self.assertEqual(manifest["source_rotation"], 0.125)
+        self.assertEqual(manifest["source_palette"], "custom:879caa-0e3057")
+        self.assertEqual(manifest["source_palette_display_name"], "Night reef")
         self.assertNotIn("raw_key", manifest)
         self.assertNotIn("raw_meta_key", manifest)
         self.assertNotIn("palette", manifest)

@@ -229,8 +229,5 @@ npx playwright test \
     tests/e2e/render-refresh.spec.js \
     tests/e2e/scrub-pad.spec.js \
     tests/e2e/sheets-ui.spec.js
-# render-solve-score: 46 good tests gated; ONLY the known-red ColorRender-MT
-# fixture test is inverted out (pre-existing missing calc.job_size — CR30 follow-up F11).
-npx playwright test tests/e2e/render-solve-score.spec.js \
-    --grep-invert "ColorRender-MT popup exposes retries" 
+npx playwright test tests/e2e/render-solve-score.spec.js
 echo "Predeploy contract gate passed."

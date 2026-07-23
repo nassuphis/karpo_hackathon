@@ -236,6 +236,22 @@ let _favoriteLoadGeneration = 0;          // stale-completion guard (force refre
 let _triPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _builtinPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
+let _customPalettePopupState = {
+    open: false,
+    mode: null,
+    loading: false,
+    saving: false,
+    selectedIdx: -1,
+    working: [],
+    savedSignature: '[]',
+    status: '',
+    error: '',
+};
+let _customPaletteCatalog = [];
+let _customPaletteCatalogRevision = '';
+let _customPaletteCatalogLoaded = false;
+let _customPaletteCatalogLoadPromise = null;
+let _customPaletteSelectionByMode = {};
 let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _resizePopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
@@ -322,17 +338,25 @@ const BUILTIN_PALETTE_ENTRIES = PALETTE_DEFS.map(def => ({
     search_text: def.name.toLowerCase(),
 }));
 
-// --- Custom hex-stop palettes -------------------------------------------
-// The user pastes hex stops ("#879CAA, #AAA4A4 ..." — the # signals each
-// color, commas/whitespace optional). Canonical wire form is the palette
-// NAME itself: "custom:rrggbb-rrggbb-..." (2..32 stops, equal distance,
-// linear interpolation — palette_lut.h parses the same string natively).
+// --- Named custom hex-stop palettes -------------------------------------
+// The renderer's canonical wire value remains custom:rrggbb-rrggbb-...
+// Display names live in a separately persisted catalog and travel beside the
+// wire value as immutable artifact provenance.
 const CUSTOM_PALETTE_MAX_STOPS = 32;
-let _customPaletteTextByMode = {};
+const CUSTOM_PALETTE_MAX_ENTRIES = 256;
+const CUSTOM_PALETTE_MAX_NAME_LEN = 80;
 
 function _parseCustomPaletteStops(text) {
-    const matches = [...String(text || '').matchAll(/#\s*([0-9a-fA-F]{6})\b/g)];
-    const stops = matches.map(m => '#' + m[1].toLowerCase());
+    const value = String(text || '').trim();
+    if (!value) return null;
+    if (value.toLowerCase().startsWith('custom:')) return _customStopsFromName(value);
+    const tokens = value.split(/[\s,;]+/).filter(Boolean);
+    const stops = [];
+    for (const token of tokens) {
+        const hex = token.startsWith('#') ? token.slice(1) : token;
+        if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+        stops.push('#' + hex.toLowerCase());
+    }
     if (stops.length < 2 || stops.length > CUSTOM_PALETTE_MAX_STOPS) return null;
     return stops;
 }
@@ -342,33 +366,94 @@ function _customPaletteNameFromStops(stops) {
 }
 
 function _customStopsFromName(name) {
-    if (typeof name !== 'string' || !name.startsWith('custom:')) return null;
+    if (typeof name !== 'string' || !name.toLowerCase().startsWith('custom:')) return null;
     const groups = name.slice(7).split('-');
     if (groups.length < 2 || groups.length > CUSTOM_PALETTE_MAX_STOPS) return null;
     if (!groups.every(g => /^[0-9a-fA-F]{6}$/.test(g))) return null;
     return groups.map(g => '#' + g.toLowerCase());
 }
 
-function _customPaletteTextForMode(mode) {
-    return _customPaletteTextByMode[mode] || '';
+function _customPaletteEntry(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const name = String(raw.name || '').trim();
+    const sourceStops = Array.isArray(raw.stops) ? raw.stops : [];
+    const stops = sourceStops.map(stop => {
+        const value = String(stop || '').trim();
+        return '#' + (value.startsWith('#') ? value.slice(1) : value).toLowerCase();
+    });
+    if (!name || name.length > CUSTOM_PALETTE_MAX_NAME_LEN) return null;
+    if (stops.length < 2 || stops.length > CUSTOM_PALETTE_MAX_STOPS) return null;
+    if (!stops.every(stop => /^#[0-9a-f]{6}$/.test(stop))) return null;
+    return {
+        name,
+        stops,
+        hexText: stops.join(', '),
+        palette: _customPaletteNameFromStops(stops),
+    };
 }
 
-function _setCustomPaletteTextForMode(mode, text) {
-    _customPaletteTextByMode[mode] = String(text || '');
+function _customPaletteClone(entry) {
+    return {
+        name: String(entry.name || ''),
+        stops: Array.isArray(entry.stops) ? entry.stops.slice() : [],
+        hexText: String(entry.hexText || ''),
+        palette: String(entry.palette || ''),
+    };
 }
 
-function _customPaletteTextFromName(name) {
-    const stops = _customStopsFromName(name);
-    return stops ? stops.join(', ') : '';
+function _customPaletteSignature(entries) {
+    return JSON.stringify((entries || []).map(entry => ({
+        name: String(entry.name || '').trim(),
+        hexText: String(entry.hexText || '').trim(),
+    })));
 }
 
-function _applyCustomPaletteText(mode, text) {
-    _setCustomPaletteTextForMode(mode, text);
-    const stops = _parseCustomPaletteStops(text);
-    if (!stops) return false;
-    setPaletteForMode(mode, _customPaletteNameFromStops(stops));
-    if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
-    return true;
+function _customPalettePopupDirty() {
+    return _customPaletteSignature(_customPalettePopupState.working)
+        !== _customPalettePopupState.savedSignature;
+}
+
+function _customPaletteEntryBySpec(palette) {
+    return _customPaletteCatalog.find(entry => entry.palette === palette) || null;
+}
+
+function _rememberCustomPaletteForMode(mode, palette, displayName) {
+    const spec = String(palette || '');
+    if (!_customStopsFromName(spec)) return;
+    const catalogEntry = _customPaletteEntryBySpec(spec);
+    _customPaletteSelectionByMode[mode] = {
+        palette: spec,
+        displayName: String(displayName || (catalogEntry && catalogEntry.name) || '').trim(),
+    };
+}
+
+function _customPaletteForMode(mode) {
+    const current = _currentPaletteForMode(mode);
+    const remembered = _customPaletteSelectionByMode[mode];
+    if (remembered && remembered.palette) return remembered;
+    if (_customStopsFromName(current)) {
+        const entry = _customPaletteEntryBySpec(current);
+        return {
+            palette: current,
+            displayName: String((entry && entry.name) || '').trim(),
+        };
+    }
+    return null;
+}
+
+function _paletteDisplayNameForMode(mode) {
+    const current = _currentPaletteForMode(mode);
+    if (!_customStopsFromName(current)) return '';
+    const remembered = _customPaletteSelectionByMode[mode];
+    if (remembered && remembered.palette === current) {
+        return String(remembered.displayName || '').trim();
+    }
+    const entry = _customPaletteEntryBySpec(current);
+    return entry ? entry.name : '';
+}
+
+function _activeRenderPaletteDisplayName() {
+    return _paletteDisplayNameForMode('solve_score');
 }
 
 function _paletteContainerId(mode) {
@@ -623,51 +708,20 @@ function _renderPaletteRow(mode) {
     };
     children.push(longSwatch);
 
-    const customText = _customPaletteTextForMode(mode);
-    const customStops = _parseCustomPaletteStops(customText)
-        || _customStopsFromName(currentPalette);
+    const rememberedCustom = _customPaletteForMode(mode);
+    const customStops = rememberedCustom
+        ? _customStopsFromName(rememberedCustom.palette)
+        : _customStopsFromName(currentPalette);
     const customActive = typeof currentPalette === 'string' && currentPalette.startsWith('custom:');
     const customSwatch = document.createElement('div');
     customSwatch.className = 'pal-circle pal-circle-builtin pal-circle-custom' + (customActive ? ' active' : '');
     customSwatch.textContent = 'HEX';
     customSwatch.title = customStops
-        ? `Custom palette (${customStops.length} stops) — equal distance, linear interpolation`
-        : 'Custom palette: enter hex stops in the box (e.g. #879CAA, #AAA4A4); # starts each color';
+        ? `${(rememberedCustom && rememberedCustom.displayName) || 'Custom palette'} (${customStops.length} stops)`
+        : 'Named custom palettes';
     customSwatch.style.background = customStops ? _stopsToGradient(customStops) : '#555';
-    customSwatch.onclick = () => {
-        const stops = _parseCustomPaletteStops(_customPaletteTextForMode(mode));
-        if (stops) {
-            setPaletteForMode(mode, _customPaletteNameFromStops(stops));
-            if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
-        }
-    };
+    customSwatch.onclick = () => _openCustomPalettePopup(mode);
     children.push(customSwatch);
-
-    const customInput = document.createElement('input');
-    customInput.type = 'text';
-    customInput.className = 'pal-custom-input';
-    customInput.placeholder = '#hex, #hex, ...';
-    customInput.title = 'Custom palette stops: hex colors, # starts each one, commas optional. Applied on Enter or focus-out.';
-    customInput.value = customText;
-    customInput.oninput = () => {
-        // live: remember the text and preview the swatch WITHOUT rebuilding
-        // the row (a rebuild would steal focus mid-typing)
-        _setCustomPaletteTextForMode(mode, customInput.value);
-        const stops = _parseCustomPaletteStops(customInput.value);
-        customSwatch.style.background = stops ? _stopsToGradient(stops) : '#555';
-        customInput.classList.toggle('invalid', !stops && customInput.value.trim() !== '');
-    };
-    customInput.onchange = () => {
-        if (customInput.value.trim() === '') return;
-        _applyCustomPaletteText(mode, customInput.value);
-    };
-    customInput.onkeydown = (ev) => {
-        if (ev.key === 'Enter') {
-            ev.preventDefault();
-            _applyCustomPaletteText(mode, customInput.value);
-        }
-    };
-    children.push(customInput);
 
     container.replaceChildren();
     children.forEach(child => container.appendChild(child));
@@ -873,7 +927,7 @@ function setMatch(mode) {
     document.querySelectorAll('.strat-chip').forEach(c => c.classList.toggle('active', c.dataset.match === mode));
 }
 
-function setPaletteForMode(mode, name) {
+function setPaletteForMode(mode, name, displayName = '') {
     if (mode === 'proximity') renderRootProximityPalette = name;
     else if (mode === 'solve_score') renderSolveScorePalette = name;
     else if (mode === 'repalette') repalettePalette = name;
@@ -888,12 +942,7 @@ function setPaletteForMode(mode, name) {
         const longName = name.slice(5);
         if (_longPaletteEntryByName(longName)) _setRememberedLongPalette(mode, longName);
     } else if (typeof name === 'string' && name.startsWith('custom:')) {
-        // loading a saved run restores the text box from the canonical name
-        // (unless the user's own text already parses to this palette)
-        const current = _parseCustomPaletteStops(_customPaletteTextForMode(mode));
-        if (!current || _customPaletteNameFromStops(current) !== name) {
-            _setCustomPaletteTextForMode(mode, _customPaletteTextFromName(name));
-        }
+        _rememberCustomPaletteForMode(mode, name, displayName);
     }
     _renderPaletteRow(mode);
     if (mode === 'repalette' && _repalettePopupState.open) _renderRepalettePopup();
@@ -939,6 +988,381 @@ function _setLongPaletteForMode(mode, longName, activate = true) {
     if (activate) setPaletteForMode(mode, entry.palette_id);
     else _renderPaletteRow(mode);
     if (activate && (mode === 'proximity' || mode === 'solve_score')) setColorMode(mode);
+}
+
+function _resetCustomPaletteWorking() {
+    _customPalettePopupState.working = _customPaletteCatalog.map(_customPaletteClone);
+    _customPalettePopupState.savedSignature = _customPaletteSignature(_customPalettePopupState.working);
+    const remembered = _customPaletteForMode(_customPalettePopupState.mode);
+    const selectedIdx = remembered
+        ? _customPalettePopupState.working.findIndex(entry => entry.palette === remembered.palette)
+        : -1;
+    _customPalettePopupState.selectedIdx = selectedIdx;
+    _customPalettePopupState.error = '';
+    _customPalettePopupState.status = selectedIdx < 0 && remembered
+        ? 'Current HEX colors are not saved. New will import them.'
+        : '';
+}
+
+async function _loadCustomPaletteCatalog(force = false) {
+    if (_customPaletteCatalogLoaded && !force) return _customPaletteCatalog;
+    if (_customPaletteCatalogLoadPromise && !force) return _customPaletteCatalogLoadPromise;
+    const promise = (async () => {
+        const response = await lambdaPost('storage', {}, '/list-custom-palettes');
+        const rows = Array.isArray(response && response.palettes) ? response.palettes : [];
+        const entries = rows.map(_customPaletteEntry);
+        if (entries.some(entry => !entry)) {
+            throw new Error('Saved custom palette catalog contains an invalid row');
+        }
+        _customPaletteCatalog = entries;
+        _customPaletteCatalogRevision = String((response && response.revision) || '');
+        _customPaletteCatalogLoaded = true;
+        ['proximity', 'solve_score', 'palette_tab', 'repalette', 'color_repalette']
+            .forEach(mode => _renderPaletteRow(mode));
+        return entries;
+    })();
+    _customPaletteCatalogLoadPromise = promise;
+    try {
+        return await promise;
+    } finally {
+        if (_customPaletteCatalogLoadPromise === promise) {
+            _customPaletteCatalogLoadPromise = null;
+        }
+    }
+}
+
+function _customPaletteValidation(entries) {
+    if (!Array.isArray(entries)) return { error: 'Palette list is invalid.' };
+    if (entries.length > CUSTOM_PALETTE_MAX_ENTRIES) {
+        return { error: `At most ${CUSTOM_PALETTE_MAX_ENTRIES} custom palettes are allowed.` };
+    }
+    const names = new Set();
+    const palettes = new Set();
+    const payload = [];
+    for (let idx = 0; idx < entries.length; idx += 1) {
+        const entry = entries[idx] || {};
+        const name = String(entry.name || '').trim();
+        if (!name) return { error: `Row ${idx + 1} requires a name.` };
+        if (name.length > CUSTOM_PALETTE_MAX_NAME_LEN) {
+            return { error: `"${name}" exceeds ${CUSTOM_PALETTE_MAX_NAME_LEN} characters.` };
+        }
+        if (/[\u0000-\u001f\u007f]/.test(name)) {
+            return { error: `"${name}" contains control characters.` };
+        }
+        const stops = _parseCustomPaletteStops(entry.hexText);
+        if (!stops) {
+            return { error: `"${name}" requires 2–${CUSTOM_PALETTE_MAX_STOPS} six-digit hex colors.` };
+        }
+        const palette = _customPaletteNameFromStops(stops);
+        const nameKey = name.toLocaleLowerCase();
+        if (names.has(nameKey)) return { error: `Duplicate palette name: "${name}".` };
+        if (palettes.has(palette)) return { error: `"${name}" duplicates another row's colors.` };
+        names.add(nameKey);
+        palettes.add(palette);
+        payload.push({ name, stops: stops.map(stop => stop.slice(1)) });
+    }
+    return { payload };
+}
+
+function _renderCustomPaletteRows() {
+    const body = document.getElementById('custom-palette-popup-body');
+    if (!body) return;
+    body.replaceChildren();
+    const rows = _customPalettePopupState.working;
+    if (!rows.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 3;
+        cell.textContent = _customPalettePopupState.loading
+            ? 'Loading custom palettes...'
+            : 'No custom palettes. Click New to add one.';
+        row.appendChild(cell);
+        body.appendChild(row);
+        return;
+    }
+    const current = _currentPaletteForMode(_customPalettePopupState.mode);
+    rows.forEach((entry, idx) => {
+        const stops = _parseCustomPaletteStops(entry.hexText);
+        const palette = stops ? _customPaletteNameFromStops(stops) : '';
+        entry.stops = stops || [];
+        entry.palette = palette;
+
+        const row = document.createElement('tr');
+        const classes = ['tri-popup-row'];
+        if (palette && palette === current) classes.push('active');
+        if (idx === _customPalettePopupState.selectedIdx) classes.push('highlight');
+        if (!stops || !String(entry.name || '').trim()) classes.push('invalid');
+        row.className = classes.join(' ');
+        row.onclick = () => {
+            _customPalettePopupState.selectedIdx = idx;
+            _syncCustomPaletteEditor();
+            _renderCustomPaletteRows();
+            const displayName = String(entry.name || '').trim();
+            if (!displayName) {
+                _customPalettePopupState.error = 'Give this palette a name before activating it.';
+                _renderCustomPaletteStatus();
+                return;
+            }
+            if (!stops) {
+                _customPalettePopupState.error = 'Fix the HEX values before activating this row.';
+                _renderCustomPaletteStatus();
+                return;
+            }
+            _customPalettePopupState.error = '';
+            setPaletteForMode(
+                _customPalettePopupState.mode,
+                palette,
+                displayName,
+            );
+            if (_customPalettePopupState.mode === 'proximity'
+                    || _customPalettePopupState.mode === 'solve_score') {
+                setColorMode(_customPalettePopupState.mode);
+            }
+            _renderCustomPaletteStatus();
+        };
+
+        const nameCell = document.createElement('td');
+        nameCell.className = 'custom-palette-name';
+        nameCell.textContent = String(entry.name || '').trim() || 'Unnamed palette';
+        const hexCell = document.createElement('td');
+        hexCell.className = 'custom-palette-hex';
+        hexCell.textContent = stops ? stops.join(' ') : String(entry.hexText || '');
+        const stripCell = document.createElement('td');
+        const strip = document.createElement('div');
+        strip.className = 'tri-popup-strip';
+        strip.style.background = stops ? _stopsToGradient(stops) : '#555';
+        stripCell.appendChild(strip);
+        row.append(nameCell, hexCell, stripCell);
+        body.appendChild(row);
+    });
+}
+
+function _renderCustomPaletteStatus() {
+    const status = document.getElementById('custom-palette-popup-status');
+    const save = document.getElementById('custom-palette-popup-save');
+    if (status) {
+        const dirty = _customPalettePopupDirty();
+        status.textContent = _customPalettePopupState.error
+            || _customPalettePopupState.status
+            || (dirty ? 'Unsaved changes.' : `${_customPalettePopupState.working.length} saved palettes.`);
+        status.className = `custom-palette-status${_customPalettePopupState.error ? ' error' : ''}`;
+    }
+    if (save) {
+        save.disabled = _customPalettePopupState.loading
+            || _customPalettePopupState.saving
+            || !_customPalettePopupDirty();
+        save.textContent = _customPalettePopupState.saving ? 'Saving...' : 'Save';
+    }
+}
+
+function _syncCustomPaletteEditor() {
+    const nameInput = document.getElementById('custom-palette-popup-name');
+    const hexInput = document.getElementById('custom-palette-popup-hex');
+    const deleteBtn = document.getElementById('custom-palette-popup-delete');
+    const idx = _customPalettePopupState.selectedIdx;
+    const entry = idx >= 0 ? _customPalettePopupState.working[idx] : null;
+    if (nameInput) {
+        nameInput.disabled = !entry;
+        nameInput.value = entry ? String(entry.name || '') : '';
+    }
+    if (hexInput) {
+        hexInput.disabled = !entry;
+        hexInput.value = entry ? String(entry.hexText || '') : '';
+    }
+    if (deleteBtn) deleteBtn.disabled = !entry || _customPalettePopupState.saving;
+}
+
+function _renderCustomPalettePopup() {
+    const overlay = document.getElementById('custom-palette-popup-overlay');
+    const title = document.getElementById('custom-palette-popup-title');
+    if (!overlay || !title) return;
+    if (!_customPalettePopupState.open) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+        return;
+    }
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    title.textContent = 'Custom palettes for ' + _popupModeLabel(_customPalettePopupState.mode);
+    _renderCustomPaletteRows();
+    _syncCustomPaletteEditor();
+    _renderCustomPaletteStatus();
+}
+
+async function _openCustomPalettePopup(mode) {
+    _closeBuiltinPalettePopup();
+    _closeTriPalettePopup();
+    _closeLongPalettePopup();
+    _customPalettePopupState.open = true;
+    _customPalettePopupState.mode = mode;
+    _customPalettePopupState.loading = !_customPaletteCatalogLoaded;
+    _customPalettePopupState.saving = false;
+    _customPalettePopupState.working = [];
+    _customPalettePopupState.selectedIdx = -1;
+    _customPalettePopupState.status = '';
+    _customPalettePopupState.error = '';
+    _renderCustomPalettePopup();
+    try {
+        await _loadCustomPaletteCatalog();
+        if (!_customPalettePopupState.open || _customPalettePopupState.mode !== mode) return;
+        _customPalettePopupState.loading = false;
+        _resetCustomPaletteWorking();
+        _renderCustomPalettePopup();
+    } catch (error) {
+        if (!_customPalettePopupState.open || _customPalettePopupState.mode !== mode) return;
+        _customPalettePopupState.loading = false;
+        _customPalettePopupState.error = `Load failed: ${error.message || error}`;
+        _renderCustomPalettePopup();
+    }
+}
+
+function _closeCustomPalettePopup(force = false) {
+    if (!_customPalettePopupState.open) return true;
+    if (!force && _customPalettePopupDirty()
+            && !confirm('Discard unsaved custom palette changes?')) {
+        return false;
+    }
+    _customPalettePopupState.open = false;
+    _customPalettePopupState.loading = false;
+    _customPalettePopupState.saving = false;
+    _renderCustomPalettePopup();
+    return true;
+}
+
+function _newCustomPaletteRow() {
+    if (_customPalettePopupState.working.length >= CUSTOM_PALETTE_MAX_ENTRIES) {
+        _customPalettePopupState.error = `At most ${CUSTOM_PALETTE_MAX_ENTRIES} custom palettes are allowed.`;
+        _renderCustomPaletteStatus();
+        return;
+    }
+    const existing = new Set(
+        _customPalettePopupState.working.map(entry => String(entry.name || '').toLocaleLowerCase())
+    );
+    let name = 'New palette';
+    let suffix = 2;
+    while (existing.has(name.toLocaleLowerCase())) {
+        name = `New palette ${suffix}`;
+        suffix += 1;
+    }
+    const remembered = _customPaletteForMode(_customPalettePopupState.mode);
+    const stops = remembered ? _customStopsFromName(remembered.palette) : null;
+    const rowStops = stops || ['#000000', '#ffffff'];
+    _customPalettePopupState.working.push({
+        name,
+        stops: rowStops,
+        hexText: rowStops.join(', '),
+        palette: _customPaletteNameFromStops(rowStops),
+    });
+    _customPalettePopupState.selectedIdx = _customPalettePopupState.working.length - 1;
+    _customPalettePopupState.error = '';
+    _customPalettePopupState.status = 'New row added. Edit it, then Save.';
+    _renderCustomPalettePopup();
+    const input = document.getElementById('custom-palette-popup-name');
+    if (input) {
+        input.focus();
+        input.select();
+    }
+}
+
+function _deleteSelectedCustomPalette() {
+    const idx = _customPalettePopupState.selectedIdx;
+    if (idx < 0 || idx >= _customPalettePopupState.working.length) return;
+    _customPalettePopupState.working.splice(idx, 1);
+    _customPalettePopupState.selectedIdx = Math.min(
+        idx,
+        _customPalettePopupState.working.length - 1,
+    );
+    _customPalettePopupState.error = '';
+    _customPalettePopupState.status = 'Row removed. Save to persist the deletion.';
+    _renderCustomPalettePopup();
+}
+
+function _customPaletteNameChanged(value) {
+    const entry = _customPalettePopupState.working[_customPalettePopupState.selectedIdx];
+    if (!entry) return;
+    entry.name = String(value || '');
+    _customPalettePopupState.error = '';
+    _customPalettePopupState.status = '';
+    _renderCustomPaletteRows();
+    _renderCustomPaletteStatus();
+}
+
+function _customPaletteHexChanged(value) {
+    const entry = _customPalettePopupState.working[_customPalettePopupState.selectedIdx];
+    if (!entry) return;
+    entry.hexText = String(value || '');
+    const stops = _parseCustomPaletteStops(entry.hexText);
+    entry.stops = stops || [];
+    entry.palette = stops ? _customPaletteNameFromStops(stops) : '';
+    _customPalettePopupState.error = '';
+    _customPalettePopupState.status = '';
+    _renderCustomPaletteRows();
+    _renderCustomPaletteStatus();
+}
+
+function _reconcileCustomPaletteSelections() {
+    ['proximity', 'solve_score', 'palette_tab', 'repalette', 'color_repalette'].forEach(mode => {
+        const current = _currentPaletteForMode(mode);
+        if (_customStopsFromName(current)) {
+            const entry = _customPaletteEntryBySpec(current);
+            // Deleting a catalog row must not erase the name already attached
+            // to the active in-memory selection. It remains an ad-hoc custom
+            // palette until another row is selected.
+            if (entry) _rememberCustomPaletteForMode(mode, current, entry.name);
+        }
+        _renderPaletteRow(mode);
+    });
+}
+
+async function _saveCustomPaletteCatalog() {
+    if (_customPalettePopupState.saving) return;
+    const validation = _customPaletteValidation(_customPalettePopupState.working);
+    if (validation.error) {
+        _customPalettePopupState.error = validation.error;
+        _renderCustomPaletteStatus();
+        return;
+    }
+    _customPalettePopupState.saving = true;
+    _customPalettePopupState.error = '';
+    _customPalettePopupState.status = '';
+    _renderCustomPaletteStatus();
+    try {
+        const response = await lambdaPost('storage', {
+            palettes: validation.payload,
+            expected_revision: _customPaletteCatalogRevision,
+        }, '/save-custom-palettes');
+        const rows = Array.isArray(response && response.palettes) ? response.palettes : [];
+        const entries = rows.map(_customPaletteEntry);
+        if (entries.some(entry => !entry)) {
+            throw new Error('Save returned an invalid custom palette catalog');
+        }
+        const selected = _customPalettePopupState.working[_customPalettePopupState.selectedIdx];
+        _customPaletteCatalog = entries;
+        _customPaletteCatalogRevision = String((response && response.revision) || '');
+        _customPaletteCatalogLoaded = true;
+        _customPalettePopupState.working = entries.map(_customPaletteClone);
+        _customPalettePopupState.savedSignature = _customPaletteSignature(_customPalettePopupState.working);
+        _customPalettePopupState.selectedIdx = selected
+            ? _customPalettePopupState.working.findIndex(entry => (
+                entry.name === String(selected.name || '').trim()
+                && entry.palette === selected.palette
+            ))
+            : -1;
+        _customPalettePopupState.status = `Saved ${entries.length} custom palettes.`;
+        _reconcileCustomPaletteSelections();
+    } catch (error) {
+        const message = String((error && error.message) || error || '');
+        if (/\b409\b|custom_palette_revision|custom palette catalog changed/i.test(message)) {
+            // Preserve this draft, but force the next open to fetch the new
+            // revision instead of presenting the stale catalog again.
+            _customPaletteCatalogLoaded = false;
+        }
+        _customPalettePopupState.error = `Save failed: ${message}`;
+    } finally {
+        _customPalettePopupState.saving = false;
+        _renderCustomPalettePopup();
+    }
 }
 
 function _closeBuiltinPalettePopup() {
@@ -1047,6 +1471,7 @@ function _renderTriPalettePopup() {
 
 function _openTriPalettePopup(mode) {
     if (!_triCatalogAvailable()) return;
+    if (!_closeCustomPalettePopup()) return;
     _closeBuiltinPalettePopup();
     _closeLongPalettePopup();
     _syncTriDefaults();
@@ -1138,6 +1563,7 @@ function _renderLongPalettePopup() {
 
 function _openLongPalettePopup(mode) {
     if (!_longCatalogAvailable()) return;
+    if (!_closeCustomPalettePopup()) return;
     _closeBuiltinPalettePopup();
     _closeTriPalettePopup();
     _syncLongDefaults();
@@ -1222,6 +1648,7 @@ function _renderBuiltinPalettePopup() {
 }
 
 function _openBuiltinPalettePopup(mode) {
+    if (!_closeCustomPalettePopup()) return;
     _closeTriPalettePopup();
     _closeLongPalettePopup();
     _syncBuiltinDefaults();
@@ -1375,6 +1802,33 @@ function _initLongPalettePopup() {
         },
     });
     if (filterEl) filterEl.addEventListener('input', (ev) => _applyLongPopupFilter(ev.target.value));
+}
+
+function _initCustomPalettePopup() {
+    _bindPopupShell({
+        overlayId: 'custom-palette-popup-overlay',
+        closeId: 'custom-palette-popup-close',
+        isOpen: () => !!_customPalettePopupState.open,
+        onClose: () => _closeCustomPalettePopup(),
+    });
+    const nameInput = document.getElementById('custom-palette-popup-name');
+    const hexInput = document.getElementById('custom-palette-popup-hex');
+    const newBtn = document.getElementById('custom-palette-popup-new');
+    const deleteBtn = document.getElementById('custom-palette-popup-delete');
+    const saveBtn = document.getElementById('custom-palette-popup-save');
+    if (nameInput) {
+        nameInput.addEventListener('input', (event) => {
+            _customPaletteNameChanged(event.target.value);
+        });
+    }
+    if (hexInput) {
+        hexInput.addEventListener('input', (event) => {
+            _customPaletteHexChanged(event.target.value);
+        });
+    }
+    if (newBtn) newBtn.addEventListener('click', _newCustomPaletteRow);
+    if (deleteBtn) deleteBtn.addEventListener('click', _deleteSelectedCustomPalette);
+    if (saveBtn) saveBtn.addEventListener('click', _saveCustomPaletteCatalog);
 }
 
 function _canRepaletteArtifact(art) {

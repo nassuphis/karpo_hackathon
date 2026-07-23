@@ -491,6 +491,7 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
             "width": str(grid_n),
             "height": str(grid_n),
             "palette": str(source_meta.get("palette") or ""),
+            "palette_display_name": str(source_meta.get("palette_display_name") or ""),
             "full_n": str(grid_n),
             "times": "1",
             "using_pass": "0",
@@ -521,13 +522,20 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
         omega_enabled = source_score["omega_enabled"]
         score_chain = raw_sidecar["score_chain"]
         metric = str(source_score["metric"] or "").strip()
-        display_name = _associated_palette_display_name(score_chain, metric, quantile, source_meta.get("palette"))
+        palette_display_name = str(source_meta.get("palette_display_name") or "")
+        display_name = _associated_palette_display_name(
+            score_chain,
+            metric,
+            quantile,
+            palette_display_name or source_meta.get("palette"),
+        )
         meta_body = {
             "job_id": job_id,
             "palette_id": palette_id,
             "created_at": created_at,
             "display_name": display_name or palette_id,
             "palette": str(source_meta.get("palette") or ""),
+            "palette_display_name": palette_display_name,
             "degree": int(source_meta.get("degree") or 0),
             "N": grid_n,
             "times": 1,
@@ -571,6 +579,7 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
             "palette_id": palette_id,
             "display_name": display_name or palette_id,
             "palette": str(source_meta.get("palette") or ""),
+            "palette_display_name": palette_display_name,
             "metric": metric,
             "score_chain": score_chain,
             "quantile": quantile,

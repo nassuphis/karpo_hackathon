@@ -1176,6 +1176,7 @@ buildPaletteCircles('palette-circles-palette-tab', 'palette_tab', () => paletteT
 _initTriPalettePopup();
 _initBuiltinPalettePopup();
 _initLongPalettePopup();
+_initCustomPalettePopup();
 _initFunctionPopup();
 _initAutolevelPopup();
 _initResizePopup();

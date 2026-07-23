@@ -693,7 +693,12 @@ function _renderGalleryPieceRow(piece, index, total) {
     meta.style.cssText = 'flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:4px';
     const id = document.createElement('div');
     id.style.cssText = 'font-size:11px; color:#9aa0b4; white-space:nowrap; overflow:hidden; text-overflow:ellipsis';
-    id.textContent = [piece.function, piece.artifact_id, piece.deepzoom ? 'zoom' : ''].filter(Boolean).join(' · ');
+    id.textContent = [
+        piece.function,
+        piece.palette_display_name || piece.palette || '',
+        piece.artifact_id,
+        piece.deepzoom ? 'zoom' : '',
+    ].filter(Boolean).join(' · ');
     const titleInp = document.createElement('input');
     titleInp.type = 'text';
     titleInp.value = piece.title || '';

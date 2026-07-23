@@ -42,7 +42,9 @@ const RENDER_POPUP_SUMMARY = {
       },
     ],
   },
-  calc: { exists: true, N: 4000, degree: 8 },
+  // Keep popup tests self-contained: an empty object means the summary was
+  // loaded but does not provide enough data for an automatic section estimate.
+  calc: { exists: true, N: 4000, degree: 8, job_size: {} },
   artifacts: {},
   deepzoom_latest: { exists: false },
 };
@@ -240,24 +242,105 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#palette-circles-solve-score .pal-circle-tri')).toBeVisible();
     await expect(page.locator('#palette-circles-solve-score .pal-circle-long')).toBeVisible();
     await expect(page.locator('#palette-circles-solve-score .pal-circle-custom')).toBeVisible();
-    await expect(page.locator('#palette-circles-solve-score .pal-custom-input')).toBeVisible();
+    await expect(page.locator('#palette-circles-solve-score .pal-custom-input')).toHaveCount(0);
   });
 
-  test('custom hex-stop palette entry applies the canonical custom name', async ({ page }) => {
+  test('named custom palette catalog selects, edits, and saves with CAS provenance', async ({ page }) => {
+    await page.evaluate(() => {
+      window._customPaletteRequests = [];
+      window.lambdaPost = async function(name, body, path) {
+        if (name !== 'storage') throw new Error(`unexpected ${name}`);
+        if (path === '/list-custom-palettes') {
+          return {
+            revision: 'etag-1',
+            palettes: [{
+              name: 'Night reef',
+              stops: ['879caa', 'aaa4a4', '0e3057'],
+              palette: 'custom:879caa-aaa4a4-0e3057',
+            }],
+          };
+        }
+        if (path === '/save-custom-palettes') {
+          window._customPaletteRequests.push(JSON.parse(JSON.stringify(body)));
+          return {
+            revision: 'etag-2',
+            palettes: body.palettes.map((entry) => ({
+              name: entry.name,
+              stops: entry.stops,
+              palette: 'custom:' + entry.stops.join('-'),
+            })),
+          };
+        }
+        throw new Error(`unexpected storage path ${path}`);
+      };
+    });
+
     await page.click('.tab-btn:text("Render")');
-    const input = page.locator('#palette-circles-solve-score .pal-custom-input');
-    await input.fill('#879CAA, #AAA4A4 #0E3057');
-    await input.press('Enter');
-    const palette = await page.evaluate(() => renderSolveScorePalette);
-    expect(palette).toBe('custom:879caa-aaa4a4-0e3057');
+    await page.locator('#palette-circles-solve-score .pal-circle-custom').click();
+    await expect(page.locator('#custom-palette-popup-overlay')).toBeVisible();
+    await expect(page.locator('#custom-palette-popup-body .tri-popup-row')).toHaveCount(1);
+    await page.locator('#custom-palette-popup-body .tri-popup-row').click();
+    const active = await page.evaluate(() => ({
+      palette: renderSolveScorePalette,
+      displayName: _activeRenderPaletteDisplayName(),
+    }));
+    expect(active).toEqual({
+      palette: 'custom:879caa-aaa4a4-0e3057',
+      displayName: 'Night reef',
+    });
     await expect(page.locator('#palette-circles-solve-score .pal-circle-custom')).toHaveClass(/active/);
 
-    // invalid text (single stop) marks the box and leaves the palette alone
-    await input.fill('#879CAA');
-    const invalid = page.locator('#palette-circles-solve-score .pal-custom-input.invalid');
-    await expect(invalid).toBeVisible();
-    const unchanged = await page.evaluate(() => renderSolveScorePalette);
-    expect(unchanged).toBe('custom:879caa-aaa4a4-0e3057');
+    await page.locator('#custom-palette-popup-new').click();
+    await page.locator('#custom-palette-popup-name').fill('Signal fire');
+    await page.locator('#custom-palette-popup-hex').fill('#ff3300, #ffd166, #101820');
+    await page.locator('#custom-palette-popup-save').click();
+    await expect(page.locator('#custom-palette-popup-status')).toContainText('Saved 2 custom palettes');
+    const request = await page.evaluate(() => window._customPaletteRequests[0]);
+    expect(request.expected_revision).toBe('etag-1');
+    expect(request.palettes[1]).toEqual({
+      name: 'Signal fire',
+      stops: ['ff3300', 'ffd166', '101820'],
+    });
+  });
+
+  test('custom palette save conflict preserves the draft for retry', async ({ page }) => {
+    await page.evaluate(() => {
+      window._customPaletteListCount = 0;
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'storage' && path === '/list-custom-palettes') {
+          window._customPaletteListCount += 1;
+          return window._customPaletteListCount === 1
+            ? { revision: 'old-etag', palettes: [] }
+            : {
+                revision: 'new-etag',
+                palettes: [{
+                  name: 'Server palette',
+                  stops: ['102030', '405060'],
+                  palette: 'custom:102030-405060',
+                }],
+              };
+        }
+        if (name === 'storage' && path === '/save-custom-palettes') {
+          throw new Error('HTTP 409: custom palette catalog changed');
+        }
+        throw new Error(`unexpected ${name} ${path || ''}`);
+      };
+    });
+    await page.click('.tab-btn:text("Render")');
+    await page.locator('#palette-circles-solve-score .pal-circle-custom').click();
+    await page.locator('#custom-palette-popup-new').click();
+    await page.locator('#custom-palette-popup-name').fill('Unsaved draft');
+    await page.locator('#custom-palette-popup-hex').fill('#112233, #445566');
+    await page.locator('#custom-palette-popup-save').click();
+    await expect(page.locator('#custom-palette-popup-status')).toContainText('HTTP 409');
+    await expect(page.locator('#custom-palette-popup-name')).toHaveValue('Unsaved draft');
+    await expect(page.locator('#custom-palette-popup-save')).toBeEnabled();
+
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#custom-palette-popup-close').click();
+    await page.locator('#palette-circles-solve-score .pal-circle-custom').click();
+    await expect(page.locator('#custom-palette-popup-body')).toContainText('Server palette');
+    expect(await page.evaluate(() => window._customPaletteListCount)).toBe(2);
   });
 
   test('left-click built-in swatch opens popup and selecting a row activates palette', async ({ page }) => {

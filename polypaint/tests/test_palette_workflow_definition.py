@@ -169,6 +169,10 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
 
         finalize = self.states["PaletteFinalizeTask"]["Parameters"]["Payload"]
         self.assertEqual(finalize["times.$"], "$.plan.calc.times")
+        self.assertEqual(
+            finalize["palette_display_name.$"],
+            "$.plan.params.palette_display_name",
+        )
         self.assertEqual(finalize["solve_score_quantile.$"], "$.plan.solve_score.quantile")
         self.assertEqual(finalize["solve_score_program_source_text.$"], "$.plan.solve_score.source_text")
         self.assertEqual(finalize["solve_score_omega.$"], "$.plan.solve_score.omega")

@@ -124,6 +124,8 @@
     "/list-favorites",
     "/add-favorite",
     "/delete-favorite",
+    "/list-custom-palettes",
+    "/save-custom-palettes",
     "/list-palettes",
     "/delete-palette",
     "/delete-render-artifact",

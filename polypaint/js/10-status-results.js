@@ -505,6 +505,7 @@ async function runRenderLoresPreview() {
             preview_pix: previewPix,
             quality: p.quality,
             palette: _activeRenderPalette() || 'inferno',
+            palette_display_name: _activeRenderPaletteDisplayName(),
             background_color: p.backgroundColor,
             view_mode: _viewMode,
             quantile: p.quantile,
@@ -805,6 +806,7 @@ async function runRenderPaletteArtifact() {
             params: {
                 metric: p.solveScoreMetric,
                 palette: _activeRenderPalette() || 'inferno',
+                palette_display_name: _activeRenderPaletteDisplayName(),
                 color_interpretation: colorInterpretation,
                 solve_score_quantile: p.solveScoreQuantile,
                 solve_score_omega: p.solveScoreOmega,

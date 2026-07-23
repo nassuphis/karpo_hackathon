@@ -76,6 +76,23 @@ class TestCustomPaletteValidity(unittest.TestCase):
         for name in bad:
             self.assertFalse(is_valid_palette_name(name), name)
 
+    def test_display_name_is_optional_custom_only_provenance(self):
+        from palette_names import normalize_palette_display_name
+
+        self.assertEqual(
+            normalize_palette_display_name("  Night reef  ", "custom:000000-ffffff"),
+            "Night reef",
+        )
+        self.assertEqual(
+            normalize_palette_display_name("", "custom:000000-ffffff"),
+            "",
+        )
+        self.assertEqual(normalize_palette_display_name("ignored", "inferno"), "")
+        with self.assertRaisesRegex(ValueError, "printable single-line"):
+            normalize_palette_display_name("bad\nname", "custom:000000-ffffff")
+        with self.assertRaisesRegex(ValueError, "at most 80"):
+            normalize_palette_display_name("x" * 81, "custom:000000-ffffff")
+
 
 @unittest.skipUnless(HAVE_PROBE, "local cc build unavailable")
 class TestCustomPaletteNative(unittest.TestCase):

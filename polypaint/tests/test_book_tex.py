@@ -74,15 +74,33 @@ class TestGeometryAndStructure(unittest.TestCase):
         self.assertIn(r"\usepackage{fontspec}", tex)
         self.assertIn(r"\usepackage{microtype}", tex)
 
-    def test_cover_pins_computed_dims_not_script_comments(self):
-        tex = book_tex.render_cover_tex(_book(2), "assets/e1.jpg")
-        self.assertIn("paperwidth=629mm", tex)
+    def test_cover_matches_44_page_whitewall_idml(self):
+        # 20 entries -> 1 title + 40 entry pages + 3 pads = 44 pages.
+        tex = book_tex.render_cover_tex(_book(20), "assets/e1.jpg")
+        self.assertIn("paperwidth=626mm", tex)
         self.assertIn("paperheight=316mm", tex)
-        self.assertNotIn("629.4", tex)
         self.assertIn("assets/e1.jpg", tex)
         self.assertIn(r"\definecolor{pagebg}{HTML}{1A1A2E}", tex)
         self.assertIn(r"\pagecolor{pagebg}\color{bodytext}", tex)
         self.assertNotIn(r"\pagecolor{black}", tex)
+
+    def test_cover_geometry_tracks_content_page_count(self):
+        geometry_28 = book_tex.cover_geometry(28)
+        self.assertEqual(geometry_28["panel_mm"], 296)
+        self.assertEqual(geometry_28["spine_mm"], 11)
+        self.assertEqual(geometry_28["trim_width_mm"], 603)
+        self.assertEqual(geometry_28["width_mm"], 623)
+        self.assertEqual(geometry_28["height_mm"], 316)
+
+        geometry_44 = book_tex.cover_geometry(44)
+        self.assertEqual(geometry_44["panel_mm"], 296)
+        self.assertEqual(geometry_44["spine_mm"], 14)
+        self.assertEqual(geometry_44["trim_width_mm"], 606)
+        self.assertEqual(geometry_44["width_mm"], 626)
+        self.assertEqual(geometry_44["height_mm"], 316)
+
+        with self.assertRaisesRegex(ValueError, "positive multiple of 4"):
+            book_tex.cover_geometry(42)
 
     def test_selected_background_drives_content_cover_and_contrast(self):
         book = _book(2, background_color="#f4e8d0")

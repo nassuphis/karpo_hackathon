@@ -115,6 +115,12 @@ def _manifest_source_fields(source_key):
         "source_family": str(meta.get("family") or ref["family"] or ""),
         "source_rotation": _coerce_finite_float(meta.get("rotation")),
     }
+    source_palette = str(meta.get("palette") or "")
+    source_palette_display_name = str(meta.get("palette_display_name") or "")
+    if source_palette:
+        manifest["source_palette"] = source_palette
+    if source_palette_display_name:
+        manifest["source_palette_display_name"] = source_palette_display_name
     if manifest["source_rotation"] is None:
         manifest["source_rotation"] = 0.0
     viewport = {

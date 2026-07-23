@@ -735,7 +735,7 @@ function populateSelectedPalette() {
     }
 
     if (pal.palette) {
-        setPaletteForMode('palette_tab', pal.palette);
+        setPaletteForMode('palette_tab', pal.palette, pal.palette_display_name);
     } else {
         warnings.push('palette');
     }
@@ -811,6 +811,7 @@ async function runPaletteArtifact() {
             params: {
                 metric: score.metric,
                 palette: paletteTabPalette,
+                palette_display_name: _paletteDisplayNameForMode('palette_tab'),
                 color_interpretation: colorInterpretation,
                 solve_score_quantile: score.quantile,
                 solve_score_omega: score.omega,
@@ -1535,6 +1536,7 @@ async function _launchFusedRenderOrchestrator(paramsPatch = null) {
         solve_score_program_source_text: p.solveScoreProgramSourceText,
         solve_score_normalize: !!p.solveScoreNormalize,
         palette: _activeRenderPalette() || 'inferno',
+        palette_display_name: _activeRenderPaletteDisplayName(),
         root_program_source_text: p.rootProgramSourceText || undefined,
         raster_engine: 'mt',
         raster_mt_threads: 4,

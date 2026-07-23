@@ -106,24 +106,31 @@ class GalleryBackendTests(unittest.TestCase):
 
     # ── seeding (color artifact + deepzoom export by EXACT key) ──────────
     def _seed_color(self, job, art, *, created_at="2026-05-01T00:00:00Z",
-                    function="poly_1", degree=8, N=2048, times=1):
+                    function="poly_1", degree=8, N=2048, times=1,
+                    palette="", palette_display_name=""):
         prefix = f"renders/{job}/color/{art}/"
         self.s3.objects[prefix + "image.jpeg"] = {"Metadata": {}, "ContentLength": 1000, "ContentType": "image/jpeg"}
         self.s3.objects[prefix + "preview.png"] = {"Metadata": {}, "ContentLength": 50, "ContentType": "image/png"}
         self.s3.objects[prefix + "meta.json"] = {"body": json.dumps({
             "created_at": created_at, "preview_jpg_key": prefix + "preview.jpg",
-            "preview_jpg_width": 512, "preview_jpg_height": 512}).encode()}
+            "preview_jpg_width": 512, "preview_jpg_height": 512,
+            "palette": palette,
+            "palette_display_name": palette_display_name,
+        }).encode()}
         self.s3.objects[f"renders/{job}/calc.json"] = {"body": json.dumps({
             "function": function, "degree": degree, "N": N, "times": times}).encode()}
 
     def _seed_export(self, job, art, export_id, *, image_key=None, dzi_key=None,
-                     source_family="color", source_artifact_id=None, export_job=None):
+                     source_family="color", source_artifact_id=None, export_job=None,
+                     source_palette="", source_palette_display_name=""):
         export_job = export_job or job
         image_key = image_key or f"renders/{job}/color/{art}/image.jpeg"
         canonical_dzi = f"deepzoom/{export_job}/{export_id}/image.dzi"
         self.s3.objects[f"deepzoom/{export_job}/{export_id}/meta.json"] = {"body": json.dumps({
             "job_id": export_job, "export_id": export_id, "source_family": source_family,
             "source_artifact_id": source_artifact_id or art, "source_key": image_key,
+            "source_palette": source_palette,
+            "source_palette_display_name": source_palette_display_name,
             "dzi_key": dzi_key or canonical_dzi}).encode()}
         # a REAL parseable descriptor + single-tile preview level, so tests that
         # expect rejection prove fail-CLOSED against a fully usable pyramid
@@ -602,10 +609,18 @@ class GalleryBackendTests(unittest.TestCase):
 
     def test_dzi_fallback_piece_records_viewer_capability(self):
         gid = self._create()["gallery"]["gallery_id"]
-        self._seed_export("jobF", "cF", "dz_f")           # no color artifact at all
+        self._seed_export(
+            "jobF",
+            "cF",
+            "dz_f",
+            source_palette="custom:112233-445566",
+            source_palette_display_name="Archive dusk",
+        )                                                   # no color artifact at all
         body = self._add(gid, "jobF", "cF", "dz_f")
         self.assertTrue(body["added"], body)
-        self.assertIs(body["gallery"]["pieces"][0]["deepzoom"]["viewer"], False)
+        piece = body["gallery"]["pieces"][0]
+        self.assertIs(piece["deepzoom"]["viewer"], False)
+        self.assertEqual(piece["palette_display_name"], "Archive dusk")
 
     # ── code-review-29 F6: share writes are create-only ──────────────────
     def test_share_write_is_create_only_and_retries_collision(self):
@@ -653,6 +668,38 @@ class GalleryBackendTests(unittest.TestCase):
         m = json.loads(put["Body"])
         self.assertEqual(m["artifact_kind"], "mixed")
         self.assertEqual({p["family"] for p in m["pieces"]}, {"color", "bilevel"})
+
+    def test_palette_display_name_survives_editable_and_shared_gallery(self):
+        gid = self._create()["gallery"]["gallery_id"]
+        custom = "custom:879caa-aaa4a4-0e3057"
+        self._seed_color(
+            "jobP",
+            "cP",
+            palette=custom,
+            palette_display_name="Night reef",
+        )
+
+        added = self._add(gid, "jobP", "cP")
+        piece = added["gallery"]["pieces"][0]
+        self.assertEqual(piece["palette"], custom)
+        self.assertEqual(piece["palette_display_name"], "Night reef")
+
+        fetched = json.loads(hs.handle_fetch_gallery(
+            self._event({"gallery_id": gid})
+        )["body"])
+        self._route(
+            hs.handle_create_gallery_share,
+            gallery_id=gid,
+            expected_revision=fetched["revision"],
+        )
+        put = next(
+            row for row in self.s3.puts
+            if row["Key"].startswith("renders/_shared_mosaic/gallery/")
+            and row["Key"].endswith("manifest.json")
+        )
+        shared_piece = json.loads(put["Body"])["pieces"][0]
+        self.assertEqual(shared_piece["palette"], custom)
+        self.assertEqual(shared_piece["palette_display_name"], "Night reef")
 
     # ── async describe: the ROUTE dispatches, the WORKER titles ──────────
     # Vision I/O cannot live in the request path (a provider read can outlast

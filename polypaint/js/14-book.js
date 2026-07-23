@@ -553,6 +553,16 @@ function _bookMoveSelectedTop() {
     _renderBookTab();
 }
 
+function _bookMoveSelectedBottom() {
+    const doc = _bookState.doc;
+    const selected = _bookSelectedInListOrder();
+    if (!doc || !selected.length) { _bookStatus('Select row(s) first, then press Bottom', true); return; }
+    const sel = _bookSelectedSet();
+    doc.entries = [...(doc.entries || []).filter(e => !sel.has(e.entry_id)), ...selected];
+    _bookState.dirty = true;
+    _renderBookTab();
+}
+
 /* ---- row drag-and-drop: click = toggle select, drag = reorder; dragging a
    selected row carries the WHOLE selection as one block (list order kept) */
 let _bookDragState = { pointerId: null, startX: 0, startY: 0, entryId: '', dragging: false, draggedIds: [], dropIndex: -1, suppressClick: false };

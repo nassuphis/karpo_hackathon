@@ -435,6 +435,9 @@ test('book rows: Top moves the selection to the top in list order; cover = first
   await page.click('#btn-book-top');
   expect(await bookOrder(page)).toEqual(['e2', 'e4', 'e1', 'e3']);
   expect(await page.evaluate(() => _bookState.dirty)).toBe(true);
+  // Bottom mirrors Top: the same selection drops to the end, order kept
+  await page.click('#btn-book-bottom');
+  expect(await bookOrder(page)).toEqual(['e1', 'e3', 'e2', 'e4']);
   // cover uses the FIRST selected row in list order (e2)
   await page.click('#btn-book-set-cover');
   expect(await page.evaluate(() => _bookState.doc.cover_entry_id)).toBe('e2');

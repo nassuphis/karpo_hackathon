@@ -84,11 +84,28 @@ test.describe('Palette UI', () => {
     await expect(mic).toBeVisible();
     await mic.click();
     await expect(page.locator('#mic-popup-overlay')).toBeVisible();
-    // real catalog served relatively by the test server (~4.8 MB, 20k rows)
+    // real catalog served relatively by the test server (~2.3 MB, 20k rows)
     await expect(page.locator('#mic-popup-status')).toContainText('palettes', { timeout: 20000 });
     await expect(page.locator('.mic-popup-credit')).toContainText('Meditations in Color');
 
+    // pager: 250/page over the whole catalog; browse without any filter
+    const pageDisplay = page.locator('#mic-popup-page-display');
+    await expect(pageDisplay).toHaveText(/^1 \/ \d\d+$/);
+    await expect(page.locator('#mic-popup-prev')).toBeDisabled();
+    const firstOfPage1 = await page.locator('#mic-popup-body .tri-popup-row').first().textContent();
+    await page.click('#mic-popup-next');
+    await expect(pageDisplay).toHaveText(/^2 \/ \d\d+$/);
+    await expect(page.locator('#mic-popup-prev')).toBeEnabled();
+    const firstOfPage2 = await page.locator('#mic-popup-body .tri-popup-row').first().textContent();
+    expect(firstOfPage2).not.toBe(firstOfPage1);
+    await page.fill('#mic-popup-goto', '50');
+    await page.press('#mic-popup-goto', 'Enter');
+    await expect(pageDisplay).toHaveText(/^50 \/ \d\d+$/);
+    await expect(page.locator('#mic-popup-overlay')).toBeVisible();   // Enter jumped, did not pick
+
+    // filtering resets to page 1 of the filtered set
     await page.fill('#mic-popup-filter', 'kandinsky points');
+    await expect(pageDisplay).toHaveText(/^1 \/ \d+$/);
     const row = page.locator('#mic-popup-body .tri-popup-row').first();
     await expect(row).toContainText('Kandinsky');
     await row.click();
@@ -100,7 +117,10 @@ test.describe('Palette UI', () => {
     }));
     expect(applied.palette).toMatch(/^custom:[0-9a-f]{6}(-[0-9a-f]{6})+$/);
     expect(applied.displayName).toContain('Kandinsky');
+    // exactly ONE swatch is live: MIC owns its selection, HEX yields
     await expect(page.locator('#palette-circles-palette-tab .pal-circle-mic.active')).toBeVisible();
+    await expect(page.locator('#palette-circles-palette-tab .pal-circle-custom.active')).toHaveCount(0);
+    await expect(page.locator('#palette-circles-palette-tab .pal-circle.active')).toHaveCount(1);
   });
 
   test('palette create dispatches the current visible preset and palette selection', async ({ page }) => {

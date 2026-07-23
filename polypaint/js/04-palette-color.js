@@ -714,11 +714,15 @@ function _renderPaletteRow(mode) {
     };
     children.push(longSwatch);
 
+    const micSel = _micPaletteSelectionByMode[mode];
+    const micActive = !!(micSel && micSel.palette && micSel.palette === currentPalette);
     const rememberedCustom = _customPaletteForMode(mode);
     const customStops = rememberedCustom
         ? _customStopsFromName(rememberedCustom.palette)
         : _customStopsFromName(currentPalette);
-    const customActive = typeof currentPalette === 'string' && currentPalette.startsWith('custom:');
+    // A MIC pick is a custom: spec too — exactly one swatch may be live,
+    // and the MIC swatch owns the active state for its own selection.
+    const customActive = typeof currentPalette === 'string' && currentPalette.startsWith('custom:') && !micActive;
     const customSwatch = document.createElement('div');
     customSwatch.className = 'pal-circle pal-circle-builtin pal-circle-custom' + (customActive ? ' active' : '');
     customSwatch.textContent = 'HEX';
@@ -729,8 +733,6 @@ function _renderPaletteRow(mode) {
     customSwatch.onclick = () => _openCustomPalettePopup(mode);
     children.push(customSwatch);
 
-    const micSel = _micPaletteSelectionByMode[mode];
-    const micActive = !!(micSel && micSel.palette && micSel.palette === currentPalette);
     const micStops = micSel ? _customStopsFromName(micSel.palette) : null;
     const micSwatch = document.createElement('div');
     micSwatch.className = 'pal-circle pal-circle-builtin pal-circle-mic' + (micActive ? ' active' : '');
@@ -1708,7 +1710,7 @@ function _isTextInputFocused(multilineOnly) {
    rebuilds the catalog; its --check validates offline in the gate. */
 
 const MIC_CATALOG_URL = 'data/mic_palette_catalog.json';
-const MIC_POPUP_ROW_CAP = 250;
+const MIC_POPUP_PAGE_SIZE = 250;
 // Kandinsky — Points (1920): the MIC swatch's resting face
 const MIC_SWATCH_DEFAULT_STOPS = ['#bc9f41', '#292b24', '#9a8a44', '#454833', '#552c2f', '#5f5337', '#776a3d', '#155c52'];
 
@@ -1767,6 +1769,20 @@ function _visibleMicPaletteCatalog() {
     return _micPaletteCatalog.filter(entry => terms.every(t => entry.search.includes(t)));
 }
 
+function _micPopupShownEntries() {
+    const visible = _visibleMicPaletteCatalog();
+    const start = (_micPopupState.page || 0) * MIC_POPUP_PAGE_SIZE;
+    return visible.slice(start, start + MIC_POPUP_PAGE_SIZE);
+}
+
+function _micPopupGoToPage(page) {
+    const visible = _visibleMicPaletteCatalog();
+    const totalPages = Math.max(1, Math.ceil(visible.length / MIC_POPUP_PAGE_SIZE));
+    _micPopupState.page = Math.max(0, Math.min(page, totalPages - 1));
+    _micPopupState.highlightIdx = 0;
+    _renderMicPalettePopup();
+}
+
 function _micApplyEntry(mode, entry) {
     const wire = _micPaletteWire(entry && entry.stops);
     if (!wire) return;
@@ -1781,7 +1797,7 @@ function _openMicPalettePopup(mode) {
     _closeBuiltinPalettePopup();
     _closeTriPalettePopup();
     _closeLongPalettePopup();
-    _micPopupState = { open: true, mode, filter: '', highlightIdx: 0 };
+    _micPopupState = { open: true, mode, filter: String(_micPopupState.filter || ''), page: _micPopupState.page || 0, highlightIdx: 0 };
     _renderMicPalettePopup();
     if (!_micCatalogReady()) {
         _loadMicPaletteCatalog()
@@ -1794,6 +1810,7 @@ function _openMicPalettePopup(mode) {
 
 function _applyMicPopupFilter(text) {
     _micPopupState.filter = String(text || '');
+    _micPopupState.page = 0;
     _micPopupState.highlightIdx = 0;
     _renderMicPalettePopup();
 }
@@ -1824,7 +1841,14 @@ function _renderMicPalettePopup() {
     if (filterEl.value !== (_micPopupState.filter || '')) filterEl.value = _micPopupState.filter || '';
     bodyEl.replaceChildren();
 
+    const prevBtn = document.getElementById('mic-popup-prev');
+    const nextBtn = document.getElementById('mic-popup-next');
+    const pageEl = document.getElementById('mic-popup-page-display');
+    const gotoEl = document.getElementById('mic-popup-goto');
     if (!_micCatalogReady()) {
+        if (pageEl) pageEl.textContent = '– / –';
+        if (prevBtn) prevBtn.disabled = true;
+        if (nextBtn) nextBtn.disabled = true;
         statusEl.textContent = _micPaletteCatalogError
             ? `Failed to load palette catalog: ${_micPaletteCatalogError}`
             : 'Loading artwork palettes…';
@@ -1839,10 +1863,18 @@ function _renderMicPalettePopup() {
     }
 
     const visible = _visibleMicPaletteCatalog();
-    const shown = visible.slice(0, MIC_POPUP_ROW_CAP);
-    statusEl.textContent = visible.length > shown.length
-        ? `Showing ${shown.length} of ${visible.length.toLocaleString()} palettes — type to narrow`
-        : `${visible.length.toLocaleString()} palette${visible.length === 1 ? '' : 's'}`;
+    const totalPages = Math.max(1, Math.ceil(visible.length / MIC_POPUP_PAGE_SIZE));
+    const page = Math.max(0, Math.min(_micPopupState.page || 0, totalPages - 1));
+    _micPopupState.page = page;
+    const start = page * MIC_POPUP_PAGE_SIZE;
+    const shown = visible.slice(start, start + MIC_POPUP_PAGE_SIZE);
+    if (pageEl) pageEl.textContent = `${page + 1} / ${totalPages}`;
+    if (prevBtn) prevBtn.disabled = page <= 0;
+    if (nextBtn) nextBtn.disabled = page >= totalPages - 1;
+    if (gotoEl) gotoEl.max = String(totalPages);
+    statusEl.textContent = visible.length
+        ? `${visible.length.toLocaleString()} palette${visible.length === 1 ? '' : 's'} — showing ${(start + 1).toLocaleString()}–${(start + shown.length).toLocaleString()}`
+        : 'No artwork palettes match this filter.';
     const highlightIdx = shown.length
         ? Math.max(0, Math.min(_micPopupState.highlightIdx || 0, shown.length - 1)) : 0;
     _micPopupState.highlightIdx = highlightIdx;
@@ -1896,25 +1928,45 @@ function _initMicPalettePopup() {
         isOpen: () => !!_micPopupState.open,
         onClose: _closeMicPalettePopup,
         onArrowDown: () => {
-            const count = Math.min(_visibleMicPaletteCatalog().length, MIC_POPUP_ROW_CAP);
+            const count = _micPopupShownEntries().length;
             if (!count) return;
             _micPopupState.highlightIdx = Math.min((_micPopupState.highlightIdx || 0) + 1, count - 1);
             _renderMicPalettePopup();
         },
         onArrowUp: () => {
-            const count = Math.min(_visibleMicPaletteCatalog().length, MIC_POPUP_ROW_CAP);
+            const count = _micPopupShownEntries().length;
             if (!count) return;
             _micPopupState.highlightIdx = Math.max((_micPopupState.highlightIdx || 0) - 1, 0);
             _renderMicPalettePopup();
         },
         onEnter: () => {
-            const shown = _visibleMicPaletteCatalog().slice(0, MIC_POPUP_ROW_CAP);
+            const shown = _micPopupShownEntries();
             if (!shown.length) return;
             const entry = shown[Math.max(0, Math.min(_micPopupState.highlightIdx || 0, shown.length - 1))];
             if (entry) _micApplyEntry(_micPopupState.mode, entry);
         },
     });
     if (filterEl) filterEl.addEventListener('input', (ev) => _applyMicPopupFilter(ev.target.value));
+    const prevBtn = document.getElementById('mic-popup-prev');
+    const nextBtn = document.getElementById('mic-popup-next');
+    const gotoEl = document.getElementById('mic-popup-goto');
+    if (prevBtn) prevBtn.addEventListener('click', () => _micPopupGoToPage((_micPopupState.page || 0) - 1));
+    if (nextBtn) nextBtn.addEventListener('click', () => _micPopupGoToPage((_micPopupState.page || 0) + 1));
+    if (gotoEl) {
+        const jump = () => {
+            const v = parseInt(gotoEl.value, 10);
+            if (Number.isFinite(v)) _micPopupGoToPage(v - 1);
+        };
+        gotoEl.addEventListener('change', jump);
+        gotoEl.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') {
+                // jump only — stop the popup shell's Enter-to-pick handler
+                ev.preventDefault();
+                ev.stopPropagation();
+                jump();
+            }
+        });
+    }
 }
 
 function _bindPopupShell({ overlayId, closeId, cancelId, isOpen, onClose, onEnter, onArrowDown, onArrowUp }) {

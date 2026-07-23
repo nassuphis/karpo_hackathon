@@ -443,6 +443,16 @@ button {
 .mic-popup-status {
     color: #9aa3b2; font-size: 11px; padding: 2px 2px 6px;
 }
+.mic-popup-pager {
+    display: flex; align-items: center; gap: 8px; padding: 0 2px 6px;
+}
+.mic-popup-page-display {
+    color: #c8cdd6; font-size: 12px; min-width: 70px; text-align: center;
+}
+.mic-popup-goto {
+    color: #9aa3b2; font-size: 11px; margin-left: auto;
+}
+.mic-popup-goto input { width: 4.5em; margin-left: 4px; }
 .mic-popup-credit {
     color: #9aa3b2; font-size: 11px; padding: 8px 2px 0;
     border-top: 1px solid rgba(255,255,255,0.08);
@@ -2508,22 +2518,22 @@ button {
     <div id="gallery-piece-list" style="display:flex; flex-direction:column; gap:6px; max-height:60vh; overflow-y:auto"></div>
     <div id="gallery-status" class="status" style="margin-top:8px; font-size:12px"></div>
         </div>
-        <!-- Gallery name / confirm modal (app-styled, replaces native prompt/confirm) -->
-        <div id="gallery-modal-overlay" class="tri-popup-overlay" aria-hidden="true" style="z-index:1600" onkeydown="_galleryModalKey(event)">
-            <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="gallery-modal-title" style="width:min(440px, calc(100vw - 32px))">
+        <!-- Shared app-styled name / confirm modal -->
+        <div id="app-modal-overlay" class="tri-popup-overlay" aria-hidden="true" style="z-index:1600" onkeydown="_appModalKey(event)">
+            <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="app-modal-title" style="width:min(440px, calc(100vw - 32px))">
                 <div class="tri-popup-head">
-                    <div id="gallery-modal-title" class="tri-popup-title">New gallery</div>
-                    <button type="button" class="tri-popup-close" onclick="_galleryModalCancel()">Close</button>
+                    <div id="app-modal-title" class="tri-popup-title"></div>
+                    <button type="button" class="tri-popup-close" onclick="_appModalCancel()">Close</button>
                 </div>
                 <div style="padding:16px 18px">
-                    <label id="gallery-modal-label" for="gallery-modal-input" style="display:block; font-size:12px; color:#9aa0b4; margin-bottom:6px">Gallery name</label>
-                    <input id="gallery-modal-input" type="text" spellcheck="false" onkeydown="_galleryModalKey(event)"
+                    <label id="app-modal-label" for="app-modal-input" style="display:block; font-size:12px; color:#9aa0b4; margin-bottom:6px">Name</label>
+                    <input id="app-modal-input" type="text" spellcheck="false"
                            style="width:100%; box-sizing:border-box; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:8px 10px; font-size:13px">
-                    <div id="gallery-modal-message" style="font-size:12px; color:#c8cee0; margin-top:8px; line-height:1.5"></div>
+                    <div id="app-modal-message" style="font-size:12px; color:#c8cee0; margin-top:8px; line-height:1.5"></div>
                 </div>
                 <div style="display:flex; gap:8px; justify-content:flex-end; padding:12px 18px; border-top:1px solid rgba(255,255,255,0.1)">
-                    <button type="button" class="btn-secondary" onclick="_galleryModalCancel()" style="padding:6px 14px">Cancel</button>
-                    <button id="gallery-modal-ok" type="button" class="btn-primary" onclick="_galleryModalConfirm()" style="padding:6px 14px">Create</button>
+                    <button type="button" class="btn-secondary" onclick="_appModalCancel()" style="padding:6px 14px">Cancel</button>
+                    <button id="app-modal-ok" type="button" class="btn-primary" onclick="_appModalConfirm()" style="padding:6px 14px">OK</button>
                 </div>
             </div>
         </div>
@@ -2810,7 +2820,13 @@ button {
             <button id="mic-popup-close" type="button" class="tri-popup-close">Close</button>
         </div>
         <div class="tri-popup-filter-wrap">
-            <input id="mic-popup-filter" type="text" placeholder="Filter by artist, title, or museum">
+            <input id="mic-popup-filter" type="text" placeholder="Filter by artist or title">
+        </div>
+        <div class="mic-popup-pager">
+            <button id="mic-popup-prev" type="button" class="btn-secondary btn-inline" title="Previous page">&#9664;</button>
+            <span id="mic-popup-page-display" class="mic-popup-page-display">&ndash; / &ndash;</span>
+            <button id="mic-popup-next" type="button" class="btn-secondary btn-inline" title="Next page">&#9654;</button>
+            <label class="mic-popup-goto">go to page <input id="mic-popup-goto" type="number" min="1" step="1"></label>
         </div>
         <div id="mic-popup-status" class="mic-popup-status"></div>
         <div class="tri-popup-table-wrap">

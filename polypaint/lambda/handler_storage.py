@@ -2910,28 +2910,21 @@ def handle_list_books(event):
             # per-book assets/outputs share the prefix: skip nested keys
             if not book_id or "/" in book_id:
                 continue
+            # Body read, not HEAD: the selector shows title/subtitle now,
+            # and S3 metadata is ASCII-constrained while titles are unicode.
+            # Same request count as the old HEAD fast path; docs are small.
             try:
-                head = s3.head_object(Bucket=BUCKET, Key=key)
-                meta = head.get("Metadata") or {}
-                if BOOK_META_NAME not in meta:
-                    raise RuntimeError("book metadata headers missing")
+                payload = _read_book_object(book_id)
                 books.append({
                     "id": book_id,
-                    "name": meta.get(BOOK_META_NAME) or book_id,
-                    "entry_count": int(meta.get(BOOK_META_ENTRY_COUNT) or 0),
-                    "saved_at": meta.get(BOOK_META_SAVED_AT) or "",
+                    "name": payload.get("name") or book_id,
+                    "title": str(payload.get("title") or ""),
+                    "subtitle": str(payload.get("subtitle") or ""),
+                    "entry_count": len(payload.get("entries") or []),
+                    "saved_at": payload.get("saved_at") or "",
                 })
-            except Exception:
-                try:
-                    payload = _read_book_object(book_id)
-                    books.append({
-                        "id": book_id,
-                        "name": payload.get("name") or book_id,
-                        "entry_count": len(payload.get("entries") or []),
-                        "saved_at": payload.get("saved_at") or "",
-                    })
-                except Exception as inner:
-                    errors.append({"id": book_id, "error": str(inner)[:240]})
+            except Exception as inner:
+                errors.append({"id": book_id, "error": str(inner)[:240]})
         if resp.get("IsTruncated"):
             kwargs["ContinuationToken"] = resp.get("NextContinuationToken")
             continue

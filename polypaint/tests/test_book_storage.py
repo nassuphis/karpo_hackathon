@@ -129,6 +129,24 @@ class TestBookStorage(unittest.TestCase):
         self.assertEqual(json.loads(fetched["body"])["latest_output"]["compile_id"], "c1")
 
     @patch("handler_storage.s3")
+    def test_list_books_carries_title_and_subtitle(self, mock_s3):
+        import handler_storage
+
+        _patch_s3(mock_s3, _FakeS3())
+        resp = handler_storage.handler(_event("/save-book", {"book": {
+            "name": "field notes", "title": "Chromatic Fields",
+            "subtitle": "roots in colour"}}), None)
+        self.assertEqual(resp["statusCode"], 200)
+        resp = handler_storage.handler(_event("/list-books", {}), None)
+        self.assertEqual(resp["statusCode"], 200)
+        rows = json.loads(resp["body"])["books"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "field notes")
+        self.assertEqual(rows[0]["title"], "Chromatic Fields")
+        self.assertEqual(rows[0]["subtitle"], "roots in colour")
+        self.assertEqual(rows[0]["entry_count"], 0)
+
+    @patch("handler_storage.s3")
     def test_spread_layout_roundtrips_and_defaults(self, mock_s3):
         import handler_storage
 

@@ -397,7 +397,7 @@ async function bookSetup(page) {
       entry_id: id, job_id: 'job_' + id, artifact_id: 'art_' + id, title: 'Entry ' + (i + 1),
     }));
     window.lambdaPost = async function (name, body, path) {
-      if (path === '/list-books') return { books: [{ id: 'b1', name: 'B', entry_count: 4 }] };
+      if (path === '/list-books') return { books: [{ id: 'b1', name: 'B', title: 'Chromatic Fields', subtitle: 'roots in colour', entry_count: 4 }] };
       if (path === '/fetch-book') return { book: { id: 'b1', name: 'B', entries, cover_entry_id: '', cover_source: { kind: 'none' } } };
       if (path === '/render-summary') return { families: { color: [] } };
       return {};
@@ -405,6 +405,9 @@ async function bookSetup(page) {
   });
   await page.click('.tab-btn:text("Book")');
   await expect(page.locator('.book-entry-row')).toHaveCount(4);
+  // selector label: name — cover title — cover subtitle (count)
+  await expect(page.locator('#book-selector option[value="b1"]'))
+    .toHaveText('B — Chromatic Fields — roots in colour (4)');
 }
 
 function bookOrder(page) {

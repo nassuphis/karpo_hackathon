@@ -308,8 +308,12 @@ function bookSpreadLayoutChanged(value) {
 function _renderBookTab() {
     const sel = document.getElementById('book-selector');
     if (sel) {
-        sel.innerHTML = '<option value="">(select book)</option>' + _bookState.books.map(b =>
-            `<option value="${_escapeHtml(b.id)}"${b.id === _bookState.activeId ? ' selected' : ''}>${_escapeHtml(b.name)} (${b.entry_count})</option>`).join('');
+        sel.innerHTML = '<option value="">(select book)</option>' + _bookState.books.map(b => {
+            // name — cover title — cover subtitle (count); empty parts drop out
+            const label = [b.name, b.title, b.subtitle]
+                .map(part => String(part || '').trim()).filter(Boolean).join(' — ');
+            return `<option value="${_escapeHtml(b.id)}"${b.id === _bookState.activeId ? ' selected' : ''}>${_escapeHtml(label)} (${b.entry_count})</option>`;
+        }).join('');
     }
     const info = document.getElementById('book-info');
     const doc = _bookState.doc;

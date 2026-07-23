@@ -1880,6 +1880,8 @@ function _renderMicPalettePopup() {
         selStripEl.style.display = selStops ? '' : 'none';
         if (selStops) selStripEl.style.background = _stopsToGradient(selStops);
     }
+    const copyBtn = document.getElementById('mic-popup-copy2hex');
+    if (copyBtn && !copyBtn.dataset.busy) copyBtn.disabled = !selStops;
     if (filterEl.value !== (_micPopupState.filter || '')) filterEl.value = _micPopupState.filter || '';
     bodyEl.replaceChildren();
 
@@ -1991,6 +1993,78 @@ function _micPopupMoveHighlight(delta) {
     }
 }
 
+async function _micCopySelectionToHex(mode) {
+    /* Save the mode's selected MIC palette into the named HEX custom-palette
+       catalog (backend CAS catalog — the HEX popup's own store). Idempotent:
+       identical colors already saved -> report the existing name. */
+    const btn = document.getElementById('mic-popup-copy2hex');
+    const statusEl = document.getElementById('mic-popup-status');
+    const sel = _micPaletteSelectionByMode[mode];
+    const stops = sel && sel.palette ? _customStopsFromName(sel.palette) : null;
+    if (!btn || btn.dataset.busy || !stops || !sel.displayName) return;
+    btn.dataset.busy = '1';
+    btn.disabled = true;
+    btn.textContent = 'Copying…';
+    const finish = (label) => {
+        btn.textContent = label;
+        setTimeout(() => {
+            delete btn.dataset.busy;
+            btn.textContent = 'Copy to HEX';
+            const cur = _micPaletteSelectionByMode[_micPopupState.mode];
+            btn.disabled = !(cur && cur.palette);
+        }, 1600);
+    };
+    const saveOnce = async () => {
+        const palette = _customPaletteNameFromStops(stops);
+        const existing = _customPaletteCatalog.find(entry => entry.palette === palette);
+        if (existing) return { already: existing.name };
+        let name = sel.displayName;
+        const lower = new Set(_customPaletteCatalog.map(entry => entry.name.toLocaleLowerCase()));
+        let counter = 2;
+        while (lower.has(name.toLocaleLowerCase())) {
+            const suffix = ` (${counter++})`;
+            name = sel.displayName.slice(0, CUSTOM_PALETTE_MAX_NAME_LEN - suffix.length) + suffix;
+        }
+        const entry = { name, stops, hexText: stops.join(', '), palette };
+        const validation = _customPaletteValidation([..._customPaletteCatalog, entry]);
+        if (validation.error) throw new Error(validation.error);
+        const response = await lambdaPost('storage', {
+            palettes: validation.payload,
+            expected_revision: _customPaletteCatalogRevision,
+        }, '/save-custom-palettes');
+        const rows = Array.isArray(response && response.palettes) ? response.palettes : [];
+        const entries = rows.map(_customPaletteEntry);
+        if (entries.some(row => !row)) throw new Error('Save returned an invalid custom palette catalog');
+        _customPaletteCatalog = entries;
+        _customPaletteCatalogRevision = String((response && response.revision) || '');
+        _customPaletteCatalogLoaded = true;
+        ['proximity', 'solve_score', 'palette_tab', 'repalette', 'color_repalette']
+            .forEach(m => _renderPaletteRow(m));
+        return { saved: name };
+    };
+    try {
+        await _loadCustomPaletteCatalog();
+        let outcome;
+        try {
+            outcome = await saveOnce();
+        } catch (error) {
+            if (!/\b409\b|custom_palette_revision|custom palette catalog changed/i.test(String(error && error.message || error))) throw error;
+            // another session moved the catalog — refetch once and retry
+            await _loadCustomPaletteCatalog(true);
+            outcome = await saveOnce();
+        }
+        if (statusEl) {
+            statusEl.textContent = outcome.already
+                ? `Already saved in HEX as "${outcome.already}".`
+                : `Saved to HEX as "${outcome.saved}".`;
+        }
+        finish(outcome.already ? '✓ Already in HEX' : '✓ Saved to HEX');
+    } catch (error) {
+        if (statusEl) statusEl.textContent = `Copy to HEX failed: ${error && error.message ? error.message : error}`;
+        finish('✗ Copy failed');
+    }
+}
+
 function _initMicPalettePopup() {
     const filterEl = document.getElementById('mic-popup-filter');
     _bindPopupShell({
@@ -2014,6 +2088,8 @@ function _initMicPalettePopup() {
             _micPopupMoveHighlight(ev.key === 'ArrowDown' ? 1 : -1);
         }
     });
+    const copyBtn = document.getElementById('mic-popup-copy2hex');
+    if (copyBtn) copyBtn.addEventListener('click', () => _micCopySelectionToHex(_micPopupState.mode));
     const prevBtn = document.getElementById('mic-popup-prev');
     const nextBtn = document.getElementById('mic-popup-next');
     const gotoEl = document.getElementById('mic-popup-goto');

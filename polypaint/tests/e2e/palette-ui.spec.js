@@ -72,9 +72,19 @@ test.describe('Palette UI', () => {
   test('MIC picker loads the artwork catalog, filters, and applies name + custom wire', async ({ page }) => {
     await page.evaluate((palettes) => {
       window._mockPalettes = palettes.slice();
+      window._customSaves = [];
+      window._customSaveBodies = [];
       document.getElementById('palette-results-dir').value = 'job_palette';
       window.lambdaPost = async function (name, body, path) {
         if (name === 'storage' && path === '/list-palettes') return { palettes: window._mockPalettes.slice() };
+        if (name === 'storage' && path === '/list-custom-palettes') {
+          return { revision: 'r1', palettes: window._customSaves.slice() };
+        }
+        if (name === 'storage' && path === '/save-custom-palettes') {
+          window._customSaveBodies.push(JSON.parse(JSON.stringify(body)));
+          window._customSaves = body.palettes.map(p => ({ name: p.name, stops: p.stops, palette: 'custom:' + p.stops.join('-') }));
+          return { revision: 'r' + (window._customSaveBodies.length + 1), palettes: window._customSaves.slice() };
+        }
         throw new Error(`unexpected storage path ${path}`);
       };
     }, PALETTES);
@@ -140,6 +150,25 @@ test.describe('Palette UI', () => {
     expect(after).not.toBe(before);
     await page.keyboard.press('ArrowUp');
     await expect(page.locator('#mic-popup-body .tri-popup-row.highlight')).toHaveText(String(before));
+
+    // Copy to HEX: saves the selection into the named custom-palette catalog
+    // with busy + lingering result on the button itself; second copy is a no-op
+    const copyBtn = page.locator('#mic-popup-copy2hex');
+    await expect(copyBtn).toBeEnabled();
+    await copyBtn.click();
+    await expect(copyBtn).toHaveText('✓ Saved to HEX');
+    await expect(page.locator('#mic-popup-status')).toContainText('Saved to HEX as');
+    const saved = await page.evaluate(() => window._customSaveBodies);
+    expect(saved).toHaveLength(1);
+    expect(saved[0].expected_revision).toBe('r1');
+    expect(saved[0].palettes).toHaveLength(1);
+    expect(saved[0].palettes[0].name).toContain('Kandinsky');
+    expect(saved[0].palettes[0].stops.length).toBeGreaterThanOrEqual(3);
+    await expect(copyBtn).toHaveText('Copy to HEX', { timeout: 5000 });
+    await copyBtn.click();
+    await expect(copyBtn).toHaveText('✓ Already in HEX');
+    expect(await page.evaluate(() => window._customSaveBodies.length)).toBe(1);
+    await expect(copyBtn).toHaveText('Copy to HEX', { timeout: 5000 });
     await page.click('#mic-popup-close');
   });
 

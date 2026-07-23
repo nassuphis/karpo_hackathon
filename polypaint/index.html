@@ -454,6 +454,7 @@ button {
     width: 180px; height: 14px; border-radius: 999px; flex: 0 0 auto;
     border: 1px solid rgba(255,255,255,0.15);
 }
+.mic-popup-copy2hex { margin-left: auto; flex: 0 0 auto; }
 .mic-popup-pager {
     display: flex; align-items: center; gap: 8px; padding: 0 2px 6px;
 }
@@ -2833,6 +2834,7 @@ button {
         <div id="mic-popup-selected" class="mic-popup-selected">
             <span id="mic-popup-selected-name" class="mic-popup-selected-name">No artwork palette selected</span>
             <div id="mic-popup-selected-strip" class="mic-popup-selected-strip" style="display:none"></div>
+            <button id="mic-popup-copy2hex" type="button" class="btn-secondary btn-inline mic-popup-copy2hex" disabled title="Save the selected artwork palette as a named HEX custom palette">Copy to HEX</button>
         </div>
         <div class="tri-popup-filter-wrap">
             <input id="mic-popup-filter" type="text" placeholder="Filter by artist or title">

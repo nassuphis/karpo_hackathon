@@ -182,11 +182,20 @@ def _build_report(calc, src_meta, source_job_id, source_artifact_id):
         src_meta.get("palette_id"),
         src_meta.get("palette"),
     )
+    # palette-primary versos show the palette's ID flush-left on the header
+    # line (the color id labels the verso square there) — the raw wire
+    # `palette` string is deliberately excluded: custom: specs are huge.
+    palette_id = _first_text(
+        src_meta.get("associated_palette_id"),
+        src_meta.get("palette_artifact_id"),
+        src_meta.get("palette_id"),
+    )
     return {
         "compute_id": source_job_id,
         "artifact_id": source_artifact_id,
         "summary_rows": [[label, value] for label, value in rows if str(value).strip()],
         "palette_label": palette_label,
+        "palette_id": palette_id,
     }
 
 

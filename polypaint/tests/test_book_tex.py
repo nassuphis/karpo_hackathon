@@ -167,11 +167,13 @@ class TestReportPage(unittest.TestCase):
         the color in the verso square labeled by the color id, and the
         palette title flush-right on the artifact-id header line."""
         book = _book(1, spread_layout="palette_primary")
+        long_title = "crowding q=5.0% w=4 obsidian loom chasm extended score"
         prov = {"e0": {"report": {
             "compute_id": "compute_x",
             "artifact_id": "color_run_9",
             "summary_rows": [["N", "4000"]],
-            "palette_label": "tri_ember",
+            "palette_label": long_title,
+            "palette_id": "pal_run_77",
             "has_palette": True,
         }}}
         tex, _ = book_tex.render_content_tex(book, prov)
@@ -185,11 +187,17 @@ class TestReportPage(unittest.TestCase):
         self.assertIn("e0.jpg", square_zone)
         self.assertNotIn("e0.palette.jpg", square_zone)
         self.assertIn("color\_run\_9", square_zone)
-        # the palette title sits on the header id line, flush right (\hss gap)
-        header_line = tex[tex.index("color\_run\_9"):tex.index("color\_run\_9") + 200]
-        self.assertIn(r"\hss tri\_ember", header_line)
-        # ...and is no longer the under-square label
-        self.assertLess(tex.index("tri\_ember"), square_at)
+        # header line: PALETTE id flush left (the color id labels the square),
+        # palette title flush right TRUNCATED to 30 chars + [...] so it can
+        # never crawl over the id
+        header_at = tex.index("pal\_run\_77")
+        header_line = tex[header_at:header_at + 220]
+        expected_short = book_tex.tex_escape(long_title[:30].rstrip() + "[...]")
+        self.assertIn(r"\hss " + expected_short, header_line)
+        self.assertNotIn(book_tex.tex_escape(long_title), tex)   # full title nowhere
+        # the color id does NOT sit on the header line in this layout
+        self.assertNotIn("color\_run\_9", header_line)
+        self.assertLess(header_at, square_at)
 
     def test_palette_primary_without_palette_falls_back(self):
         book = _book(1, spread_layout="palette_primary")

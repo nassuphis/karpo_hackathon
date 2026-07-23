@@ -256,6 +256,19 @@ def _palette_mm(rows, body_override):
     return int(max(PALETTE_MIN_MM, min(PALETTE_MAX_MM, avail)))
 
 
+PALETTE_TITLE_MAX_CHARS = 30
+
+
+def _truncate_label(text, limit=PALETTE_TITLE_MAX_CHARS):
+    """Header labels must never overrun the flush-left id (user bug: a long
+    score-script palette title crawled left over the artifact id). Truncate
+    with an explicit [...] marker so the cut is visible."""
+    raw = str(text or "")
+    if len(raw) <= limit:
+        return raw
+    return raw[:limit].rstrip() + "[...]"
+
+
 def book_spread_layout(book):
     """color_primary (default) or palette_primary — the Layout tab option."""
     layout = str((book or {}).get("spread_layout") or "color_primary")
@@ -296,6 +309,8 @@ def _verso_report_page(entry, provenance, layout="color_primary"):
     rows = _report_rows(entry, provenance)
     body_override = str(entry.get("body_override") or "").strip()
     palette_label = tex_escape(str(report.get("palette_label") or "palette"))
+    palette_id = tex_escape(str(report.get("palette_id") or ""))
+    palette_title_short = tex_escape(_truncate_label(str(report.get("palette_label") or "palette")))
     # palette_primary flips the spread: the palette owns the recto, the color
     # sits in the verso square. Entries without a palette keep color_primary.
     swapped = layout == "palette_primary" and bool(report.get("has_palette"))
@@ -312,10 +327,11 @@ def _verso_report_page(entry, provenance, layout="color_primary"):
         r"{\color{rulecol}\rule{\linewidth}{0.8pt}}\par",
         r"\vspace{1.5mm}",
         # swapped spreads: the recto is the palette, so its title labels it
-        # from up here, flush RIGHT toward the image it names (user spec);
-        # the artifact id keeps its flush-left home
+        # from up here, flush RIGHT toward the image it names — truncated so
+        # it can never crawl over the flush-left id. That id is the PALETTE
+        # id (the color id already labels the verso square below).
         (r"{\monofont\footnotesize\color{monotext}\hbox to \linewidth{%s\hss %s}\par}"
-         % (artifact, palette_label)) if swapped else
+         % (palette_id, palette_title_short)) if swapped else
         (r"{\monofont\footnotesize\color{monotext} %s\par}" % artifact),
         r"\vspace{7mm}",
     ]

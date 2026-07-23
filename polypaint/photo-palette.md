@@ -147,6 +147,8 @@ constants identical:
 [ ] js/04: PIC swatch in _renderPaletteRow (all modes)
 [ ] js/04: popup quintet (_openPicPalettePopup/_render/_close/_init/handlers)
 [ ] index.html: #pic-popup-overlay DOM + CSS (reuse tri-popup + mic classes)
+    INCLUDING the z-index:1200 elevation selector — palette pickers must
+    stack above the repalette/color-repalette overlays (MIC missed this)
 [ ] js/12: _initPicPalettePopup() in the boot block
 [ ] e2e: fixture PNG + flow test in palette-ui.spec.js
 [ ] full predeploy gate, commit, push

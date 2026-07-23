@@ -498,6 +498,24 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#long-popup-overlay')).toBeVisible();
     await expect(page.locator('#long-popup-title')).toContainText('RePalette');
     await page.locator('#long-popup-close').click();
+
+    // MIC must stack ABOVE the repalette overlay like the other pickers
+    // (z-index 1200 elevation list) — a covered popup fails these clicks
+    // with "intercepts pointer events".
+    await page.locator('#palette-circles-repalette .pal-circle-mic').click();
+    await expect(page.locator('#mic-popup-overlay')).toBeVisible();
+    await expect(page.locator('#mic-popup-title')).toContainText('RePalette');
+    await expect(page.locator('#mic-popup-status')).toContainText('palettes', { timeout: 20000 });
+    await page.fill('#mic-popup-filter', 'kandinsky points');
+    await page.locator('#mic-popup-body .tri-popup-row').first().click();
+    await expect(page.locator('#mic-popup-overlay')).toBeHidden();
+    const repaletteApplied = await page.evaluate(() => ({
+      palette: _currentPaletteForMode('repalette'),
+      displayName: _paletteDisplayNameForMode('repalette'),
+    }));
+    expect(repaletteApplied.palette).toMatch(/^custom:[0-9a-f]{6}(-[0-9a-f]{6})+$/);
+    expect(repaletteApplied.displayName).toContain('Kandinsky');
+    await expect(page.locator('#repalette-popup-overlay')).toBeVisible();
   });
 
   test('solve-score Help reference lists every metric in the editor sidepanel', async ({ page }) => {

@@ -402,18 +402,47 @@ async function loadBookTab() {
 
 async function bookSelectorChanged() {
     const sel = document.getElementById('book-selector');
-    _bookSetActive(sel ? sel.value : '');
+    const nextId = sel ? sel.value : '';
+    if (nextId === _bookState.activeId) return;
+    if (_bookState.dirty) {
+        const discard = await _appModal({
+            title: 'Discard changes?',
+            input: false,
+            okLabel: 'Discard',
+            message: 'Switch books and discard your unsaved changes?',
+        });
+        if (!discard) {
+            if (sel) sel.value = _bookState.activeId;
+            return;
+        }
+    }
+    _bookSetActive(nextId);
     await _bookLoadActive();
     _renderBookTab();
     void _bookHydrateEntries();
 }
 
 async function bookNew() {
-    const name = prompt('Book name:');
-    if (!name || !name.trim()) return;
+    if (_bookState.dirty) {
+        const discard = await _appModal({
+            title: 'Discard changes?',
+            input: false,
+            okLabel: 'Discard',
+            message: 'Create a new book and discard your unsaved changes?',
+        });
+        if (!discard) return;
+    }
+    const enteredName = await _appModal({
+        title: 'New book',
+        label: 'Book name',
+        value: 'Untitled book',
+        okLabel: 'Create',
+    });
+    if (enteredName === null) return;
+    const name = enteredName || 'Untitled book';
     _bookBtnBusy('btn-book-new', true, 'Creating…');
     try {
-        const resp = await lambdaPost('storage', { book: { name: name.trim(), entries: [] } }, '/save-book');
+        const resp = await lambdaPost('storage', { book: { name, entries: [] } }, '/save-book');
         _bookSetActive(resp.book.id);
         _bookState.listLoaded = false;
         await _bookRefreshList(true);
@@ -981,11 +1010,9 @@ async function bookDownload(kind, btn) {
     if (!key) return;
     const orig = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
-    _bookStatus(`Preparing ${kind} download…`);
     try {
         const resp = await lambdaPost('storage', { key, filename: `${_bookState.activeId}-${kind}.${kind === 'source' ? 'zip' : 'pdf'}` }, '/presign');
         window.location.href = resp.url;
-        _bookStatus(`Downloading ${kind}…`);
     } catch (e) {
         _bookStatus(e.message, true);
     } finally {

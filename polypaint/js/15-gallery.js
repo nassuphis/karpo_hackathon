@@ -71,53 +71,6 @@ function _galleryStatus(msg, isError) {
     if (el) { el.textContent = msg || ''; el.className = 'status' + (isError ? ' error' : ''); }
 }
 
-// ── app-styled modal (replaces native prompt/confirm) ───────────────────────
-// Promise-based: resolves to the trimmed input string (name prompt) or true
-// (confirm) on OK, or null on Cancel/Escape/Close.
-let _galleryModalResolve = null;
-
-function _galleryModal(opts) {
-    return new Promise((resolve) => {
-        if (_galleryModalResolve) _galleryModalResolve(null);   // supersede any open one
-        _galleryModalResolve = resolve;
-        const overlay = document.getElementById('gallery-modal-overlay');
-        const hasInput = opts.input !== false;
-        document.getElementById('gallery-modal-title').textContent = opts.title || '';
-        const labelEl = document.getElementById('gallery-modal-label');
-        const inputEl = document.getElementById('gallery-modal-input');
-        labelEl.style.display = hasInput ? 'block' : 'none';
-        inputEl.style.display = hasInput ? 'block' : 'none';
-        labelEl.textContent = opts.label || 'Name';
-        inputEl.value = opts.value || '';
-        document.getElementById('gallery-modal-message').textContent = opts.message || '';
-        document.getElementById('gallery-modal-ok').textContent = opts.okLabel || 'OK';
-        overlay.style.display = 'flex';
-        overlay.setAttribute('aria-hidden', 'false');
-        if (hasInput) { inputEl.focus(); inputEl.select(); }
-        else document.getElementById('gallery-modal-ok').focus();
-    });
-}
-
-function _galleryModalClose(result) {
-    const overlay = document.getElementById('gallery-modal-overlay');
-    if (overlay) { overlay.style.display = 'none'; overlay.setAttribute('aria-hidden', 'true'); }
-    const r = _galleryModalResolve; _galleryModalResolve = null;
-    if (r) r(result);
-}
-
-function _galleryModalConfirm() {
-    const inputEl = document.getElementById('gallery-modal-input');
-    const hasInput = inputEl && inputEl.style.display !== 'none';
-    _galleryModalClose(hasInput ? String(inputEl.value || '').trim() : true);
-}
-
-function _galleryModalCancel() { _galleryModalClose(null); }
-
-function _galleryModalKey(e) {
-    if (e.key === 'Enter') { e.preventDefault(); _galleryModalConfirm(); }
-    else if (e.key === 'Escape') { e.preventDefault(); _galleryModalCancel(); }
-}
-
 // The DeepZoom tab calls this after an add, handing over the updated gallery +
 // its new revision. When the tab has unsaved edits we MERGE (adopt the new
 // revision + append the added pieces, keeping local order/titles) so a later
@@ -224,11 +177,11 @@ async function _galleryLoadActive() {
 
 async function galleryNew() {
     if (_galleryState.dirty) {
-        const ok = await _galleryModal({ title: 'Discard changes?', input: false, okLabel: 'Discard',
+        const ok = await _appModal({ title: 'Discard changes?', input: false, okLabel: 'Discard',
             message: 'You have unsaved changes to this gallery. Create a new one and discard them?' });
         if (!ok) return;
     }
-    const name = await _galleryModal({ title: 'New gallery', label: 'Gallery name', value: 'Untitled gallery', okLabel: 'Create' });
+    const name = await _appModal({ title: 'New gallery', label: 'Gallery name', value: 'Untitled gallery', okLabel: 'Create' });
     if (name === null) return;
     _galleryBtnBusy('btn-gallery-new', true, 'Creating…');
     try {
@@ -253,7 +206,7 @@ async function gallerySelectorChanged() {
     const newId = sel ? sel.value : '';
     if (newId === _galleryState.activeId) return;
     if (_galleryState.dirty) {
-        const ok = await _galleryModal({ title: 'Discard changes?', input: false, okLabel: 'Discard',
+        const ok = await _appModal({ title: 'Discard changes?', input: false, okLabel: 'Discard',
             message: 'Switch gallery and discard your unsaved changes?' });
         if (!ok) { if (sel) sel.value = _galleryState.activeId; return; }   // revert the visual selection
     }
@@ -266,7 +219,7 @@ async function galleryDelete() {
     const id = _galleryState.activeId;
     if (!id) return;
     const name = (_galleryState.doc && _galleryState.doc.name) || 'this gallery';
-    const ok = await _galleryModal({ title: 'Delete gallery', input: false, okLabel: 'Delete',
+    const ok = await _appModal({ title: 'Delete gallery', input: false, okLabel: 'Delete',
         message: 'Delete “' + name + '”? This cannot be undone.' });
     if (!ok) return;
     _galleryBtnBusy('btn-gallery-delete', true, 'Deleting…');

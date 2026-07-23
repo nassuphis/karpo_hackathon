@@ -91,10 +91,10 @@ test('New creates a gallery via the app-styled modal (not a native prompt)', asy
   page.on('dialog', (d) => { nativeDialog = true; d.dismiss(); });
   await setup(page, {});
   await page.click('#btn-gallery-new');
-  await expect(page.locator('#gallery-modal-overlay')).toBeVisible();   // styled modal, not prompt()
-  await page.fill('#gallery-modal-input', 'My Show');
-  await page.click('#gallery-modal-ok');
-  await expect(page.locator('#gallery-modal-overlay')).toBeHidden();
+  await expect(page.locator('#app-modal-overlay')).toBeVisible();   // styled modal, not prompt()
+  await page.fill('#app-modal-input', 'My Show');
+  await page.click('#app-modal-ok');
+  await expect(page.locator('#app-modal-overlay')).toBeHidden();
   expect(nativeDialog).toBe(false);
   await expect(page.locator('#gallery-name')).toHaveValue('My Show');
   // Save must be usable immediately after creating (not a mysterious grey button).

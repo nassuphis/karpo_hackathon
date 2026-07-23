@@ -16,6 +16,88 @@ function log(msg, cls='', target='compute-log') {
     while (el.children.length > 500) el.removeChild(el.lastChild);
 }
 
+// Shared app-styled prompt/confirm dialog. Feature modules pass data and await
+// the result instead of invoking browser-native prompt()/confirm() UI.
+let _appModalState = null;
+
+function _appModal(opts = {}) {
+    return new Promise((resolve) => {
+        if (_appModalState) {
+            const previous = _appModalState.resolve;
+            _appModalState = null;
+            previous(null);
+        }
+        const overlay = document.getElementById('app-modal-overlay');
+        const titleEl = document.getElementById('app-modal-title');
+        const labelEl = document.getElementById('app-modal-label');
+        const inputEl = document.getElementById('app-modal-input');
+        const messageEl = document.getElementById('app-modal-message');
+        const okEl = document.getElementById('app-modal-ok');
+        if (!overlay || !titleEl || !labelEl || !inputEl || !messageEl || !okEl) {
+            resolve(null);
+            return;
+        }
+        const hasInput = opts.input !== false;
+        _appModalState = {
+            resolve,
+            hasInput,
+            restoreFocus: document.activeElement,
+        };
+        titleEl.textContent = opts.title || '';
+        labelEl.style.display = hasInput ? 'block' : 'none';
+        inputEl.style.display = hasInput ? 'block' : 'none';
+        labelEl.textContent = opts.label || 'Name';
+        inputEl.value = opts.value == null ? '' : String(opts.value);
+        messageEl.textContent = opts.message || '';
+        okEl.textContent = opts.okLabel || 'OK';
+        overlay.style.display = 'flex';
+        overlay.setAttribute('aria-hidden', 'false');
+        if (hasInput) {
+            inputEl.focus();
+            inputEl.select();
+        } else {
+            okEl.focus();
+        }
+    });
+}
+
+function _appModalClose(result) {
+    const overlay = document.getElementById('app-modal-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    const state = _appModalState;
+    _appModalState = null;
+    if (!state) return;
+    state.resolve(result);
+    if (state.restoreFocus && typeof state.restoreFocus.focus === 'function') {
+        state.restoreFocus.focus();
+    }
+}
+
+function _appModalConfirm() {
+    const inputEl = document.getElementById('app-modal-input');
+    const result = _appModalState && _appModalState.hasInput
+        ? String(inputEl ? inputEl.value : '').trim()
+        : true;
+    _appModalClose(result);
+}
+
+function _appModalCancel() {
+    _appModalClose(null);
+}
+
+function _appModalKey(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        _appModalConfirm();
+    } else if (event.key === 'Escape') {
+        event.preventDefault();
+        _appModalCancel();
+    }
+}
+
 const _loggedContractWarnings = new Set();
 
 function _fmtContractDefault(value) {

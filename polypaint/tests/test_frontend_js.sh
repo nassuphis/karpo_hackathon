@@ -3095,6 +3095,121 @@ if (!js.match(/phase === 'done'[\s\S]{0,400}rd\.failed/))
 console.log('Frontend book row label checks: OK');
 NODE
 
+# ── Book commands: shared modal, dirty guards, button-only download feedback ──
+node - "$ROOT" <<'NODE'
+const fs = require('fs'), path = require('path'), vm = require('vm');
+const root = process.argv[2];
+const core = fs.readFileSync(path.join(root, 'js', '01-core-compute.js'), 'utf8');
+const book = fs.readFileSync(path.join(root, 'js', '14-book.js'), 'utf8');
+const gallery = fs.readFileSync(path.join(root, 'js', '15-gallery.js'), 'utf8');
+const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+function assert(ok, msg) { if (!ok) throw new Error(msg); }
+for (const id of ['app-modal-overlay', 'app-modal-title', 'app-modal-label',
+                  'app-modal-input', 'app-modal-message', 'app-modal-ok']) {
+  assert(html.includes(`id="${id}"`), 'shared app modal missing ' + id);
+}
+assert(core.includes('function _appModal('), 'shared _appModal helper missing');
+assert(!book.includes('prompt('), 'Book commands must not use a native prompt');
+assert(!gallery.includes('_galleryModal'), 'Gallery must use the shared app modal');
+
+const els = {
+  'book-status': {textContent: 'Compiled', className: 'status'},
+  'btn-book-new': {disabled: false, textContent: 'New', dataset: {}},
+  'book-selector': {value: 'book-b'},
+};
+const stored = {};
+let posts = [];
+let modalAnswers = [];
+let modalCalls = [];
+const ctx = {
+  console,
+  location: {href: ''},
+  localStorage: {
+    getItem(key) { return stored[key] || ''; },
+    setItem(key, value) { stored[key] = String(value); },
+  },
+  document: {
+    getElementById(id) { return els[id] || null; },
+  },
+  log() {},
+  asyncPool: async () => {},
+  _escapeHtml(value) { return String(value); },
+  _appModal: async (opts) => {
+    modalCalls.push(opts);
+    return modalAnswers.shift();
+  },
+  lambdaPost: async (_service, body, route) => {
+    posts.push({body, route});
+    if (route === '/save-book') return {book: {id: 'book-new', name: body.book.name, entries: []}};
+    throw new Error('unexpected route ' + route);
+  },
+};
+ctx.window = ctx;
+ctx.globalThis = ctx;
+vm.createContext(ctx);
+vm.runInContext(book, ctx, {filename: 'js/14-book.js'});
+vm.runInContext(`
+  _bookRefreshList = async () => {};
+  _bookLoadActive = async () => { globalThis.__loadCount += 1; };
+  _renderBookTab = () => {};
+  _bookHydrateEntries = async () => {};
+`, ctx);
+ctx.__loadCount = 0;
+
+(async () => {
+  // New uses the styled modal and posts the trimmed/defaulted name.
+  modalAnswers = ['My Book'];
+  await ctx.bookNew();
+  assert(posts.length === 1 && posts[0].route === '/save-book', 'Book New did not save');
+  assert(posts[0].body.book.name === 'My Book', 'Book New lost the modal name');
+  assert(modalCalls[0].title === 'New book', 'Book New did not use the shared dialog');
+
+  // A dirty Book cannot be silently discarded by New.
+  posts = []; modalCalls = []; modalAnswers = [false];
+  vm.runInContext('_bookState.dirty = true;', ctx);
+  await ctx.bookNew();
+  assert(posts.length === 0, 'Book New ignored rejected dirty-state confirmation');
+  assert(modalCalls.length === 1 && modalCalls[0].input === false,
+         'Book New must ask before discarding unsaved changes');
+
+  // A rejected selector change restores the active Book in the dropdown.
+  modalCalls = []; modalAnswers = [false];
+  vm.runInContext("_bookState.activeId = 'book-a'; _bookState.dirty = true;", ctx);
+  els['book-selector'].value = 'book-b';
+  await ctx.bookSelectorChanged();
+  assert(els['book-selector'].value === 'book-a', 'Book selector did not roll back after Cancel');
+
+  // Successful download feedback belongs to the button; status is unchanged.
+  let releasePresign;
+  ctx.lambdaPost = async (_service, body, route) => {
+    assert(route === '/presign', 'Book download used the wrong route');
+    assert(body.key === 'content-key', 'Book download used the wrong object');
+    return await new Promise(resolve => { releasePresign = () => resolve({url: 'https://example.test/content.pdf'}); });
+  };
+  vm.runInContext("_bookState.activeId = 'book-a'; _bookState.latestOutput = {content_key: 'content-key'};", ctx);
+  els['book-status'].textContent = 'Compiled';
+  els['book-status'].className = 'status';
+  const button = {disabled: false, textContent: 'Content PDF'};
+  const download = ctx.bookDownload('content', button);
+  await Promise.resolve();
+  assert(button.disabled && button.textContent === 'Preparing…', 'Book download button lacks busy feedback');
+  assert(els['book-status'].textContent === 'Compiled', 'Book download overwrote the status while preparing');
+  releasePresign();
+  await download;
+  assert(ctx.location.href === 'https://example.test/content.pdf', 'Book download did not navigate to the presigned URL');
+  assert(!button.disabled && button.textContent === 'Content PDF', 'Book download button did not reset');
+  assert(els['book-status'].textContent === 'Compiled', 'Book download left redundant status text');
+
+  // Presign failures still use the persistent status line.
+  ctx.lambdaPost = async () => { throw new Error('presign failed'); };
+  await ctx.bookDownload('content', button);
+  assert(els['book-status'].textContent === 'presign failed'
+         && els['book-status'].className === 'status error',
+         'Book download failure was not surfaced');
+  console.log('Frontend Book command checks: OK');
+})().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
+NODE
+
 # ── F6: Results/Favorites/Render artifact tables must escape stored fields ──
 node - "$ROOT" <<'NODE'
 const fs = require('fs'), path = require('path');

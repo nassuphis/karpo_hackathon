@@ -52,6 +52,12 @@ class TestColorRepaletteHandler(unittest.TestCase):
             "raw_key": "renders/j/color/color_src/greyscale.raw",
             "raw_meta_key": "renders/j/color/color_src/greyscale.meta.json",
             "background_color": "000000",
+            # the preview-jpg migration stamps ABSOLUTE keys — copied into a
+            # derived artifact they point its mosaic tile at the SOURCE's
+            # preview (the AllCol wrong-tile bug); the flow must drop them
+            "preview_jpg_key": "renders/j/color/color_src/preview.jpg",
+            "preview_jpg_width": "512",
+            "preview_jpg_height": "512",
         }
         puts = {}
         copies = []
@@ -153,6 +159,10 @@ class TestColorRepaletteHandler(unittest.TestCase):
             "public, max-age=31536000, immutable",
         )
         self.assertIn("renders/j/color/color_new/meta.json", puts)
+        new_meta = json.loads(puts["renders/j/color/color_new/meta.json"]["body"].decode())
+        for stale in ("preview_jpg_key", "preview_jpg_width", "preview_jpg_height"):
+            self.assertNotIn(stale, new_meta,
+                             "migration preview-jpg pointers must not survive the repalette copy")
         self.assertIn("renders/j/color/color_new/greyscale.meta.json", puts)
         raw_sidecar = json.loads(puts["renders/j/color/color_new/greyscale.meta.json"]["body"].decode())
         self.assertEqual(raw_sidecar["version"], 2)

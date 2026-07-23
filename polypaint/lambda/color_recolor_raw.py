@@ -592,6 +592,14 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
         metadata.pop("step_scores_key", None)
         metadata.pop("step_count", None)
         metadata.pop("step_scores_grid_n", None)
+        # The preview-jpg migration stamps ABSOLUTE keys into artifact meta;
+        # copied verbatim they point the new artifact's tile at the SOURCE's
+        # preview (the AllCol wall showed the pre-repalette look while
+        # Go-Image opened the right image). This artifact writes its own
+        # preview.png; the jpg sibling is migration-owned and must not carry.
+        metadata.pop("preview_jpg_key", None)
+        metadata.pop("preview_jpg_width", None)
+        metadata.pop("preview_jpg_height", None)
         _clear_associated_palette_metadata(metadata)
         source_palette_spec = _source_associated_palette_spec(source_meta, job_id)
 

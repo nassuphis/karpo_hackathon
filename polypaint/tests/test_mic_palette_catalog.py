@@ -1,9 +1,10 @@
-"""Meditations-in-Color palette catalog contract.
+"""Meditations-in-Color palette catalog contract (schema v2).
 
 The MIC picker (js/04) turns a catalog entry into a `custom:` wire spec
-plus palette_display_name — no new palette machinery. These tests pin the
-half of that contract the backend enforces: every catalog entry must
-produce a spec CUSTOM_PALETTE_RE accepts and a display name
+plus palette_display_name — no new palette machinery. v2 rows are minimal
+by design (display name + packed hex string; site-level credit only).
+These tests pin the half of the contract the backend enforces: every
+entry must produce a spec CUSTOM_PALETTE_RE accepts and a display name
 normalize_palette_display_name accepts, the deploy ships the catalog as a
 frontend asset, and the generator's offline --check stays green.
 """
@@ -26,9 +27,16 @@ from palette_names import (  # noqa: E402
 )
 
 
-def _wire_from_colors(colors):
+def _stops_from_packed(packed):
+    """Mirror of the js loader's split: 6 lowercase hex chars per stop."""
+    return re.findall(r"[0-9a-f]{6}", packed)
+
+
+def _wire_from_packed(packed):
     """Mirror of js _micPaletteWire: single-color palettes duplicate."""
-    stops = colors if len(colors) >= 2 else colors * 2
+    stops = _stops_from_packed(packed)
+    if len(stops) == 1:
+        stops = stops * 2
     return "custom:" + "-".join(stops)
 
 
@@ -47,17 +55,27 @@ class TestMicPaletteCatalog(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def test_catalog_carries_credit_and_scale(self):
-        self.assertEqual(self.doc["schema_version"], 1)
+        self.assertEqual(self.doc["schema_version"], 2)
         self.assertIn("meditationsincolor.com", self.doc["origin"])
         self.assertIn("Meditations in Color", self.doc["credit"])
         self.assertGreaterEqual(len(self.rows), 20000)
         self.assertEqual(self.doc["count"], len(self.rows))
 
-    def test_every_entry_is_wire_and_display_name_valid(self):
-        """The full 20k catalog: each entry must survive the exact backend
-        validators that gate render payloads."""
+    def test_rows_are_name_and_packed_hex_only(self):
+        """v2 is deliberately minimal: any extra field is schema drift."""
         for i, row in enumerate(self.rows):
-            wire = _wire_from_colors(row["c"])
+            self.assertEqual(set(row.keys()), {"n", "c"}, f"row {i}")
+
+    def test_every_entry_is_wire_and_display_name_valid(self):
+        """The full catalog: each entry must survive the exact backend
+        validators that gate render payloads. The packed split must also
+        consume every character (no truncated/odd stops)."""
+        for i, row in enumerate(self.rows):
+            packed = row["c"]
+            stops = _stops_from_packed(packed)
+            self.assertEqual("".join(stops), packed,
+                            f"row {i}: packed string not a whole number of stops")
+            wire = _wire_from_packed(packed)
             self.assertTrue(
                 CUSTOM_PALETTE_RE.match(wire),
                 f"row {i} ({row['n']!r}) wire rejected: {wire[:60]}")
@@ -67,11 +85,15 @@ class TestMicPaletteCatalog(unittest.TestCase):
                 normalize_palette_display_name(row["n"], wire), row["n"],
                 f"row {i} display name rejected")
 
-    def test_entries_have_source_credit_fields(self):
-        with_source = sum(1 for r in self.rows if str(r.get("s") or "").strip())
-        with_url = sum(1 for r in self.rows if str(r.get("u") or "").strip())
-        self.assertGreater(with_source / len(self.rows), 0.99)
-        self.assertGreater(with_url / len(self.rows), 0.99)
+    def test_single_stop_palettes_exist_and_duplicate_to_valid_wire(self):
+        """The 1-color rows are the only path through the stop-duplication
+        branch — pin that they exist and produce a valid 2-stop wire."""
+        singles = [r for r in self.rows if len(r["c"]) == 6]
+        self.assertGreater(len(singles), 0, "no single-stop palettes left")
+        for row in singles:
+            wire = _wire_from_packed(row["c"])
+            self.assertRegex(wire, r"^custom:([0-9a-f]{6})-\1$")
+            self.assertTrue(is_valid_palette_name(wire))
 
     def test_deploy_ships_the_catalog_as_frontend_asset(self):
         deploy_text = open(os.path.join(ROOT, "deploy.sh"), encoding="utf-8").read()

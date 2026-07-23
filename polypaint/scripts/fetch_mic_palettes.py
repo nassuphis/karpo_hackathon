@@ -17,12 +17,14 @@ Modes:
       Offline validation of the committed catalog (schema, hex, name
       lengths, dedup, counts). This is the predeploy-gated mode.
 
-Catalog schema (compact keys — the client fetches this lazily, ~5 MB):
-  { schema_version: 1, fetched: "YYYY-MM-DD", origin, credit, count,
+Catalog schema (v2, deliberately minimal — display name + hex only, per
+the user's call; site-level credit lives in the top-level fields and the
+picker footer. ~2.4 MB for ~20k rows):
+  { schema_version: 2, fetched: "YYYY-MM-DD", origin, credit, count,
     palettes: [ { n: "Artist — Title (date)",   # display name, <= 80 chars
-                  a: "Artist", s: "MET",         # artist + source-museum code
-                  u: "https://...",              # original record URL (credit)
-                  c: ["aabbcc", ...] } ] }       # 1..32 lowercase hex stops
+                  c: "aabbcc112233..." } ] }     # 1..32 stops packed 6 chars each
+Display names may repeat (series plates share titles); the (n, c) PAIR is
+unique. Source URLs/museum codes are parsed for dedup but not emitted.
 
 Wire mapping (client side): colors become a `custom:aabbcc-...` spec —
 single-color palettes duplicate their stop to satisfy the 2-stop minimum
@@ -46,7 +48,7 @@ CATALOG_PATH = ROOT / "data" / "mic_palette_catalog.json"
 
 ORIGIN_URL = "https://meditationsincolor.com/colorists"
 CREDIT = "Palettes: Meditations in Color (meditationsincolor.com)"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 MAX_NAME_LEN = 80          # lambda/palette_names.py MAX_PALETTE_DISPLAY_NAME_LEN
 MAX_STOPS = 32             # custom: wire cap (palette_lut.h / palette_names.py)
@@ -132,12 +134,9 @@ def build_catalog(artists: list, fetched: str) -> dict:
             seen.add(key)
             rows.append({
                 "n": _display_name(artist_name, title, date),
-                "a": artist_name,
-                "s": _clean_text(work.get("source")),
-                "u": url,
-                "c": colors,
+                "c": "".join(colors),
             })
-    rows.sort(key=lambda r: (r["a"].lower(), r["n"].lower()))
+    rows.sort(key=lambda r: r["n"].lower())
     print(f"kept {len(rows)} palettes "
           f"(skipped: {skipped_dup} duplicate, {skipped_hex} bad-hex, "
           f"{skipped_empty} empty)")
@@ -172,18 +171,19 @@ def check_catalog() -> int:
     seen = set()
     for i, row in enumerate(rows):
         name = str(row.get("n") or "")
-        colors = row.get("c")
+        packed = row.get("c")
         if not name or len(name) > MAX_NAME_LEN:
             problems.append(f"row {i}: bad name length")
         if any(not ch.isprintable() for ch in name):
             problems.append(f"row {i}: non-printable name")
-        if (not isinstance(colors, list) or not (1 <= len(colors) <= MAX_STOPS)
-                or not all(isinstance(c, str) and HEX_RE.fullmatch(c)
-                           for c in colors)):
-            problems.append(f"row {i}: invalid colors")
-        key = row.get("u") or name
+        if (not isinstance(packed, str) or len(packed) % 6 != 0
+                or not (1 <= len(packed) // 6 <= MAX_STOPS)
+                or not re.fullmatch(r"[0-9a-f]+", packed)):
+            problems.append(f"row {i}: invalid packed colors")
+        # names repeat across series plates; the (name, palette) pair must not
+        key = (name, packed)
         if key in seen:
-            problems.append(f"row {i}: duplicate key {key!r}")
+            problems.append(f"row {i}: duplicate entry {name!r}")
         seen.add(key)
         if problems and len(problems) > 20:
             break

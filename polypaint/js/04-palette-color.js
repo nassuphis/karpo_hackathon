@@ -1730,15 +1730,13 @@ function _loadMicPaletteCatalog() {
             if (!rows.length) throw new Error('catalog is empty');
             _micPaletteCredit = String(doc.credit || '');
             _micPaletteCatalog = rows.map(row => {
-                const stops = (Array.isArray(row.c) ? row.c : []).map(h => '#' + String(h || '').toLowerCase());
+                // v2 rows pack stops as one hex string, 6 chars per stop
+                const stops = (String(row.c || '').toLowerCase().match(/[0-9a-f]{6}/g) || []).map(h => '#' + h);
                 return {
                     name: String(row.n || ''),
-                    artist: String(row.a || ''),
-                    source: String(row.s || ''),
-                    url: String(row.u || ''),
                     stops,
                     gradient: _stopsToGradient(stops.length === 1 ? [stops[0], stops[0]] : stops),
-                    search: `${String(row.n || '')} ${String(row.s || '')}`.toLowerCase(),
+                    search: String(row.n || '').toLowerCase(),
                 };
             });
             return _micPaletteCatalog;
@@ -1875,21 +1873,6 @@ function _renderMicPalettePopup() {
         const nameMain = document.createElement('div');
         nameMain.textContent = entry.name;
         nameWrap.appendChild(nameMain);
-        const sub = document.createElement('div');
-        sub.className = 'tri-popup-aliases';
-        sub.textContent = `${entry.source || 'unknown source'} · ${entry.stops.length} colors`;
-        if (entry.url) {
-            const link = document.createElement('a');
-            link.className = 'mic-popup-source-link';
-            link.href = entry.url;
-            link.target = '_blank';
-            link.rel = 'noopener';
-            link.textContent = '↗';
-            link.title = 'Open the original record';
-            link.onclick = (ev) => ev.stopPropagation();
-            sub.appendChild(link);
-        }
-        nameWrap.appendChild(sub);
         nameCell.appendChild(nameWrap);
 
         const stripCell = document.createElement('td');

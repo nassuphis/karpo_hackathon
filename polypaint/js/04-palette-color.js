@@ -1792,12 +1792,45 @@ function _micApplyEntry(mode, entry) {
     _closeMicPalettePopup();
 }
 
+function _micEntryWire(entry) {
+    return _micPaletteWire(entry && entry.stops);
+}
+
+function _micLocateSelection(mode, filter) {
+    /* Index of the mode's remembered MIC pick under `filter`; -1 if absent. */
+    const sel = _micPaletteSelectionByMode[mode];
+    if (!sel || !sel.palette || !_micCatalogReady()) return -1;
+    const terms = String(filter || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let idx = -1;
+    let seen = 0;
+    for (const entry of _micPaletteCatalog) {
+        if (terms.length && !terms.every(t => entry.search.includes(t))) continue;
+        if (_micEntryWire(entry) === sel.palette) { idx = seen; break; }
+        seen += 1;
+    }
+    return idx;
+}
+
 function _openMicPalettePopup(mode) {
     if (!_closeCustomPalettePopup()) return;
     _closeBuiltinPalettePopup();
     _closeTriPalettePopup();
     _closeLongPalettePopup();
-    _micPopupState = { open: true, mode, filter: String(_micPopupState.filter || ''), page: _micPopupState.page || 0, highlightIdx: 0 };
+    let filterText = String(_micPopupState.filter || '');
+    let page = _micPopupState.page || 0;
+    let highlightIdx = 0;
+    // Reopen lands on the current selection: keep the remembered filter when
+    // it still shows the pick, otherwise clear it so the pick is reachable.
+    let idx = _micLocateSelection(mode, filterText);
+    if (idx < 0 && filterText && _micLocateSelection(mode, '') >= 0) {
+        filterText = '';
+        idx = _micLocateSelection(mode, '');
+    }
+    if (idx >= 0) {
+        page = Math.floor(idx / MIC_POPUP_PAGE_SIZE);
+        highlightIdx = idx % MIC_POPUP_PAGE_SIZE;
+    }
+    _micPopupState = { open: true, mode, filter: filterText, page, highlightIdx };
     _renderMicPalettePopup();
     if (!_micCatalogReady()) {
         _loadMicPaletteCatalog()
@@ -1838,6 +1871,15 @@ function _renderMicPalettePopup() {
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     titleEl.textContent = 'Select artwork palette for ' + _popupModeLabel(_micPopupState.mode);
+    const selNameEl = document.getElementById('mic-popup-selected-name');
+    const selStripEl = document.getElementById('mic-popup-selected-strip');
+    const sel = _micPaletteSelectionByMode[_micPopupState.mode];
+    const selStops = sel && sel.palette ? _customStopsFromName(sel.palette) : null;
+    if (selNameEl) selNameEl.textContent = sel && sel.displayName ? `Selected: ${sel.displayName}` : 'No artwork palette selected';
+    if (selStripEl) {
+        selStripEl.style.display = selStops ? '' : 'none';
+        if (selStops) selStripEl.style.background = _stopsToGradient(selStops);
+    }
     if (filterEl.value !== (_micPopupState.filter || '')) filterEl.value = _micPopupState.filter || '';
     bodyEl.replaceChildren();
 
@@ -1894,7 +1936,7 @@ function _renderMicPalettePopup() {
     shown.forEach((entry, idx) => {
         const row = document.createElement('tr');
         const cls = ['tri-popup-row'];
-        if (_micPaletteWire(entry.stops) === current) cls.push('active');
+        if (_micEntryWire(entry) === current) cls.push('active');
         if (idx === highlightIdx) cls.push('highlight');
         row.className = cls.join(' ');
         row.onclick = () => _micApplyEntry(_micPopupState.mode, entry);
@@ -1918,6 +1960,35 @@ function _renderMicPalettePopup() {
         row.appendChild(stripCell);
         bodyEl.appendChild(row);
     });
+    const highlighted = bodyEl.children[highlightIdx];
+    if (highlighted && typeof highlighted.scrollIntoView === 'function') {
+        highlighted.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+function _micPopupMoveHighlight(delta) {
+    /* Arrow scrolling that walks ACROSS pages at the edges. */
+    const shown = _micPopupShownEntries();
+    if (!shown.length) return;
+    const idx = Math.max(0, Math.min(_micPopupState.highlightIdx || 0, shown.length - 1));
+    const next = idx + delta;
+    if (next >= 0 && next < shown.length) {
+        _micPopupState.highlightIdx = next;
+        _renderMicPalettePopup();
+        return;
+    }
+    const visible = _visibleMicPaletteCatalog();
+    const totalPages = Math.max(1, Math.ceil(visible.length / MIC_POPUP_PAGE_SIZE));
+    const page = _micPopupState.page || 0;
+    if (next < 0 && page > 0) {
+        _micPopupState.page = page - 1;
+        _micPopupState.highlightIdx = MIC_POPUP_PAGE_SIZE - 1;
+        _renderMicPalettePopup();
+    } else if (next >= shown.length && page < totalPages - 1) {
+        _micPopupState.page = page + 1;
+        _micPopupState.highlightIdx = 0;
+        _renderMicPalettePopup();
+    }
 }
 
 function _initMicPalettePopup() {
@@ -1927,18 +1998,8 @@ function _initMicPalettePopup() {
         closeId: 'mic-popup-close',
         isOpen: () => !!_micPopupState.open,
         onClose: _closeMicPalettePopup,
-        onArrowDown: () => {
-            const count = _micPopupShownEntries().length;
-            if (!count) return;
-            _micPopupState.highlightIdx = Math.min((_micPopupState.highlightIdx || 0) + 1, count - 1);
-            _renderMicPalettePopup();
-        },
-        onArrowUp: () => {
-            const count = _micPopupShownEntries().length;
-            if (!count) return;
-            _micPopupState.highlightIdx = Math.max((_micPopupState.highlightIdx || 0) - 1, 0);
-            _renderMicPalettePopup();
-        },
+        onArrowDown: () => _micPopupMoveHighlight(1),
+        onArrowUp: () => _micPopupMoveHighlight(-1),
         onEnter: () => {
             const shown = _micPopupShownEntries();
             if (!shown.length) return;
@@ -1947,6 +2008,12 @@ function _initMicPalettePopup() {
         },
     });
     if (filterEl) filterEl.addEventListener('input', (ev) => _applyMicPopupFilter(ev.target.value));
+    if (filterEl) filterEl.addEventListener('keydown', (ev) => {
+        if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            _micPopupMoveHighlight(ev.key === 'ArrowDown' ? 1 : -1);
+        }
+    });
     const prevBtn = document.getElementById('mic-popup-prev');
     const nextBtn = document.getElementById('mic-popup-next');
     const gotoEl = document.getElementById('mic-popup-goto');

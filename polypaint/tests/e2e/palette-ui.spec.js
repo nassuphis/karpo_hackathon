@@ -121,6 +121,26 @@ test.describe('Palette UI', () => {
     await expect(page.locator('#palette-circles-palette-tab .pal-circle-mic.active')).toBeVisible();
     await expect(page.locator('#palette-circles-palette-tab .pal-circle-custom.active')).toHaveCount(0);
     await expect(page.locator('#palette-circles-palette-tab .pal-circle.active')).toHaveCount(1);
+
+    // reopen: the banner names the selection, its strip shows, and the popup
+    // lands on the page holding the selected row (highlighted + active)
+    await mic.click();
+    await expect(page.locator('#mic-popup-overlay')).toBeVisible();
+    await expect(page.locator('#mic-popup-selected-name')).toContainText('Kandinsky');
+    await expect(page.locator('#mic-popup-selected-strip')).toBeVisible();
+    const landed = page.locator('#mic-popup-body .tri-popup-row.highlight');
+    await expect(landed).toHaveClass(/active/);
+    await expect(landed).toContainText('Kandinsky');
+
+    // arrows work while the filter input keeps focus, and move the highlight
+    await page.locator('#mic-popup-filter').focus();
+    const before = await page.locator('#mic-popup-body .tri-popup-row.highlight').textContent();
+    await page.keyboard.press('ArrowDown');
+    const after = await page.locator('#mic-popup-body .tri-popup-row.highlight').textContent();
+    expect(after).not.toBe(before);
+    await page.keyboard.press('ArrowUp');
+    await expect(page.locator('#mic-popup-body .tri-popup-row.highlight')).toHaveText(String(before));
+    await page.click('#mic-popup-close');
   });
 
   test('palette create dispatches the current visible preset and palette selection', async ({ page }) => {

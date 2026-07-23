@@ -233,7 +233,7 @@ test.describe('Solve Score UI', () => {
     await page.click('.tab-btn:text("Render")');
     const solveCircles = page.locator('#palette-circles-solve-score .pal-circle');
     const solveCount = await solveCircles.count();
-    expect(solveCount).toBe(4);   // PAL, TRI, LONG, HEX (custom)
+    expect(solveCount).toBe(5);   // PAL, TRI, LONG, HEX (custom), MIC
   });
 
   test('render solve-score row shows built-in, TRI, LONG, and HEX swatches', async ({ page }) => {
@@ -477,11 +477,12 @@ test.describe('Solve Score UI', () => {
     await page.locator('#btn-render-repalette').click();
     await expect(page.locator('#repalette-popup-overlay')).toBeVisible();
     const swatches = page.locator('#palette-circles-repalette .pal-circle');
-    await expect(swatches).toHaveCount(4);
+    await expect(swatches).toHaveCount(5);
     await expect(swatches.nth(0)).toContainText('PAL');
     await expect(swatches.nth(1)).toContainText('TRI');
     await expect(swatches.nth(2)).toContainText('LONG');
     await expect(swatches.nth(3)).toContainText('HEX');
+    await expect(swatches.nth(4)).toContainText('MIC');
 
     await page.locator('#palette-circles-repalette [data-palette-popup="builtin"]').click();
     await expect(page.locator('#builtin-popup-overlay')).toBeVisible();

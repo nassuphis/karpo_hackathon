@@ -54,6 +54,7 @@ bash scripts/test-tsan-races.sh
 "${TEST_PYTHON[@]}" lambda/gen_root_vocab.py --check
 "${TEST_PYTHON[@]}" scripts/generate_tri_palettes.py --check
 "${TEST_PYTHON[@]}" scripts/generate_long_palettes.py --check
+"${TEST_PYTHON[@]}" scripts/fetch_mic_palettes.py --check
 # gen_catalog.py (coeff_func_catalog_js.js + coeff_func_lookup.h) is
 # deliberately deploy-gated only: it probes the freshly built sweep_test
 # binary for per-function degrees, so a predeploy --check would depend on
@@ -156,6 +157,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_sweep_cm_threads.py \
     tests/test_solver_brushes.py \
     tests/test_palette_custom.py \
+    tests/test_mic_palette_catalog.py \
     tests/test_coeff_source_equivalence.py \
     tests/test_coeff_program_registers.py \
     tests/test_roots_jt_transform.py \

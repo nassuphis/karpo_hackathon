@@ -252,6 +252,12 @@ let _customPaletteCatalogRevision = '';
 let _customPaletteCatalogLoaded = false;
 let _customPaletteCatalogLoadPromise = null;
 let _customPaletteSelectionByMode = {};
+let _micPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
+let _micPaletteCatalog = null;
+let _micPaletteCatalogLoadPromise = null;
+let _micPaletteCatalogError = '';
+let _micPaletteCredit = '';
+let _micPaletteSelectionByMode = {};
 let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _resizePopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
@@ -722,6 +728,20 @@ function _renderPaletteRow(mode) {
     customSwatch.style.background = customStops ? _stopsToGradient(customStops) : '#555';
     customSwatch.onclick = () => _openCustomPalettePopup(mode);
     children.push(customSwatch);
+
+    const micSel = _micPaletteSelectionByMode[mode];
+    const micActive = !!(micSel && micSel.palette && micSel.palette === currentPalette);
+    const micStops = micSel ? _customStopsFromName(micSel.palette) : null;
+    const micSwatch = document.createElement('div');
+    micSwatch.className = 'pal-circle pal-circle-builtin pal-circle-mic' + (micActive ? ' active' : '');
+    micSwatch.dataset.palettePopup = 'mic';
+    micSwatch.textContent = 'MIC';
+    micSwatch.title = micSel && micSel.displayName
+        ? `MIC: ${micSel.displayName}`
+        : 'Meditations in Color: museum artwork palettes';
+    micSwatch.style.background = micStops ? _stopsToGradient(micStops) : _stopsToGradient(MIC_SWATCH_DEFAULT_STOPS);
+    micSwatch.onclick = () => _openMicPalettePopup(mode);
+    children.push(micSwatch);
 
     container.replaceChildren();
     children.forEach(child => container.appendChild(child));
@@ -1194,6 +1214,7 @@ async function _openCustomPalettePopup(mode) {
     _closeBuiltinPalettePopup();
     _closeTriPalettePopup();
     _closeLongPalettePopup();
+    _closeMicPalettePopup();
     _customPalettePopupState.open = true;
     _customPalettePopupState.mode = mode;
     _customPalettePopupState.loading = !_customPaletteCatalogLoaded;
@@ -1474,6 +1495,7 @@ function _openTriPalettePopup(mode) {
     if (!_closeCustomPalettePopup()) return;
     _closeBuiltinPalettePopup();
     _closeLongPalettePopup();
+    _closeMicPalettePopup();
     _syncTriDefaults();
     const visible = _triCatalog();
     const activeName = _triPaletteForMode(mode);
@@ -1566,6 +1588,7 @@ function _openLongPalettePopup(mode) {
     if (!_closeCustomPalettePopup()) return;
     _closeBuiltinPalettePopup();
     _closeTriPalettePopup();
+    _closeMicPalettePopup();
     _syncLongDefaults();
     const visible = _longCatalog();
     const activeName = _longPaletteForMode(mode);
@@ -1651,6 +1674,7 @@ function _openBuiltinPalettePopup(mode) {
     if (!_closeCustomPalettePopup()) return;
     _closeTriPalettePopup();
     _closeLongPalettePopup();
+    _closeMicPalettePopup();
     _syncBuiltinDefaults();
     const visible = BUILTIN_PALETTE_ENTRIES;
     const activeName = _builtinPaletteForMode(mode);
@@ -1674,6 +1698,240 @@ function _isTextInputFocused(multilineOnly) {
     const tag = ae.tagName;
     if (tag === 'TEXTAREA') return true;
     return !multilineOnly && tag === 'INPUT';
+}
+
+/* ---- MIC popup: Meditations in Color artwork palettes ----
+   ~20k museum-sourced palettes served as a static catalog JSON
+   (data/mic_palette_catalog.json — same-origin both locally and on S3).
+   A chosen entry rides the existing custom: wire + palette_display_name,
+   so the render pipeline is untouched. scripts/fetch_mic_palettes.py
+   rebuilds the catalog; its --check validates offline in the gate. */
+
+const MIC_CATALOG_URL = 'data/mic_palette_catalog.json';
+const MIC_POPUP_ROW_CAP = 250;
+// Kandinsky — Points (1920): the MIC swatch's resting face
+const MIC_SWATCH_DEFAULT_STOPS = ['#bc9f41', '#292b24', '#9a8a44', '#454833', '#552c2f', '#5f5337', '#776a3d', '#155c52'];
+
+function _micCatalogReady() {
+    return Array.isArray(_micPaletteCatalog) && _micPaletteCatalog.length > 0;
+}
+
+function _loadMicPaletteCatalog() {
+    if (_micCatalogReady()) return Promise.resolve(_micPaletteCatalog);
+    if (_micPaletteCatalogLoadPromise) return _micPaletteCatalogLoadPromise;
+    _micPaletteCatalogError = '';
+    _micPaletteCatalogLoadPromise = fetch(MIC_CATALOG_URL)
+        .then(resp => {
+            if (!resp.ok) throw new Error(`catalog fetch failed (HTTP ${resp.status})`);
+            return resp.json();
+        })
+        .then(doc => {
+            const rows = Array.isArray(doc && doc.palettes) ? doc.palettes : [];
+            if (!rows.length) throw new Error('catalog is empty');
+            _micPaletteCredit = String(doc.credit || '');
+            _micPaletteCatalog = rows.map(row => {
+                const stops = (Array.isArray(row.c) ? row.c : []).map(h => '#' + String(h || '').toLowerCase());
+                return {
+                    name: String(row.n || ''),
+                    artist: String(row.a || ''),
+                    source: String(row.s || ''),
+                    url: String(row.u || ''),
+                    stops,
+                    gradient: _stopsToGradient(stops.length === 1 ? [stops[0], stops[0]] : stops),
+                    search: `${String(row.n || '')} ${String(row.s || '')}`.toLowerCase(),
+                };
+            });
+            return _micPaletteCatalog;
+        })
+        .catch(e => {
+            _micPaletteCatalogError = e && e.message ? e.message : String(e);
+            _micPaletteCatalogLoadPromise = null;
+            throw e;
+        });
+    return _micPaletteCatalogLoadPromise;
+}
+
+function _micPaletteWire(stops) {
+    const bare = (Array.isArray(stops) ? stops : [])
+        .map(s => String(s || '').replace(/^#/, '').toLowerCase());
+    if (!bare.length || bare.length > CUSTOM_PALETTE_MAX_STOPS) return '';
+    if (!bare.every(s => /^[0-9a-f]{6}$/.test(s))) return '';
+    // custom: wire requires >= 2 stops; a one-color palette is a flat ramp
+    const wire = bare.length === 1 ? [bare[0], bare[0]] : bare;
+    return 'custom:' + wire.join('-');
+}
+
+function _visibleMicPaletteCatalog() {
+    if (!_micCatalogReady()) return [];
+    const filter = String(_micPopupState.filter || '').trim().toLowerCase();
+    if (!filter) return _micPaletteCatalog;
+    const terms = filter.split(/\s+/);
+    return _micPaletteCatalog.filter(entry => terms.every(t => entry.search.includes(t)));
+}
+
+function _micApplyEntry(mode, entry) {
+    const wire = _micPaletteWire(entry && entry.stops);
+    if (!wire) return;
+    _micPaletteSelectionByMode[mode] = { palette: wire, displayName: entry.name };
+    setPaletteForMode(mode, wire, entry.name);
+    if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
+    _closeMicPalettePopup();
+}
+
+function _openMicPalettePopup(mode) {
+    if (!_closeCustomPalettePopup()) return;
+    _closeBuiltinPalettePopup();
+    _closeTriPalettePopup();
+    _closeLongPalettePopup();
+    _micPopupState = { open: true, mode, filter: '', highlightIdx: 0 };
+    _renderMicPalettePopup();
+    if (!_micCatalogReady()) {
+        _loadMicPaletteCatalog()
+            .then(() => { if (_micPopupState.open) _renderMicPalettePopup(); })
+            .catch(() => { if (_micPopupState.open) _renderMicPalettePopup(); });
+    }
+    const filter = document.getElementById('mic-popup-filter');
+    if (filter && typeof filter.focus === 'function') filter.focus();
+}
+
+function _applyMicPopupFilter(text) {
+    _micPopupState.filter = String(text || '');
+    _micPopupState.highlightIdx = 0;
+    _renderMicPalettePopup();
+}
+
+function _closeMicPalettePopup() {
+    _micPopupState.open = false;
+    const overlay = document.getElementById('mic-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function _renderMicPalettePopup() {
+    const overlay = document.getElementById('mic-popup-overlay');
+    const titleEl = document.getElementById('mic-popup-title');
+    const statusEl = document.getElementById('mic-popup-status');
+    const bodyEl = document.getElementById('mic-popup-body');
+    const filterEl = document.getElementById('mic-popup-filter');
+    if (!overlay || !titleEl || !statusEl || !bodyEl || !filterEl) return;
+    if (!_micPopupState.open) {
+        _closeMicPalettePopup();
+        return;
+    }
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    titleEl.textContent = 'Select artwork palette for ' + _popupModeLabel(_micPopupState.mode);
+    if (filterEl.value !== (_micPopupState.filter || '')) filterEl.value = _micPopupState.filter || '';
+    bodyEl.replaceChildren();
+
+    if (!_micCatalogReady()) {
+        statusEl.textContent = _micPaletteCatalogError
+            ? `Failed to load palette catalog: ${_micPaletteCatalogError}`
+            : 'Loading artwork palettes…';
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+        cell.textContent = _micPaletteCatalogError ? 'Catalog unavailable.' : 'Loading…';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        return;
+    }
+
+    const visible = _visibleMicPaletteCatalog();
+    const shown = visible.slice(0, MIC_POPUP_ROW_CAP);
+    statusEl.textContent = visible.length > shown.length
+        ? `Showing ${shown.length} of ${visible.length.toLocaleString()} palettes — type to narrow`
+        : `${visible.length.toLocaleString()} palette${visible.length === 1 ? '' : 's'}`;
+    const highlightIdx = shown.length
+        ? Math.max(0, Math.min(_micPopupState.highlightIdx || 0, shown.length - 1)) : 0;
+    _micPopupState.highlightIdx = highlightIdx;
+
+    if (!shown.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+        cell.textContent = 'No artwork palettes match this filter.';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        return;
+    }
+
+    const current = _currentPaletteForMode(_micPopupState.mode);
+    shown.forEach((entry, idx) => {
+        const row = document.createElement('tr');
+        const cls = ['tri-popup-row'];
+        if (_micPaletteWire(entry.stops) === current) cls.push('active');
+        if (idx === highlightIdx) cls.push('highlight');
+        row.className = cls.join(' ');
+        row.onclick = () => _micApplyEntry(_micPopupState.mode, entry);
+
+        const nameCell = document.createElement('td');
+        const nameWrap = document.createElement('div');
+        nameWrap.className = 'tri-popup-name';
+        const nameMain = document.createElement('div');
+        nameMain.textContent = entry.name;
+        nameWrap.appendChild(nameMain);
+        const sub = document.createElement('div');
+        sub.className = 'tri-popup-aliases';
+        sub.textContent = `${entry.source || 'unknown source'} · ${entry.stops.length} colors`;
+        if (entry.url) {
+            const link = document.createElement('a');
+            link.className = 'mic-popup-source-link';
+            link.href = entry.url;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.textContent = '↗';
+            link.title = 'Open the original record';
+            link.onclick = (ev) => ev.stopPropagation();
+            sub.appendChild(link);
+        }
+        nameWrap.appendChild(sub);
+        nameCell.appendChild(nameWrap);
+
+        const stripCell = document.createElement('td');
+        const strip = document.createElement('div');
+        strip.className = 'tri-popup-strip';
+        strip.style.background = entry.gradient;
+        strip.title = entry.name;
+        stripCell.appendChild(strip);
+
+        row.appendChild(nameCell);
+        row.appendChild(stripCell);
+        bodyEl.appendChild(row);
+    });
+}
+
+function _initMicPalettePopup() {
+    const filterEl = document.getElementById('mic-popup-filter');
+    _bindPopupShell({
+        overlayId: 'mic-popup-overlay',
+        closeId: 'mic-popup-close',
+        isOpen: () => !!_micPopupState.open,
+        onClose: _closeMicPalettePopup,
+        onArrowDown: () => {
+            const count = Math.min(_visibleMicPaletteCatalog().length, MIC_POPUP_ROW_CAP);
+            if (!count) return;
+            _micPopupState.highlightIdx = Math.min((_micPopupState.highlightIdx || 0) + 1, count - 1);
+            _renderMicPalettePopup();
+        },
+        onArrowUp: () => {
+            const count = Math.min(_visibleMicPaletteCatalog().length, MIC_POPUP_ROW_CAP);
+            if (!count) return;
+            _micPopupState.highlightIdx = Math.max((_micPopupState.highlightIdx || 0) - 1, 0);
+            _renderMicPalettePopup();
+        },
+        onEnter: () => {
+            const shown = _visibleMicPaletteCatalog().slice(0, MIC_POPUP_ROW_CAP);
+            if (!shown.length) return;
+            const entry = shown[Math.max(0, Math.min(_micPopupState.highlightIdx || 0, shown.length - 1))];
+            if (entry) _micApplyEntry(_micPopupState.mode, entry);
+        },
+    });
+    if (filterEl) filterEl.addEventListener('input', (ev) => _applyMicPopupFilter(ev.target.value));
 }
 
 function _bindPopupShell({ overlayId, closeId, cancelId, isOpen, onClose, onEnter, onArrowDown, onArrowUp }) {

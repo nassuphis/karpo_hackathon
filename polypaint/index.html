@@ -440,6 +440,15 @@ button {
 .tri-popup-empty td {
     color: #777; text-align: center; padding: 16px 8px;
 }
+.mic-popup-status {
+    color: #9aa3b2; font-size: 11px; padding: 2px 2px 6px;
+}
+.mic-popup-credit {
+    color: #9aa3b2; font-size: 11px; padding: 8px 2px 0;
+    border-top: 1px solid rgba(255,255,255,0.08);
+}
+.mic-popup-credit a { color: #9ec1e8; }
+.mic-popup-source-link { color: #9ec1e8; text-decoration: none; margin-left: 6px; }
 .custom-palette-popup {
     width: min(980px, calc(100vw - 32px));
 }
@@ -2793,6 +2802,27 @@ button {
             <div id="custom-palette-popup-status" class="custom-palette-status"></div>
             <button id="custom-palette-popup-save" type="button" class="btn-primary" disabled>Save</button>
         </div>
+    </div>
+</div>
+<div id="mic-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="mic-popup-title">
+        <div class="tri-popup-head">
+            <div id="mic-popup-title" class="tri-popup-title">Select artwork palette</div>
+            <button id="mic-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div class="tri-popup-filter-wrap">
+            <input id="mic-popup-filter" type="text" placeholder="Filter by artist, title, or museum">
+        </div>
+        <div id="mic-popup-status" class="mic-popup-status"></div>
+        <div class="tri-popup-table-wrap">
+            <table class="tri-popup-table">
+                <thead>
+                    <tr><th>Artwork</th><th>Palette</th></tr>
+                </thead>
+                <tbody id="mic-popup-body"></tbody>
+            </table>
+        </div>
+        <div class="mic-popup-credit">Palettes from <a href="https://meditationsincolor.com" target="_blank" rel="noopener">Meditations in Color</a> — museum-sourced artwork palettes; each row links its original record.</div>
     </div>
 </div>
 <div id="solve-score-modal-overlay" class="tri-popup-overlay" aria-hidden="true">

@@ -69,6 +69,40 @@ test.describe('Palette UI', () => {
     await expect(page.locator('#palette-circles-palette-tab .pal-circle-long')).toBeVisible();
   });
 
+  test('MIC picker loads the artwork catalog, filters, and applies name + custom wire', async ({ page }) => {
+    await page.evaluate((palettes) => {
+      window._mockPalettes = palettes.slice();
+      document.getElementById('palette-results-dir').value = 'job_palette';
+      window.lambdaPost = async function (name, body, path) {
+        if (name === 'storage' && path === '/list-palettes') return { palettes: window._mockPalettes.slice() };
+        throw new Error(`unexpected storage path ${path}`);
+      };
+    }, PALETTES);
+
+    await page.click('.tab-btn:text("Palette")');
+    const mic = page.locator('#palette-circles-palette-tab .pal-circle-mic');
+    await expect(mic).toBeVisible();
+    await mic.click();
+    await expect(page.locator('#mic-popup-overlay')).toBeVisible();
+    // real catalog served relatively by the test server (~4.8 MB, 20k rows)
+    await expect(page.locator('#mic-popup-status')).toContainText('palettes', { timeout: 20000 });
+    await expect(page.locator('.mic-popup-credit')).toContainText('Meditations in Color');
+
+    await page.fill('#mic-popup-filter', 'kandinsky points');
+    const row = page.locator('#mic-popup-body .tri-popup-row').first();
+    await expect(row).toContainText('Kandinsky');
+    await row.click();
+    await expect(page.locator('#mic-popup-overlay')).toBeHidden();
+
+    const applied = await page.evaluate(() => ({
+      palette: _currentPaletteForMode('palette_tab'),
+      displayName: _paletteDisplayNameForMode('palette_tab'),
+    }));
+    expect(applied.palette).toMatch(/^custom:[0-9a-f]{6}(-[0-9a-f]{6})+$/);
+    expect(applied.displayName).toContain('Kandinsky');
+    await expect(page.locator('#palette-circles-palette-tab .pal-circle-mic.active')).toBeVisible();
+  });
+
   test('palette create dispatches the current visible preset and palette selection', async ({ page }) => {
     await page.evaluate((palettes) => {
       window._mockPalettes = palettes.slice();

@@ -1177,6 +1177,7 @@ _initTriPalettePopup();
 _initBuiltinPalettePopup();
 _initLongPalettePopup();
 _initCustomPalettePopup();
+_initMicPalettePopup();
 _initFunctionPopup();
 _initAutolevelPopup();
 _initResizePopup();

@@ -158,6 +158,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_solver_brushes.py \
     tests/test_palette_custom.py \
     tests/test_mic_palette_catalog.py \
+    tests/test_extract_image_palette.py \
     tests/test_coeff_source_equivalence.py \
     tests/test_coeff_program_registers.py \
     tests/test_roots_jt_transform.py \

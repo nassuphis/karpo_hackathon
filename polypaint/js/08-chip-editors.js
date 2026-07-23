@@ -1737,7 +1737,7 @@ function _scrubPadNudge(direction, big) {
         const root = st.roots[st.activeRoot];
         root.re = Number((root.re + dx * step).toFixed(9));
         root.im = Number((root.im + dy * step).toFixed(9));
-        _rootPadWrite();
+        _rootPadMaybeWrite();
         return;
     }
     if (st.mode === 'choice') {
@@ -1835,6 +1835,10 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
         st.snapStep = 0.5;
         st.snapOn = true;
         st.activeRoot = -1;
+        // Edits BUFFER in the pad and land on Done; the live toggle restores
+        // write-through-per-drag (user spec 2026-07-23).
+        st.liveWrite = false;
+        st.rootsDirty = false;
     } else if (mode === 'choice') {
         st.choices = _solveScoreMetricNames.slice();
         st.index = st.choices.indexOf(span.raw);
@@ -1876,10 +1880,15 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
     let hint;
     if (mode === 'roots') {
         modeRows = `<div class="program-scrub-row">
-            window <input type="text" id="program-scrub-window" onchange="_rootPadSetWindow()" title="View range: a square of side d centered on 0">
+            extent <input type="text" id="program-scrub-extent" onchange="_rootPadSetExtent()" title="View range: -extent-extent*1i to +extent+extent*1i, centered on 0">
+            count <input type="number" id="program-scrub-count" min="1" max="255" step="1" onchange="_rootPadSetCount()" title="Number of roots; new roots spawn on the extent circle, farthest from the others">
+        </div>
+        <div class="program-scrub-row">
             <label><input type="checkbox" id="program-scrub-snap" checked onchange="_rootPadSetSnap(this.checked)"> snap 0.5</label>
+            <label><input type="checkbox" id="program-scrub-live-write" onchange="_rootPadSetLiveWrite(this.checked)"> live</label>
+            <button type="button" class="btn-secondary program-scrub-done" id="program-scrub-done" onclick="_rootPadDone()">Done</button>
         </div>`;
-        hint = 'drag a point &middot; arrows nudge it (Shift &times;5) &middot; Esc reverts &middot; any other edit closes';
+        hint = 'drag a point &middot; arrows nudge it (Shift &times;5) &middot; Done writes (or live) &middot; Esc reverts';
     } else if (mode === 'choice') {
         modeRows = `<div class="program-scrub-row"><span id="program-scrub-pos"></span></div>
         <div id="program-scrub-desc" class="program-scrub-desc"></div>`;
@@ -1918,8 +1927,10 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
         <div class="program-scrub-hint">${hint}</div>
     `;
     if (mode === 'roots') {
-        const windowEl = document.getElementById('program-scrub-window');
-        if (windowEl) windowEl.value = _scrubFormatNumber(2 * st.plane.half);
+        const extentEl = document.getElementById('program-scrub-extent');
+        if (extentEl) extentEl.value = _scrubFormatNumber(st.plane.half);
+        const countEl = document.getElementById('program-scrub-count');
+        if (countEl) countEl.value = String(st.roots.length);
     } else if (mode === 'complex') {
         const spanEl = document.getElementById('program-scrub-span');
         if (spanEl) spanEl.value = _scrubFormatNumber(st.span);
@@ -1956,9 +1967,10 @@ function _renderProgramScrubPad() {
     if (st.mode === 'roots') {
         if (valueEl) {
             const active = st.activeRoot >= 0 ? st.roots[st.activeRoot] : null;
-            valueEl.textContent = active
+            const dirty = st.rootsDirty && !st.liveWrite ? ' · unsaved' : '';
+            valueEl.textContent = (active
                 ? `${st.roots.length} roots · ${_scrubFormatRoot(active.re, active.im)}`
-                : `${st.roots.length} roots`;
+                : `${st.roots.length} roots`) + dirty;
         }
         _rootPadDraw();
         return;
@@ -2183,19 +2195,90 @@ function _rootPadSetSnap(checked) {
     _rootPadDraw();
 }
 
-function _rootPadSetWindow() {
-    // View-range control: a single number d frames a square of side d
-    // CENTERED ON 0 (the open-time frame auto-fits the layout instead).
-    // Points outside the window stay live in the text; enlarge d to see
-    // them again. Invalid input re-displays the effective side.
+function _rootPadSetExtent() {
+    // View-range control: extent = HALF-side (Render/Compute convention);
+    // the view spans -extent-extent*1i .. +extent+extent*1i. The open-time
+    // frame auto-fits the layout instead. Points outside stay live in the
+    // pad; enlarge extent to see them. Invalid input re-displays the
+    // effective extent.
     const st = _scrubPadState;
     if (!st || st.mode !== 'roots') return;
-    const el = document.getElementById('program-scrub-window');
-    const side = Number(el && el.value);
-    if (Number.isFinite(side) && side > 0) {
-        st.plane = _rootPadPlaneAt(0, 0, side / 2, st.plane.size);
+    const el = document.getElementById('program-scrub-extent');
+    const extent = Number(el && el.value);
+    if (Number.isFinite(extent) && extent > 0) {
+        st.plane = _rootPadPlaneAt(0, 0, extent, st.plane.size);
     }
-    if (el) el.value = _scrubFormatNumber(2 * st.plane.half);
+    if (el) el.value = _scrubFormatNumber(st.plane.half);
+    _rootPadDraw();
+}
+
+function _rootPadMaybeWrite() {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'roots') return;
+    if (st.liveWrite) {
+        _rootPadWrite();
+        return;
+    }
+    st.rootsDirty = true;
+    _renderProgramScrubPad();
+}
+
+function _rootPadSetLiveWrite(checked) {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'roots') return;
+    st.liveWrite = !!checked;
+    // turning live ON flushes whatever was buffered
+    if (st.liveWrite && st.rootsDirty) {
+        _rootPadWrite();
+        st.rootsDirty = false;
+    }
+    _renderProgramScrubPad();
+}
+
+function _rootPadDone() {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'roots') return;
+    _rootPadWrite();
+    _closeProgramScrubPad();
+}
+
+function _rootPadSetCount() {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'roots') return;
+    const el = document.getElementById('program-scrub-count');
+    let count = Math.round(Number(el && el.value));
+    if (!Number.isFinite(count)) count = st.roots.length;
+    count = Math.max(1, Math.min(255, count));
+    if (count < st.roots.length) {
+        st.roots.length = count;                       // drop from the end
+        if (st.activeRoot >= count) st.activeRoot = -1;
+    } else if (count > st.roots.length) {
+        // Each new root lands on the |z| = extent circle at the angle
+        // farthest from every existing root (user spec).
+        while (st.roots.length < count) {
+            const radius = st.plane.half;
+            let bestAngle = 0;
+            let bestScore = -Infinity;
+            for (let k = 0; k < 256; k++) {
+                const angle = (2 * Math.PI * k) / 256;
+                const re = radius * Math.cos(angle);
+                const im = radius * Math.sin(angle);
+                let nearest = Infinity;
+                for (const r of st.roots) {
+                    const d = (r.re - re) * (r.re - re) + (r.im - im) * (r.im - im);
+                    if (d < nearest) nearest = d;
+                }
+                if (nearest > bestScore) { bestScore = nearest; bestAngle = angle; }
+            }
+            st.roots.push({
+                re: Number((radius * Math.cos(bestAngle)).toFixed(9)),
+                im: Number((radius * Math.sin(bestAngle)).toFixed(9)),
+                raw: null,
+            });
+        }
+    }
+    if (el) el.value = String(st.roots.length);
+    _rootPadMaybeWrite();
     _rootPadDraw();
 }
 
@@ -2283,7 +2366,7 @@ function _rootPadDragMove(event) {
     root.re = re;
     root.im = im;
     root.raw = null;   // moved: formats with round-trip precision
-    _rootPadWrite();
+    _rootPadMaybeWrite();
 }
 
 function _scrubPadSetRange() {

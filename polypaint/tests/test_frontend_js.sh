@@ -2136,7 +2136,7 @@ async function main() {
   // Scrub pad: span detection, splice writes, invariant guard, revert.
   {
     const padEls = {};
-    for (const id of ['program-scrub-pad', 'program-scrub-value', 'program-scrub-handle', 'program-scrub-surface', 'program-scrub-min', 'program-scrub-max', 'program-scrub-live', 'program-scrub-pos', 'program-scrub-desc', 'program-scrub-snap', 'program-scrub-window']) {
+    for (const id of ['program-scrub-pad', 'program-scrub-value', 'program-scrub-handle', 'program-scrub-surface', 'program-scrub-min', 'program-scrub-max', 'program-scrub-live', 'program-scrub-pos', 'program-scrub-desc', 'program-scrub-snap', 'program-scrub-extent', 'program-scrub-count', 'program-scrub-live-write', 'program-scrub-done']) {
       padEls[id] = { innerHTML: '', textContent: '', value: '', style: {}, setAttribute() {}, contains() { return false; } };
     }
     // canvas fake: geometry for drag math, NO getContext — drawing must be
@@ -2204,7 +2204,11 @@ async function main() {
       extractFunction('_rootPadSnapValue'),
       extractFunction('_rootPadPlaneAt'),
       extractFunction('_rootPadPlane'),
-      extractFunction('_rootPadSetWindow'),
+      extractFunction('_rootPadSetExtent'),
+      extractFunction('_rootPadMaybeWrite'),
+      extractFunction('_rootPadSetLiveWrite'),
+      extractFunction('_rootPadDone'),
+      extractFunction('_rootPadSetCount'),
       extractFunction('_rootPadDraw'),
       extractFunction('_rootPadSetSnap'),
       extractFunction('_rootPadWrite'),
@@ -2448,29 +2452,40 @@ async function main() {
       vm.runInContext(`_rootPadDragMove({ clientX: ${dest.x}, clientY: ${dest.y} })`, scrubCtx);
       rst = vm.runInContext('_state()', scrubCtx);
       assert(rst.roots[0].re === 2 && rst.roots[0].im === 0.5, 'snapped drag should land on the 0.5 grid');
-      // CR35-F26: only the MOVED root reformats; untouched roots keep
-      // their original token spelling verbatim (incl. the j suffix)
+      // Buffered by default: the drag mutates PAD STATE only; the source
+      // is untouched until Done or the live toggle.
+      assert(scrubCtx._ta.value === src, 'buffered drag must not rewrite the source');
+      assert(rst.rootsDirty === true, 'buffered drag should mark the pad dirty');
+      // live toggle flushes the buffer; CR35-F26: only the MOVED root
+      // reformats; untouched roots keep their original spelling (incl. j)
+      vm.runInContext('_rootPadSetLiveWrite(true)', scrubCtx);
       assert(scrubCtx._ta.value.startsWith('roots_literal(\n    2+0.5i,\n    2i,\n    -7.5+2j\n)'),
-        'drag should rewrite only the moved root, got ' + JSON.stringify(scrubCtx._ta.value.split('\\n')[0]));
+        'live flush should rewrite only the moved root, got ' + JSON.stringify(scrubCtx._ta.value.split('\\n')[0]));
       assert(scrubCtx._ta.value.endsWith('poly = blend(0.5)\nemit'), 'text after the call must be untouched');
-      assert(scrubCtx._notifyCalls.includes('cp'), 'root drag should run the coeff editor input handler');
-      // window control: a single number d frames a square of side d
-      // centered on 0 (open-time framing auto-fits the layout instead)
-      assert(padEls['program-scrub-pad'].innerHTML.includes('program-scrub-window'),
-        'root pad should offer the window range input');
-      assert(Number(padEls['program-scrub-window'].value) > 0,
-        'window input should show the effective auto-fit side on open');
-      padEls['program-scrub-window'].value = '4';
-      vm.runInContext('_rootPadSetWindow()', scrubCtx);
+      assert(scrubCtx._notifyCalls.includes('cp'), 'root writes should run the coeff editor input handler');
+      // extent control: HALF-side of a zero-centered square (Render
+      // convention; open-time framing auto-fits the layout instead)
+      assert(padEls['program-scrub-pad'].innerHTML.includes('program-scrub-extent'),
+        'root pad should offer the extent range input');
+      assert(Number(padEls['program-scrub-extent'].value) > 0,
+        'extent input should show the effective auto-fit extent on open');
+      assert(padEls['program-scrub-pad'].innerHTML.includes('program-scrub-count'),
+        'root pad should offer the count input');
+      assert(padEls['program-scrub-pad'].innerHTML.includes('program-scrub-live-write'),
+        'root pad should offer the live toggle');
+      assert(padEls['program-scrub-pad'].innerHTML.includes('program-scrub-done'),
+        'root pad should offer the Done button');
+      padEls['program-scrub-extent'].value = '2';
+      vm.runInContext('_rootPadSetExtent()', scrubCtx);
       rst = vm.runInContext('_state()', scrubCtx);
       assert(rst.plane.cRe === 0 && rst.plane.cIm === 0 && rst.plane.half === 2,
-        'window d=4 should frame a side-4 square centered on 0');
-      assert(padEls['program-scrub-window'].value === '4', 'window input should re-display the side');
-      padEls['program-scrub-window'].value = 'garbage';
-      vm.runInContext('_rootPadSetWindow()', scrubCtx);
+        'extent 2 should frame a zero-centered square of half-side 2');
+      assert(padEls['program-scrub-extent'].value === '2', 'extent input should re-display the extent');
+      padEls['program-scrub-extent'].value = 'garbage';
+      vm.runInContext('_rootPadSetExtent()', scrubCtx);
       rst = vm.runInContext('_state()', scrubCtx);
-      assert(rst.plane.half === 2 && padEls['program-scrub-window'].value === '4',
-        'invalid window input must keep the previous frame and re-display it');
+      assert(rst.plane.half === 2 && padEls['program-scrub-extent'].value === '2',
+        'invalid extent input must keep the previous frame and re-display it');
       // drag under the zero-centered window lands where the new plane says
       const wdest = vm.runInContext('(function(){ const s=_state(); return { x: s.plane.toX(-1.5), y: s.plane.toY(1) }; })()', scrubCtx);
       vm.runInContext(`_rootPadDragMove({ clientX: ${wdest.x}, clientY: ${wdest.y} })`, scrubCtx);
@@ -2485,6 +2500,21 @@ async function main() {
       rst = vm.runInContext('_state()', scrubCtx);
       assert(Math.abs(rst.roots[0].re - 1.37) < 0.05 && Math.abs(rst.roots[0].im + 0.61) < 0.05,
         'with snap off the drag should keep free coordinates');
+      // count: grow spawns on the |z| = extent circle at the point farthest
+      // from the existing roots; shrink drops from the end (live is ON, so
+      // each change writes through)
+      padEls['program-scrub-count'].value = '5';
+      vm.runInContext('_rootPadSetCount()', scrubCtx);
+      rst = vm.runInContext('_state()', scrubCtx);
+      assert(rst.roots.length === 5, 'count 5 should grow to five roots');
+      const added = rst.roots[4];
+      assert(Math.abs(Math.hypot(added.re, added.im) - rst.plane.half) < 1e-6,
+        'new roots spawn on the extent circle');
+      assert((scrubCtx._ta.value.match(/,/g) || []).length >= 4, 'live count change should write through');
+      padEls['program-scrub-count'].value = '3';
+      vm.runInContext('_rootPadSetCount()', scrubCtx);
+      rst = vm.runInContext('_state()', scrubCtx);
+      assert(rst.roots.length === 3, 'count 3 should drop the appended roots from the end');
       // Escape reverts the entire call
       vm.runInContext('_revert()', scrubCtx);
       assert(scrubCtx._ta.value === src, 'Escape must restore the original roots_literal call');

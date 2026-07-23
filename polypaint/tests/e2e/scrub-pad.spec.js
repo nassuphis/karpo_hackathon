@@ -473,20 +473,28 @@ test.describe('Root pad (roots_literal geometry)', () => {
     await expect(page.locator('#program-scrub-canvas')).toBeVisible();
     await expect(page.locator('#program-scrub-value')).toHaveText('3 roots');
     await expect(page.locator('#program-scrub-snap')).toBeChecked();
+    // buffered-edit controls: extent (half-side), count, live toggle, Done
+    await expect(page.locator('#program-scrub-count')).toHaveValue('3');
+    await expect(page.locator('#program-scrub-live-write')).not.toBeChecked();
+    await expect(page.locator('#program-scrub-done')).toBeVisible();
+    const extent = await page.evaluate(() => ({
+      shown: Number(document.getElementById('program-scrub-extent').value),
+      half: _scrubPadState.plane.half,
+    }));
+    expect(extent.shown).toBeCloseTo(extent.half, 6);
   });
 
-  test('dragging a point snaps to the 0.5 grid and rewrites the whole call in place', async ({ page }) => {
+  test('dragging buffers until Done, which rewrites the call and closes', async ({ page }) => {
     await openPadOnCoeffLiteral(page, SRC, 'roots_literal');
-    const after = await page.evaluate(() => {
+    const dragged = await page.evaluate(() => {
       const st = _scrubPadState;
       const canvas = document.getElementById('program-scrub-canvas');
       const rect = canvas.getBoundingClientRect();
-      const hit = {
+      _rootPadDragStart({
         clientX: rect.left + st.plane.toX(st.roots[0].re),
         clientY: rect.top + st.plane.toY(st.roots[0].im),
         preventDefault() {},
-      };
-      _rootPadDragStart(hit);
+      });
       _rootPadDragMove({
         clientX: rect.left + st.plane.toX(2.1),
         clientY: rect.top + st.plane.toY(0.43),
@@ -499,12 +507,75 @@ test.describe('Root pad (roots_literal geometry)', () => {
         root0: { ...st.roots[0] },
       };
     });
-    expect(after.active).toBe(0);
-    expect(after.root0).toEqual({ re: 2, im: 0.5, raw: null });
+    expect(dragged.active).toBe(0);
+    expect(dragged.root0).toEqual({ re: 2, im: 0.5, raw: null });
+    // default is buffered: the source is untouched and the readout says so
+    expect(dragged.text).toBe(SRC);
+    expect(dragged.readout).toBe('3 roots · 2+0.5i · unsaved');
+    await page.click('#program-scrub-done');
+    const after = await page.evaluate(() => ({
+      text: document.getElementById('cp-source-text').value,
+      padVisible: document.getElementById('program-scrub-pad').style.display === 'block',
+    }));
     // CR35-F26: untouched roots keep their original spelling (incl. j)
     expect(after.text.startsWith('roots_literal(\n    2+0.5i,\n    2i,\n    -7.5+2j\n)')).toBe(true);
     expect(after.text.endsWith('poly = blend(0.5)\nemit')).toBe(true);
-    expect(after.readout).toBe('3 roots · 2+0.5i');
+    expect(after.padVisible).toBe(false);
+  });
+
+  test('the live toggle writes through on every drag', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, SRC, 'roots_literal');
+    await page.check('#program-scrub-live-write');
+    const after = await page.evaluate(() => {
+      const st = _scrubPadState;
+      const canvas = document.getElementById('program-scrub-canvas');
+      const rect = canvas.getBoundingClientRect();
+      _rootPadDragStart({
+        clientX: rect.left + st.plane.toX(st.roots[0].re),
+        clientY: rect.top + st.plane.toY(st.roots[0].im),
+        preventDefault() {},
+      });
+      _rootPadDragMove({
+        clientX: rect.left + st.plane.toX(2.1),
+        clientY: rect.top + st.plane.toY(0.43),
+      });
+      document.dispatchEvent(new PointerEvent('pointerup'));
+      return document.getElementById('cp-source-text').value;
+    });
+    expect(after.startsWith('roots_literal(\n    2+0.5i,')).toBe(true);
+  });
+
+  test('count grows on the extent circle at the farthest point, shrinks from the end', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, SRC, 'roots_literal');
+    const grown = await page.evaluate(() => {
+      document.getElementById('program-scrub-extent').value = '8';
+      _rootPadSetExtent();
+      document.getElementById('program-scrub-count').value = '4';
+      _rootPadSetCount();
+      const st = _scrubPadState;
+      const added = st.roots[3];
+      return {
+        n: st.roots.length,
+        radius: Math.hypot(added.re, added.im),
+        text: document.getElementById('cp-source-text').value,
+        minDist: Math.min(...st.roots.slice(0, 3).map(r => Math.hypot(r.re - added.re, r.im - added.im))),
+      };
+    });
+    expect(grown.n).toBe(4);
+    expect(grown.radius).toBeCloseTo(8, 6);      // spawns ON the extent circle
+    expect(grown.minDist).toBeGreaterThan(8);    // farthest point from the cluster
+    expect(grown.text).toBe(SRC);                // still buffered
+    await page.click('#program-scrub-done');
+    const written = await page.evaluate(() => document.getElementById('cp-source-text').value);
+    expect((written.match(/[-+]?[\d.]+(?:[+-][\d.]+)?[ij]?\s*[,)]/g) || []).length).toBeGreaterThanOrEqual(4);
+    // shrink drops from the END of the list
+    await openPadOnCoeffLiteral(page, SRC, 'roots_literal');
+    const shrunk = await page.evaluate(() => {
+      document.getElementById('program-scrub-count').value = '2';
+      _rootPadSetCount();
+      return _scrubPadState.roots.map(r => ({ re: r.re, im: r.im }));
+    });
+    expect(shrunk).toEqual([{ re: 1, im: 0 }, { re: 0, im: 2 }]);
   });
 
   test('expression args refuse the pad; help opens instead', async ({ page }) => {
@@ -515,16 +586,16 @@ test.describe('Root pad (roots_literal geometry)', () => {
     expect(helpVisible).toBe(true);
   });
 
-  test('the window input reframes to a zero-centered square of side d', async ({ page }) => {
+  test('the extent input reframes to a zero-centered square of half-side extent', async ({ page }) => {
     await openPadOnCoeffLiteral(page, SRC, 'roots_literal');
     const initial = await page.evaluate(() => ({
-      shown: document.getElementById('program-scrub-window').value,
+      shown: document.getElementById('program-scrub-extent').value,
       half: _scrubPadState.plane.half,
     }));
-    expect(Number(initial.shown)).toBeCloseTo(2 * initial.half, 6);
+    expect(Number(initial.shown)).toBeCloseTo(initial.half, 6);
     const after = await page.evaluate(() => {
-      document.getElementById('program-scrub-window').value = '30';
-      _rootPadSetWindow();
+      document.getElementById('program-scrub-extent').value = '15';
+      _rootPadSetExtent();
       const st = _scrubPadState;
       // drag root 1 (2i) under the new frame to 5-5i, snapped
       const canvas = document.getElementById('program-scrub-canvas');
@@ -549,7 +620,10 @@ test.describe('Root pad (roots_literal geometry)', () => {
     expect(after.cIm).toBe(0);
     expect(after.half).toBe(15);
     expect(after.root1).toEqual({ re: 5, im: -5, raw: null });
-    expect(after.text).toContain('5-5i,');
+    expect(after.text).toBe(SRC);            // buffered until Done
+    await page.click('#program-scrub-done');
+    const written = await page.evaluate(() => document.getElementById('cp-source-text').value);
+    expect(written).toContain('5-5i,');
   });
 
   test('Escape reverts the entire call after a drag', async ({ page }) => {

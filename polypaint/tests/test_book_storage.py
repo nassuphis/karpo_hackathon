@@ -129,6 +129,24 @@ class TestBookStorage(unittest.TestCase):
         self.assertEqual(json.loads(fetched["body"])["latest_output"]["compile_id"], "c1")
 
     @patch("handler_storage.s3")
+    def test_spread_layout_roundtrips_and_defaults(self, mock_s3):
+        import handler_storage
+
+        _patch_s3(mock_s3, _FakeS3())
+        # default: absent -> color_primary persisted explicitly
+        resp = handler_storage.handler(_event("/save-book", {"book": {"name": "Lay"}}), None)
+        self.assertEqual(resp["statusCode"], 200)
+        saved = json.loads(resp["body"])["book"]
+        self.assertEqual(saved["spread_layout"], "color_primary")
+        # palette_primary round-trips through save -> fetch
+        resp = handler_storage.handler(_event("/save-book", {
+            "book": {"name": "Lay", "id": saved["id"], "spread_layout": "palette_primary"}}), None)
+        self.assertEqual(resp["statusCode"], 200)
+        resp = handler_storage.handler(_event("/fetch-book", {"id": saved["id"]}), None)
+        fetched = json.loads(resp["body"])["book"]
+        self.assertEqual(fetched["spread_layout"], "palette_primary")
+
+    @patch("handler_storage.s3")
     def test_legacy_entry_cover_upgrades_to_cover_source(self, mock_s3):
         import handler_storage
 
@@ -278,6 +296,8 @@ class TestBookStorage(unittest.TestCase):
             ({"book": {"name": "x", "author": "bad\ttab"}}, "author must be printable"),
             ({"book": {"name": "x", "background_color": "midnight"}},
              "background_color must be 6-digit hex"),
+            ({"book": {"name": "x", "spread_layout": "sideways"}},
+             "spread_layout must be color_primary or palette_primary"),
             ({"book": {"name": "x", "cover_source": {
                 "kind": "allcol_wall",
                 "refresh_id": "mosaic_20260722T120000Z_abcdef01",

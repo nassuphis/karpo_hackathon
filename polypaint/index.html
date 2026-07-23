@@ -2364,6 +2364,7 @@ button {
     <div class="book-subtabs" style="display:flex; gap:0; margin:4px 0 0 0">
         <div id="book-subtab-content" class="book-subtab active" onclick="bookSubtab('content')">Content</div>
         <div id="book-subtab-cover" class="book-subtab" onclick="bookSubtab('cover')">Cover</div>
+        <div id="book-subtab-layout" class="book-subtab" onclick="bookSubtab('layout')">Layout</div>
     </div>
     <div id="book-sub-content" style="border:1px solid #2b3a5e; border-radius:0 4px 4px 4px; padding:8px">
         <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px">
@@ -2376,6 +2377,20 @@ button {
         </div>
         <div style="color:#727b94; font-size:11px; margin:0 0 4px 2px">click = select/deselect &middot; drag = reorder (a selected row drags the whole selection) &middot; Top = selected rows to top &middot; Cover/GoRender use the first selected row</div>
         <div id="book-entry-list" style="max-height:500px; overflow-y:auto"></div>
+    </div>
+    <div id="book-sub-layout" style="display:none; border:1px solid #2b3a5e; border-radius:0 4px 4px 4px; padding:12px">
+        <div style="color:#c8cdd6; margin-bottom:8px">Spread layout — which artifact owns the full right-hand page:</div>
+        <label class="color-mode-choice" style="display:block; margin-bottom:6px">
+            <input type="radio" name="book-spread-layout" value="color_primary" onchange="bookSpreadLayoutChanged(this.value)">
+            <span class="color-mode-name">Color primary</span>
+            <span style="color:#727b94; font-size:11px"> — color full-page right; palette in the lower-left square with its title beneath (the default).</span>
+        </label>
+        <label class="color-mode-choice" style="display:block">
+            <input type="radio" name="book-spread-layout" value="palette_primary" onchange="bookSpreadLayoutChanged(this.value)">
+            <span class="color-mode-name">Palette primary</span>
+            <span style="color:#727b94; font-size:11px"> — palette full-page right, its title flush-right on the id line; color in the lower-left square with the color id beneath. Entries without a palette keep color-primary.</span>
+        </label>
+        <div style="color:#727b94; font-size:11px; margin-top:10px">Applies to every spread of this book. Save, then Compile to rebuild.</div>
     </div>
     <div id="book-sub-cover" style="display:none; border:1px solid #2b3a5e; border-radius:0 4px 4px 4px; padding:12px">
         <div style="display:flex; gap:16px; align-items:flex-start">

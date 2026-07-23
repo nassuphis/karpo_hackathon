@@ -256,7 +256,13 @@ def _palette_mm(rows, body_override):
     return int(max(PALETTE_MIN_MM, min(PALETTE_MAX_MM, avail)))
 
 
-def _verso_report_page(entry, provenance):
+def book_spread_layout(book):
+    """color_primary (default) or palette_primary — the Layout tab option."""
+    layout = str((book or {}).get("spread_layout") or "color_primary")
+    return layout if layout in ("color_primary", "palette_primary") else "color_primary"
+
+
+def _verso_report_page(entry, provenance, layout="color_primary"):
     """Deep-blue report page matching the ColorSpread PDF: title, accent
     rule, artifact id, fixed-pitch KV rows, and the palette at a FIXED
     120x120mm in a centered table. Everything is fixed-size, so the worst
@@ -289,6 +295,10 @@ def _verso_report_page(entry, provenance):
     artifact = tex_escape(str(report.get("artifact_id") or entry.get("artifact_id") or ""))
     rows = _report_rows(entry, provenance)
     body_override = str(entry.get("body_override") or "").strip()
+    palette_label = tex_escape(str(report.get("palette_label") or "palette"))
+    # palette_primary flips the spread: the palette owns the recto, the color
+    # sits in the verso square. Entries without a palette keep color_primary.
+    swapped = layout == "palette_primary" and bool(report.get("has_palette"))
 
     parts = [
         r"\newpage",
@@ -301,7 +311,12 @@ def _verso_report_page(entry, provenance):
         r"\vspace{2.5mm}",
         r"{\color{rulecol}\rule{\linewidth}{0.8pt}}\par",
         r"\vspace{1.5mm}",
-        r"{\monofont\footnotesize\color{monotext} %s\par}" % artifact,
+        # swapped spreads: the recto is the palette, so its title labels it
+        # from up here, flush RIGHT toward the image it names (user spec);
+        # the artifact id keeps its flush-left home
+        (r"{\monofont\footnotesize\color{monotext}\hbox to \linewidth{%s\hss %s}\par}"
+         % (artifact, palette_label)) if swapped else
+        (r"{\monofont\footnotesize\color{monotext} %s\par}" % artifact),
         r"\vspace{7mm}",
     ]
     # KV rows on the left (fixed 6.5mm pitch, reference PDF KV_PITCH=17pt);
@@ -322,15 +337,17 @@ def _verso_report_page(entry, provenance):
     parts.append(r"\par")
 
     if report.get("has_palette"):
-        palette_label = tex_escape(str(report.get("palette_label") or "palette"))
+        square_asset = (f"{entry.get('entry_id')}.jpg" if swapped
+                        else f"{entry.get('entry_id')}.palette.jpg")
+        square_label = artifact if swapped else palette_label
         parts.extend([
             r"\vfill",
             r"\begin{center}",
             r"\begin{tabular}{c}",
-            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=%dmm,height=%dmm,keepaspectratio]{%s/%s.palette.jpg}} \\[2mm]"
+            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=%dmm,height=%dmm,keepaspectratio]{%s/%s}} \\[2mm]"
             % (_palette_mm(rows, body_override), _palette_mm(rows, body_override),
-               ASSET_DIR, entry.get("entry_id")),
-            r"{\monofont\footnotesize\color{monotext} %s} \\" % palette_label,
+               ASSET_DIR, square_asset),
+            r"{\monofont\footnotesize\color{monotext} %s} \\" % square_label,
             r"\end{tabular}",
             r"\end{center}",
             r"\vfill",
@@ -378,10 +395,16 @@ def render_content_tex(book, provenance_by_entry=None, pdf_url=None):
             r"\end{center}",
             r"\vspace*{14mm}",
         ])
+    layout = book_spread_layout(book)
     for entry in entries:
         prov = provenance_by_entry.get(entry.get("entry_id") or "")
-        parts.append(_verso_report_page(entry, prov))
-        parts.append(_full_bleed_image(f"{ASSET_DIR}/{entry.get('entry_id')}.jpg"))
+        report = (prov or {}).get("report") if isinstance(prov, dict) else None
+        has_palette = bool((report or {}).get("has_palette"))
+        swapped = layout == "palette_primary" and has_palette
+        parts.append(_verso_report_page(entry, prov, layout))
+        recto_asset = (f"{entry.get('entry_id')}.palette.jpg" if swapped
+                       else f"{entry.get('entry_id')}.jpg")
+        parts.append(_full_bleed_image(f"{ASSET_DIR}/{recto_asset}"))
     for _ in range(pad):
         parts.append(_background_page())
     parts.append(r"\end{document}")

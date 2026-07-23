@@ -162,6 +162,50 @@ class TestReportPage(unittest.TestCase):
         self.assertGreaterEqual(book_tex._palette_mm([("k", "v")] * 5, tall),
                                 book_tex.PALETTE_MIN_MM)
 
+    def test_palette_primary_swaps_the_spread(self):
+        """Layout tab: palette_primary puts the palette on the FULL recto,
+        the color in the verso square labeled by the color id, and the
+        palette title flush-right on the artifact-id header line."""
+        book = _book(1, spread_layout="palette_primary")
+        prov = {"e0": {"report": {
+            "compute_id": "compute_x",
+            "artifact_id": "color_run_9",
+            "summary_rows": [["N", "4000"]],
+            "palette_label": "tri_ember",
+            "has_palette": True,
+        }}}
+        tex, _ = book_tex.render_content_tex(book, prov)
+        # recto full-bleed carries the PALETTE asset
+        self.assertIn("e0.palette.jpg", tex)
+        recto_at = tex.index("e0.palette.jpg")
+        self.assertIn(r"\includegraphics", tex[recto_at - 400:recto_at])
+        # verso square carries the COLOR asset, labeled by the color id below
+        square_at = tex.index(r"\fcolorbox{panelborder}{panelbg}")
+        square_zone = tex[square_at:square_at + 230]   # the box + its label line
+        self.assertIn("e0.jpg", square_zone)
+        self.assertNotIn("e0.palette.jpg", square_zone)
+        self.assertIn("color\_run\_9", square_zone)
+        # the palette title sits on the header id line, flush right (\hss gap)
+        header_line = tex[tex.index("color\_run\_9"):tex.index("color\_run\_9") + 200]
+        self.assertIn(r"\hss tri\_ember", header_line)
+        # ...and is no longer the under-square label
+        self.assertLess(tex.index("tri\_ember"), square_at)
+
+    def test_palette_primary_without_palette_falls_back(self):
+        book = _book(1, spread_layout="palette_primary")
+        prov = {"e0": {"report": {"compute_id": "c", "summary_rows": [["N", "1"]],
+                                  "has_palette": False}}}
+        tex, _ = book_tex.render_content_tex(book, prov)
+        # recto stays the color image; nothing references a palette asset
+        self.assertIn("e0.jpg", tex)
+        self.assertNotIn(".palette.jpg", tex)
+
+    def test_color_primary_is_the_default_layout(self):
+        self.assertEqual(book_tex.book_spread_layout({}), "color_primary")
+        self.assertEqual(book_tex.book_spread_layout({"spread_layout": "junk"}), "color_primary")
+        self.assertEqual(book_tex.book_spread_layout({"spread_layout": "palette_primary"}),
+                         "palette_primary")
+
     def test_no_palette_omits_swatch(self):
         book = _book(1)
         prov = {"e0": {"report": {"compute_id": "c", "summary_rows": [["N", "4000"]],

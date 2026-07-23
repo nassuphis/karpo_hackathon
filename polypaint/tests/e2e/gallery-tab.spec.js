@@ -437,6 +437,31 @@ test('book rows: Top moves the selection to the top in list order; cover = first
   expect(await page.evaluate(() => _bookState.doc.cover_entry_id)).toBe('e2');
 });
 
+test('book Layout tab: palette-primary radio marks dirty and saves the field', async ({ page }) => {
+  await bookSetup(page);
+  await page.evaluate(() => {
+    window._bookSaves = [];
+    const prev = window.lambdaPost;
+    window.lambdaPost = async function (name, body, path) {
+      if (path === '/save-book') {
+        window._bookSaves.push(JSON.parse(JSON.stringify(body)));
+        return { book: body.book, overwritten: true, revision: 'r2' };
+      }
+      return prev(name, body, path);
+    };
+  });
+  await page.click('#book-subtab-layout');
+  await expect(page.locator('#book-sub-layout')).toBeVisible();
+  await expect(page.locator('input[name="book-spread-layout"][value="color_primary"]')).toBeChecked();
+  await page.check('input[name="book-spread-layout"][value="palette_primary"]');
+  expect(await page.evaluate(() => ({ layout: _bookState.doc.spread_layout, dirty: _bookState.dirty })))
+    .toEqual({ layout: 'palette_primary', dirty: true });
+  await page.evaluate(() => bookSave());
+  const saves = await page.evaluate(() => window._bookSaves);
+  expect(saves).toHaveLength(1);
+  expect(saves[0].book.spread_layout).toBe('palette_primary');
+});
+
 test('book rows: dragging reorders — single row and whole selected group', async ({ page }) => {
   await bookSetup(page);
   // single drag: e4 to the very top (no selection involved)

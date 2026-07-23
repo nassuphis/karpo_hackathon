@@ -286,13 +286,22 @@ async function bookEditEntrySave(entryId, btn) {
 }
 
 function bookSubtab(name) {
-    _bookState.subtab = name === 'cover' ? 'cover' : 'content';
-    document.getElementById('book-subtab-content')?.classList.toggle('active', _bookState.subtab === 'content');
-    document.getElementById('book-subtab-cover')?.classList.toggle('active', _bookState.subtab === 'cover');
-    const c = document.getElementById('book-sub-content');
-    const v = document.getElementById('book-sub-cover');
-    if (c) c.style.display = _bookState.subtab === 'content' ? 'block' : 'none';
-    if (v) v.style.display = _bookState.subtab === 'cover' ? 'block' : 'none';
+    _bookState.subtab = (name === 'cover' || name === 'layout') ? name : 'content';
+    for (const tab of ['content', 'cover', 'layout']) {
+        document.getElementById(`book-subtab-${tab}`)?.classList.toggle('active', _bookState.subtab === tab);
+        const panel = document.getElementById(`book-sub-${tab}`);
+        if (panel) panel.style.display = _bookState.subtab === tab ? 'block' : 'none';
+    }
+    _renderBookTab();
+}
+
+function bookSpreadLayoutChanged(value) {
+    const doc = _bookState.doc;
+    if (!doc) { _bookStatus('No book loaded', true); return; }
+    const layout = value === 'palette_primary' ? 'palette_primary' : 'color_primary';
+    if ((doc.spread_layout || 'color_primary') === layout) return;
+    doc.spread_layout = layout;
+    _bookState.dirty = true;
     _renderBookTab();
 }
 
@@ -310,6 +319,11 @@ function _renderBookTab() {
             ? `${(doc.entries || []).length} entries${missing ? `, ${missing} missing` : ''}${_bookState.dirty ? ' (unsaved)' : ''}`
             : 'no book loaded';
     }
+    const layoutValue = doc ? (doc.spread_layout || 'color_primary') : 'color_primary';
+    document.querySelectorAll('input[name="book-spread-layout"]').forEach(radio => {
+        radio.checked = radio.value === layoutValue;
+        radio.disabled = !doc;
+    });
     const selCountEl = document.getElementById('book-selected-count');
     if (selCountEl) selCountEl.textContent = _bookState.selectedEntryIds.length ? `${_bookState.selectedEntryIds.length} selected` : '';
     const clearSelBtn = document.getElementById('btn-book-clear-selection');

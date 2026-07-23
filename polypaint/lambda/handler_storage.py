@@ -2602,6 +2602,9 @@ def _validate_book_payload(raw):
         entry_ids=seen_entry_ids,
         legacy_cover=legacy_cover,
     )
+    spread_layout = str(raw.get("spread_layout") or "color_primary")
+    if spread_layout not in ("color_primary", "palette_primary"):
+        raise ValueError("book spread_layout must be color_primary or palette_primary")
     return {
         "version": 2,
         "book_kind": "book",
@@ -2615,6 +2618,9 @@ def _validate_book_payload(raw):
         # discriminated cover_source is authoritative for new code.
         "cover_entry_id": cover_entry_id,
         "cover_source": cover_source,
+        # Layout tab: which artifact owns the full recto page. palette_primary
+        # swaps the palette onto the recto and the color into the verso square.
+        "spread_layout": spread_layout,
         "entries": entries,
         "saved_at": _utc_now_iso(),
     }

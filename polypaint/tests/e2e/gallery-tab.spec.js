@@ -384,3 +384,82 @@ test('a network error on load keeps the active gallery (only 404 clears it)', as
   const active = await page.evaluate(() => localStorage.getItem('polypaint_active_gallery'));
   expect(active).toBe('gal_x');   // a 503 must NOT clear the selection
 });
+
+// ── Book tab: multi-select + drag reordering (photo of the Gallery patterns) ──
+
+async function bookSetup(page) {
+  await page.goto('http://localhost:8765/index.html');
+  await page.waitForLoadState('domcontentloaded');
+  await page.evaluate(() => {
+    localStorage.setItem('polypaint_active_book', 'b1');
+    _bookState.activeId = 'b1';   // state snapshot was taken at parse time
+    const entries = ['e1', 'e2', 'e3', 'e4'].map((id, i) => ({
+      entry_id: id, job_id: 'job_' + id, artifact_id: 'art_' + id, title: 'Entry ' + (i + 1),
+    }));
+    window.lambdaPost = async function (name, body, path) {
+      if (path === '/list-books') return { books: [{ id: 'b1', name: 'B', entry_count: 4 }] };
+      if (path === '/fetch-book') return { book: { id: 'b1', name: 'B', entries, cover_entry_id: '', cover_source: { kind: 'none' } } };
+      if (path === '/render-summary') return { families: { color: [] } };
+      return {};
+    };
+  });
+  await page.click('.tab-btn:text("Book")');
+  await expect(page.locator('.book-entry-row')).toHaveCount(4);
+}
+
+function bookOrder(page) {
+  return page.evaluate(() => (_bookState.doc.entries || []).map((e) => e.entry_id));
+}
+
+test('book rows: click toggles multi-selection with badge + Clear', async ({ page }) => {
+  await bookSetup(page);
+  await page.locator('.book-entry-row[data-entry="e1"]').click();
+  await expect(page.locator('#book-selected-count')).toHaveText('1 selected');
+  await page.locator('.book-entry-row[data-entry="e3"]').click();
+  await expect(page.locator('#book-selected-count')).toHaveText('2 selected');
+  await expect(page.locator('.book-entry-row.selected')).toHaveCount(2);
+  await page.locator('.book-entry-row[data-entry="e1"]').click();   // toggle off
+  await expect(page.locator('#book-selected-count')).toHaveText('1 selected');
+  await page.click('#btn-book-clear-selection');
+  await expect(page.locator('#book-selected-count')).toHaveText('');
+  await expect(page.locator('.book-entry-row.selected')).toHaveCount(0);
+});
+
+test('book rows: Top moves the selection to the top in list order; cover = first selected', async ({ page }) => {
+  await bookSetup(page);
+  await page.locator('.book-entry-row[data-entry="e2"]').click();
+  await page.locator('.book-entry-row[data-entry="e4"]').click();
+  await page.click('#btn-book-top');
+  expect(await bookOrder(page)).toEqual(['e2', 'e4', 'e1', 'e3']);
+  expect(await page.evaluate(() => _bookState.dirty)).toBe(true);
+  // cover uses the FIRST selected row in list order (e2)
+  await page.click('#btn-book-set-cover');
+  expect(await page.evaluate(() => _bookState.doc.cover_entry_id)).toBe('e2');
+});
+
+test('book rows: dragging reorders — single row and whole selected group', async ({ page }) => {
+  await bookSetup(page);
+  // single drag: e4 to the very top (no selection involved)
+  const e4 = await page.locator('.book-entry-row[data-entry="e4"]').boundingBox();
+  const e1 = await page.locator('.book-entry-row[data-entry="e1"]').boundingBox();
+  await page.mouse.move(e4.x + e4.width / 2, e4.y + e4.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(e1.x + e1.width / 2, e1.y + 2, { steps: 8 });
+  await page.mouse.up();
+  expect(await bookOrder(page)).toEqual(['e4', 'e1', 'e2', 'e3']);
+  expect(await page.evaluate(() => _bookState.dirty)).toBe(true);
+
+  // group drag: select e1 + e3, then drag e3 — the pair travels together
+  await page.locator('.book-entry-row[data-entry="e1"]').click();
+  await page.locator('.book-entry-row[data-entry="e3"]').click();
+  await expect(page.locator('#book-selected-count')).toHaveText('2 selected');
+  const e3 = await page.locator('.book-entry-row[data-entry="e3"]').boundingBox();
+  const top = await page.locator('.book-entry-row[data-entry="e4"]').boundingBox();
+  await page.mouse.move(e3.x + e3.width / 2, e3.y + e3.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(top.x + top.width / 2, top.y + 2, { steps: 8 });
+  await page.mouse.up();
+  expect(await bookOrder(page)).toEqual(['e1', 'e3', 'e4', 'e2']);
+  // the drag's trailing click must NOT have toggled the grabbed row
+  await expect(page.locator('#book-selected-count')).toHaveText('2 selected');
+});

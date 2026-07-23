@@ -13,7 +13,7 @@ let _bookState = {
     editingEntryId: '',
     dirty: false,
     hydrated: {},         // entry_id -> {preview_url, missing}
-    selectedEntryId: '',
+    selectedEntryIds: [],   // multi-select: click toggles; drag moves the group
     coverSourceMode: 'entry', // pending Cover-tab choice; survives hydration rerenders
     subtab: 'content',    // 'content' | 'cover'
     compile: null,        // {runId, phase, expected, done}
@@ -121,7 +121,7 @@ async function _bookLoadActive() {
     _bookState.doc = null;
     _bookState.latestOutput = null;
     _bookState.hydrated = {};
-    _bookState.selectedEntryId = '';
+    _bookState.selectedEntryIds = [];
     _bookState.coverSourceMode = 'entry';
     _bookState.dirty = false;
     if (!_bookState.activeId) return;
@@ -178,7 +178,7 @@ function _bookEntryLabel(entry) {
 
 function _bookEntryRow(entry, idx) {
     const hyd = _bookState.hydrated[entry.entry_id] || {};
-    const selected = entry.entry_id === _bookState.selectedEntryId;
+    const selected = _bookState.selectedEntryIds.includes(entry.entry_id);
     const cover = _bookState.doc.cover_entry_id === entry.entry_id;
     const thumb = hyd.preview_url
         ? `<img src="${_escapeHtml(hyd.preview_url)}" style="width:48px;height:48px;object-fit:cover">`
@@ -198,8 +198,6 @@ function _bookEntryRow(entry, idx) {
         <span style="color:${numColor};width:24px;${numWeight}">${idx + 1}</span>${palThumb}${thumb}
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}${cover ? ' <span style="color:#e94560">— cover</span>' : ''}${hyd.missing ? ' <span style="color:#e94560">[missing]</span>' : ''}</span>
         <span style="color:#666;font-size:10px">${_escapeHtml(entry.job_id)}</span>
-        <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,-1)">▲</button>
-        <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,1)">▼</button>
         <button class="btn-secondary" style="padding:1px 7px" title="Edit title & text" onclick="event.stopPropagation();bookEditEntry(this.closest('.book-entry-row').dataset.entry)">…</button>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookRemoveEntry(this.closest('.book-entry-row').dataset.entry)">✕</button>
     </div>` + _bookEntryEditor(entry);
@@ -312,6 +310,10 @@ function _renderBookTab() {
             ? `${(doc.entries || []).length} entries${missing ? `, ${missing} missing` : ''}${_bookState.dirty ? ' (unsaved)' : ''}`
             : 'no book loaded';
     }
+    const selCountEl = document.getElementById('book-selected-count');
+    if (selCountEl) selCountEl.textContent = _bookState.selectedEntryIds.length ? `${_bookState.selectedEntryIds.length} selected` : '';
+    const clearSelBtn = document.getElementById('btn-book-clear-selection');
+    if (clearSelBtn) clearSelBtn.style.display = _bookState.selectedEntryIds.length ? '' : 'none';
     const list = document.getElementById('book-entry-list');
     if (list) {
         list.innerHTML = doc && (doc.entries || []).length
@@ -351,11 +353,9 @@ function _renderBookTab() {
     }
     const sourceDetail = document.getElementById('book-cover-source-detail');
     if (sourceDetail) {
-        const selected = doc
-            ? (doc.entries || []).find(e => e.entry_id === _bookState.selectedEntryId)
-            : null;
-        sourceDetail.textContent = selected
-            ? `Selected Content image: ${_bookEntryLabel(selected)}`
+        const selEntries = doc ? _bookSelectedInListOrder() : [];
+        sourceDetail.textContent = selEntries.length
+            ? `Selected Content image: ${_bookEntryLabel(selEntries[0])}${selEntries.length > 1 ? ` (first of ${selEntries.length} selected)` : ''}`
             : 'Select a Content row before choosing “Selected image”. AllCol uses the current ready default wall.';
     }
     for (const [id, key] of [['book-title-input', 'title'], ['book-subtitle-input', 'subtitle'], ['book-author-input', 'author']]) {
@@ -389,6 +389,7 @@ async function bookRefresh() {
 
 async function loadBookTab() {
     try {
+        _bookInitEntryDrag();
         await _bookRefreshList();
         if (_bookState.activeId && !_bookState.doc) {
             await _bookLoadActive();
@@ -497,21 +498,123 @@ async function bookDelete() {
     }
 }
 
+function _bookSelectedSet() {
+    return new Set(_bookState.selectedEntryIds);
+}
+
+function _bookSelectedInListOrder() {
+    const sel = _bookSelectedSet();
+    return ((_bookState.doc || {}).entries || []).filter(e => sel.has(e.entry_id));
+}
+
+function _bookFirstSelectedEntry() {
+    return _bookSelectedInListOrder()[0] || null;
+}
+
 function _bookSelectEntry(entryId) {
-    _bookState.selectedEntryId = entryId;
+    if (_bookDragState.suppressClick) { _bookDragState.suppressClick = false; return; }
+    const ids = _bookState.selectedEntryIds;
+    const at = ids.indexOf(entryId);
+    if (at >= 0) ids.splice(at, 1);
+    else ids.push(entryId);
     _renderBookTab();
 }
 
-function _bookMoveEntry(entryId, delta) {
-    const entries = (_bookState.doc || {}).entries || [];
-    const idx = entries.findIndex(e => e.entry_id === entryId);
-    const to = idx + delta;
-    if (idx < 0 || to < 0 || to >= entries.length) return;
-    const [row] = entries.splice(idx, 1);
-    entries.splice(to, 0, row);
+function _bookClearSelection() {
+    _bookState.selectedEntryIds = [];
+    _renderBookTab();
+}
+
+function _bookMoveSelectedTop() {
+    const doc = _bookState.doc;
+    const selected = _bookSelectedInListOrder();
+    if (!doc || !selected.length) { _bookStatus('Select row(s) first, then press Top', true); return; }
+    const sel = _bookSelectedSet();
+    doc.entries = [...selected, ...(doc.entries || []).filter(e => !sel.has(e.entry_id))];
     _bookState.dirty = true;
     _renderBookTab();
 }
+
+/* ---- row drag-and-drop: click = toggle select, drag = reorder; dragging a
+   selected row carries the WHOLE selection as one block (list order kept) */
+let _bookDragState = { pointerId: null, startX: 0, startY: 0, entryId: '', dragging: false, draggedIds: [], dropIndex: -1, suppressClick: false };
+
+function _bookInitEntryDrag() {
+    const list = document.getElementById('book-entry-list');
+    if (!list || list.dataset.dragWired) return;
+    list.dataset.dragWired = '1';
+    list.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0) return;
+        if (ev.target && ev.target.closest('button, input, textarea, a')) return;
+        const row = ev.target && ev.target.closest('.book-entry-row');
+        if (!row || !row.dataset.entry) return;
+        _bookDragState = { pointerId: ev.pointerId, startX: ev.clientX, startY: ev.clientY, entryId: row.dataset.entry, dragging: false, draggedIds: [], dropIndex: -1, suppressClick: false };
+        window.addEventListener('pointermove', _bookDragMove);
+        window.addEventListener('pointerup', _bookDragUp);
+        window.addEventListener('pointercancel', _bookDragCancel);
+    });
+}
+
+function _bookDragRows() {
+    const list = document.getElementById('book-entry-list');
+    return list ? Array.from(list.querySelectorAll('.book-entry-row')) : [];
+}
+
+function _bookDragMove(ev) {
+    const st = _bookDragState;
+    if (st.pointerId !== ev.pointerId) return;
+    if (!st.dragging) {
+        if (Math.abs(ev.clientY - st.startY) < 6 && Math.abs(ev.clientX - st.startX) < 6) return;
+        st.dragging = true;
+        st.draggedIds = _bookSelectedSet().has(st.entryId)
+            ? _bookSelectedInListOrder().map(e => e.entry_id)
+            : [st.entryId];
+    }
+    ev.preventDefault();
+    const draggedSet = new Set(st.draggedIds);
+    const rows = _bookDragRows();
+    let dropIndex = rows.length;
+    for (let i = 0; i < rows.length; i++) {
+        const rect = rows[i].getBoundingClientRect();
+        if (ev.clientY < rect.top + rect.height / 2) { dropIndex = i; break; }
+    }
+    st.dropIndex = dropIndex;
+    rows.forEach((row, i) => {
+        row.classList.toggle('book-drag-ghost', draggedSet.has(row.dataset.entry));
+        row.classList.toggle('book-drop-before', i === dropIndex);
+        row.classList.toggle('book-drop-after', dropIndex === rows.length && i === rows.length - 1);
+    });
+}
+
+function _bookDragFinish(apply) {
+    const st = _bookDragState;
+    window.removeEventListener('pointermove', _bookDragMove);
+    window.removeEventListener('pointerup', _bookDragUp);
+    window.removeEventListener('pointercancel', _bookDragCancel);
+    _bookDragRows().forEach(row => row.classList.remove('book-drag-ghost', 'book-drop-before', 'book-drop-after'));
+    const wasDragging = st.dragging;
+    st.pointerId = null;
+    st.dragging = false;
+    if (!wasDragging) return;
+    st.suppressClick = true;                       // eat the click this gesture fires
+    setTimeout(() => { _bookDragState.suppressClick = false; }, 0);
+    if (!apply || !_bookState.doc || st.dropIndex < 0) return;
+    const entries = _bookState.doc.entries || [];
+    const draggedSet = new Set(st.draggedIds);
+    const anchorId = st.dropIndex < entries.length ? entries[st.dropIndex].entry_id : null;
+    if (anchorId && draggedSet.has(anchorId)) return;   // dropped onto itself
+    const dragged = entries.filter(e => draggedSet.has(e.entry_id));
+    const rest = entries.filter(e => !draggedSet.has(e.entry_id));
+    let insertAt = anchorId ? rest.findIndex(e => e.entry_id === anchorId) : rest.length;
+    if (insertAt < 0) insertAt = rest.length;
+    rest.splice(insertAt, 0, ...dragged);
+    _bookState.doc.entries = rest;
+    _bookState.dirty = true;
+    _renderBookTab();
+}
+
+function _bookDragUp(ev) { if (_bookDragState.pointerId === ev.pointerId) _bookDragFinish(true); }
+function _bookDragCancel(ev) { if (_bookDragState.pointerId === ev.pointerId) _bookDragFinish(false); }
 
 function _bookRemoveEntry(entryId) {
     const doc = _bookState.doc;
@@ -523,7 +626,7 @@ function _bookRemoveEntry(entryId) {
         doc.cover_entry_id = '';
         doc.cover_source = {kind: 'none'};
     }
-    if (_bookState.selectedEntryId === entryId) _bookState.selectedEntryId = '';
+    _bookState.selectedEntryIds = _bookState.selectedEntryIds.filter(id => id !== entryId);
     _bookState.dirty = true;
     _renderBookTab();
 }
@@ -531,15 +634,15 @@ function _bookRemoveEntry(entryId) {
 function bookSetCover() {
     const doc = _bookState.doc;
     if (!doc) { _bookStatus('No book loaded', true); return; }
-    if (!_bookState.selectedEntryId) { _bookStatus('Select a row first, then press Cover', true); return; }
-    const entry = (doc.entries || []).find(e => e.entry_id === _bookState.selectedEntryId);
-    if (!entry) { _bookStatus('The selected Content row no longer exists', true); return; }
-    doc.cover_entry_id = _bookState.selectedEntryId;
-    doc.cover_source = {kind: 'entry', entry_id: _bookState.selectedEntryId};
+    const entry = _bookFirstSelectedEntry();
+    if (!entry) { _bookStatus('Select row(s) first, then press Cover', true); return; }
+    doc.cover_entry_id = entry.entry_id;
+    doc.cover_source = {kind: 'entry', entry_id: entry.entry_id};
     _bookState.coverSourceMode = 'entry';
     _bookState.dirty = true;
     _renderBookTab();
-    _bookStatus(`Cover set to "${entry ? _bookEntryLabel(entry) : '?'}" (row turns red). Save to keep it.`);
+    const extra = _bookState.selectedEntryIds.length > 1 ? ` (first of ${_bookState.selectedEntryIds.length} selected)` : '';
+    _bookStatus(`Cover set to "${_bookEntryLabel(entry)}"${extra} (row turns red). Save to keep it.`);
 }
 
 function bookCoverSourceModeChanged() {
@@ -586,7 +689,7 @@ async function bookApplyCoverSource() {
 }
 
 async function bookGoRender() {
-    const entry = (_bookState.doc || {}).entries?.find(e => e.entry_id === _bookState.selectedEntryId);
+    const entry = _bookFirstSelectedEntry();
     if (!entry) { _bookStatus('Select a row first', true); return; }
     _bookBtnBusy('btn-book-go-render', true, 'Opening…');
     try {
@@ -874,9 +977,9 @@ async function bookDescribe(btn) {
 async function bookDescribeSelection(btn) {
     // the selected row only — explicit intent, so regenerate even if it
     // already has prose
-    const entry = (_bookState.doc?.entries || []).find(e => e.entry_id === _bookState.selectedEntryId);
-    if (!entry) { _bookStatus('Select a row first', true); return; }
-    return _bookDescribeRun(btn, { entry_ids: [entry.entry_id], overwrite: true });
+    const entries = _bookSelectedInListOrder();
+    if (!entries.length) { _bookStatus('Select row(s) first', true); return; }
+    return _bookDescribeRun(btn, { entry_ids: entries.map(e => e.entry_id), overwrite: true });
 }
 
 async function _bookDescribeRun(btn, extra) {
@@ -951,11 +1054,10 @@ async function _bookPollDescribe() {
             finish();
             // reload drops the thumbnail cache + selection — rehydrate and
             // keep the row selected (DescribeSelection iterates on one row)
-            const keepSelected = _bookState.selectedEntryId;
+            const keepSelected = _bookState.selectedEntryIds.slice();
             await _bookLoadActive();
-            if (keepSelected && (_bookState.doc?.entries || []).some(e => e.entry_id === keepSelected)) {
-                _bookState.selectedEntryId = keepSelected;
-            }
+            const alive = new Set((_bookState.doc?.entries || []).map(e => e.entry_id));
+            _bookState.selectedEntryIds = keepSelected.filter(id => alive.has(id));
             _renderBookTab();
             if (_bookState.doc) void _bookHydrateEntries();
             if (failed) {

@@ -131,6 +131,11 @@ test.describe('Palette UI', () => {
     await expect(page.locator('#palette-circles-palette-tab .pal-circle-mic.active')).toBeVisible();
     await expect(page.locator('#palette-circles-palette-tab .pal-circle-custom.active')).toHaveCount(0);
     await expect(page.locator('#palette-circles-palette-tab .pal-circle.active')).toHaveCount(1);
+    // ...and the HEX swatch does NOT adopt the MIC pick's face or name —
+    // it only ever shows the line selected in its own popup
+    await expect(page.locator('#palette-circles-palette-tab .pal-circle-custom'))
+      .toHaveAttribute('title', 'Named custom palettes');
+    expect(await page.evaluate(() => _customPaletteSelectionByMode['palette_tab'] || null)).toBeNull();
 
     // reopen: the banner names the selection, its strip shows, and the popup
     // lands on the page holding the selected row (highlighted + active)

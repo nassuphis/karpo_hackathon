@@ -437,6 +437,10 @@ function _customPaletteForMode(mode) {
     const current = _currentPaletteForMode(mode);
     const remembered = _customPaletteSelectionByMode[mode];
     if (remembered && remembered.palette) return remembered;
+    // A live MIC pick is a custom: spec, but it belongs to the MIC swatch —
+    // without it this fallback made the HEX swatch adopt MIC selections.
+    const micSel = _micPaletteSelectionByMode[mode];
+    if (micSel && micSel.palette === current) return null;
     if (_customStopsFromName(current)) {
         const entry = _customPaletteEntryBySpec(current);
         return {
@@ -450,6 +454,10 @@ function _customPaletteForMode(mode) {
 function _paletteDisplayNameForMode(mode) {
     const current = _currentPaletteForMode(mode);
     if (!_customStopsFromName(current)) return '';
+    const micSel = _micPaletteSelectionByMode[mode];
+    if (micSel && micSel.palette === current) {
+        return String(micSel.displayName || '').trim();
+    }
     const remembered = _customPaletteSelectionByMode[mode];
     if (remembered && remembered.palette === current) {
         return String(remembered.displayName || '').trim();
@@ -719,7 +727,7 @@ function _renderPaletteRow(mode) {
     const rememberedCustom = _customPaletteForMode(mode);
     const customStops = rememberedCustom
         ? _customStopsFromName(rememberedCustom.palette)
-        : _customStopsFromName(currentPalette);
+        : (micActive ? null : _customStopsFromName(currentPalette));
     // A MIC pick is a custom: spec too — exactly one swatch may be live,
     // and the MIC swatch owns the active state for its own selection.
     const customActive = typeof currentPalette === 'string' && currentPalette.startsWith('custom:') && !micActive;
@@ -949,7 +957,7 @@ function setMatch(mode) {
     document.querySelectorAll('.strat-chip').forEach(c => c.classList.toggle('active', c.dataset.match === mode));
 }
 
-function setPaletteForMode(mode, name, displayName = '') {
+function setPaletteForMode(mode, name, displayName = '', opts = {}) {
     if (mode === 'proximity') renderRootProximityPalette = name;
     else if (mode === 'solve_score') renderSolveScorePalette = name;
     else if (mode === 'repalette') repalettePalette = name;
@@ -964,7 +972,10 @@ function setPaletteForMode(mode, name, displayName = '') {
         const longName = name.slice(5);
         if (_longPaletteEntryByName(longName)) _setRememberedLongPalette(mode, longName);
     } else if (typeof name === 'string' && name.startsWith('custom:')) {
-        _rememberCustomPaletteForMode(mode, name, displayName);
+        // MIC picks are custom: specs too, but the HEX swatch's memory must
+        // only track choices made in the HEX popup itself (user bug report:
+        // "MIC updates HEX too") — MIC passes rememberCustom: false.
+        if (opts.rememberCustom !== false) _rememberCustomPaletteForMode(mode, name, displayName);
     }
     _renderPaletteRow(mode);
     if (mode === 'repalette' && _repalettePopupState.open) _renderRepalettePopup();
@@ -1787,7 +1798,7 @@ function _micApplyEntry(mode, entry) {
     const wire = _micPaletteWire(entry && entry.stops);
     if (!wire) return;
     _micPaletteSelectionByMode[mode] = { palette: wire, displayName: entry.name };
-    setPaletteForMode(mode, wire, entry.name);
+    setPaletteForMode(mode, wire, entry.name, { rememberCustom: false });
     if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
     _closeMicPalettePopup();
 }

@@ -956,6 +956,11 @@ button {
     border-radius: 5px;
     scrollbar-color: #0f3460 #111827;
 }
+.program-source-help-filter {
+    flex: 1 1 90px; min-width: 70px; background: #0d1118; color: #d7dce6;
+    border: 1px solid #2b3a5e; border-radius: 5px; padding: 3px 8px; font-size: 12px;
+}
+.program-source-docs-link { text-decoration: none; }
 .program-source-sidepanel {
     min-height: 220px;
     height: 220px;
@@ -1838,6 +1843,8 @@ button {
                             <div class="program-source-help-tabs" role="tablist" aria-label="Param Program help tabs">
                                 <button type="button" id="pp-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('pp','starter')">Starter</button>
                                 <button type="button" id="pp-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('pp','help')">Help</button>
+                                <a class="btn-secondary program-source-help-tab program-source-docs-link" href="program-help.html#param" target="_blank" rel="noopener" title="Open the full searchable reference in a new tab">Docs &#8599;</a>
+                                <input type="search" id="pp-help-filter" class="program-source-help-filter" placeholder="Search" oninput="_setProgramSourceHelpFilter('pp', this.value)">
                             </div>
                             <div id="pp-cheatsheet" class="program-source-cheatsheet" aria-label="Param Program source cheatsheet"></div>
                             <div id="pp-help" class="program-source-help" aria-label="Param Program generated help" hidden></div>
@@ -1871,6 +1878,8 @@ button {
                             <div class="program-source-help-tabs" role="tablist" aria-label="Coeff Program help tabs">
                                 <button type="button" id="cp-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('cp','starter')">Starter</button>
                                 <button type="button" id="cp-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('cp','help')">Help</button>
+                                <a class="btn-secondary program-source-help-tab program-source-docs-link" href="program-help.html#coeff" target="_blank" rel="noopener" title="Open the full searchable reference in a new tab">Docs &#8599;</a>
+                                <input type="search" id="cp-help-filter" class="program-source-help-filter" placeholder="Search" oninput="_setProgramSourceHelpFilter('cp', this.value)">
                             </div>
                             <div id="cp-cheatsheet" class="program-source-cheatsheet" aria-label="Coeff Program source cheatsheet"></div>
                             <div id="cp-help" class="program-source-help" aria-label="Coeff Program generated help" hidden></div>
@@ -2270,6 +2279,8 @@ button {
                                 <div class="program-source-help-tabs" role="tablist" aria-label="Solve-score help tabs">
                                     <button type="button" id="render-ss-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('render-ss','starter')">Starter</button>
                                     <button type="button" id="render-ss-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('render-ss','help')">Help</button>
+                                <a class="btn-secondary program-source-help-tab program-source-docs-link" href="program-help.html#solve-score" target="_blank" rel="noopener" title="Open the full searchable reference in a new tab">Docs &#8599;</a>
+                                <input type="search" id="render-ss-help-filter" class="program-source-help-filter" placeholder="Search" oninput="_setProgramSourceHelpFilter('render-ss', this.value)">
                                 </div>
                                 <div id="render-ss-cheatsheet" class="program-source-cheatsheet" aria-label="Solve-score source cheatsheet"></div>
                                 <div id="render-ss-help" class="program-source-help" aria-label="Solve-score generated help" hidden></div>
@@ -2290,6 +2301,8 @@ button {
                                 <div class="program-source-help-tabs" role="tablist" aria-label="Root Program help tabs">
                                     <button type="button" id="rt-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('rt','starter')">Starter</button>
                                     <button type="button" id="rt-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('rt','help')">Help</button>
+                                <a class="btn-secondary program-source-help-tab program-source-docs-link" href="program-help.html#root" target="_blank" rel="noopener" title="Open the full searchable reference in a new tab">Docs &#8599;</a>
+                                <input type="search" id="rt-help-filter" class="program-source-help-filter" placeholder="Search" oninput="_setProgramSourceHelpFilter('rt', this.value)">
                                 </div>
                                 <div id="rt-cheatsheet" class="program-source-cheatsheet" aria-label="Root Program source cheatsheet"></div>
                                 <div id="rt-help" class="program-source-help" aria-label="Root Program generated help" hidden></div>
@@ -2421,6 +2434,8 @@ button {
                             <div class="program-source-help-tabs" role="tablist" aria-label="Palette solve-score help tabs">
                                 <button type="button" id="palette-ss-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('palette-ss','starter')">Starter</button>
                                 <button type="button" id="palette-ss-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('palette-ss','help')">Help</button>
+                                <a class="btn-secondary program-source-help-tab program-source-docs-link" href="program-help.html#solve-score" target="_blank" rel="noopener" title="Open the full searchable reference in a new tab">Docs &#8599;</a>
+                                <input type="search" id="palette-ss-help-filter" class="program-source-help-filter" placeholder="Search" oninput="_setProgramSourceHelpFilter('palette-ss', this.value)">
                             </div>
                             <div id="palette-ss-cheatsheet" class="program-source-cheatsheet" aria-label="Palette solve-score source cheatsheet"></div>
                             <div id="palette-ss-help" class="program-source-help" aria-label="Palette solve-score generated help" hidden></div>
@@ -2460,6 +2475,8 @@ button {
                             <div class="program-source-help-tabs" role="tablist" aria-label="Palette root Program help tabs">
                                 <button type="button" id="prt-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('prt','starter')">Starter</button>
                                 <button type="button" id="prt-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('prt','help')">Help</button>
+                                <a class="btn-secondary program-source-help-tab program-source-docs-link" href="program-help.html#root" target="_blank" rel="noopener" title="Open the full searchable reference in a new tab">Docs &#8599;</a>
+                                <input type="search" id="prt-help-filter" class="program-source-help-filter" placeholder="Search" oninput="_setProgramSourceHelpFilter('prt', this.value)">
                             </div>
                             <div id="prt-cheatsheet" class="program-source-cheatsheet" aria-label="Palette root Program source cheatsheet"></div>
                             <div id="prt-help" class="program-source-help" aria-label="Palette root Program generated help" hidden></div>

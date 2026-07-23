@@ -55,6 +55,7 @@ bash scripts/test-tsan-races.sh
 "${TEST_PYTHON[@]}" scripts/generate_tri_palettes.py --check
 "${TEST_PYTHON[@]}" scripts/generate_long_palettes.py --check
 "${TEST_PYTHON[@]}" scripts/fetch_mic_palettes.py --check
+"${TEST_PYTHON[@]}" scripts/gen_program_help_page.py --check
 # gen_catalog.py (coeff_func_catalog_js.js + coeff_func_lookup.h) is
 # deliberately deploy-gated only: it probes the freshly built sweep_test
 # binary for per-function degrees, so a predeploy --check would depend on

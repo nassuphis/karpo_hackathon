@@ -287,3 +287,40 @@ test.describe('Compute UI', () => {
     });
   });
 });
+
+test.describe('Program help & search', () => {
+  test('cp sidepanel filter narrows Starter and Help; Docs links out', async ({ page }) => {
+    await page.click('.tab-btn:text("Compute")');
+    const buttonsBefore = await page.locator('#cp-cheatsheet .program-source-cheat-button').count();
+    expect(buttonsBefore).toBeGreaterThan(10);
+    await page.fill('#cp-help-filter', 'roots_literal');
+    const buttonsAfter = await page.locator('#cp-cheatsheet .program-source-cheat-button').count();
+    expect(buttonsAfter).toBeGreaterThan(0);
+    expect(buttonsAfter).toBeLessThan(buttonsBefore);
+    // the same filter applies to the generated Help tab
+    await page.click('#cp-help-tab-help');
+    await expect(page.locator('#cp-help .program-help-item').first()).toContainText('roots_literal');
+    // clearing restores the full lists
+    await page.fill('#cp-help-filter', '');
+    await page.click('#cp-help-tab-starter');
+    expect(await page.locator('#cp-cheatsheet .program-source-cheat-button').count()).toBe(buttonsBefore);
+    // the Docs link opens the standalone reference at the language anchor
+    const href = await page.locator('[data-program-help="cp"] .program-source-docs-link').getAttribute('href');
+    expect(href).toBe('program-help.html#coeff');
+  });
+
+  test('the standalone program reference page searches across languages', async ({ page }) => {
+    await page.goto('http://localhost:8765/program-help.html');
+    await expect(page.locator('#match-count')).toContainText('entries');
+    const total = await page.locator('.entry').count();
+    expect(total).toBeGreaterThan(300);
+    await page.fill('#help-search', 'roots_literal');
+    await expect(page.locator('#match-count')).toContainText(' of ');
+    const visible = await page.locator('.entry:not(.hidden)').count();
+    expect(visible).toBeGreaterThan(0);
+    expect(visible).toBeLessThan(30);
+    await expect(page.locator('.entry:not(.hidden)').first()).toContainText('roots_literal');
+    // language sections with no matches collapse away
+    expect(await page.locator('.lang-block#param.lang-empty').count()).toBe(1);
+  });
+});

@@ -1259,7 +1259,16 @@ function _renderProgramSourceHelp(which) {
     const el = document.getElementById(`${key}-help`);
     if (!el) return;
     const registry = _programHelpRegistry(key);
-    el.innerHTML = (registry.sections || []).map(section => _programHelpSectionHtml(key, section)).join('');
+    const filter = _programSourceHelpFilterFor(key);
+    const rendered = (registry.sections || []).map(section => {
+        if (!filter) return _programHelpSectionHtml(key, section);
+        const items = (section.items || []).filter(item => _programSourceHelpFilterMatch(
+            filter, item.name, item.signature, item.help, item.category,
+            (item.aliases || []).join(' '), (item.forms || []).join(' ')));
+        return items.length ? _programHelpSectionHtml(key, { title: section.title, items }) : '';
+    }).filter(Boolean);
+    el.innerHTML = rendered.length ? rendered.join('')
+        : (filter ? '<div class="program-help-meta">No help entries match.</div>' : '');
 }
 
 function _setProgramSourceSidePanelMode(which, mode) {
@@ -1270,6 +1279,11 @@ function _setProgramSourceSidePanelMode(which, mode) {
 
 function _renderProgramSourceSidePanel(which) {
     const key = _programSourceWhichKey(which);
+    const filterEl = document.getElementById(`${key}-help-filter`);
+    if (filterEl && filterEl.value !== (_programSourceHelpFilter[key] || '')) {
+        filterEl.value = _programSourceHelpFilter[key] || '';
+    }
+    _renderProgramSourceSidePanel_renderCheat(key);
     _renderProgramSourceHelp(key);
     const mode = _programSourceSidePanelMode[key] || 'starter';
     const starter = document.getElementById(`${key}-cheatsheet`);
@@ -1280,6 +1294,14 @@ function _renderProgramSourceSidePanel(which) {
     if (help) help.hidden = mode !== 'help';
     if (starterTab && starterTab.classList) starterTab.classList.toggle('active', mode === 'starter');
     if (helpTab && helpTab.classList) helpTab.classList.toggle('active', mode === 'help');
+}
+
+function _renderProgramSourceSidePanel_renderCheat(key) {
+    if (key === 'pp') _renderParamProgramCheatsheet();
+    else if (key === 'cp') _renderCoeffProgramCheatsheet();
+    else if (key === 'rt' || key === 'prt') _renderRootProgramCheatsheets();
+    else if (key === 'render-ss') _renderSolveScoreCheatsheet('render');
+    else if (key === 'palette-ss') _renderSolveScoreCheatsheet('palette');
 }
 
 function _renderProgramSourceSidePanels() {
@@ -2490,28 +2512,50 @@ function _onProgramSourceDblClick(which, event) {
     _openProgramHelpInspector(key, _normalizeProgramHelpToken(token) || token, item, event || {});
 }
 
-function _renderProgramSourceCheatsheet(elementId, insertFn, sections) {
+let _programSourceHelpFilter = {};
+
+function _setProgramSourceHelpFilter(which, text) {
+    const key = _programSourceWhichKey(which);
+    _programSourceHelpFilter[key] = String(text || '').trim().toLowerCase();
+    _renderProgramSourceSidePanel(key);
+}
+
+function _programSourceHelpFilterFor(which) {
+    return _programSourceHelpFilter[_programSourceWhichKey(which)] || '';
+}
+
+function _programSourceHelpFilterMatch(filter, ...fields) {
+    if (!filter) return true;
+    const blob = fields.map(f => String(f || '')).join(' ').toLowerCase();
+    return filter.split(/\s+/).every(term => blob.includes(term));
+}
+
+function _renderProgramSourceCheatsheet(elementId, insertFn, sections, filterText = '') {
     const el = document.getElementById(elementId);
     if (!el) return;
-    el.innerHTML = (sections || []).map(section => {
-        const buttons = (section.buttons || []).map(item => (
-            _programSourceCheatButtonHtml(insertFn, item.label, item.snippet, item.title || '')
-        ));
-        return _programSourceCheatSectionHtml(section.title, buttons);
-    }).join('');
+    const rendered = (sections || []).map(section => {
+        const buttons = (section.buttons || [])
+            .filter(item => _programSourceHelpFilterMatch(filterText, item.label, item.snippet, item.title))
+            .map(item => (
+                _programSourceCheatButtonHtml(insertFn, item.label, item.snippet, item.title || '')
+            ));
+        return buttons.length ? _programSourceCheatSectionHtml(section.title, buttons) : '';
+    }).filter(Boolean);
+    el.innerHTML = rendered.length ? rendered.join('')
+        : (filterText ? '<div class="program-help-meta">No starter entries match.</div>' : '');
 }
 
 function _renderParamProgramCheatsheet() {
-    _renderProgramSourceCheatsheet('pp-cheatsheet', '_insertParamProgramSourceSnippet', _paramProgramCheatSections);
+    _renderProgramSourceCheatsheet('pp-cheatsheet', '_insertParamProgramSourceSnippet', _paramProgramCheatSections, _programSourceHelpFilterFor('pp'));
 }
 
 function _renderCoeffProgramCheatsheet() {
-    _renderProgramSourceCheatsheet('cp-cheatsheet', '_insertCoeffProgramSourceSnippet', _coeffProgramCheatSections);
+    _renderProgramSourceCheatsheet('cp-cheatsheet', '_insertCoeffProgramSourceSnippet', _coeffProgramCheatSections, _programSourceHelpFilterFor('cp'));
 }
 
 function _renderRootProgramCheatsheets() {
-    _renderProgramSourceCheatsheet('rt-cheatsheet', '_insertRenderRootSourceSnippet', _rootProgramCheatSections);
-    _renderProgramSourceCheatsheet('prt-cheatsheet', '_insertPaletteRootSourceSnippet', _rootProgramCheatSections);
+    _renderProgramSourceCheatsheet('rt-cheatsheet', '_insertRenderRootSourceSnippet', _rootProgramCheatSections, _programSourceHelpFilterFor('rt'));
+    _renderProgramSourceCheatsheet('prt-cheatsheet', '_insertPaletteRootSourceSnippet', _rootProgramCheatSections, _programSourceHelpFilterFor('prt'));
 }
 
 function _renderParamCoeffProgramCheatsheets() {
@@ -2712,36 +2756,50 @@ function _renderSolveScoreCheatsheet(prefix) {
     const p = _editorPrefix(prefix);
     const el = document.getElementById(`${p}-ss-cheatsheet`);
     if (!el) return;
+    const filter = _programSourceHelpFilterFor(`${p}-ss`);
+    const keep = (label, snippet, tooltip) => _programSourceHelpFilterMatch(filter, label, snippet, tooltip);
     const metrics = _solveScoreMetricNames.slice();
     const starters = (_solveScoreStarterSnippets.length ? _solveScoreStarterSnippets : _solveScoreFallbackStarters)
+        .filter(item => keep(item.label, item.snippet, ''))
         .map(item => _solveScoreCheatButtonHtml(p, item.label, item.snippet));
     const metricButtons = metrics.map(name => {
         const choices = _solveScoreMetricAllowedSources(name).join('/');
-        return _solveScoreCheatButtonHtml(p, name, _solveScoreMetricSnippet(name), choices ? `${choices}; q=0.1%` : '');
-    });
+        const tooltip = choices ? `${choices}; q=0.1%` : '';
+        const snippet = _solveScoreMetricSnippet(name);
+        return keep(name, snippet, tooltip) ? _solveScoreCheatButtonHtml(p, name, snippet, tooltip) : '';
+    }).filter(Boolean);
     const outputButtons = Object.keys(_solveScoreOutputSpecs).map(name => {
         const expr = 'metric(proximity, slv, q=0.1%)';
         const fn = _solveScoreOutputSpecs[name].snippet || (name === 'emit'
             ? `emit(${expr})`
             : (name === 'emit_none' ? `emit_none(${expr})\nemit_norm(${expr})` : `${name}(${expr})`));
-        return _solveScoreCheatButtonHtml(p, name, fn, (_solveScoreOutputSpecs[name] || {}).tooltip || '');
-    });
-    const unaryButtons = Object.keys(_solveScoreUnarySpecs).map(name => (
-        _solveScoreCheatButtonHtml(p, name, _solveScoreUnarySnippet(name, _solveScoreUnarySpecs[name]), (_solveScoreUnarySpecs[name] || {}).tooltip || '')
-    ));
-    const combineButtons = Object.keys(_solveScoreCombineSpecs).map(name => (
-        _solveScoreCheatButtonHtml(p, name, _solveScoreCombineSnippet(name, _solveScoreCombineSpecs[name]), (_solveScoreCombineSpecs[name] || {}).tooltip || '')
-    ));
-    const languageButtons = _solveScoreLanguageSnippets.map(item =>
-        _solveScoreCheatButtonHtml(p, item.label, item.snippet, item.title || ''));
-    el.innerHTML = [
-        _solveScoreCheatSectionHtml('Language', languageButtons),
-        _solveScoreCheatSectionHtml('Starters', starters),
-        _solveScoreCheatSectionHtml('Metrics', metricButtons),
-        _solveScoreCheatSectionHtml('Outputs', outputButtons),
-        _solveScoreCheatSectionHtml('Unary / Stack', unaryButtons),
-        _solveScoreCheatSectionHtml('Combine', combineButtons),
-    ].join('');
+        const tooltip = (_solveScoreOutputSpecs[name] || {}).tooltip || '';
+        return keep(name, fn, tooltip) ? _solveScoreCheatButtonHtml(p, name, fn, tooltip) : '';
+    }).filter(Boolean);
+    const unaryButtons = Object.keys(_solveScoreUnarySpecs).map(name => {
+        const snippet = _solveScoreUnarySnippet(name, _solveScoreUnarySpecs[name]);
+        const tooltip = (_solveScoreUnarySpecs[name] || {}).tooltip || '';
+        return keep(name, snippet, tooltip) ? _solveScoreCheatButtonHtml(p, name, snippet, tooltip) : '';
+    }).filter(Boolean);
+    const combineButtons = Object.keys(_solveScoreCombineSpecs).map(name => {
+        const snippet = _solveScoreCombineSnippet(name, _solveScoreCombineSpecs[name]);
+        const tooltip = (_solveScoreCombineSpecs[name] || {}).tooltip || '';
+        return keep(name, snippet, tooltip) ? _solveScoreCheatButtonHtml(p, name, snippet, tooltip) : '';
+    }).filter(Boolean);
+    const languageButtons = _solveScoreLanguageSnippets
+        .filter(item => keep(item.label, item.snippet, item.title || ''))
+        .map(item => _solveScoreCheatButtonHtml(p, item.label, item.snippet, item.title || ''));
+    const sections = [
+        ['Language', languageButtons],
+        ['Starters', starters],
+        ['Metrics', metricButtons],
+        ['Outputs', outputButtons],
+        ['Unary / Stack', unaryButtons],
+        ['Combine', combineButtons],
+    ].filter(([, buttons]) => buttons.length)
+        .map(([title, buttons]) => _solveScoreCheatSectionHtml(title, buttons));
+    el.innerHTML = sections.length ? sections.join('')
+        : (filter ? '<div class="program-help-meta">No starter entries match.</div>' : '');
 }
 
 function _renderSolveScoreCheatsheets() {

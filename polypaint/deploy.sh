@@ -97,7 +97,8 @@ frontend_asset_keys() {
         "coeff_func_catalog_js.js" \
         "tri_palette_catalog_js.js" \
         "long_palette_catalog_js.js" \
-        "data/mic_palette_catalog.json"
+        "data/mic_palette_catalog.json" \
+        "program-help.html"
     if [ -d "$SCRIPT_DIR/js" ]; then
         (
             cd "$SCRIPT_DIR" || exit 1

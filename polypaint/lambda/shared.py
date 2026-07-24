@@ -2,6 +2,7 @@
 Shared utilities for all polypaint Lambda handlers.
 """
 import json
+import unicodedata
 import math
 import os
 import re
@@ -366,6 +367,34 @@ def parse_body(event):
     elif "body" in event and event["body"] is not None:
         return event["body"]
     return event
+
+
+# S3 user metadata travels as HTTP headers and is ASCII-only — boto3 raises
+# on any non-ASCII value (user hit it with the MIC palette display name
+# "Gustav Klimt \u2014 Portrait ..."). Sanitize AT THE METADATA BOUNDARY ONLY:
+# JSON bodies (meta.json overlays, book/program documents) keep exact unicode.
+_ASCII_METADATA_MAP = {
+    "\u2014": "-", "\u2013": "-",          # em/en dash
+    "\u2018": "'", "\u2019": "'",          # curly single quotes
+    "\u201c": '"', "\u201d": '"',          # curly double quotes
+    "\u2026": "...", "\u00b7": ".",        # ellipsis, middle dot
+    "\u00d7": "x", "\u2192": "->",         # multiply sign, arrow
+}
+
+
+def ascii_metadata_value(value):
+    text = str(value if value is not None else "")
+    if text.isascii():
+        return text
+    for src, dst in _ASCII_METADATA_MAP.items():
+        text = text.replace(src, dst)
+    text = unicodedata.normalize("NFKD", text)
+    return text.encode("ascii", "ignore").decode("ascii")
+
+
+def ascii_metadata(mapping):
+    """ASCII-safe copy of an S3 user-metadata dict (values sanitized)."""
+    return {str(k): ascii_metadata_value(v) for k, v in (mapping or {}).items()}
 
 
 def ok_response(body):

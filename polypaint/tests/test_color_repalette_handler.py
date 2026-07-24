@@ -58,6 +58,8 @@ class TestColorRepaletteHandler(unittest.TestCase):
             "preview_jpg_key": "renders/j/color/color_src/preview.jpg",
             "preview_jpg_width": "512",
             "preview_jpg_height": "512",
+            # unicode display name: must reach S3 headers ASCII-fied only
+            "palette_display_name": "Ren\u00e9 \u2014 tude",
         }
         puts = {}
         copies = []
@@ -159,6 +161,10 @@ class TestColorRepaletteHandler(unittest.TestCase):
             "public, max-age=31536000, immutable",
         )
         self.assertIn("renders/j/color/color_new/meta.json", puts)
+        for key, put in puts.items():
+            for mk, mv in (put.get("metadata") or {}).items():
+                self.assertTrue(str(mv).isascii(),
+                                f"non-ascii metadata {mk!r}={mv!r} on {key}")
         new_meta = json.loads(puts["renders/j/color/color_new/meta.json"]["body"].decode())
         for stale in ("preview_jpg_key", "preview_jpg_width", "preview_jpg_height"):
             self.assertNotIn(stale, new_meta,

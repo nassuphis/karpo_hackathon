@@ -129,6 +129,27 @@ class TestBookStorage(unittest.TestCase):
         self.assertEqual(json.loads(fetched["body"])["latest_output"]["compile_id"], "c1")
 
     @patch("handler_storage.s3")
+    def test_unicode_book_name_saves_with_ascii_s3_metadata(self, mock_s3):
+        """Book names/titles are unicode; S3 user metadata is ASCII-only.
+        The body keeps the exact text, the metadata gets the ASCII spelling
+        (same class as the ExtractPalette em-dash crash, 2026-07-24)."""
+        import handler_storage
+        from shared import ascii_metadata_value
+
+        fake = _FakeS3()
+        _patch_s3(mock_s3, fake)
+        name = "Chromatic Fields \u2014 B\u00f6cklin studies"
+        resp = handler_storage.handler(_event("/save-book", {"book": {"name": name}}), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        saved = json.loads(resp["body"])["book"]
+        self.assertEqual(saved["name"], name)   # body: exact unicode
+        put_meta = fake.metadata.get(f"polypaint/books/{saved['id']}.json") or {}
+        for value in put_meta.values():
+            self.assertTrue(str(value).isascii(), repr(put_meta))
+        self.assertEqual(ascii_metadata_value(name),
+                         "Chromatic Fields - Bocklin studies")
+
+    @patch("handler_storage.s3")
     def test_list_books_carries_title_and_subtitle(self, mock_s3):
         import handler_storage
 

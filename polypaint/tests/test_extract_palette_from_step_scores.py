@@ -55,6 +55,9 @@ class TestExtractPaletteFromStepScores(unittest.TestCase):
             "height": "2",
             "color_mode": "solve_score",
             "palette": "magma",
+            # the MIC library produces unicode display names — the em-dash
+            # here crashed the put_object metadata validation (user report)
+            "palette_display_name": "Gustav Klimt \u2014 Portrait of Eugenia Primavesi (1913)",
             "solve_metric": "crowding",
             "solve_score_chain": '[["crowding","0.1"]]',
             "solve_score_quantile": "0.01",
@@ -163,6 +166,15 @@ class TestExtractPaletteFromStepScores(unittest.TestCase):
         self.assertEqual(assoc["palette_id"], "pal_color_src")
         self.assertEqual(assoc["image_key"], "renders/j/palettes/pal_color_src/image.jpeg")
         self.assertEqual(puts["renders/j/palettes/pal_color_src/greyscale.raw"]["body"], bytes([0, 11, 22, 33]))
+        # every S3 user-metadata value must be ASCII (HTTP-header transport);
+        # the display name maps to its closest ASCII spelling at the boundary
+        for key, put in puts.items():
+            for mk, mv in (put.get("metadata") or {}).items():
+                self.assertTrue(str(mv).isascii(),
+                                f"non-ascii metadata {mk!r}={mv!r} on {key}")
+        image_meta = puts["renders/j/palettes/pal_color_src/image.jpeg"]["metadata"]
+        self.assertEqual(image_meta["palette_display_name"],
+                         "Gustav Klimt - Portrait of Eugenia Primavesi (1913)")
         self.assertEqual(
             puts["renders/j/palettes/pal_color_src/preview.png"]["cache_control"],
             "public, max-age=31536000, immutable",

@@ -26,7 +26,7 @@ from color_artifact_meta import load_color_artifact_head
 from logical_sections import build_source_spans, resolve_solve_source_manifest, stitch_spans_to_file
 from raw_sidecar import validate_raw_sidecar
 from root_pipeline_programs import root_program_for_run
-from shared import BILEVEL_SPARSE_PIPELINE, BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response, parse_body, report_status
+from shared import ascii_metadata, BILEVEL_SPARSE_PIPELINE, BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response, parse_body, report_status
 
 s3 = boto3.client("s3")
 BILEVEL_SECTION_RASTER = os.path.join(os.path.dirname(__file__), "bilevel_section_raster")
@@ -220,7 +220,7 @@ def _upload_file(path, key, *, content_type, metadata=None, cache_control=None):
             Key=key,
             Body=fh,
             ContentType=content_type,
-            Metadata={str(k): str(v) for k, v in (metadata or {}).items() if v not in ("", None)},
+            Metadata=ascii_metadata({str(k): str(v) for k, v in (metadata or {}).items() if v not in ("", None)}),
             **extra,
         )
 

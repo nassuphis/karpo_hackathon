@@ -44,7 +44,8 @@ from logical_sections import (
     DEFAULT_SOLVE_SCORE_MEMORY_MB,
     summarize_chunk_items,
 )
-from shared import (BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response,
+from shared import (
+    ascii_metadata,BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response,
                     _get_ddb, parse_boolish, assert_safe_render_image_key,
                     assert_render_identity, is_missing_s3_error, s3_error_reason,
                     s3_error_code, assert_safe_id, CACHE_IMMUTABLE, report_status)
@@ -1139,7 +1140,7 @@ def _handle_migrate_program(event, kind):
         Key=key,
         Body=(json.dumps(migrated, indent=2) + "\n").encode("utf-8"),
         ContentType="application/json",
-        Metadata=cfg["put_meta"](migrated),
+        Metadata=ascii_metadata(cfg["put_meta"](migrated)),
     )
     response["wrote"] = True
     return ok_response(response)
@@ -2796,7 +2797,7 @@ def handle_save_book(event):
         Bucket=BUCKET, Key=key,
         Body=json.dumps(book).encode("utf-8"),
         ContentType="application/json",
-        Metadata=_book_put_metadata(book))
+        Metadata=ascii_metadata(_book_put_metadata(book)))
     # Real compare-and-swap (CR28 F5): when the caller passes the opaque
     # `revision` it fetched, S3 atomically refuses the write if the object's
     # ETag has changed (a concurrent save landed). No read-then-write TOCTOU
@@ -3142,7 +3143,7 @@ def handle_save_root_program(event):
         Key=key,
         Body=(json.dumps(program, indent=2) + "\n").encode("utf-8"),
         ContentType="application/json",
-        Metadata=_root_program_put_metadata(program),
+        Metadata=ascii_metadata(_root_program_put_metadata(program)),
     )
     return ok_response({"program": program, "overwritten": overwritten})
 

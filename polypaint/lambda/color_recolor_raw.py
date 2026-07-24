@@ -25,7 +25,7 @@ from solve_score_chain import (
     read_solve_score_metadata,
     strip_solve_score_version,
 )
-from shared import BUCKET, CACHE_IMMUTABLE, ok_response, report_status
+from shared import ascii_metadata, BUCKET, CACHE_IMMUTABLE, ok_response, report_status
 
 
 s3 = boto3.client("s3")
@@ -335,7 +335,7 @@ def _recolor_associated_palette(
             Key=new_image_key,
             Body=out_fh,
             ContentType="image/jpeg",
-            Metadata={
+            Metadata=ascii_metadata({
                 "pix": str(width),
                 "width": str(width),
                 "height": str(height),
@@ -346,7 +346,7 @@ def _recolor_associated_palette(
                 "full_n": str(width),
                 "times": str(int(_parse_int(palette_meta.get("times"), 1))),
                 "using_pass": str(int(_parse_int(palette_meta.get("using_pass"), 0))),
-            },
+            }),
         )
     temp_copy_keys.append(new_image_key)
     with open(preview_path, "rb") as preview_fh:
@@ -723,7 +723,7 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
                 Key=image_key,
                 Body=out_fh,
                 ContentType=content_type,
-                Metadata=final_headers,
+                Metadata=ascii_metadata(final_headers),
             )
         temp_copy_keys.append(image_key)
         with open(preview_out_path, "rb") as preview_fh:

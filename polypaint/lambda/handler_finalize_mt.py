@@ -22,7 +22,7 @@ from color_artifact_meta import split_color_artifact_metadata, write_color_artif
 from color_render_contract import normalize_color_interpretation, validate_color_output_contract
 from raw_score_render import render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar
-from shared import build_identity, BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response, parse_body, parse_boolish, report_status
+from shared import ascii_metadata, build_identity, BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response, parse_body, parse_boolish, report_status
 from solve_score_chain import (
     SOLVE_SCORE_LEGACY_SPEC_VERSION,
     SOLVE_SCORE_SPEC_VERSION,
@@ -526,7 +526,7 @@ def _finalize_associated_palette(
             Key=image_key,
             Body=out_fh,
             ContentType="image/jpeg",
-            Metadata=image_metadata,
+            Metadata=ascii_metadata(image_metadata),
         )
     with open(preview_path, "rb") as preview_fh:
         finalize_s3.put_object(
@@ -941,7 +941,7 @@ def handler(event, context):
             Key=image_key,
             Body=out_fh,
             ContentType=content_type,
-            Metadata=final_headers,
+            Metadata=ascii_metadata(final_headers),
         )
     progress["image_upload_ms"] = int((time.time() - t_component) * 1000)
     t_component = time.time()

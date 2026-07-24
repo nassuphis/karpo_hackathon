@@ -14,7 +14,7 @@ import time
 
 import boto3
 
-from shared import BUCKET, PRESIGN_EXPIRY, parse_body, ok_response, imgpipe_env, report_status
+from shared import ascii_metadata, BUCKET, PRESIGN_EXPIRY, parse_body, ok_response, imgpipe_env, report_status
 
 s3 = boto3.client("s3")
 
@@ -138,7 +138,7 @@ def handler(event, context):
         with open(out_path, "rb") as f:
             s3.put_object(Bucket=BUCKET, Key=preview_key,
                           Body=f, ContentType="image/png",
-                          Metadata=img_meta)
+                          Metadata=ascii_metadata(img_meta))
         upload_ms = int((time.time() - t2) * 1000)
 
         total_ms = int((time.time() - t0) * 1000)

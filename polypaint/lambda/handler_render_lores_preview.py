@@ -1350,19 +1350,23 @@ def handler(event, context):
                 with open(TMP_ROOTS, "rb") as fh:
                     s3.put_object(
                         Bucket=BUCKET, Key=sculpture_roots_key, Body=fh.read(),
-                        ContentType="application/octet-stream")
+                        ContentType="application/octet-stream", CacheControl="no-cache")
             sculpture_palette_key = f"renders/{job_id}/sculpture_palette.png"
             with open(TMP_PALETTE_IMAGE, "rb") as fh:
                 s3.put_object(
                     Bucket=BUCKET, Key=sculpture_palette_key, Body=fh.read(),
-                    ContentType="image/png")
+                    ContentType="image/png", CacheControl="no-cache")
             region = os.environ.get("AWS_REGION", "us-east-1")
             base_url = f"https://{BUCKET}.s3.{region}.amazonaws.com"
+            # fixed keys + heuristic browser caching served STALE data to the
+            # viewer across runs ("it's not evaluating my score") — every run
+            # mints version-stamped URLs so the fetches can never cache-hit
+            stamp = int(time.time() * 1000)
             sculpture_export = {
                 "roots_key": sculpture_roots_key,
-                "roots_url": f"{base_url}/{sculpture_roots_key}",
+                "roots_url": f"{base_url}/{sculpture_roots_key}?v={stamp}",
                 "palette_key": sculpture_palette_key,
-                "palette_url": f"{base_url}/{sculpture_palette_key}",
+                "palette_url": f"{base_url}/{sculpture_palette_key}?v={stamp}",
                 "grid_n": int(palette_grid_n),
                 "degree": int(degree),
                 "step_count": int(step_count),

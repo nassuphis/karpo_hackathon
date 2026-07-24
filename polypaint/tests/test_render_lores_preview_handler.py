@@ -607,9 +607,11 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         # physical mode: the roots object already lives on S3 — reused, not re-uploaded
         self.assertEqual(sc["roots_key"], "renders/j/lores.bin")
         self.assertTrue(sc["roots_url"].startswith("https://"))
-        self.assertTrue(sc["roots_url"].endswith("/renders/j/lores.bin"))
+        # version-stamped URLs: fixed keys + browser heuristic caching served
+        # stale palettes across runs
+        self.assertIn("/renders/j/lores.bin?v=", sc["roots_url"])
         self.assertEqual(sc["palette_key"], "renders/j/sculpture_palette.png")
-        self.assertTrue(sc["palette_url"].endswith("/renders/j/sculpture_palette.png"))
+        self.assertIn("/renders/j/sculpture_palette.png?v=", sc["palette_url"])
         self.assertEqual(sc["grid_n"], 1)
         self.assertEqual(sc["degree"], 2)
         self.assertEqual(sc["step_count"], 3)
@@ -622,6 +624,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(put_kwargs["Bucket"], BUCKET)
         self.assertEqual(put_kwargs["Key"], "renders/j/sculpture_palette.png")
         self.assertEqual(put_kwargs["ContentType"], "image/png")
+        self.assertEqual(put_kwargs["CacheControl"], "no-cache")
         self.assertEqual(put_kwargs["Body"], PNG_1X1)
 
     @patch("handler_render_lores_preview.render_score_raw")
@@ -714,6 +717,8 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(sorted(by_key), ["renders/j/sculpture_palette.png", "renders/j/sculpture_roots.bin"])
         self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["Body"], roots_bytes)
         self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["ContentType"], "application/octet-stream")
+        self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["CacheControl"], "no-cache")
+        self.assertIn("/renders/j/sculpture_roots.bin?v=", sc["roots_url"])
 
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")

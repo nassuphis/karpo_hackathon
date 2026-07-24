@@ -36,6 +36,10 @@ The handler uploads what the viewer needs (public bucket, no presigning):
 
 The response `sculpture` block carries `roots_url`, `palette_url`,
 `grid_n`, `degree`, `step_count`, `pass_count`, `viewport`, `roots_bytes`.
+Both uploads set `Cache-Control: no-cache` and both URLs carry a per-run
+`?v=<ms>` stamp — fixed keys plus browser heuristic caching served STALE
+palettes/roots across runs (user-visible as "the sculpture isn't using my
+selected solve score").
 
 **Frontend**: the `Sculpture` button next to Preview (`js/10`,
 `runRenderLoresSculpture()` → `runRenderLoresPreview({sculpture:true})`).
@@ -54,6 +58,12 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
 
 - X = Re, Z = −Im (right-handed view), Y (up) = t2 − ½; cube side 1,
   wireframe frame; xy normalized by the isotropic viewport.
+- Exact colors: `THREE.ColorManagement.enabled = false` + renderer
+  `LinearSRGBColorSpace` so the palette PNG's sRGB bytes pass through to
+  the screen unconverted — the default pipeline treats vertex colors as
+  linear and washes them out vs the 2D preview. The smoke spec renders a
+  frame and asserts byte-exact palette triples via `gl.readPixels`
+  (mutation-tested: reverting the flags fails the pin).
 - Pass 0 only (`gridN²` steps) — matches the palette image's semantics
   for multi-pass jobs.
 - Non-finite roots and roots outside the xy viewport are dropped and

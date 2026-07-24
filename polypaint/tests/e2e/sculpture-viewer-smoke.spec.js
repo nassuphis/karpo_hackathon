@@ -166,6 +166,37 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   });
   expect(vis).toEqual([[false, true], [true, false], [true, true]]);
 
+  // colors must reach the screen BYTE-FOR-BYTE (washed-out vertex colors —
+  // three's default linear interpretation of sRGB bytes — were a real
+  // user-facing bug): spread the stacks, enlarge + opacify the points,
+  // render a frame, and hunt the topmost palette triples exactly. With the
+  // shared-roots fixture the 4 stack winners are row 3's palette row.
+  const px = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const heightCtl = document.getElementById('ctl-height');
+    heightCtl.value = '100';
+    heightCtl.dispatchEvent(new Event('input'));
+    v.ribbons.visible = false;
+    v.material.size = 0.12;
+    v.material.opacity = 1;
+    v.material.transparent = false;
+    v.material.needsUpdate = true;
+    v.renderer.render(v.scene, v.camera);
+    const gl = v.renderer.getContext();
+    const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+    const buf = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+    const hits = { '180,0,17': 0, '180,60,17': 0, '180,120,17': 0, '180,180,17': 0 };
+    for (let i = 0; i < buf.length; i += 4) {
+      const key = buf[i] + ',' + buf[i + 1] + ',' + buf[i + 2];
+      if (key in hits) hits[key]++;
+    }
+    return hits;
+  });
+  for (const [key, n] of Object.entries(px)) {
+    expect(n, `exact on-screen pixels for rgb(${key})`).toBeGreaterThan(0);
+  }
+
   // the height slider flattens the sculpture onto its base plane — the 2D
   // art is literally this shape's shadow
   const flat = await page.evaluate(() => {

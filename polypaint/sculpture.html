@@ -73,6 +73,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+// exact color pass-through: the palette PNG's bytes ARE the artwork's colors.
+// Default color management treats vertex colors as linear and re-encodes on
+// output, washing them out vs the 2D preview — disable both conversions.
+THREE.ColorManagement.enabled = false;
+
 function fail(title, detail) {
     document.getElementById('message-title').textContent = title;
     document.getElementById('message-detail').textContent = detail || '';
@@ -191,6 +196,7 @@ async function boot() {
         fail('WebGL is not available in this browser', String(e && e.message ? e.message : e));
         return;
     }
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.getElementById('gl-root').appendChild(renderer.domElement);

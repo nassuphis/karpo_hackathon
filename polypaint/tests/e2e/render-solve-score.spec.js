@@ -1870,6 +1870,7 @@ test.describe('Solve Score UI', () => {
       };
     });
 
+    await page.selectOption('#render-sculpture-n', '512');
     await page.click('#btn-render-lores-sculpture');
     // busy then lingering result feedback on the button itself
     await expect(page.locator('#btn-render-lores-sculpture')).toHaveText('\u2713 Sculpture');
@@ -1880,6 +1881,10 @@ test.describe('Solve Score UI', () => {
     }));
     expect(st.bodies).toHaveLength(1);
     expect(st.bodies[0].sculpture).toBe(true);
+    // the hi-res selector forces the logical subsample + u16 quantization
+    expect(st.bodies[0].preview_source_mode).toBe('logical');
+    expect(st.bodies[0].preview_source_size).toBe(512);
+    expect(st.bodies[0].sculpture_format).toBe('u16');
     expect(st.opens).toBe(1);
     expect(st.url.startsWith('sculpture.html#')).toBe(true);
     const frag = new URLSearchParams(st.url.split('#')[1]);
@@ -1983,6 +1988,7 @@ test.describe('Solve Score UI', () => {
       grid_n: 60, degree: 5, step_count: 3600,
       viewport: { min_re: -2, max_re: 2, min_im: -1.5, max_im: 2.5 },
       palette: 'inferno',
+      format: 'f32',
       view: {
         point: 14, height: 0.35, slices: 11,
         show: { points: false, ribbons: true, threads: true, clu: true },

@@ -303,6 +303,22 @@ list is session-cached; the family registers in `_renderArtifacts` so
 the active-family reset never bounces off it (the rebuild resets
 unknown families to color).
 
+## Hi-res sculptures (u16)
+
+The resolution selector beside the Sculpture button (`preview` / 384² /
+512²): numeric sizes force the LOGICAL source — a subsample of the FULL
+solve via range GETs, no solving — with the preview-cost cap lifted for
+sculpture runs, and the transformed dump quantized to **u16** in C at
+flush time (`--xformed_roots_format=u16`): 0..65534 spans the viewport
+per axis, the pair (65535,65535) is the non-finite/out-of-viewport
+sentinel, half the bytes of f32 (512²×deg30 ≈ 31MB). The format rides
+the response, the fragment (`fmt`), `_lastSculptureData`, the save
+payload (size check switches to ×2), and `meta.format`; the viewer
+dequantizes over the viewport and counts sentinel pairs as clipped.
+Pinned at every layer: C closed-form quantization + sentinel, handler
+flag + halved dump size, save meta format, viewer dequantization to
+exact positions, and the dispatch payload (logical + size + u16).
+
 ## Sizes
 
 lores/logical/recompute previews run ≤256²; 256² × degree 30 ≈ 2M points

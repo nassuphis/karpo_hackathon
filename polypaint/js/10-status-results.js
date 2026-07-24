@@ -539,6 +539,17 @@ async function runRenderLoresPreview(opts = {}) {
             raster_sectioned_retries: 2,
         };
         if (sculpture) payload.sculpture = true;
+        if (sculpture) {
+            const nSel = document.getElementById('render-sculpture-n');
+            const hiresN = nSel && nSel.value !== 'preview' ? parseInt(nSel.value, 10) : 0;
+            if (hiresN) {
+                // hi-res: subsample the FULL solve (logical mode, no solving)
+                // and quantize the dump to u16 — half the bytes at 4x steps
+                payload.preview_source_mode = 'logical';
+                payload.preview_source_size = hiresN;
+                payload.sculpture_format = 'u16';
+            }
+        }
         if (_viewMode === 'explicit') {
             payload.min_re = p.minRe;
             payload.max_re = p.maxRe;
@@ -593,6 +604,7 @@ async function runRenderLoresPreview(opts = {}) {
             if (!sc.roots_url || !sc.palette_url) throw new Error('preview response missing sculpture links');
             const frag = new URLSearchParams({
                 v: '1', r: sc.roots_url, p: sc.palette_url,
+                fmt: sc.format || 'f32',
                 n: String(sc.grid_n), d: String(sc.degree), s: String(sc.step_count),
                 x0: String(vp.min_re), x1: String(vp.max_re),
                 y0: String(vp.min_im), y1: String(vp.max_im),
@@ -611,6 +623,7 @@ async function runRenderLoresPreview(opts = {}) {
                 grid_n: sc.grid_n, degree: sc.degree, step_count: sc.step_count,
                 pass_count: sc.pass_count, viewport: sc.viewport,
                 palette: sc.palette, roots_bytes: sc.roots_bytes,
+                format: sc.format || 'f32',
             };
             log(`Sculpture: grid ${sc.grid_n}×${sc.grid_n} · degree ${sc.degree} · roots ${(Number(sc.roots_bytes || 0) / (1024 * 1024)).toFixed(1)}MB`, 'ok', 'render-log');
         }

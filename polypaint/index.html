@@ -2256,6 +2256,11 @@ button {
                         <input type="text" inputmode="numeric" id="render-preview-pix" value="256" style="width:6em">
                         <button class="btn-secondary btn-inline" id="btn-render-lores-preview" onclick="runRenderLoresPreview()">Preview</button>
                         <button class="btn-secondary btn-inline" id="btn-render-lores-sculpture" onclick="runRenderLoresSculpture()" title="Open the 3D root sculpture (z = t2) built from this preview's solve">Sculpture</button>
+                        <select id="render-sculpture-n" title="Sculpture resolution: preview follows the source settings; numeric sizes subsample the FULL solve (logical mode, u16-quantized)" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
+                            <option value="preview" selected>preview</option>
+                            <option value="384">384&#178;</option>
+                            <option value="512">512&#178;</option>
+                        </select>
                         <span id="render-lores-preview-status" style="color:#777; font-size:11px">No render preview yet</span>
                     </div>
                     <div class="anim-row" style="margin-top:6px">

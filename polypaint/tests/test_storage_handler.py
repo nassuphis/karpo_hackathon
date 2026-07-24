@@ -1336,6 +1336,19 @@ class TestSaveSculpture(unittest.TestCase):
         mock_s3.copy_object.assert_not_called()
 
     @patch("handler_storage.s3")
+    def test_u16_format_halves_the_expected_size(self, mock_s3):
+        import handler_storage
+        mock_s3.head_object.return_value = {"ContentLength": 4 * 3 * 2 * 2}
+        resp = handler_storage.handler(
+            _event("/save-sculpture", self._params(format="u16")), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        self.assertEqual(body["sculpture"]["format"], "u16")
+        puts = {c.kwargs["Key"]: c.kwargs for c in mock_s3.put_object.call_args_list}
+        meta_key = next(k for k in puts if k.endswith("meta.json"))
+        self.assertEqual(json.loads(puts[meta_key]["Body"])["format"], "u16")
+
+    @patch("handler_storage.s3")
     def test_size_mismatch_demands_a_fresh_run(self, mock_s3):
         import handler_storage
         mock_s3.head_object.return_value = {"ContentLength": 17}

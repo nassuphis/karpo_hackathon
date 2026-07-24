@@ -988,7 +988,7 @@ def _preview_palette_grid_n(source_meta, step_count):
     return 0
 
 
-def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeffs, step_count, include_coeff, include_param, palette_grid_n=0, xformed_roots_output=None):
+def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeffs, step_count, include_coeff, include_param, palette_grid_n=0, xformed_roots_output=None, xformed_roots_format="f32"):
     metrics = _metric_rows_from_summary(summary)
     payload = solve_score_program_cli_payload({
         "metrics": metrics,
@@ -1053,6 +1053,8 @@ def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeff
         # sculpture data: the post-xform post-rotation roots exactly as the
         # raster plotted them — the 3D viewer must see what the 2D saw
         cmd.append(f"--xformed_roots_output={xformed_roots_output}")
+        if xformed_roots_format and xformed_roots_format != "f32":
+            cmd.append(f"--xformed_roots_format={xformed_roots_format}")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
@@ -1087,6 +1089,10 @@ def handler(event, context):
             max_value=MAX_PREVIEW_PIX,
         )
         source_mode = _preview_source_mode(params)
+        sculpture_requested = parse_boolish(params.get("sculpture", False), False, strict=True, label="sculpture")
+        sculpture_format = str(params.get("sculpture_format") or "f32").strip().lower()
+        if sculpture_format not in ("f32", "u16"):
+            raise RuntimeError(f"sculpture_format must be f32 or u16, got {sculpture_format!r}")
         lores_bin_key = str(params.get("lores_bin_key") or "").strip()
         if not lores_bin_key and source_mode == "lores":
             raise RuntimeError("lores_bin_key is required")
@@ -1124,7 +1130,9 @@ def handler(event, context):
                 "preview_source_size",
                 default=default_logical_n,
                 min_value=5,
-                max_value=MAX_LOGICAL_LORES_N,
+                # hi-res sculptures subsample the FULL solve (range GETs, no
+                # solving) — the preview-cost cap does not apply to them
+                max_value=(512 if (sculpture_requested and source_mode == "logical") else MAX_LOGICAL_LORES_N),
             )
         if source_mode == "logical":
             estimate = estimate_logical_lores_bytes(
@@ -1256,7 +1264,6 @@ def handler(event, context):
             )
         manifest_ms = int((time.time() - t_manifest) * 1000)
         palette_grid_n = _preview_palette_grid_n(source_meta, step_count)
-        sculpture_requested = parse_boolish(params.get("sculpture", False), False, strict=True, label="sculpture")
 
         t_raster = time.time()
         raster_meta = _run_roots2pix(
@@ -1268,6 +1275,7 @@ def handler(event, context):
             degree=degree,
             n_coeffs=n_coeffs,
             xformed_roots_output=TMP_XFORMED_ROOTS if sculpture_requested else None,
+            xformed_roots_format=sculpture_format,
             step_count=step_count,
             include_coeff=include_coeff,
             include_param=include_param,
@@ -1356,13 +1364,14 @@ def handler(event, context):
             # sculpture built from them diverges from the plot (user-caught on
             # escape-camera pieces). No lores.bin reuse: raw != what was seen.
             xformed_size = os.path.getsize(TMP_XFORMED_ROOTS) if os.path.exists(TMP_XFORMED_ROOTS) else 0
-            expected_xformed = step_count * degree * 2 * 4
+            expected_xformed = step_count * degree * 2 * (2 if sculpture_format == "u16" else 4)
             if xformed_size != expected_xformed:
                 raise RuntimeError(
                     f"sculpture transformed-roots dump size mismatch: got {xformed_size}, expected {expected_xformed}")
             region = os.environ.get("AWS_REGION", "us-east-1")
             base_url = f"https://{BUCKET}.s3.{region}.amazonaws.com"
             sculpture_export = {
+                "format": sculpture_format,
                 "grid_n": int(palette_grid_n),
                 "degree": int(degree),
                 "step_count": int(step_count),

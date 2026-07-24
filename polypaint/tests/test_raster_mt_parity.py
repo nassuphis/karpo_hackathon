@@ -331,6 +331,67 @@ class TestRasterMtParity(unittest.TestCase):
                     self.assertAlmostEqual(dump[idx + 1], want_im, delta=1e-3,
                                            msg=f"step {s} root {r} im")
 
+    def test_xformed_roots_u16_quantizes_over_the_viewport_with_sentinel(self):
+        """--xformed_roots_format=u16: 0..65534 spans the viewport per axis;
+        (65535,65535) marks non-finite/out-of-viewport roots. Hi-res
+        sculptures ride this to halve the bytes."""
+        degree = 2
+        step_count = 2
+        center_re, center_im = 0.0, 0.0
+        roots = [0.5, -1.0,      # inside
+                 -2.0, 3.0,      # inside (corner-ish)
+                 50.0, 50.0,     # outside -> sentinel
+                 0.0, 0.0]       # dead center
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(root / "q_roots.bin", roots)
+            dump_path = root / "q_dump.bin"
+            server, thread = self._serve_dir(root)
+            try:
+                manifest_path = self._write_single_span_manifest(
+                    root / "q_manifest.json",
+                    file_name=roots_path.name,
+                    port=server.server_address[1],
+                    row_bytes=degree * 2 * 4,
+                    solve_count=step_count,
+                )
+                cmd = [
+                    str(self._binary),
+                    str(root / "q_pix"),
+                    "--pix=8",
+                    *self._bounds_args(8, 8, center_re, center_im, 1.0),
+                    f"--degree={degree}",
+                    "--rotation=0",
+                    "--threads=1",
+                    f"--input_manifest={manifest_path}",
+                    f"--step_count={step_count}",
+                    *self._single_metric_program_args("centroid_re", 0, 1),
+                    f"--fragment_prefix={root / 'q_fragment'}",
+                    f"--xformed_roots_output={dump_path}",
+                    "--xformed_roots_format=u16",
+                    "--retries=1",
+                ]
+                result = self._run_binary(cmd)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+            dump = array("H")
+            dump.frombytes(dump_path.read_bytes())
+            self.assertEqual(len(dump), step_count * degree * 2)
+            # viewport is [-4,4]x[-4,4] (pix 8, scale 1): q = (v+4)/8*65534
+            def q(v):
+                return round((v + 4.0) / 8.0 * 65534.0)
+            self.assertEqual(dump[0], q(0.5))
+            self.assertEqual(dump[1], q(-1.0))
+            self.assertEqual(dump[2], q(-2.0))
+            self.assertEqual(dump[3], q(3.0))
+            self.assertEqual(dump[4], 0xFFFF)     # sentinel pair
+            self.assertEqual(dump[5], 0xFFFF)
+            self.assertEqual(dump[6], q(0.0))
+            self.assertEqual(dump[7], q(0.0))
+
     def test_multispan_sectioned_raster_matches_single_span_manifest_for_logical_section_mixed_sources(self):
         from logical_sections import build_native_multispan_manifest, build_solve_source_manifest
 

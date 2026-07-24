@@ -603,6 +603,7 @@ int main(int argc, char **argv) {
                 "[--associated_palette_fragment_prefix=/tmp/palette_fragment] [--palette_grid_n=N] [--palette_step_start=STEP] "
                 "[--step_scores_output=/tmp/step_scores.bin] "
                 "[--xformed_roots_output=/tmp/xformed_roots.bin] "
+                "[--xformed_roots_format=f32|u16] "
                 "[--root_xforms=file.json]\n");
         return 1;
     }
@@ -612,7 +613,7 @@ int main(int argc, char **argv) {
         "--rotation", "--degree", "--retries", "--threads", "--step_count",
         "--prelude_rows", "--score_coeff_prelude_rows", "--score_param_prelude_rows",
         "--fragment_prefix", "--associated_palette_fragment_prefix", "--step_scores_output",
-        "--xformed_roots_output",
+        "--xformed_roots_output", "--xformed_roots_format",
         "--palette_grid_n", "--palette_step_start", "--root_xforms",
         "--score_metrics", "--score_sources",
         "--score_clip_los", "--score_clip_his", "--score_program",
@@ -648,6 +649,7 @@ int main(int argc, char **argv) {
     const char *paletteFragmentPrefix = getArgStr(argc, argv, "--associated_palette_fragment_prefix", NULL);
     const char *stepScoresOutputPath = getArgStr(argc, argv, "--step_scores_output", NULL);
     const char *xformedRootsOutputPath = getArgStr(argc, argv, "--xformed_roots_output", NULL);
+    const char *xformedRootsFormat = getArgStr(argc, argv, "--xformed_roots_format", "f32");
     int paletteGridN = getArgInt(argc, argv, "--palette_grid_n", 0);
     long long paletteStepStart = getArgLongLong(argc, argv, "--palette_step_start", 0);
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
@@ -1238,15 +1240,40 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Cannot create %s\n", xformedRootsOutputPath);
             goto cleanup;
         }
+        int xfU16 = xformedRootsFormat && strcmp(xformedRootsFormat, "u16") == 0;
         for (int i = 0; i < threads; i++) {
-            if (args[i].stepScoreCount > 0 && args[i].xformedRoots) {
-                fwrite(
-                    args[i].xformedRoots,
-                    sizeof(float),
-                    (size_t)args[i].stepScoreCount * (size_t)args[i].degree * 2,
-                    fx
-                );
+            if (args[i].stepScoreCount <= 0 || !args[i].xformedRoots) continue;
+            size_t nvals = (size_t)args[i].stepScoreCount * (size_t)args[i].degree * 2;
+            if (!xfU16) {
+                fwrite(args[i].xformedRoots, sizeof(float), nvals, fx);
+                continue;
             }
+            /* u16 quantization over the viewport (hi-res sculptures: half
+             * the bytes). 0..65534 spans [min..max]; the pair (65535,65535)
+             * is the sentinel for non-finite or out-of-viewport roots —
+             * quantizing to 65534 keeps the sentinel unambiguous. */
+            uint16_t *qbuf = malloc(nvals * sizeof(uint16_t));
+            if (!qbuf) {
+                fprintf(stderr, "Out of memory for u16 quantization\n");
+                fclose(fx);
+                goto cleanup;
+            }
+            double spanRe = maxRe - minRe;
+            double spanIm = maxIm - minIm;
+            for (size_t v = 0; v + 1 < nvals; v += 2) {
+                double re = args[i].xformedRoots[v];
+                double im = args[i].xformedRoots[v + 1];
+                if (!isfinite(re) || !isfinite(im)
+                    || re < minRe || re > maxRe || im < minIm || im > maxIm) {
+                    qbuf[v] = 0xFFFF;
+                    qbuf[v + 1] = 0xFFFF;
+                    continue;
+                }
+                qbuf[v] = (uint16_t)llround((re - minRe) / spanRe * 65534.0);
+                qbuf[v + 1] = (uint16_t)llround((im - minIm) / spanIm * 65534.0);
+            }
+            fwrite(qbuf, sizeof(uint16_t), nvals, fx);
+            free(qbuf);
         }
         fclose(fx);
     }

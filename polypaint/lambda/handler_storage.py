@@ -7273,6 +7273,9 @@ def handle_save_sculpture(event):
 
     # the source is DERIVED from job_id — the ephemeral objects the open
     # viewer is showing; clients cannot point this at arbitrary keys
+    fmt = str(params.get("format") or "f32").strip().lower()
+    if fmt not in ("f32", "u16"):
+        raise RuntimeError(f"save-sculpture format must be f32 or u16, got {fmt!r}")
     src_roots = f"renders/{job_id}/sculpture_roots.bin"
     src_palette = f"renders/{job_id}/sculpture_palette.png"
     try:
@@ -7280,9 +7283,9 @@ def handle_save_sculpture(event):
         s3.head_object(Bucket=BUCKET, Key=src_palette)
     except Exception:
         raise RuntimeError("no ephemeral sculpture data for this job — press Sculpture first")
-    if roots_bytes != step_count * degree * 2 * 4:
+    if roots_bytes != step_count * degree * 2 * (2 if fmt == "u16" else 4):
         raise RuntimeError(
-            f"ephemeral roots size {roots_bytes} does not match grid/degree "
+            f"ephemeral roots size {roots_bytes} does not match grid/degree/format "
             "— re-run Sculpture before saving")
 
     sid = "scu_" + _b36(int(time.time() * 1000))
@@ -7310,6 +7313,7 @@ def handle_save_sculpture(event):
         "pass_count": pass_count,
         "roots_key": "roots.bin",
         "palette_key": "palette.png",
+        "format": fmt,
         "roots_bytes": roots_bytes,
         "viewport": viewport,
         "palette": "".join(ch for ch in str(params.get("palette") or "") if ch.isprintable())[:64],

@@ -737,6 +737,51 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
+    def test_sculpture_u16_format_flags_the_raster_and_halves_the_dump(self, mock_s3, mock_run, mock_render):
+        from handler_render_lores_preview import TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, TMP_XFORMED_ROOTS, handler
+
+        mock_s3.get_object.return_value = {"Body": _ChunkBody(b"\x00" * (3 * 2 * 2 * 4))}
+        xformed_u16 = b"Q" * (3 * 2 * 2 * 2)   # steps*degree*2 u16 values
+
+        def subprocess_fake(cmd, **kwargs):
+            if "--mode=clip" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "clip_lo": 0.0, "clip_hi": 1.0, "min_score": 0.0, "max_score": 1.0,
+                    "n_solves": 3, "threads": 1}), stderr="")
+            if "--mode=summary" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "degree": 2, "n_solves": 3, "clip_lo": 0.0, "clip_hi": 1.0,
+                    "min_score": 0.0, "q05": 0.1, "q95": 0.9, "max_score": 1.0,
+                    "threads": 1}), stderr="")
+            self.assertIn("--xformed_roots_format=u16", cmd)
+            with open(TMP_FRAGMENT, "wb") as fh:
+                fh.write((0).to_bytes(4, "little") + bytes([10]))
+            with open(TMP_PALETTE_FRAGMENT, "wb") as fh:
+                fh.write((0).to_bytes(4, "little") + bytes([10]))
+            with open(TMP_XFORMED_ROOTS, "wb") as fh:
+                fh.write(xformed_u16)
+            return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 2, "roots_clipped": 0}), stderr="")
+
+        def render_fake(**kwargs):
+            with open(kwargs["out_path"], "wb") as fh:
+                fh.write(PNG_1X1)
+            return {"file_size": len(PNG_1X1), "preview_file_size": 0}
+
+        mock_run.side_effect = subprocess_fake
+        mock_render.side_effect = render_fake
+
+        resp = handler(_event(lores_N=1, sculpture=True, sculpture_format="u16"), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        sc = body["sculpture"]
+        self.assertEqual(sc["format"], "u16")
+        self.assertEqual(sc["roots_bytes"], 3 * 2 * 2 * 2)
+        by_key = {call.kwargs["Key"]: call.kwargs for call in mock_s3.put_object.call_args_list}
+        self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["Body"], xformed_u16)
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
     def test_sculpture_requires_square_grid(self, mock_s3, mock_run, mock_render):
         from handler_render_lores_preview import TMP_FRAGMENT, handler
 

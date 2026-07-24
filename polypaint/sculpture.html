@@ -194,6 +194,7 @@ async function bootConfig() {
             minRe: floatParam(qp, 'x0'), maxRe: floatParam(qp, 'x1'),
             minIm: floatParam(qp, 'y0'), maxIm: floatParam(qp, 'y1'),
             title: qp.get('t') || 'PolyPaint sculpture',
+            format: qp.get('fmt') === 'u16' ? 'u16' : 'f32',
             saved: false,
         };
     }
@@ -213,6 +214,7 @@ async function bootConfig() {
             minIm: parseFloat(vp.min_im), maxIm: parseFloat(vp.max_im),
             title: String(meta.title || 'PolyPaint sculpture'),
             view: (meta.view && typeof meta.view === 'object') ? meta.view : null,
+            format: meta.format === 'u16' ? 'u16' : 'f32',
             saved: true,
         };
     } catch (e) {
@@ -257,13 +259,19 @@ async function boot() {
         return;
     }
 
-    const roots = new Float32Array(rootsBuf);
+    // u16 payloads dequantize over the viewport: 0..65534 spans each axis,
+    // the pair (65535,65535) is the out-of-view/non-finite sentinel (half
+    // the bytes of f32 — the hi-res sculpture format)
+    const isU16 = cfg.format === 'u16';
+    const roots = isU16 ? new Uint16Array(rootsBuf) : new Float32Array(rootsBuf);
     const passSteps = gridN * gridN;             // pass 0 only
     if (roots.length < passSteps * degree * 2) {
         fail('Sculpture data is too small',
-             `roots carry ${roots.length} floats, need ${passSteps * degree * 2} for grid ${gridN}×${gridN} at degree ${degree}.`);
+             `roots carry ${roots.length} values, need ${passSteps * degree * 2} for grid ${gridN}×${gridN} at degree ${degree}.`);
         return;
     }
+    const deqRe = (q) => minRe + (q / 65534) * (maxRe - minRe);
+    const deqIm = (q) => minIm + (q / 65534) * (maxIm - minIm);
     // per-step colors: the palette PNG is already de-serpentined to (row, col)
     const palCanvas = document.createElement('canvas');
     palCanvas.width = gridN; palCanvas.height = gridN;
@@ -290,8 +298,16 @@ async function boot() {
         const cr = pal[pi], cg = pal[pi + 1], cb = pal[pi + 2];
         const base = step * degree * 2;
         for (let r = 0; r < degree; r++) {
-            const re = roots[base + r * 2];
-            const im = roots[base + r * 2 + 1];
+            let re, im;
+            if (isU16) {
+                const qre = roots[base + r * 2], qim = roots[base + r * 2 + 1];
+                if (qre === 0xFFFF && qim === 0xFFFF) { clipped++; continue; }
+                re = deqRe(qre);
+                im = deqIm(qim);
+            } else {
+                re = roots[base + r * 2];
+                im = roots[base + r * 2 + 1];
+            }
             if (!Number.isFinite(re) || !Number.isFinite(im)
                 || re < minRe || re > maxRe || im < minIm || im > maxIm) {
                 clipped++;

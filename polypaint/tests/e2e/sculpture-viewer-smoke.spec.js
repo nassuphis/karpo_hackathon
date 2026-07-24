@@ -1186,3 +1186,56 @@ test('cloud style: additive splats through the tone-mapped pipeline', async ({ p
   expect(st.shot.maxV).toBeLessThanOrEqual(255);   // tone map bounded
   expect(st.restored).toBe(true);                  // solid restores the material
 });
+
+test('u16 format: dequantizes over the viewport, sentinel pairs clip', async ({ page }) => {
+  await page.goto('http://localhost:8765/sculpture.html');
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 2; c.height = 2;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgb(10,20,30)';
+    g.fillRect(0, 0, 2, 2);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  // grid 2, degree 2: quantized over viewport [-1,1]^2 — q = (v+1)/2*65534
+  const gridN = 2, degree = 2;
+  const q = (v) => Math.round((v + 1) / 2 * 65534);
+  const vals = [];
+  for (let step = 0; step < gridN * gridN; step++) {
+    vals.push(q(0.5), q(-0.25));       // root 0: (0.5, -0.25)
+    vals.push(0xFFFF, 0xFFFF);         // root 1: sentinel -> clipped
+  }
+  const buf = Buffer.alloc(vals.length * 2);
+  vals.forEach((v, i) => buf.writeUInt16LE(v, i * 2));
+  await page.route('**/fx/u16roots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: buf,
+  }));
+  await page.route('**/fx/u16pal.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  const frag = new URLSearchParams({
+    v: '1', r: '/fx/u16roots.bin', p: '/fx/u16pal.png', fmt: 'u16',
+    n: '2', d: '2', s: '4', x0: '-1', x1: '1', y0: '-1', y1: '1', t: 'u16 fixture',
+  });
+  await page.goto('about:blank');
+  await page.goto('http://localhost:8765/sculpture.html#' + frag.toString());
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const built = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!built) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+  const st = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const pos = v.points.geometry.getAttribute('position');
+    return { count: v.count, clipped: v.clipped, x0: pos.array[0], z0: pos.array[2] };
+  });
+  expect(st.count).toBe(4);      // one live root per step
+  expect(st.clipped).toBe(4);    // one sentinel per step
+  // (0.5, -0.25) normalized in the side-2 viewport: X=0.25, Z=+0.125
+  expect(st.x0).toBeCloseTo(0.25, 4);
+  expect(st.z0).toBeCloseTo(0.125, 4);
+});

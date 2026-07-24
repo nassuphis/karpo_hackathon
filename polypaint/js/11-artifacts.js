@@ -1787,6 +1787,7 @@ async function runSculptureSave() {
             step_count: data.step_count,
             viewport: data.viewport,
             palette: data.palette,
+            format: data.format || 'f32',
             view: view || undefined,
         }, '/save-sculpture');
         const saved = resp && resp.sculpture;

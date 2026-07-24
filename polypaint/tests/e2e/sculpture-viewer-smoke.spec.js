@@ -627,3 +627,91 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   expect(st.count).toBe(48);
   expect(st.title).toBe('saved fixture');
 });
+
+test('tours: orbit and weave follow their parametric paths; interaction stops them', async ({ page }) => {
+  await page.goto('http://localhost:8765/sculpture.html');
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 4;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgb(10,20,30)';
+    g.fillRect(0, 0, 4, 4);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  await page.route('**/fx/troots2.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: rootsBuffer(4),
+  }));
+  await page.route('**/fx/tpal2.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  const frag = new URLSearchParams({
+    v: '1', r: '/fx/troots2.bin', p: '/fx/tpal2.png', n: '4', d: '3', s: '16',
+    x0: '-1', x1: '1', y0: '-1', y1: '1', t: 'tour fixture',
+  });
+  await page.goto('about:blank');
+  await page.goto('http://localhost:8765/sculpture.html#' + frag.toString());
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const built = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!built) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+
+  const st = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const btn = document.getElementById('btn-tour-play');
+    const out = { initial: { playing: v.tour.state.playing, btn: btn.textContent } };
+
+    // play: the tick drives the camera along the orbit parametrization
+    btn.click();
+    out.playing = { playing: v.tour.state.playing, btn: btn.textContent, orbit: v.controls.enabled };
+    v.tour.tick(1.0);
+    const p1 = v.camera.position.clone();
+    const want1 = v.tour.pose('orbit', v.tour.state.t, v.sculpt.scale.y);
+    v.tour.tick(1.0);
+    const p2 = v.camera.position.clone();
+    out.orbitPath = {
+      matches: Math.hypot(p1.x - want1.pos[0], p1.y - want1.pos[1], p1.z - want1.pos[2]) < 1e-9,
+      moved: p1.distanceTo(p2) > 0.01,
+      radius: Math.hypot(p2.x, p2.z),
+    };
+
+    // weave resets t and flies the interior
+    const mode = document.getElementById('ctl-tour-mode');
+    mode.value = 'weave';
+    mode.dispatchEvent(new Event('change'));
+    out.weaveReset = v.tour.state.t;
+    v.tour.tick(1.0);
+    const w = v.camera.position.clone();
+    const wantW = v.tour.pose('weave', v.tour.state.t, v.sculpt.scale.y);
+    out.weavePath = {
+      matches: Math.hypot(w.x - wantW.pos[0], w.y - wantW.pos[1], w.z - wantW.pos[2]) < 1e-9,
+      radius: Math.hypot(w.x, w.z),
+    };
+
+    // pointerdown on the canvas hands control back
+    v.renderer.domElement.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    out.afterPointer = { playing: v.tour.state.playing, btn: btn.textContent, orbit: v.controls.enabled };
+
+    // movement keys stop a re-started tour too
+    btn.click();
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', bubbles: true }));
+    out.afterKey = { playing: v.tour.state.playing, keyF: v.flight.keys.f };
+    document.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyW', bubbles: true }));
+    return out;
+  });
+  expect(st.initial).toEqual({ playing: false, btn: '\u25b6' });
+  expect(st.playing).toEqual({ playing: true, btn: '\u25a0', orbit: false });
+  expect(st.orbitPath.matches).toBe(true);
+  expect(st.orbitPath.moved).toBe(true);
+  expect(st.orbitPath.radius).toBeCloseTo(1.35, 5);   // exterior turntable
+  expect(st.weaveReset).toBe(0);
+  expect(st.weavePath.matches).toBe(true);
+  expect(st.weavePath.radius).toBeLessThan(1.0);      // interior pass
+  expect(st.afterPointer).toEqual({ playing: false, btn: '\u25b6', orbit: true });
+  expect(st.afterKey.playing).toBe(false);
+  expect(st.afterKey.keyF).toBe(1);                   // the key still flies
+});

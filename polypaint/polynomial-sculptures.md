@@ -87,6 +87,17 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   for multi-pass jobs.
 - Non-finite roots and roots outside the xy viewport are dropped and
   counted (`clipped` in the HUD).
+- **Tours** (▶/■ next to the tour selector): two parametric camera
+  paths — **orbit**, an exterior helical turntable whose height breathes
+  past the whole stack, and **weave**, an interior corkscrew with a
+  breathing radius sweeping the full height (the close-up detail pass).
+  Both follow the height-SCALED geometry so squashed plate stacks get a
+  skimming pass. Any manual interaction (canvas pointerdown, a movement
+  key, entering fly) stops the tour and re-anchors the orbit target
+  ahead of the camera; starting a tour exits pointer lock. Deterministic
+  in t — the smoke spec drives the tick and pins the parametrization,
+  radii (exterior 1.35 vs interior <1), mode-switch reset, and the
+  interaction-stops handoffs.
 - Controls: orbit/damping for outside-in, plus **fly mode** (user:
   orbit alone was "terrible") — double-click the canvas to pointer-lock,
   then mouse look + WASD along the TRUE look direction (not walk-plane),

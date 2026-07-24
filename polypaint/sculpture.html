@@ -46,6 +46,10 @@
   #panel input[type=checkbox] { accent-color: #e94560; margin-left: 6px; }
   #panel select { background: #0d1320; color: #cfd8e3; border: 1px solid #232b3a;
                   border-radius: 4px; font: inherit; padding: 1px 4px; }
+  #panel button { background: #0d1320; color: #cfd8e3; border: 1px solid #232b3a;
+                  border-radius: 4px; font: inherit; padding: 1px 8px;
+                  cursor: pointer; margin-left: 6px; }
+  #panel button:hover { border-color: #e94560; }
   #panel .val { width: 4ch; text-align: right; color: #cfd8e3; }
   #message-box { position: fixed; inset: 0; display: none; z-index: 10;
                  align-items: center; justify-content: center; text-align: center;
@@ -87,6 +91,10 @@
     <option value="solid" selected>solid</option>
     <option value="ghost">ghost</option>
   </select></label>
+  <label>tour <select id="ctl-tour-mode">
+    <option value="orbit" selected>orbit</option>
+    <option value="weave">weave</option>
+  </select><button type="button" id="btn-tour-play" title="Play / stop the automated camera tour">&#9654;</button></label>
   <label>connect <select id="ctl-order">
     <option value="nearest" selected>nearest</option>
     <option value="angle">angle</option>
@@ -542,6 +550,7 @@ async function boot() {
             case 'ShiftRight': flyKeys.sprint = v; break;
             default: return;
         }
+        if (v && tour.playing) tourSetPlaying(false);
         ev.preventDefault();
     };
     document.addEventListener('keydown', ev => setKey(ev, 1));
@@ -559,6 +568,54 @@ async function boot() {
         camera.position.y += (flyKeys.u - flyKeys.d) * speed;
     };
     flight.tick = flyTick;
+
+    // automated tours: parametric camera paths, deterministic in t.
+    // orbit = exterior helical turntable (whole-form pass); weave = interior
+    // corkscrew with a breathing radius sweeping the full height (the
+    // close-up detail pass). Both follow the HEIGHT-SCALED geometry, so a
+    // squashed plate stack gets a low skimming pass instead of empty air.
+    const tour = { playing: false, t: 0 };
+    const tourBtn = document.getElementById('btn-tour-play');
+    const tourModeCtl = document.getElementById('ctl-tour-mode');
+    const tourPose = (mode, t, heightScale) => {
+        const hh = Math.max(0.06, 0.5 * heightScale);
+        if (mode === 'weave') {
+            const angle = t * 0.55;
+            const radius = 0.5 + 0.4 * Math.sin(t * 0.23);
+            const y = Math.sin(t * 0.11) * hh * 1.05;
+            return { pos: [Math.cos(angle) * radius, y, Math.sin(angle) * radius],
+                     look: [0, y * 0.6, 0] };
+        }
+        const angle = t * 0.35;
+        const y = Math.sin(t * 0.17) * (hh + 0.35);
+        return { pos: [Math.cos(angle) * 1.35, y, Math.sin(angle) * 1.35],
+                 look: [0, 0, 0] };
+    };
+    const tourTick = (dt) => {
+        if (!tour.playing) return;
+        tour.t += dt;
+        const p = tourPose(tourModeCtl.value, tour.t, sculpt.scale.y);
+        camera.position.set(p.pos[0], p.pos[1], p.pos[2]);
+        camera.lookAt(p.look[0], p.look[1], p.look[2]);
+    };
+    const tourSetPlaying = (on) => {
+        if (on && fly.isLocked) fly.unlock();
+        tour.playing = on;
+        controls.enabled = !on && !fly.isLocked;
+        if (tourBtn) tourBtn.textContent = on ? '\u25a0' : '\u25b6';
+        if (!on) {
+            const ahead = new THREE.Vector3();
+            camera.getWorldDirection(ahead);
+            controls.target.copy(camera.position).addScaledVector(ahead, 0.9);
+        }
+    };
+    tourBtn.addEventListener('click', () => tourSetPlaying(!tour.playing));
+    tourModeCtl.addEventListener('change', () => { tour.t = 0; });
+    // any manual camera interaction hands control back
+    renderer.domElement.addEventListener('pointerdown', () => {
+        if (tour.playing) tourSetPlaying(false);
+    });
+    fly.addEventListener('lock', () => { if (tour.playing) tourSetPlaying(false); });
     setHint();
 
     const updateStats = () => {
@@ -668,6 +725,7 @@ async function boot() {
         const now = performance.now();
         const dt = Math.min(0.1, (now - lastT) / 1000);
         lastT = now;
+        tourTick(dt);
         flyTick(dt);
         if (controls.enabled) controls.update();
         renderer.render(scene, camera);
@@ -675,7 +733,8 @@ async function boot() {
 
     window.__sculptureViewer = {
         scene, camera, renderer, points, ribbons, threads, sculpt, material, controls,
-        flight, count, clipped, gridN, degree,
+        flight, tour: { state: tour, tick: tourTick, pose: tourPose, setPlaying: tourSetPlaying },
+        count, clipped, gridN, degree,
     };
 }
 

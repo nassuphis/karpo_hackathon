@@ -1269,6 +1269,47 @@ class TestDeletePrefixNarrowing(unittest.TestCase):
         self.assertEqual(resp["statusCode"], 200)
 
 
+class TestStartSculptureHires(unittest.TestCase):
+    @patch("handler_storage.boto3")
+    @patch("handler_storage.s3")
+    def test_stamps_the_result_key_and_invokes_async(self, mock_s3, mock_boto3):
+        import handler_storage
+        resp = handler_storage.handler(_event("/start-sculpture-hires", {
+            "job_id": "compute_j1",
+            "preview_payload": {"preview_source_mode": "logical",
+                                "preview_source_size": 512,
+                                "sculpture_format": "u16",
+                                "degree": 9},
+        }), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        self.assertEqual(body["result_key"], "renders/compute_j1/sculpture_hires_result.json")
+        stamp = mock_s3.put_object.call_args.kwargs
+        self.assertEqual(stamp["Key"], "renders/compute_j1/sculpture_hires_result.json")
+        self.assertEqual(json.loads(stamp["Body"])["status"], "starting")
+        invoke = mock_boto3.client.return_value.invoke.call_args.kwargs
+        self.assertEqual(invoke["InvocationType"], "Event")
+        self.assertEqual(invoke["FunctionName"], "polypaint-render-lores-preview")
+        payload = json.loads(invoke["Payload"])
+        self.assertEqual(payload["job_id"], "compute_j1")
+        self.assertTrue(payload["sculpture"])
+        self.assertTrue(payload["sculpture_async"])
+        self.assertEqual(payload["preview_source_size"], 512)
+        self.assertEqual(payload["sculpture_format"], "u16")
+
+    @patch("handler_storage.boto3")
+    @patch("handler_storage.s3")
+    def test_rejects_bad_job_or_missing_payload(self, mock_s3, mock_boto3):
+        import handler_storage
+        resp = handler_storage.handler(_event("/start-sculpture-hires", {
+            "job_id": "../evil", "preview_payload": {}}), None)
+        self.assertEqual(resp["statusCode"], 400)
+        resp = handler_storage.handler(_event("/start-sculpture-hires", {
+            "job_id": "compute_j1"}), None)
+        self.assertEqual(resp["statusCode"], 400)
+        mock_boto3.client.return_value.invoke.assert_not_called()
+
+
 class TestSaveSculpture(unittest.TestCase):
     def _params(self, **over):
         p = {

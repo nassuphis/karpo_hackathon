@@ -1093,6 +1093,18 @@ def handler(event, context):
         sculpture_format = str(params.get("sculpture_format") or "f32").strip().lower()
         if sculpture_format not in ("f32", "u16"):
             raise RuntimeError(f"sculpture_format must be f32 or u16, got {sculpture_format!r}")
+        # hi-res sculptures run 2-3 minutes — past API Gateway's ~30s
+        # response ceiling — so they invoke async and publish their result
+        # to a well-known key the app polls (user-hit: the sync 512 call
+        # completed server-side while the browser saw only a dead request)
+        sculpture_async_key = ""
+        if sculpture_requested and parse_boolish(params.get("sculpture_async", False), False, strict=True, label="sculpture_async"):
+            sculpture_async_key = f"renders/{job_id}/sculpture_hires_result.json"
+            s3.put_object(
+                Bucket=BUCKET, Key=sculpture_async_key,
+                Body=json.dumps({"status": "running",
+                                 "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}).encode("utf-8"),
+                ContentType="application/json", CacheControl="no-cache")
         lores_bin_key = str(params.get("lores_bin_key") or "").strip()
         if not lores_bin_key and source_mode == "lores":
             raise RuntimeError("lores_bin_key is required")
@@ -1481,6 +1493,16 @@ def handler(event, context):
             f"total={total_ms / 1000.0:.2f}s"
         )
 
+        if sculpture_async_key:
+            s3.put_object(
+                Bucket=BUCKET, Key=sculpture_async_key,
+                Body=json.dumps({
+                    "status": "done",
+                    "sculpture": sculpture_export,
+                    "n_solves": int(step_count),
+                    "total_ms": total_ms,
+                }).encode("utf-8"),
+                ContentType="application/json", CacheControl="no-cache")
         return ok_response({
             "image_base64": image_b64,
             "palette_image_base64": palette_image_b64,
@@ -1525,6 +1547,16 @@ def handler(event, context):
             },
         })
     except Exception as exc:
+        try:
+            if (params.get("job_id") and parse_boolish(params.get("sculpture_async", False), False)
+                    and parse_boolish(params.get("sculpture", False), False)):
+                s3.put_object(
+                    Bucket=BUCKET,
+                    Key=f"renders/{params['job_id']}/sculpture_hires_result.json",
+                    Body=json.dumps({"status": "error", "detail": str(exc)}).encode("utf-8"),
+                    ContentType="application/json", CacheControl="no-cache")
+        except Exception:
+            pass
         return _json_response(500, {
             "error": "render lores preview failed",
             "phase": "render-lores-preview",

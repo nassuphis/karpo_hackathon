@@ -92,7 +92,8 @@
       "/save-vision-config",
       "/share-mosaic",
       "/snapshot-book-cover",
-      "/solve-score-chain-to-source"
+      "/solve-score-chain-to-source",
+      "/start-sculpture-hires"
     ]
   },
   "deploy": {
@@ -178,6 +179,7 @@
       "/snapshot-book-cover",
       "/solve-proximity",
       "/solve-score-chain-to-source",
+      "/start-sculpture-hires",
       "/sweep-cm",
       "/sweep-mt",
       "/tiff-compat",
@@ -302,7 +304,8 @@
       "/save-vision-config",
       "/share-mosaic",
       "/snapshot-book-cover",
-      "/solve-score-chain-to-source"
+      "/solve-score-chain-to-source",
+      "/start-sculpture-hires"
     ]
   },
   "version": 1

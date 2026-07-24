@@ -1058,10 +1058,17 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
             <div class="subtab-bar render-artifact-family-tabs" role="tablist" aria-label="Render artifact family tabs">${familyTabs}</div>
             <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap">
-                <input type="text" id="sculpture-title" placeholder="sculpture title (optional)" style="flex:0 1 340px; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:5px 8px; font-family:monospace; font-size:12px">
+                <button type="button" class="btn-secondary btn-inline" id="btn-render-lores-sculpture" onclick="runRenderLoresSculpture()" title="Generate the sculpture from the current Solve-score settings and open the viewer">Sculpture</button>
+                <select id="render-sculpture-n" title="Resolution: preview follows the source settings; numeric sizes subsample the FULL solve async (logical mode, u16)" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
+                    <option value="preview" selected>preview</option>
+                    <option value="384">384&#178;</option>
+                    <option value="512">512&#178;</option>
+                </select>
+                <span style="border-left:1px solid #333; height:18px"></span>
+                <input type="text" id="sculpture-title" placeholder="sculpture title (optional)" style="flex:0 1 300px; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:5px 8px; font-family:monospace; font-size:12px">
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-save" onclick="runSculptureSave()">Save</button>
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)">Refresh</button>
-                <span style="font-size:11px; color:#666">Save snapshots the sculpture you generated with the Sculpture button — exactly the data and settings of the open viewer, no re-solve, no new window.</span>
+                <span style="font-size:11px; color:#666; flex-basis:100%">Sculpture generates from the current Solve-score settings and opens the viewer (hi-res sizes run async, ~2-3 min). Save snapshots that run — exactly the data and settings of the open viewer.</span>
                 <span id="sculpture-view-hint" style="font-size:11px; color:#8899aa; flex-basis:100%"></span>
             </div>
             <div id="sculpture-list" style="max-height:520px; overflow-y:auto; border:1px solid #333; border-radius:4px">Loading…</div>

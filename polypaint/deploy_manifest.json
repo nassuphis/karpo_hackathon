@@ -157,6 +157,7 @@
     "/list-deepzoom",
     "/list-sculptures",
     "/save-sculpture",
+    "/start-sculpture-hires",
     "/list-sheets",
     "/list-books",
     "/fetch-book",

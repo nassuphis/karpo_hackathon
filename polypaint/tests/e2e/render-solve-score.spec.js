@@ -1834,19 +1834,36 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#render-log')).toContainText('Autolevels complete: autolevels_done (13.0s)');
   });
 
-  test('Sculpture button posts sculpture:true and opens the viewer with data links', async ({ page }) => {
+  test('Sculpture generate: preview mode posts direct; hi-res goes async via start+poll', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
+    await seedRenderPopupState(page);
     await page.evaluate(() => {
       setColorMode('solve_score');
       document.getElementById('render-results-dir').value = 'job_sc';
       const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
       window._loresBodies = [];
+      window._startCalls = [];
       window._openCount = 0;
       window._fakeWin = { closed: false, location: '', close() { this.closed = true; } };
       window.open = function () { window._openCount++; return window._fakeWin; };
+      const SC = {
+        roots_key: 'renders/job_sc/sculpture_roots.bin',
+        roots_url: 'https://bkt.s3.eu-west-2.amazonaws.com/renders/job_sc/sculpture_roots.bin?v=1',
+        palette_key: 'renders/job_sc/sculpture_palette.png',
+        palette_url: 'https://bkt.s3.eu-west-2.amazonaws.com/renders/job_sc/sculpture_palette.png?v=1',
+        format: 'u16', grid_n: 512, degree: 5, step_count: 262144, pass_count: 1,
+        roots_bytes: 5242880,
+        viewport: { min_re: -2, max_re: 2, min_im: -1.5, max_im: 2.5 },
+        palette: 'inferno',
+      };
+      window._SC = SC;
       window.lambdaPost = async function (name, body, path) {
         if (name === 'storage' && path === '/detail') {
-          return { calc: { exists: true, degree: 5, n_coeffs: 6, N: 100, lores: { bin_key: 'renders/job_sc/lores.bin' } } };
+          return { calc: { exists: true, degree: 5, n_coeffs: 6, N: 1000, lores: { bin_key: 'renders/job_sc/lores.bin' } } };
+        }
+        if (name === 'storage' && path === '/start-sculpture-hires') {
+          window._startCalls.push(JSON.parse(JSON.stringify(body)));
+          return { result_key: 'renders/job_sc/sculpture_hires_result.json' };
         }
         if (name === 'render-lores-preview') {
           window._loresBodies.push(JSON.parse(JSON.stringify(body)));
@@ -1855,57 +1872,56 @@ test.describe('Solve Score UI', () => {
             palette_image_base64: PNG, palette_content_type: 'image/png', palette_pix: 1,
             emission_histograms: [], raster: { roots_plotted: 10 }, timings_ms: { total: 5 },
             source: { mode: 'lores' }, nonzero_pixels: 1, logs: [],
-            sculpture: {
-              roots_key: 'renders/job_sc/lores.bin',
-              roots_url: 'https://bkt.s3.eu-west-2.amazonaws.com/renders/job_sc/lores.bin',
-              palette_key: 'renders/job_sc/sculpture_palette.png',
-              palette_url: 'https://bkt.s3.eu-west-2.amazonaws.com/renders/job_sc/sculpture_palette.png',
-              grid_n: 60, degree: 5, step_count: 3600, pass_count: 1, roots_bytes: 144000,
-              viewport: { min_re: -2, max_re: 2, min_im: -1.5, max_im: 2.5 },
-              palette: 'inferno',
-            },
+            sculpture: { ...SC, format: 'f32', grid_n: 60, step_count: 3600 },
           };
         }
         return {};
       };
+      // the hi-res poll reads the public result key
+      const origFetch = window.fetch.bind(window);
+      window.fetch = function (url, opts) {
+        if (String(url).includes('sculpture_hires_result.json')) {
+          return Promise.resolve({ ok: true, json: async () => ({ status: 'done', sculpture: window._SC }) });
+        }
+        return origFetch(url, opts);
+      };
     });
 
+    await page.click('[data-render-family="sculpture"]');
+    await expect(page.locator('#btn-render-lores-sculpture')).toBeVisible();
+
+    // preview mode: the direct synchronous call, no async start
+    await page.click('#btn-render-lores-sculpture');
+    await expect(page.locator('#btn-render-lores-sculpture')).toHaveText('\u2713 Sculpture');
+    let st = await page.evaluate(() => ({
+      bodies: window._loresBodies.length, starts: window._startCalls.length,
+      opens: window._openCount, loc: String(window._fakeWin.location),
+    }));
+    expect(st.bodies).toBe(1);
+    expect(st.starts).toBe(0);
+    expect(st.opens).toBe(1);
+    expect(st.loc.startsWith('sculpture.html#')).toBe(true);
+
+    // hi-res 512: async start + poll; NO direct lores call; fragment carries
+    // the u16 format and the polled links
     await page.selectOption('#render-sculpture-n', '512');
     await page.click('#btn-render-lores-sculpture');
-    // busy then lingering result feedback on the button itself
     await expect(page.locator('#btn-render-lores-sculpture')).toHaveText('\u2713 Sculpture');
-    const st = await page.evaluate(() => ({
-      bodies: window._loresBodies.slice(),
-      opens: window._openCount,
-      url: String(window._fakeWin.location),
+    st = await page.evaluate(() => ({
+      bodies: window._loresBodies.length, starts: window._startCalls.slice(),
+      opens: window._openCount, loc: String(window._fakeWin.location),
     }));
-    expect(st.bodies).toHaveLength(1);
-    expect(st.bodies[0].sculpture).toBe(true);
-    // the hi-res selector forces the logical subsample + u16 quantization
-    expect(st.bodies[0].preview_source_mode).toBe('logical');
-    expect(st.bodies[0].preview_source_size).toBe(512);
-    expect(st.bodies[0].sculpture_format).toBe('u16');
-    expect(st.opens).toBe(1);
-    expect(st.url.startsWith('sculpture.html#')).toBe(true);
-    const frag = new URLSearchParams(st.url.split('#')[1]);
-    expect(frag.get('r')).toBe('https://bkt.s3.eu-west-2.amazonaws.com/renders/job_sc/lores.bin');
-    expect(frag.get('p')).toBe('https://bkt.s3.eu-west-2.amazonaws.com/renders/job_sc/sculpture_palette.png');
-    expect(frag.get('n')).toBe('60');
-    expect(frag.get('d')).toBe('5');
-    expect(frag.get('s')).toBe('3600');
-    expect(frag.get('x0')).toBe('-2');
-    expect(frag.get('x1')).toBe('2');
-    expect(frag.get('y0')).toBe('-1.5');
-    expect(frag.get('y1')).toBe('2.5');
-    expect(frag.get('t')).toContain('job_sc');
-
-    // the plain Preview button must keep its payload sculpture-free
-    await page.click('#btn-render-lores-preview');
-    await expect(page.locator('#render-lores-preview-status')).toHaveText('done');
-    const bodies = await page.evaluate(() => window._loresBodies.slice());
-    expect(bodies).toHaveLength(2);
-    expect('sculpture' in bodies[1]).toBe(false);
-    expect(await page.evaluate(() => window._openCount)).toBe(1);
+    expect(st.bodies).toBe(1);                        // unchanged — no sync call
+    expect(st.starts).toHaveLength(1);
+    expect(st.starts[0].job_id).toBe('job_sc');
+    expect(st.starts[0].preview_payload.preview_source_mode).toBe('logical');
+    expect(st.starts[0].preview_payload.preview_source_size).toBe(512);
+    expect(st.starts[0].preview_payload.sculpture_format).toBe('u16');
+    expect(st.opens).toBe(2);
+    const frag = new URLSearchParams(st.loc.split('#')[1]);
+    expect(frag.get('fmt')).toBe('u16');
+    expect(frag.get('n')).toBe('512');
+    expect(frag.get('r')).toContain('sculpture_roots.bin');
   });
 
   test('Sculpture tab: job-scoped list, snapshot save, delete', async ({ page }) => {

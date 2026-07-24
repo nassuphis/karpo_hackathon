@@ -1703,6 +1703,8 @@ def handler(event, context):
         return _handle_storage_route(handle_list_sculptures, event)
     elif path.endswith("/save-sculpture"):
         return _handle_storage_route(handle_save_sculpture, event)
+    elif path.endswith("/start-sculpture-hires"):
+        return _handle_storage_route(handle_start_sculpture_hires, event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -7234,6 +7236,37 @@ def _sculpture_viewer_template():
 
 
 _SCULPTURE_JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def handle_start_sculpture_hires(event):
+    """Kick a hi-res sculpture generation ASYNC: 512-class runs take 2-3
+    minutes — far past API Gateway's ~30s response ceiling — so storage
+    async-invokes the lores lambda and the app polls the well-known result
+    key the run publishes (running/done/error)."""
+    params = parse_body(event)
+    job_id = str(params.get("job_id") or "").strip()
+    if not _SCULPTURE_JOB_ID.fullmatch(job_id):
+        raise RuntimeError("start-sculpture-hires requires a valid job_id")
+    payload = params.get("preview_payload")
+    if not isinstance(payload, dict):
+        raise RuntimeError("start-sculpture-hires requires preview_payload")
+    payload = dict(payload)
+    payload["job_id"] = job_id
+    payload["sculpture"] = True
+    payload["sculpture_async"] = True
+    result_key = f"renders/{job_id}/sculpture_hires_result.json"
+    # pre-stamp the key so a poller can never read the PREVIOUS run's result
+    s3.put_object(
+        Bucket=BUCKET, Key=result_key,
+        Body=json.dumps({"status": "starting",
+                         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}).encode("utf-8"),
+        ContentType="application/json", CacheControl="no-cache")
+    boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")).invoke(
+        FunctionName=os.environ.get("RENDER_LORES_PREVIEW_FUNCTION", "polypaint-render-lores-preview"),
+        InvocationType="Event",
+        Payload=json.dumps(payload).encode("utf-8"),
+    )
+    return ok_response({"result_key": result_key})
 
 
 def handle_save_sculpture(event):

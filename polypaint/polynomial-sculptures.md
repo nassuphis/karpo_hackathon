@@ -303,7 +303,23 @@ list is session-cached; the family registers in `_renderArtifacts` so
 the active-family reset never bounces off it (the rebuild resets
 unknown families to color).
 
-## Hi-res sculptures (u16)
+## Hi-res sculptures (u16, ASYNC)
+
+Hi-res runs take 2–3 minutes (measured: 110–188s at 512² in the
+lambda) — far past API Gateway's ~30s response ceiling, which ate the
+responses of the first synchronous attempt while the lambda finished
+invisibly (user-hit: "minutes, no joy"; each retry stacked another
+full run). The flow is now async: the app posts
+`/start-sculpture-hires` (storage pre-stamps
+`renders/{job}/sculpture_hires_result.json` with `starting` so pollers
+can never read a previous run, then async-invokes the lores lambda);
+the run publishes `running` → `done`+sculpture block (or `error`) to
+that key; the app polls it every 3s (same-origin public read, cache-
+busted) with elapsed feedback on the button, up to 6 minutes. The
+Sculpture button + resolution selector live in the SCULPTURE TAB's
+create block (user: "it starts the instance Save snapshots — it
+belongs with Save"), not beside Preview.
+
 
 The resolution selector beside the Sculpture button (`preview` / 384² /
 512²): numeric sizes force the LOGICAL source — a subsample of the FULL

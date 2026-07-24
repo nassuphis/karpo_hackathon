@@ -433,6 +433,8 @@ async function runRenderLoresPreview(opts = {}) {
     const renderStatusEl = document.getElementById('render-status');
     const canvas = document.getElementById('render-lores-preview-canvas');
     const sculpture = !!(opts && opts.sculpture);
+    const nSel = document.getElementById('render-sculpture-n');
+    const hiresN = sculpture && nSel && nSel.value !== 'preview' ? parseInt(nSel.value, 10) : 0;
     const sculptureBtn = document.getElementById('btn-render-lores-sculpture');
     let sculptureWin = null;
     let runFailed = false;
@@ -540,8 +542,6 @@ async function runRenderLoresPreview(opts = {}) {
         };
         if (sculpture) payload.sculpture = true;
         if (sculpture) {
-            const nSel = document.getElementById('render-sculpture-n');
-            const hiresN = nSel && nSel.value !== 'preview' ? parseInt(nSel.value, 10) : 0;
             if (hiresN) {
                 // hi-res: subsample the FULL solve (logical mode, no solving)
                 // and quantize the dump to u16 — half the bytes at 4x steps
@@ -561,8 +561,12 @@ async function runRenderLoresPreview(opts = {}) {
             ? 'saved lores artifacts'
             : `${previewSourceMode} ${previewSourceSize}x${previewSourceSize}`;
         log(`Render preview: colorizing ${sourceStartLabel} at ${previewPix}px...`, '', 'render-log');
-        const result = await lambdaPost('render-lores-preview', payload);
-        if (!result || !result.image_base64) throw new Error('preview response missing image_base64');
+        let result = { emission_histograms: [], logs: [], raster: {}, timings_ms: {}, source: {} };
+        if (!hiresN) {
+            result = await lambdaPost('render-lores-preview', payload);
+            if (!result || !result.image_base64) throw new Error('preview response missing image_base64');
+        }
+        if (!hiresN) {
         _setRenderLoresPreviewEmissionHistograms(result.emission_histograms || result.solve_score?.emission_histograms || []);
         await _setRenderLoresPreviewPaletteImage(result);
 
@@ -598,6 +602,36 @@ async function runRenderLoresPreview(opts = {}) {
             renderStatusEl.className = 'status success';
         }
         log(`Render preview: ${msg}`, 'ok', 'render-log');
+        }
+        if (sculpture && hiresN) {
+            // hi-res runs 2-3 minutes — past API Gateway's ~30s ceiling —
+            // so the job runs async and we poll its published result key
+            await lambdaPost('storage', { job_id: p.jobId, preview_payload: payload }, '/start-sculpture-hires');
+            const resultUrl = _publicStorageUrl(`renders/${p.jobId}/sculpture_hires_result.json`);
+            const startedAt = Date.now();
+            let polled = null;
+            for (;;) {
+                const elapsed = Math.round((Date.now() - startedAt) / 1000);
+                if (elapsed > 360) throw new Error('hi-res sculpture timed out after 6 minutes');
+                if (sculptureBtn) sculptureBtn.textContent = `Sculpture ${elapsed}s\u2026`;
+                if (statusEl) statusEl.textContent = `hi-res ${elapsed}s`;
+                let st = null;
+                try {
+                    const resp = await fetch(`${resultUrl}?v=${Date.now()}`, { cache: 'no-store' });
+                    if (resp.ok) st = await resp.json();
+                } catch (err) { /* transient — keep polling */ }
+                if (st && st.status === 'done') { polled = st; break; }
+                if (st && st.status === 'error') throw new Error(st.detail || 'hi-res sculpture failed');
+                await new Promise((r) => setTimeout(r, 3000));
+            }
+            result = { ...result, sculpture: polled.sculpture };
+            log(`Sculpture hi-res done in ${Math.round((Date.now() - startedAt) / 1000)}s`, 'ok', 'render-log');
+            if (statusEl) statusEl.textContent = 'done';
+            if (renderStatusEl) {
+                renderStatusEl.textContent = 'Hi-res sculpture ready';
+                renderStatusEl.className = 'status success';
+            }
+        }
         if (sculpture) {
             const sc = result.sculpture || {};
             const vp = sc.viewport || {};

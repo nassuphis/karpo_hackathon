@@ -1903,71 +1903,49 @@ test.describe('Solve Score UI', () => {
     expect(await page.evaluate(() => window._openCount)).toBe(1);
   });
 
-  test('Sculpture tab: list, create with save payload, delete', async ({ page }) => {
+  test('Sculpture tab: job-scoped list, snapshot save, delete', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page);
     await page.evaluate(() => {
       setColorMode('solve_score');
-      const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
       window._storageCalls = [];
-      window._loresBodies = [];
-      window._openedUrls = [];
-      window._fakeWin = { closed: false, location: '', close() { this.closed = true; } };
-      window.open = function (url) {
-        window._openedUrls.push(url || '');
-        return window._fakeWin;
-      };
+      window._openCount = 0;
+      window.open = function () { window._openCount++; return { closed: false, location: '' }; };
       window.confirm = () => true;
-      window._sculptureList = [{
-        id: 'scu_aaa', title: 'First Piece', job_id: 'test_job', grid_n: 60, degree: 9,
-        palette: 'inferno', created_at: '2026-07-24T10:00:00Z', prefix: 'sculptures/scu_aaa/',
-      }];
+      window._sculptureList = [
+        { id: 'scu_mine', title: 'Mine', job_id: 'test_job', grid_n: 60, degree: 9,
+          palette: 'inferno', created_at: '2026-07-24T10:00:00Z', prefix: 'sculptures/scu_mine/' },
+        { id: 'scu_other', title: 'Foreign', job_id: 'other_job', grid_n: 30, degree: 5,
+          palette: 'reef', created_at: '2026-07-24T11:00:00Z', prefix: 'sculptures/scu_other/' },
+      ];
       window.lambdaPost = async function (name, body, path) {
         if (name === 'storage' && path === '/list-sculptures') {
           window._storageCalls.push(['list']);
           return { sculptures: window._sculptureList.slice(), count: window._sculptureList.length };
         }
+        if (name === 'storage' && path === '/save-sculpture') {
+          window._storageCalls.push(['save', JSON.parse(JSON.stringify(body))]);
+          return { sculpture: {
+            id: 'scu_new', title: body.title, job_id: body.job_id,
+            grid_n: body.grid_n, degree: body.degree, palette: body.palette,
+            created_at: '2026-07-25T10:00:00Z', prefix: 'sculptures/scu_new/',
+            share_url: 'https://bkt.s3.r.amazonaws.com/sculptures/scu_new/viewer.html',
+            view: body.view,
+          } };
+        }
         if (name === 'storage' && path === '/delete-prefix') {
           window._storageCalls.push(['delete', body.prefix]);
           return { prefix: body.prefix, deleted: 4 };
         }
-        if (name === 'storage' && path === '/detail') {
-          return { calc: { exists: true, degree: 5, n_coeffs: 6, N: 100, lores: { bin_key: 'renders/test_job/lores.bin' } } };
-        }
-        if (name === 'render-lores-preview') {
-          window._loresBodies.push(JSON.parse(JSON.stringify(body)));
-          window._sculptureList.unshift({
-            id: 'scu_bbb', title: body.sculpture_title, job_id: 'test_job', grid_n: 60, degree: 5,
-            palette: 'inferno', created_at: '2026-07-25T10:00:00Z', prefix: 'sculptures/scu_bbb/',
-          });
-          return {
-            image_base64: PNG, content_type: 'image/png',
-            palette_image_base64: PNG, palette_content_type: 'image/png', palette_pix: 1,
-            emission_histograms: [], raster: { roots_plotted: 10 }, timings_ms: { total: 5 },
-            source: { mode: 'lores' }, nonzero_pixels: 1, logs: [],
-            sculpture: {
-              id: 'scu_bbb', title: body.sculpture_title, prefix: 'sculptures/scu_bbb/',
-              share_url: 'https://bkt.s3.r.amazonaws.com/sculptures/scu_bbb/viewer.html',
-              roots_key: 'sculptures/scu_bbb/roots.bin',
-              roots_url: 'https://bkt.s3.r.amazonaws.com/sculptures/scu_bbb/roots.bin',
-              palette_key: 'sculptures/scu_bbb/palette.png',
-              palette_url: 'https://bkt.s3.r.amazonaws.com/sculptures/scu_bbb/palette.png',
-              grid_n: 60, degree: 5, step_count: 3600, pass_count: 1, roots_bytes: 144000,
-              viewport: { min_re: -2, max_re: 2, min_im: -2, max_im: 2 },
-              palette: 'inferno',
-            },
-          };
-        }
         return {};
       };
-    });
-
-    await page.click('[data-render-family="sculpture"]');
-    await expect(page.locator('#sculpture-list')).toContainText('First Piece', { timeout: 5000 });
-    await expect(page.locator('#sculpture-list')).toContainText('60×60 · d9');
-
-    // a tuned viewer window is open: Create must capture its live settings
-    await page.evaluate(() => {
+      // the ephemeral run Save snapshots (set by the Sculpture button flow)
+      window._lastSculptureData = {
+        job_id: 'test_job', grid_n: 60, degree: 5, step_count: 3600, pass_count: 1,
+        viewport: { min_re: -2, max_re: 2, min_im: -1.5, max_im: 2.5 },
+        palette: 'inferno', roots_bytes: 144000,
+      };
+      // a tuned viewer window is open: Save captures its live settings
       const fakeCtl = (value) => ({ value });
       const fakeChk = (checked) => ({ checked });
       const ctls = {
@@ -1983,31 +1961,42 @@ test.describe('Solve Score UI', () => {
         __sculptureViewer: { tour: { state: { playing: true } } },
       };
     });
+
+    await page.click('[data-render-family="sculpture"]');
+    // job-scoped: only this job's sculpture shows; the foreign one is hidden
+    await expect(page.locator('#sculpture-list')).toContainText('Mine', { timeout: 5000 });
+    await expect(page.locator('#sculpture-list')).not.toContainText('Foreign');
+
     await page.fill('#sculpture-title', 'Second Piece');
-    await page.click('#btn-sculpture-create');
-    await expect(page.locator('#btn-sculpture-create')).toHaveText('\u2713 Created');
+    await page.click('#btn-sculpture-save');
+    await expect(page.locator('#btn-sculpture-save')).toHaveText('\u2713 Saved');
     const st = await page.evaluate(() => ({
-      bodies: window._loresBodies.slice(),
-      openLoc: String(window._fakeWin.location),
+      calls: window._storageCalls.filter(c => c[0] === 'save'),
+      opens: window._openCount,
     }));
-    expect(st.bodies).toHaveLength(1);
-    expect(st.bodies[0].sculpture).toBe(true);
-    expect(st.bodies[0].sculpture_save).toBe(true);
-    expect(st.bodies[0].sculpture_title).toBe('Second Piece');
-    expect(st.bodies[0].sculpture_view).toEqual({
-      point: 14, height: 0.35, slices: 11,
-      show: { points: false, ribbons: true, threads: true },
-      style: 'ghost', order: 'angle', tour: 'weave', lenq: 63, zaxis: 't1',
-      zlo: 0.2, zhi: 0.9,
+    expect(st.calls).toHaveLength(1);
+    // snapshot payload: the ephemeral run's identity + the captured view —
+    // no re-solve fields, and NO window opened by the save
+    expect(st.calls[0][1]).toEqual({
+      job_id: 'test_job', title: 'Second Piece',
+      grid_n: 60, degree: 5, step_count: 3600,
+      viewport: { min_re: -2, max_re: 2, min_im: -1.5, max_im: 2.5 },
+      palette: 'inferno',
+      view: {
+        point: 14, height: 0.35, slices: 11,
+        show: { points: false, ribbons: true, threads: true },
+        style: 'ghost', order: 'angle', tour: 'weave', lenq: 63, zaxis: 't1',
+        zlo: 0.2, zhi: 0.9,
+      },
     });
-    expect(st.openLoc).toBe('https://bkt.s3.r.amazonaws.com/sculptures/scu_bbb/viewer.html');
+    expect(st.opens).toBe(0);
     await expect(page.locator('#sculpture-list')).toContainText('Second Piece');
 
-    // delete the first row (Second Piece is newest-first after refresh)
+    // delete the new row
     await page.locator('#sculpture-list button', { hasText: 'Delete' }).first().click();
     const calls = await page.evaluate(() => window._storageCalls.slice());
-    expect(calls.filter(c => c[0] === 'delete')).toEqual([['delete', 'sculptures/scu_bbb/']]);
+    expect(calls.filter(c => c[0] === 'delete')).toEqual([['delete', 'sculptures/scu_new/']]);
     await expect(page.locator('#sculpture-list')).not.toContainText('Second Piece');
-    await expect(page.locator('#sculpture-list')).toContainText('First Piece');
+    await expect(page.locator('#sculpture-list')).toContainText('Mine');
   });
 });

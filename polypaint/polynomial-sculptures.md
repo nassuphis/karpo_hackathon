@@ -207,10 +207,25 @@ truncated bin, nothing inside the viewport, no WebGL).
 
 ## Saved sculptures (the Sculpture tab)
 
-A sixth family tab in the Render artifact panel (after PDF): a create
-block plus the global list, DeepZoom-style. **Create** runs the lores
-solve with the current Solve-score settings (`sculpture_save: true` +
-`sculpture_title`) and publishes a self-contained prefix:
+A sixth family tab in the Render artifact panel (after PDF), scoped to
+the CURRENT job like every other family (the server list is global;
+the client filters — mixing jobs into a per-job panel was a user-caught
+design bug). The flow is snapshot-save, ONE window ever (the original
+Create both re-solved and opened a second window — "atrocious", and the
+re-solve could silently diverge from the tuned viewer):
+
+1. **Sculpture** button → the one ephemeral viewer. Tune it; start a
+   tour if the share should autoplay. Viewers are static pages — no
+   server process; close tabs freely.
+2. Sculpture tab → **Save**: a storage-side S3 COPY of exactly the
+   ephemeral objects the viewer is showing (`/save-sculpture`; source
+   keys derived from job_id server-side, never client-supplied; the
+   head-checked size must match grid×degree or it demands a fresh run)
+   plus the live view capture. No re-solve, no new window — a row
+   appears. Saved sculptures are immutable snapshots; Save again for a
+   new version.
+
+The durable prefix:
 
 ```
 sculptures/{scu_<ms-base36>}/

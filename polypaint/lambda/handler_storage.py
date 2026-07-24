@@ -1701,6 +1701,8 @@ def handler(event, context):
         return _handle_storage_route(handle_list_deepzoom, event)
     elif path.endswith("/list-sculptures"):
         return _handle_storage_route(handle_list_sculptures, event)
+    elif path.endswith("/save-sculpture"):
+        return _handle_storage_route(handle_save_sculpture, event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -7144,6 +7146,183 @@ def handle_list_sheets(event):
         sheets = [row for row in pool.map(manifest_row, prefixes) if row]
     sheets.sort(key=lambda r: r["modified"], reverse=True)
     return ok_response({"sheets": sheets})
+
+
+def _b36(n):
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    n = int(n)
+    while n:
+        out = digits[n % 36] + out
+        n //= 36
+    return out or "0"
+
+
+def _sculpture_title(raw, job_id):
+    title = "".join(ch for ch in str(raw or "").strip() if ch.isprintable())[:80]
+    return title or f"sculpture {job_id}"
+
+
+def _sculpture_view(raw):
+    """Whitelist-sanitize the captured viewer settings for meta.json. The
+    viewer re-validates on boot, but the meta must never carry junk."""
+    if not isinstance(raw, dict):
+        return None
+    view = {}
+
+    def _num(key, lo, hi):
+        try:
+            v = float(raw.get(key))
+        except (TypeError, ValueError):
+            return None
+        return v if lo <= v <= hi else None
+
+    point = _num("point", 1, 40)
+    if point is not None:
+        view["point"] = int(round(point))
+    height = _num("height", 0, 1)
+    if height is not None:
+        view["height"] = round(height, 3)
+    slices = _num("slices", 0, 64)
+    if slices is not None:
+        view["slices"] = int(round(slices))
+    show = raw.get("show")
+    if isinstance(show, dict):
+        view["show"] = {k: bool(show.get(k)) for k in ("points", "ribbons", "threads")}
+    if raw.get("style") in ("solid", "ghost"):
+        view["style"] = raw["style"]
+    if raw.get("order") in ("nearest", "angle", "file"):
+        view["order"] = raw["order"]
+    if raw.get("tour") in ("off", "orbit", "weave"):
+        view["tour"] = raw["tour"]
+    lenq = _num("lenq", 0, 100)
+    if lenq is not None:
+        view["lenq"] = int(round(lenq))
+    if raw.get("zaxis") in ("t1", "t2"):
+        view["zaxis"] = raw["zaxis"]
+    zlo = _num("zlo", 0, 1)
+    zhi = _num("zhi", 0, 1)
+    if zlo is not None and zhi is not None and zlo > zhi:
+        zlo = zhi
+    if zlo is not None:
+        view["zlo"] = round(zlo, 3)
+    if zhi is not None:
+        view["zhi"] = round(zhi, 3)
+    return view or None
+
+
+def _sculpture_viewer_template():
+    """The frozen viewer copied into every saved sculpture prefix. Deployed
+    zips carry sculpture.html at the package root; the repo keeps it one
+    level above lambda/."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (os.path.join(here, "sculpture.html"),
+                      os.path.join(here, "..", "sculpture.html")):
+        if os.path.exists(candidate):
+            with open(candidate, "rb") as fh:
+                return fh.read()
+    raise RuntimeError("sculpture.html viewer template not packaged with this lambda")
+
+
+_SCULPTURE_JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def handle_save_sculpture(event):
+    """Persist the CURRENT ephemeral sculpture as a durable share: copy the
+    renders/{job}/sculpture_* objects (exactly what the tuned viewer shows —
+    no re-solve) into a self-contained sculptures/{id}/ prefix with a frozen
+    viewer copy and a meta.json carrying geometry + the captured view."""
+    params = parse_body(event)
+    job_id = str(params.get("job_id") or "").strip()
+    if not _SCULPTURE_JOB_ID.fullmatch(job_id):
+        raise RuntimeError("save-sculpture requires a valid job_id")
+
+    def _int_field(name, lo, hi):
+        try:
+            v = int(params.get(name))
+        except (TypeError, ValueError):
+            raise RuntimeError(f"save-sculpture requires integer {name}")
+        if not (lo <= v <= hi):
+            raise RuntimeError(f"save-sculpture {name} out of range: {v}")
+        return v
+
+    grid_n = _int_field("grid_n", 1, 4096)
+    degree = _int_field("degree", 1, 255)
+    step_count = _int_field("step_count", 1, 4096 * 4096)
+    pass_count = max(1, step_count // (grid_n * grid_n))
+    vp_raw = params.get("viewport") or {}
+    viewport = {}
+    for key in ("min_re", "max_re", "min_im", "max_im"):
+        try:
+            viewport[key] = float(vp_raw.get(key))
+        except (TypeError, ValueError):
+            raise RuntimeError(f"save-sculpture viewport missing {key}")
+        if not math.isfinite(viewport[key]):
+            raise RuntimeError(f"save-sculpture viewport {key} not finite")
+    if not (viewport["max_re"] > viewport["min_re"] and viewport["max_im"] > viewport["min_im"]):
+        raise RuntimeError("save-sculpture viewport is degenerate")
+
+    # the source is DERIVED from job_id — the ephemeral objects the open
+    # viewer is showing; clients cannot point this at arbitrary keys
+    src_roots = f"renders/{job_id}/sculpture_roots.bin"
+    src_palette = f"renders/{job_id}/sculpture_palette.png"
+    try:
+        roots_bytes = int(s3.head_object(Bucket=BUCKET, Key=src_roots)["ContentLength"])
+        s3.head_object(Bucket=BUCKET, Key=src_palette)
+    except Exception:
+        raise RuntimeError("no ephemeral sculpture data for this job — press Sculpture first")
+    if roots_bytes != step_count * degree * 2 * 4:
+        raise RuntimeError(
+            f"ephemeral roots size {roots_bytes} does not match grid/degree "
+            "— re-run Sculpture before saving")
+
+    sid = "scu_" + _b36(int(time.time() * 1000))
+    title = _sculpture_title(params.get("title"), job_id)
+    sprefix = f"sculptures/{sid}/"
+    cache_forever = "public, max-age=31536000, immutable"
+    s3.copy_object(
+        Bucket=BUCKET, Key=sprefix + "roots.bin",
+        CopySource={"Bucket": BUCKET, "Key": src_roots},
+        MetadataDirective="REPLACE",
+        ContentType="application/octet-stream", CacheControl=cache_forever)
+    s3.copy_object(
+        Bucket=BUCKET, Key=sprefix + "palette.png",
+        CopySource={"Bucket": BUCKET, "Key": src_palette},
+        MetadataDirective="REPLACE",
+        ContentType="image/png", CacheControl=cache_forever)
+    meta = {
+        "version": 1,
+        "id": sid,
+        "title": title,
+        "job_id": job_id,
+        "grid_n": grid_n,
+        "degree": degree,
+        "step_count": step_count,
+        "pass_count": pass_count,
+        "roots_key": "roots.bin",
+        "palette_key": "palette.png",
+        "roots_bytes": roots_bytes,
+        "viewport": viewport,
+        "palette": "".join(ch for ch in str(params.get("palette") or "") if ch.isprintable())[:64],
+        "score_display": "".join(ch for ch in str(params.get("score_display") or "") if ch.isprintable())[:160],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    view = _sculpture_view(params.get("view"))
+    if view:
+        meta["view"] = view
+    s3.put_object(
+        Bucket=BUCKET, Key=sprefix + "meta.json",
+        Body=json.dumps(meta).encode("utf-8"),
+        ContentType="application/json", CacheControl="no-cache")
+    s3.put_object(
+        Bucket=BUCKET, Key=sprefix + "viewer.html",
+        Body=_sculpture_viewer_template(),
+        ContentType="text/html", CacheControl=cache_forever)
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    out = dict(meta)
+    out["prefix"] = sprefix
+    out["share_url"] = f"https://{BUCKET}.s3.{region}.amazonaws.com/{sprefix}viewer.html"
+    return ok_response({"sculpture": out})
 
 
 def handle_list_sculptures(event):

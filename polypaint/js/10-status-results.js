@@ -539,11 +539,6 @@ async function runRenderLoresPreview(opts = {}) {
             raster_sectioned_retries: 2,
         };
         if (sculpture) payload.sculpture = true;
-        if (sculpture && opts.save) {
-            payload.sculpture_save = true;
-            payload.sculpture_title = String(opts.title || '');
-            if (opts.view) payload.sculpture_view = opts.view;
-        }
         if (_viewMode === 'explicit') {
             payload.min_re = p.minRe;
             payload.max_re = p.maxRe;
@@ -603,14 +598,20 @@ async function runRenderLoresPreview(opts = {}) {
                 y0: String(vp.min_im), y1: String(vp.max_im),
                 t: `${p.jobId} · ${sc.grid_n}×${sc.grid_n} · ${sc.palette || ''}`,
             });
-            const url = sc.share_url ? sc.share_url : `sculpture.html#${frag.toString()}`;
+            const url = `sculpture.html#${frag.toString()}`;
             if (sculptureWin && !sculptureWin.closed) {
                 sculptureWin.location = url;
-                // the Sculpture tab's Create snapshots this window's live view
+                // the Sculpture tab's Save snapshots this window's live view
                 // settings (same-origin) so saves capture the tuned state
                 window._lastSculptureWin = sculptureWin;
             } else log(`Sculpture viewer (popup blocked, open manually): ${url}`, 'err', 'render-log');
-            if (sc.share_url) log(`Sculpture saved: ${sc.title || sc.id} — ${sc.share_url}`, 'ok', 'render-log');
+            // Save copies exactly this run's data — remember its identity
+            window._lastSculptureData = {
+                job_id: p.jobId,
+                grid_n: sc.grid_n, degree: sc.degree, step_count: sc.step_count,
+                pass_count: sc.pass_count, viewport: sc.viewport,
+                palette: sc.palette, roots_bytes: sc.roots_bytes,
+            };
             log(`Sculpture: grid ${sc.grid_n}×${sc.grid_n} · degree ${sc.degree} · roots ${(Number(sc.roots_bytes || 0) / (1024 * 1024)).toFixed(1)}MB`, 'ok', 'render-log');
         }
     } catch (e) {
@@ -640,8 +641,8 @@ async function runRenderLoresPreview(opts = {}) {
     return !runFailed;
 }
 
-async function runRenderLoresSculpture(opts) {
-    return runRenderLoresPreview({ sculpture: true, ...(opts || {}) });
+async function runRenderLoresSculpture() {
+    return runRenderLoresPreview({ sculpture: true });
 }
 
 async function runSolveScoreHistogramDebug() {

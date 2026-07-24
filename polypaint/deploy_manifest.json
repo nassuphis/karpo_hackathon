@@ -156,6 +156,7 @@
     "/delete-prefix",
     "/list-deepzoom",
     "/list-sculptures",
+    "/save-sculpture",
     "/list-sheets",
     "/list-books",
     "/fetch-book",

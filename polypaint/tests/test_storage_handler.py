@@ -1269,6 +1269,84 @@ class TestDeletePrefixNarrowing(unittest.TestCase):
         self.assertEqual(resp["statusCode"], 200)
 
 
+class TestSaveSculpture(unittest.TestCase):
+    def _params(self, **over):
+        p = {
+            "job_id": "compute_j1",
+            "title": "My Piece",
+            "grid_n": 2,
+            "degree": 3,
+            "step_count": 4,
+            "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -1.0, "max_im": 3.0},
+            "palette": "inferno",
+            "view": {"point": 12, "tour": "orbit", "junk": "x"},
+        }
+        p.update(over)
+        return p
+
+    @patch("handler_storage.s3")
+    def test_copies_ephemeral_objects_and_writes_meta_and_viewer(self, mock_s3):
+        import handler_storage
+        mock_s3.head_object.return_value = {"ContentLength": 4 * 3 * 2 * 4}
+        resp = handler_storage.handler(_event("/save-sculpture", self._params()), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        sc = body["sculpture"]
+        self.assertTrue(sc["id"].startswith("scu_"))
+        self.assertEqual(sc["title"], "My Piece")
+        self.assertEqual(sc["job_id"], "compute_j1")
+        self.assertEqual(sc["prefix"], f"sculptures/{sc['id']}/")
+        self.assertTrue(sc["share_url"].endswith(f"/sculptures/{sc['id']}/viewer.html"))
+        # data COPIED from the job's ephemeral objects — never re-solved
+        copies = {c.kwargs["Key"]: c.kwargs for c in mock_s3.copy_object.call_args_list}
+        self.assertEqual(sorted(copies), [
+            f"sculptures/{sc['id']}/palette.png",
+            f"sculptures/{sc['id']}/roots.bin",
+        ])
+        roots_copy = copies[f"sculptures/{sc['id']}/roots.bin"]
+        self.assertEqual(roots_copy["CopySource"],
+                         {"Bucket": handler_storage.BUCKET, "Key": "renders/compute_j1/sculpture_roots.bin"})
+        self.assertEqual(roots_copy["CacheControl"], "public, max-age=31536000, immutable")
+        puts = {c.kwargs["Key"]: c.kwargs for c in mock_s3.put_object.call_args_list}
+        meta = json.loads(puts[f"sculptures/{sc['id']}/meta.json"]["Body"])
+        self.assertEqual(meta["grid_n"], 2)
+        self.assertEqual(meta["degree"], 3)
+        self.assertEqual(meta["pass_count"], 1)
+        self.assertEqual(meta["roots_bytes"], 96)          # server truth via head
+        self.assertEqual(meta["roots_key"], "roots.bin")
+        self.assertEqual(meta["view"], {"point": 12, "tour": "orbit"})   # sanitized
+        viewer = puts[f"sculptures/{sc['id']}/viewer.html"]
+        repo_viewer = open(os.path.join(os.path.dirname(__file__), "..", "sculpture.html"), "rb").read()
+        self.assertEqual(viewer["Body"], repo_viewer)
+        self.assertEqual(viewer["ContentType"], "text/html")
+
+    @patch("handler_storage.s3")
+    def test_missing_ephemeral_data_is_a_friendly_error(self, mock_s3):
+        import handler_storage
+        mock_s3.head_object.side_effect = RuntimeError("404")
+        resp = handler_storage.handler(_event("/save-sculpture", self._params()), None)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("press Sculpture first", json.loads(resp["body"])["error"])
+        mock_s3.copy_object.assert_not_called()
+
+    @patch("handler_storage.s3")
+    def test_size_mismatch_demands_a_fresh_run(self, mock_s3):
+        import handler_storage
+        mock_s3.head_object.return_value = {"ContentLength": 17}
+        resp = handler_storage.handler(_event("/save-sculpture", self._params()), None)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("re-run Sculpture", json.loads(resp["body"])["error"])
+        mock_s3.copy_object.assert_not_called()
+
+    @patch("handler_storage.s3")
+    def test_rejects_bad_job_id(self, mock_s3):
+        import handler_storage
+        resp = handler_storage.handler(
+            _event("/save-sculpture", self._params(job_id="../evil")), None)
+        self.assertEqual(resp["statusCode"], 400)
+        mock_s3.head_object.assert_not_called()
+
+
 class TestListSculptures(unittest.TestCase):
     @patch("handler_storage.s3")
     def test_lists_metas_newest_first_with_prefix(self, mock_s3):

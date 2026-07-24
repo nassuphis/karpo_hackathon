@@ -294,8 +294,38 @@ async function boot() {
             }
             const close = order === 'angle' && k >= 3;
             const segs = close ? k : k - 1;
+            // nearest mode: never bridge clusters. These constellations are
+            // typically 2-4 separated groups (conjugate bands + outliers) and
+            // ANY full path is forced to cross between them — those forced
+            // chords were the visible "ribbon jumping" (2-opt measured
+            // useless: the chords are topology, not greedy error). Segments
+            // longer than 2.5x the solve's median nearest-neighbor distance
+            // are cut, leaving one short strand per cluster.
+            let cutSq = Infinity;
+            if (order === 'nearest' && k > 2) {
+                const mins = new Float64Array(k);
+                for (let a = 0; a < k; a++) {
+                    const ax = positions[idx[a] * 3], az = positions[idx[a] * 3 + 2];
+                    let bd = Infinity;
+                    for (let b = 0; b < k; b++) {
+                        if (b === a) continue;
+                        const dx = ax - positions[idx[b] * 3];
+                        const dz = az - positions[idx[b] * 3 + 2];
+                        const dd = dx * dx + dz * dz;
+                        if (dd < bd) bd = dd;
+                    }
+                    mins[a] = bd;
+                }
+                const sorted = Array.from(mins).sort((x, y) => x - y);
+                cutSq = 6.25 * sorted[k >> 1];   // (2.5 x median NN)^2
+            }
             for (let t = 0; t < segs; t++) {
                 const pair = [idx[t], idx[(t + 1) % k]];
+                if (cutSq !== Infinity) {
+                    const dx = positions[pair[0] * 3] - positions[pair[1] * 3];
+                    const dz = positions[pair[0] * 3 + 2] - positions[pair[1] * 3 + 2];
+                    if (dx * dx + dz * dz > cutSq) continue;
+                }
                 for (const i of pair) {
                     lp[lv * 3] = positions[i * 3];
                     lp[lv * 3 + 1] = positions[i * 3 + 1];

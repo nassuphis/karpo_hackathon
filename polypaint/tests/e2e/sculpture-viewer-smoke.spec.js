@@ -422,3 +422,71 @@ test('threads: mutual-nearest matching beats file order; slices split connectivi
   const plateYs = new Set(st.sliced.map(sg => Math.round(sg[1] * 1e5) / 1e5));
   expect(Array.from(plateYs).sort((a, b) => a - b)).toEqual([-0.5, 0.5]);
 });
+
+test('nearest ribbons never bridge clusters: long chain chords are cut', async ({ page }) => {
+  // two tight pairs far apart: the greedy chain is FORCED to bridge them
+  // (any full path is), and that bridge — 16x the intra-pair spacing — must
+  // be cut at 2.5x the median nearest-neighbor distance, leaving one short
+  // strand per cluster. This was the user-visible "ribbon jumping" on real
+  // jobs whose root constellations split into 2-4 clusters.
+  await page.goto('http://localhost:8765/sculpture.html');
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 4;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgb(10,20,30)';
+    g.fillRect(0, 0, 4, 4);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  const gridN = 4, degree = 4;
+  const CLUSTERS = [[0.2, 0.2], [0.3, 0.2], [1.4, -1.0], [1.5, -1.0]];
+  const buf = Buffer.alloc(gridN * gridN * degree * 2 * 4);
+  let o = 0;
+  for (let step = 0; step < gridN * gridN; step++) {
+    for (const [re, im] of CLUSTERS) {
+      buf.writeFloatLE(re, o); o += 4;
+      buf.writeFloatLE(im, o); o += 4;
+    }
+  }
+  await page.route('**/fx/croots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: buf,
+  }));
+  await page.route('**/fx/cpal.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  const frag = new URLSearchParams({
+    v: '1', r: '/fx/croots.bin', p: '/fx/cpal.png', n: '4', d: '4', s: '16',
+    x0: '-2', x1: '2', y0: '-2', y1: '2', t: 'cluster fixture',
+  });
+  await page.goto('about:blank');
+  await page.goto('http://localhost:8765/sculpture.html#' + frag.toString());
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const built = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!built) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+  const st = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const pos = v.ribbons.geometry.getAttribute('position');
+    let maxLen = 0;
+    for (let i = 0; i < pos.count; i += 2) {
+      const dx = pos.array[i * 3] - pos.array[(i + 1) * 3];
+      const dz = pos.array[i * 3 + 2] - pos.array[(i + 1) * 3 + 2];
+      maxLen = Math.max(maxLen, Math.hypot(dx, dz));
+    }
+    return {
+      verts: pos.count,
+      maxLen,
+      hud: document.getElementById('hud-stats').textContent || '',
+    };
+  });
+  // 16 solves x 2 kept strand segments (the forced bridge is cut)
+  expect(st.verts).toBe(64);
+  expect(st.hud).toContain('32 ribbon segments');
+  // every kept segment is intra-pair (0.025 normalized), never the bridge (~0.4)
+  expect(st.maxLen).toBeLessThan(0.06);
+});

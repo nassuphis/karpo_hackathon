@@ -116,10 +116,18 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   order is a solver artifact:
   - **nearest** (default; user: "root should ribbon to nearest"): greedy
     nearest-neighbor chain, O(k²) per solve — start at the root farthest
-    from the centroid (a natural chain end, stable across neighboring
-    solves), hop to the nearest unvisited root, OPEN path. Follows local
-    structure where the angle tour zigzags on non-star-shaped
-    constellations.
+    from the centroid, hop to the nearest unvisited root, OPEN path —
+    then **cluster cut**: segments longer than 2.5× the solve's median
+    nearest-neighbor distance are dropped, one short strand per cluster.
+    The cut is the load-bearing part (user-caught "ribbon jumping",
+    verified on compute_mryrv8zk lores data): the manifold is smooth
+    (matched movement ≈1.2% of root spacing per step) and the chain is
+    stable along t2 (99.4% identical edges), but the constellations
+    split into 2–4 separated clusters (conjugate bands + outliers) in
+    100% of sampled solves, so ANY full path is forced to bridge them
+    with a ~3.3×-spacing chord — 2-opt measured useless (3.27→3.13)
+    because the chords are topology, not greedy error. Ribboning "to
+    nearest" therefore means refusing the bridge, not optimizing it.
   - **angle**: tour each row's constellation by angle about its
     centroid, CLOSED for 3+ roots. Solver-independent, coherent, stable
     between neighboring solves.

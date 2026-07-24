@@ -81,8 +81,9 @@
     <option value="ghost">ghost</option>
   </select></label>
   <label>connect <select id="ctl-order">
-    <option value="file" selected>file order</option>
+    <option value="nearest" selected>nearest</option>
     <option value="angle">angle</option>
+    <option value="file">file order</option>
   </select></label>
 </div>
 <div id="message-box"><div><h1 id="message-title"></h1><div class="detail" id="message-detail"></div></div></div>
@@ -259,6 +260,37 @@ async function boot() {
                 mx /= k; mz /= k;
                 const ang = i => Math.atan2(positions[i * 3 + 2] - mz, positions[i * 3] - mx);
                 idx.sort((p, q) => ang(p) - ang(q));
+            } else if (order === 'nearest') {
+                // greedy nearest-neighbor chain (k^2): start at the root
+                // farthest from the centroid — a natural chain end, stable
+                // across neighboring solves — and hop to nearest unvisited
+                let mx = 0, mz = 0;
+                for (const i of idx) { mx += positions[i * 3]; mz += positions[i * 3 + 2]; }
+                mx /= k; mz /= k;
+                let start = 0, bestD = -1;
+                for (let t = 0; t < k; t++) {
+                    const dx = positions[idx[t] * 3] - mx, dz = positions[idx[t] * 3 + 2] - mz;
+                    const d = dx * dx + dz * dz;
+                    if (d > bestD) { bestD = d; start = t; }
+                }
+                const used = new Uint8Array(k);
+                const seq = [idx[start]];
+                used[start] = 1;
+                while (seq.length < k) {
+                    const cur = seq[seq.length - 1];
+                    const cx0 = positions[cur * 3], cz0 = positions[cur * 3 + 2];
+                    let best = -1, bd = Infinity;
+                    for (let t = 0; t < k; t++) {
+                        if (used[t]) continue;
+                        const dx = positions[idx[t] * 3] - cx0, dz = positions[idx[t] * 3 + 2] - cz0;
+                        const d = dx * dx + dz * dz;
+                        if (d < bd) { bd = d; best = t; }
+                    }
+                    used[best] = 1;
+                    seq.push(idx[best]);
+                }
+                idx.length = 0;
+                for (const i of seq) idx.push(i);
             }
             const close = order === 'angle' && k >= 3;
             const segs = close ? k : k - 1;

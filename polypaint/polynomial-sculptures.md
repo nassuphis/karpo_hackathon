@@ -111,17 +111,21 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   level/(S−1) so the stack spans the full cube height.
 - **Ribbons** (per user spec): one polyline per solve — each row of the
   root table (columns = degree) connected at that row's z, monochrome by
-  construction since the solve-score is per solve. `show` selector:
-  points / ribbons / both (default points). `connect` selector picks the
-  within-row order — roots have no intrinsic order, the table order is a
-  solver artifact:
-  - **file order** (default): the solver's own row order, OPEN-ended.
-    For the warm-started Aberth lores solve this order is a fossil of
-    the chain; for CM/JT rows it is essentially arbitrary (torn sheets
-    expected).
+  construction since the solve-score is per solve. `connect` selector
+  picks the within-row order — roots have no intrinsic order, the table
+  order is a solver artifact:
+  - **nearest** (default; user: "root should ribbon to nearest"): greedy
+    nearest-neighbor chain, O(k²) per solve — start at the root farthest
+    from the centroid (a natural chain end, stable across neighboring
+    solves), hop to the nearest unvisited root, OPEN path. Follows local
+    structure where the angle tour zigzags on non-star-shaped
+    constellations.
   - **angle**: tour each row's constellation by angle about its
     centroid, CLOSED for 3+ roots. Solver-independent, coherent, stable
     between neighboring solves.
+  - **file order**: the solver's own row order, OPEN-ended. For the
+    warm-started Aberth lores solve this order is a fossil of the chain;
+    for CM/JT rows it is essentially arbitrary (torn sheets expected).
   One `LineSegments` draw call for all ribbons; rows with clipped roots
   just tour the survivors. Plain WebGL lines are 1px — real thickness
   would use the already-vendored fat-line addons.

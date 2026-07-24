@@ -120,11 +120,18 @@
     <input id="ctl-show-points" type="checkbox" checked> pts
     <input id="ctl-show-ribbons" type="checkbox"> rib
     <input id="ctl-show-threads" type="checkbox"> thr
+    <input id="ctl-show-clu" type="checkbox"> clu
   </label>
   <label>style <select id="ctl-style">
     <option value="solid" selected>solid</option>
     <option value="ghost">ghost</option>
   </select></label>
+  <label>rib connect <select id="ctl-order">
+    <option value="nearest" selected>nearest</option>
+    <option value="angle">angle</option>
+    <option value="file">file order</option>
+  </select></label>
+  <label>len% <input id="ctl-lenq" type="range" min="0" max="100" value="100"><span class="val" id="ctl-lenq-val"></span></label>
   <label>tour <select id="ctl-tour-mode">
     <option value="orbit" selected>orbit</option>
     <option value="wave">wave</option>
@@ -135,13 +142,6 @@
     <option value="2">2x</option>
     <option value="4">4x</option>
   </select><button type="button" id="btn-tour-play" title="Play / stop the automated camera tour">&#9654;</button></label>
-  <label>connect <select id="ctl-order">
-    <option value="nearest" selected>nearest</option>
-    <option value="clu">clu</option>
-    <option value="angle">angle</option>
-    <option value="file">file order</option>
-  </select></label>
-  <label>len% <input id="ctl-lenq" type="range" min="0" max="100" value="100"><span class="val" id="ctl-lenq-val"></span></label>
 </div>
 <div id="message-box"><div><h1 id="message-title"></h1><div class="detail" id="message-detail"></div></div></div>
 <script type="module">
@@ -483,19 +483,23 @@ async function boot() {
             }
         }
     }
+    const cluRibbons = new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ vertexColors: true }));
+    let cluSegCount = 0;
+    function buildClu() {
+        const segPairs = [];
+        cluSegments(segPairs);
+        const geom = new THREE.BufferGeometry();
+        const n = fillSortedSegments(geom, segPairs);
+        const old = cluRibbons.geometry;
+        cluRibbons.geometry = geom;
+        if (old) old.dispose();
+        cluSegCount = n;
+        if (applyLenqHook) applyLenqHook();
+    }
     function buildRibbons(order) {
         const segPairs = [];   // [i0, i1, len2] triples, flat
-        if (order === 'clu') {
-            cluSegments(segPairs);
-            const geomClu = new THREE.BufferGeometry();
-            const nClu = fillSortedSegments(geomClu, segPairs);
-            const oldClu = ribbons.geometry;
-            ribbons.geometry = geomClu;
-            if (oldClu) oldClu.dispose();
-            ribbonSegments = nClu;
-            if (applyLenqHook) applyLenqHook();
-            return;
-        }
         const idx = [];
         for (let step = 0; step < passSteps; step++) {
             const a = stepOffsets[step], b = stepOffsets[step + 1];
@@ -697,11 +701,13 @@ async function boot() {
     material.clippingPlanes = [clipLo, clipHi];
     ribbons.material.clippingPlanes = [clipLo, clipHi];
     threads.material.clippingPlanes = [clipLo, clipHi];
+    cluRibbons.material.clippingPlanes = [clipLo, clipHi];
 
     const sculpt = new THREE.Group();
     sculpt.add(points);
     sculpt.add(ribbons);
     sculpt.add(threads);
+    sculpt.add(cluRibbons);
     scene.add(sculpt);
 
     const frame = new THREE.LineSegments(
@@ -870,6 +876,7 @@ async function boot() {
             ` · z = ${zaxisCtl.value} · clipped ${clipped.toLocaleString()}` +
             ` · ${ribbonSegments.toLocaleString()} ribbon segments` +
             (threadSegments ? ` · ${threadSegments.toLocaleString()} thread segments` : '') +
+            (cluSegCount ? ` · ${cluSegCount.toLocaleString()} clu segments` : '') +
             (parseInt(slicesCtl.value, 10) > 0 ? ` · ${slicesCtl.value} slices` : '') +
             (parseInt(document.getElementById('ctl-lenq').value, 10) < 100
                 ? ` · len ≤ ${document.getElementById('ctl-lenq').value}%` : '') +
@@ -881,6 +888,7 @@ async function boot() {
     const showPointsCtl = document.getElementById('ctl-show-points');
     const showRibbonsCtl = document.getElementById('ctl-show-ribbons');
     const showThreadsCtl = document.getElementById('ctl-show-threads');
+    const showCluCtl = document.getElementById('ctl-show-clu');
     const orderCtl = document.getElementById('ctl-order');
     const slicesCtl = document.getElementById('ctl-slices');
     const zaxisCtl = document.getElementById('ctl-zaxis');
@@ -903,6 +911,10 @@ async function boot() {
         threads.material.opacity = ghost ? 0.55 : 1;
         threads.material.depthWrite = !ghost;
         threads.material.needsUpdate = true;
+        cluRibbons.material.transparent = ghost;
+        cluRibbons.material.opacity = ghost ? 0.55 : 1;
+        cluRibbons.material.depthWrite = !ghost;
+        cluRibbons.material.needsUpdate = true;
     };
     // slices: bin t2 onto S discrete plates spanning the cube (S=11 -> z = 0,
     // 0.1, ..., 1.0). Every solve sits at one t2, so whole ribbons land
@@ -922,6 +934,7 @@ async function boot() {
         geometry.getAttribute('position').needsUpdate = true;
         buildRibbons(orderCtl.value);
         if (showThreadsCtl.checked) buildThreads();
+        if (showCluCtl.checked) buildClu();
         updateStats();
     };
     const applyShow = () => {
@@ -929,6 +942,8 @@ async function boot() {
         ribbons.visible = showRibbonsCtl.checked;
         if (showThreadsCtl.checked) buildThreads();   // lazy per-axis matching, cached
         threads.visible = showThreadsCtl.checked;
+        if (showCluCtl.checked) buildClu();           // lazy per-slice clustering
+        cluRibbons.visible = showCluCtl.checked;
         updateStats();
     };
     const applyOrder = () => {
@@ -938,6 +953,7 @@ async function boot() {
     showPointsCtl.addEventListener('change', applyShow);
     showRibbonsCtl.addEventListener('change', applyShow);
     showThreadsCtl.addEventListener('change', applyShow);
+    showCluCtl.addEventListener('change', applyShow);
     orderCtl.addEventListener('change', applyOrder);
     slicesCtl.addEventListener('change', applySlices);
     zaxisCtl.addEventListener('change', applySlices);
@@ -952,6 +968,7 @@ async function boot() {
         lenqVal.textContent = String(q);
         ribbons.geometry.setDrawRange(0, 2 * Math.round((q / 100) * ribbonSegments));
         threads.geometry.setDrawRange(0, 2 * Math.round((q / 100) * threadSegments));
+        cluRibbons.geometry.setDrawRange(0, 2 * Math.round((q / 100) * cluSegCount));
         updateStats();
     };
     applyLenqHook = applyLenq;
@@ -1030,9 +1047,10 @@ async function boot() {
             showPointsCtl.checked = !!view.show.points;
             showRibbonsCtl.checked = !!view.show.ribbons;
             showThreadsCtl.checked = !!view.show.threads;
+            showCluCtl.checked = !!view.show.clu;
         }
         if (view.style === 'solid' || view.style === 'ghost') styleCtl.value = view.style;
-        if (['nearest', 'clu', 'angle', 'file'].includes(view.order)) orderCtl.value = view.order;
+        if (['nearest', 'angle', 'file'].includes(view.order)) orderCtl.value = view.order;
         if (Number.isFinite(Number(view.lenq))) {
             lenqCtl.value = String(Math.max(0, Math.min(100, Math.round(Number(view.lenq)))));
         }
@@ -1079,7 +1097,7 @@ async function boot() {
     });
 
     window.__sculptureViewer = {
-        scene, camera, renderer, points, ribbons, threads, sculpt, material, controls,
+        scene, camera, renderer, points, ribbons, threads, clu: cluRibbons, sculpt, material, controls,
         flight, tour: { state: tour, tick: tourTick, pose: tourPose, setPlaying: tourSetPlaying },
         count, clipped, gridN, degree,
     };

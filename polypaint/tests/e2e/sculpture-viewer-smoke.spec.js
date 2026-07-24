@@ -726,7 +726,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
     viewport: { min_re: -1, max_re: 1, min_im: -1, max_im: 1 },
     view: {
       point: 22, height: 0.4, slices: 3,
-      show: { points: false, ribbons: true, threads: false },
+      show: { points: false, ribbons: true, threads: false, clu: true },
       style: 'ghost', order: 'angle', tour: 'weave', lenq: 50, zaxis: 't1',
       zlo: 0.25, zhi: 0.8, tourSpeed: 2,
     },
@@ -770,6 +770,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
       clipLoC: v.material.clippingPlanes[0].constant,
       clipHiC: v.material.clippingPlanes[1].constant,
       pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible, threadsVis: v.threads.visible,
+      cluVis: v.clu.visible,
       ghost: v.material.transparent === true && v.material.depthWrite === false,
       scaleY: v.sculpt.scale.y,
       plates: distinctY(),
@@ -795,6 +796,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   expect(st.pointsVis).toBe(false);
   expect(st.ribbonsVis).toBe(true);
   expect(st.threadsVis).toBe(false);
+  expect(st.cluVis).toBe(true);
   expect(st.ghost).toBe(true);
   expect(st.scaleY).toBeCloseTo(0.4, 5);
   expect(st.plates).toBe(3);            // slices applied to the geometry
@@ -1021,10 +1023,10 @@ test('clu ribbons: per-column k-means arcs, chained from the far end, never brid
   }
   const st = await page.evaluate(() => {
     const v = window.__sculptureViewer;
-    const ctl = document.getElementById('ctl-order');
-    ctl.value = 'clu';
+    const ctl = document.getElementById('ctl-show-clu');
+    ctl.checked = true;
     ctl.dispatchEvent(new Event('change'));
-    const pos = v.ribbons.geometry.getAttribute('position');
+    const pos = v.clu.geometry.getAttribute('position');
     let maxLen = 0, bridge = 0, notFlat = 0;
     for (let i = 0; i < pos.count; i += 2) {
       const x0 = pos.array[i * 3], x1 = pos.array[(i + 1) * 3];
@@ -1034,10 +1036,14 @@ test('clu ribbons: per-column k-means arcs, chained from the far end, never brid
       if (Math.sign(x0) !== Math.sign(x1)) bridge++;
       if (dy > 1e-9) notFlat++;
     }
-    return { verts: pos.count, maxLen, bridge, notFlat };
+    return { verts: pos.count, maxLen, bridge, notFlat, visible: v.clu.visible,
+             ribbonsUntouched: v.ribbons.geometry.getAttribute('position').count };
   });
   // 4 columns x 2 clusters x 3 chain segments = 24 segments
   expect(st.verts).toBe(48);
+  expect(st.visible).toBe(true);
+  // per-solve ribbons are a SEPARATE primitive, untouched by clu
+  expect(st.ribbonsUntouched).toBe(32);   // 16 solves x 1 nearest segment x 2 verts
   expect(st.bridge).toBe(0);                 // arcs never cross-stitched
   expect(st.maxLen).toBeLessThan(0.015);     // 0.01 steps only — no chords
   expect(st.notFlat).toBe(0);                // slice curves are flat per column

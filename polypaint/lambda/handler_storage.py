@@ -7188,10 +7188,10 @@ def _sculpture_view(raw):
         view["slices"] = int(round(slices))
     show = raw.get("show")
     if isinstance(show, dict):
-        view["show"] = {k: bool(show.get(k)) for k in ("points", "ribbons", "threads")}
+        view["show"] = {k: bool(show.get(k)) for k in ("points", "ribbons", "threads", "clu")}
     if raw.get("style") in ("solid", "ghost"):
         view["style"] = raw["style"]
-    if raw.get("order") in ("nearest", "clu", "angle", "file"):
+    if raw.get("order") in ("nearest", "angle", "file"):
         view["order"] = raw["order"]
     if raw.get("tour") in ("off", "orbit", "wave", "weave"):
         view["tour"] = raw["tour"]

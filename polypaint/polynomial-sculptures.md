@@ -174,6 +174,21 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   saved views (capture → sanitizer → meta.view.lenq). NOTE the sort
   changes buffer order, not the drawn set — pins that read "the first
   segment" must account for it.
+- **Clu** (4th show primitive — user-corrected taxonomy: rib connects
+  roots within ONE solve, clu connects across a whole z-group, so it is
+  a different object, not a ribbon order; the order select is labeled
+  "rib connect" accordingly, and the panel runs show → rib connect →
+  len% with tour LAST): per z-column, k-means the whole slice (k =
+  degree, deterministic strided init + 8 Lloyd iterations), chain each
+  cluster greedily from its FARTHEST point (mid-curve starts guarantee
+  a backtrack chord), 2.5× median-NN cut per cluster. Clusters
+  approximate the root-trajectory arcs, so clu draws the slice curves —
+  long flowing lines with per-point color gradients, flat per column.
+  Lazy-built on first check, rebuilt on slices/z changes, rides
+  solid/ghost, len%, the z-window planes, and the saved-view pipeline
+  (show.clu). Pinned: two drifting arcs separate perfectly (zero
+  cross-arc bridges), and the per-solve ribbons remain a separate,
+  untouched primitive.
 - **Slices** (off/2..32): bin t2 onto S discrete plates spanning the
   cube (S=11 → z = 0, 0.1, …, 1.0). Every solve sits at one t2, so
   whole ribbons land intact on their plate; the sculpture becomes an
@@ -200,15 +215,6 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
     with a ~3.3×-spacing chord — 2-opt measured useless (3.27→3.13)
     because the chords are topology, not greedy error. Ribboning "to
     nearest" therefore means refusing the bridge, not optimizing it.
-  - **clu** (user idea): per z-column, k-means the WHOLE slice (every
-    root across the varying parameter, k = degree, deterministic strided
-    init + 8 Lloyd iterations) and chain each cluster greedily from its
-    FARTHEST point (mid-curve starts guarantee a backtrack chord), with
-    the 2.5× median-NN cut per cluster. The clusters approximate the
-    root-trajectory arcs, so clu ribbons are the slice curves themselves
-    — long flowing lines instead of per-solve fragments; colors gradient
-    per point along each arc. Respects the z-axis transpose (clusters
-    the active z parameter's columns).
   - **angle**: tour each row's constellation by angle about its
     centroid, CLOSED for 3+ roots. Solver-independent, coherent, stable
     between neighboring solves.

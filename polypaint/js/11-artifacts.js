@@ -1630,6 +1630,7 @@ function _sculptureCaptureViewSettings() {
                 points: chk('ctl-show-points'),
                 ribbons: chk('ctl-show-ribbons'),
                 threads: chk('ctl-show-threads'),
+                clu: chk('ctl-show-clu'),
             },
             style: val('ctl-style') || 'solid',
             order: val('ctl-order') || 'nearest',
@@ -1647,7 +1648,7 @@ function _sculptureCaptureViewSettings() {
 
 function _sculptureViewSummary(view) {
     if (!view) return '';
-    const show = ['points', 'ribbons', 'threads'].filter((k) => view.show && view.show[k])
+    const show = ['points', 'ribbons', 'threads', 'clu'].filter((k) => view.show && view.show[k])
         .map((k) => k.slice(0, 3)).join('+') || 'none';
     return `point ${view.point} · height ${view.height.toFixed(2)} · slices ${view.slices || 'off'}`
         + ` · ${show} · ${view.style} · ${view.order}`

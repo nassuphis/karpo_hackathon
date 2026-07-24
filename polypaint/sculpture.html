@@ -58,6 +58,18 @@
 <div id="panel">
   <label>point <input id="ctl-size" type="range" min="1" max="40" value="10"><span class="val" id="ctl-size-val"></span></label>
   <label>height <input id="ctl-height" type="range" min="0" max="100" value="10"><span class="val" id="ctl-height-val"></span></label>
+  <label>slices <select id="ctl-slices">
+    <option value="0" selected>off</option>
+    <option value="2">2</option>
+    <option value="3">3</option>
+    <option value="4">4</option>
+    <option value="5">5</option>
+    <option value="8">8</option>
+    <option value="11">11</option>
+    <option value="16">16</option>
+    <option value="24">24</option>
+    <option value="32">32</option>
+  </select></label>
   <label>show <select id="ctl-mode">
     <option value="points" selected>points</option>
     <option value="ribbons">ribbons</option>
@@ -157,6 +169,7 @@ async function boot() {
     const side = Math.max(maxRe - minRe, maxIm - minIm);
     const positions = new Float32Array(passSteps * degree * 3);
     const colors = new Uint8Array(passSteps * degree * 3);
+    const pointT2 = new Float32Array(passSteps * degree);
     const stepOffsets = new Int32Array(passSteps + 1);
     let count = 0, clipped = 0;
     for (let step = 0; step < passSteps; step++) {
@@ -179,6 +192,7 @@ async function boot() {
             positions[o] = (re - cx) / side;          // X = Re
             positions[o + 1] = t2 - 0.5;              // Y (up) = t2
             positions[o + 2] = -(im - cy) / side;     // Z = -Im (right-handed view)
+            pointT2[count] = t2;
             colors[o] = cr; colors[o + 1] = cg; colors[o + 2] = cb;
             count++;
         }
@@ -286,11 +300,31 @@ async function boot() {
         document.getElementById('hud-stats').textContent =
             `${count.toLocaleString()} roots · grid ${gridN}×${gridN} · degree ${degree}` +
             ` · z = t2 · clipped ${clipped.toLocaleString()}` +
-            ` · ${ribbonSegments.toLocaleString()} ribbon segments`;
+            ` · ${ribbonSegments.toLocaleString()} ribbon segments` +
+            (parseInt(slicesCtl.value, 10) > 0 ? ` · ${slicesCtl.value} slices` : '');
     };
 
     const modeCtl = document.getElementById('ctl-mode');
     const orderCtl = document.getElementById('ctl-order');
+    const slicesCtl = document.getElementById('ctl-slices');
+    // slices: bin t2 onto S discrete plates spanning the cube (S=11 -> z = 0,
+    // 0.1, ..., 1.0). Every solve sits at one t2, so whole ribbons land
+    // intact on their plate — the sculpture becomes an exploded shadow.
+    const applySlices = () => {
+        const slices = Math.max(0, parseInt(slicesCtl.value, 10) || 0);
+        for (let i = 0; i < count; i++) {
+            const t2 = pointT2[i];
+            let z = t2;
+            if (slices > 0) {
+                const level = Math.min(slices - 1, Math.floor(t2 * slices));
+                z = slices > 1 ? level / (slices - 1) : 0.5;
+            }
+            positions[i * 3 + 1] = z - 0.5;
+        }
+        geometry.getAttribute('position').needsUpdate = true;
+        buildRibbons(orderCtl.value);
+        updateStats();
+    };
     const applyMode = () => {
         points.visible = modeCtl.value !== 'ribbons';
         ribbons.visible = modeCtl.value !== 'points';
@@ -301,6 +335,7 @@ async function boot() {
     };
     modeCtl.addEventListener('change', applyMode);
     orderCtl.addEventListener('change', applyOrder);
+    slicesCtl.addEventListener('change', applySlices);
     const sizeCtl = document.getElementById('ctl-size');
     const sizeVal = document.getElementById('ctl-size-val');
     const heightCtl = document.getElementById('ctl-height');

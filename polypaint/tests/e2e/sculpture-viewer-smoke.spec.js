@@ -166,6 +166,41 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   });
   expect(vis).toEqual([[false, true], [true, false], [true, true]]);
 
+  // slices: t2 binned onto discrete plates. Grid 4 has t2 in {0,.25,.5,.75};
+  // 3 slices -> levels floor(t2*3) = {0,0,1,2} -> Y in {-0.5, 0, +0.5}; whole
+  // ribbons land on their plate (ribbon Y matches its step's plate). Off
+  // restores the continuous Y.
+  const sl = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const ctl = document.getElementById('ctl-slices');
+    const distinctY = (attr) => {
+      const ys = new Set();
+      for (let i = 0; i < attr.count; i++) ys.add(Math.round(attr.array[i * 3 + 1] * 1e5) / 1e5);
+      return Array.from(ys).sort((a, b) => a - b);
+    };
+    ctl.value = '3';
+    ctl.dispatchEvent(new Event('change'));
+    const at3 = {
+      points: distinctY(v.points.geometry.getAttribute('position')),
+      ribbons: distinctY(v.ribbons.geometry.getAttribute('position')),
+      hud: document.getElementById('hud-stats').textContent || '',
+      y4: v.points.geometry.getAttribute('position').array[4 * v.degree * 3 + 1],
+    };
+    ctl.value = '0';
+    ctl.dispatchEvent(new Event('change'));
+    const off = {
+      y4: v.points.geometry.getAttribute('position').array[4 * v.degree * 3 + 1],
+      hud: document.getElementById('hud-stats').textContent || '',
+    };
+    return { at3, off };
+  });
+  expect(sl.at3.points).toEqual([-0.5, 0, 0.5]);
+  expect(sl.at3.ribbons).toEqual([-0.5, 0, 0.5]);
+  expect(sl.at3.hud).toContain('3 slices');
+  expect(sl.at3.y4).toBeCloseTo(0.5, 5);    // step 4: t2=0.75 -> top plate
+  expect(sl.off.y4).toBeCloseTo(0.25, 5);   // continuous restored
+  expect(sl.off.hud).not.toContain('slices');
+
   // colors must reach the screen BYTE-FOR-BYTE (washed-out vertex colors —
   // three's default linear interpretation of sRGB bytes — were a real
   // user-facing bug): spread the stacks, enlarge + opacify the points,

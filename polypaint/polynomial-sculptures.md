@@ -77,6 +77,13 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
 - Controls: orbit/damping, point-size slider (default 10), **height
   slider** (default 0.1) — 0 flattens the sculpture onto its base plane,
   showing the shadow ≙ the 2D art.
+- **Slices** (off/2..32): bin t2 onto S discrete plates spanning the
+  cube (S=11 → z = 0, 0.1, …, 1.0). Every solve sits at one t2, so
+  whole ribbons land intact on their plate; the sculpture becomes an
+  exploded shadow — a stack of translucent plates whose sum is the 2D
+  artwork. Viewer-only: Y quantized in place from the retained per-point
+  t2, ribbons rebuilt. Levels are floor(t2·S) clamped, plates at
+  level/(S−1) so the stack spans the full cube height.
 - **Ribbons** (per user spec): one polyline per solve — each row of the
   root table (columns = degree) connected at that row's z, monochrome by
   construction since the solve-score is per solve. `show` selector:

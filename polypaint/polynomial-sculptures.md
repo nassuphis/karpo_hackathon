@@ -125,6 +125,15 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   plate; slices off connects the whole chain unbroken. Clipped roots
   simply drop out (KNIFE punch-outs dissolve threads at the boundary).
   The show control is now three checkboxes (pts/rib/thr; default pts).
+- **z axis: t2 / t1** (user ask): the transpose — height becomes t1 and
+  the whole vertical semantics follow: slices bin by the active axis,
+  and THREADS transpose their adjacency (t2 mode matches adjacent
+  columns within a t1 row; t1 mode matches adjacent rows within a t2
+  column) with a separate lazily-computed matching cache per axis.
+  Ribbons are per-solve and unaffected. Travels with saved views
+  (`meta.view.zaxis`). Pinned: step (row 1, col 3) flips Y +0.25 ↔
+  −0.25; the threads fixture (col-dependent roots) makes t1-threads
+  purely vertical (dx=dz=0, dy=0.25 × 24 segments).
 - **len% quantile** (0–100 slider; user: "clip thr and rib paths above
   the q-th quantile — so I can see which parts have the large jumps"):
   draws only the shortest q% of ribbon AND thread segments. Segments

@@ -256,6 +256,23 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   expect(sl.off.y4).toBeCloseTo(0.25, 5);   // continuous restored
   expect(sl.off.hud).not.toContain('slices');
 
+  // z-axis transpose: step 4 = (row 1, col 3) — t2 axis puts it at
+  // Y = 3/4 - 0.5 = +0.25, t1 axis at Y = 1/4 - 0.5 = -0.25
+  const zx = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const ctl = document.getElementById('ctl-zaxis');
+    const y4 = () => v.points.geometry.getAttribute('position').array[4 * v.degree * 3 + 1];
+    ctl.value = 't1';
+    ctl.dispatchEvent(new Event('change'));
+    const t1 = { y4: y4(), hud: document.getElementById('hud-stats').textContent };
+    ctl.value = 't2';
+    ctl.dispatchEvent(new Event('change'));
+    return { t1, back: y4() };
+  });
+  expect(zx.t1.y4).toBeCloseTo(-0.25, 5);
+  expect(zx.t1.hud).toContain('z = t1');
+  expect(zx.back).toBeCloseTo(0.25, 5);
+
   // style: SOLID by default — opaque, depth-written, so nearer plates
   // occlude farther ones from every angle (depthWrite:false let draw order
   // beat distance: bottom-slice points painted over the top plate). ghost
@@ -455,6 +472,33 @@ test('threads: mutual-nearest matching beats file order; slices split connectivi
   }
   const plateYs = new Set(st.sliced.map(sg => Math.round(sg[1] * 1e5) / 1e5));
   expect(Array.from(plateYs).sort((a, b) => a - b)).toEqual([-0.5, 0.5]);
+
+  // z = t1 transposes the thread adjacency: matching runs along t1 within a
+  // t2 column. This fixture's roots depend only on col, so t1-threads
+  // connect IDENTICAL xz positions — pure vertical segments, dy = 0.25
+  const zt = await page.evaluate(() => {
+    const ctl = document.getElementById('ctl-zaxis');
+    ctl.value = 't1';
+    ctl.dispatchEvent(new Event('change'));
+    const pos = window.__sculptureViewer.threads.geometry.getAttribute('position');
+    const segs = [];
+    for (let i = 0; i < pos.count; i += 2) {
+      segs.push([
+        Math.abs(pos.array[i * 3] - pos.array[(i + 1) * 3]),
+        Math.abs(pos.array[i * 3 + 1] - pos.array[(i + 1) * 3 + 1]),
+        Math.abs(pos.array[i * 3 + 2] - pos.array[(i + 1) * 3 + 2]),
+      ]);
+    }
+    ctl.value = 't2';
+    ctl.dispatchEvent(new Event('change'));
+    return segs;
+  });
+  expect(zt).toHaveLength(24);   // 4 cols x 3 row-pairs x 2 roots
+  for (const [dx, dy, dz] of zt) {
+    expect(dx).toBeLessThan(1e-6);
+    expect(dz).toBeLessThan(1e-6);
+    expect(dy).toBeCloseTo(0.25, 5);
+  }
 });
 
 test('nearest ribbons never bridge clusters: long chain chords are cut', async ({ page }) => {
@@ -632,7 +676,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
     view: {
       point: 22, height: 0.4, slices: 3,
       show: { points: false, ribbons: true, threads: false },
-      style: 'ghost', order: 'angle', tour: 'weave', lenq: 50,
+      style: 'ghost', order: 'angle', tour: 'weave', lenq: 50, zaxis: 't1',
     },
   };
   await page.route('**/sc/viewer.html', (route) => {
@@ -669,6 +713,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
       point: val('ctl-size'), height: val('ctl-height'), slices: val('ctl-slices'),
       style: val('ctl-style'), order: val('ctl-order'), tourMode: val('ctl-tour-mode'),
       lenq: val('ctl-lenq'), ribbonDraw: v.ribbons.geometry.drawRange.count,
+      zaxis: val('ctl-zaxis'),
       pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible, threadsVis: v.threads.visible,
       ghost: v.material.transparent === true && v.material.depthWrite === false,
       scaleY: v.sculpt.scale.y,
@@ -700,6 +745,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   // len% travels with the view: 50% of the 48 angle segments drawn
   expect(st.lenq).toBe('50');
   expect(st.ribbonDraw).toBe(48);
+  expect(st.zaxis).toBe('t1');
 });
 
 test('tours: orbit and weave follow their parametric paths; interaction stops them', async ({ page }) => {

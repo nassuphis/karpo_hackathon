@@ -775,7 +775,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
                                   "point": 14, "height": 0.35, "slices": 11,
                                   "show": {"points": False, "ribbons": True, "threads": True},
                                   "style": "ghost", "order": "angle", "tour": "weave",
-                                  "lenq": 63, "junk": "dropped", "extra": 9,
+                                  "lenq": 63, "zaxis": "t1", "junk": "dropped", "extra": 9,
                               }), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
         body = json.loads(resp["body"])
@@ -811,6 +811,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
             "point": 14, "height": 0.35, "slices": 11,
             "show": {"points": False, "ribbons": True, "threads": True},
             "style": "ghost", "order": "angle", "tour": "weave", "lenq": 63,
+            "zaxis": "t1",
         })
         # the frozen viewer copy is the real template
         viewer = by_key[f"sculptures/{sc['id']}/viewer.html"]

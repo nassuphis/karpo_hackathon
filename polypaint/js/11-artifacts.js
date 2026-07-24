@@ -1634,6 +1634,7 @@ function _sculptureCaptureViewSettings() {
             style: val('ctl-style') || 'solid',
             order: val('ctl-order') || 'nearest',
             lenq: Number.isFinite(parseInt(val('ctl-lenq'), 10)) ? parseInt(val('ctl-lenq'), 10) : 100,
+            zaxis: val('ctl-zaxis') === 't1' ? 't1' : 't2',
             tour: playing ? (val('ctl-tour-mode') || 'orbit') : 'off',
         };
     } catch (e) {
@@ -1648,6 +1649,7 @@ function _sculptureViewSummary(view) {
     return `point ${view.point} · height ${view.height.toFixed(2)} · slices ${view.slices || 'off'}`
         + ` · ${show} · ${view.style} · ${view.order}`
         + (view.lenq < 100 ? ` · len ${view.lenq}%` : '')
+        + (view.zaxis === 't1' ? ' · z=t1' : '')
         + ` · tour: ${view.tour}`;
 }
 

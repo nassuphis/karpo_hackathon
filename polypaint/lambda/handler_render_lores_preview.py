@@ -257,6 +257,8 @@ def _sculpture_view(raw):
     lenq = _num("lenq", 0, 100)
     if lenq is not None:
         view["lenq"] = int(round(lenq))
+    if raw.get("zaxis") in ("t1", "t2"):
+        view["zaxis"] = raw["zaxis"]
     return view or None
 
 

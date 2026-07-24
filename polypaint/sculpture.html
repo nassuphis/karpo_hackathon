@@ -70,6 +70,10 @@
 <div id="panel">
   <label>point <input id="ctl-size" type="range" min="1" max="40" value="10"><span class="val" id="ctl-size-val"></span></label>
   <label>height <input id="ctl-height" type="range" min="0" max="100" value="10"><span class="val" id="ctl-height-val"></span></label>
+  <label>z <select id="ctl-zaxis">
+    <option value="t2" selected>t2</option>
+    <option value="t1">t1</option>
+  </select></label>
   <label>slices <select id="ctl-slices">
     <option value="0" selected>off</option>
     <option value="2">2</option>
@@ -222,6 +226,7 @@ async function boot() {
     const positions = new Float32Array(passSteps * degree * 3);
     const colors = new Uint8Array(passSteps * degree * 3);
     const pointT2 = new Float32Array(passSteps * degree);
+    const pointT1 = new Float32Array(passSteps * degree);
     const stepOffsets = new Int32Array(passSteps + 1);
     let count = 0, clipped = 0;
     for (let step = 0; step < passSteps; step++) {
@@ -245,6 +250,7 @@ async function boot() {
             positions[o + 1] = t2 - 0.5;              // Y (up) = t2
             positions[o + 2] = -(im - cy) / side;     // Z = -Im (right-handed view)
             pointT2[count] = t2;
+            pointT1[count] = row / gridN;
             colors[o] = cr; colors[o + 1] = cg; colors[o + 2] = cb;
             count++;
         }
@@ -421,7 +427,7 @@ async function boot() {
     const threads = new THREE.LineSegments(
         new THREE.BufferGeometry(),
         new THREE.LineBasicMaterial({ vertexColors: true }));
-    let threadMatches = null;   // per row, per t2 pair: Int32Array of point-index pairs
+    let threadMatches = { t2: null, t1: null };   // per-axis pair entries, lazy
     let threadSegments = 0;
     function matchPair(a0, ka, b0, kb) {
         const D = new Float32Array(ka * kb);
@@ -465,42 +471,45 @@ async function boot() {
         }
         return Int32Array.from(out);
     }
-    function computeThreadMatches() {
-        threadMatches = [];
-        for (let r = 0; r < gridN; r++) {
-            const rowPairs = [];
-            for (let c = 0; c < gridN - 1; c++) {
-                const sa = r * gridN + ((r & 1) ? (gridN - 1 - c) : c);
-                const sb = r * gridN + ((r & 1) ? (gridN - 1 - (c + 1)) : (c + 1));
-                const a0 = stepOffsets[sa], ka = stepOffsets[sa + 1] - a0;
-                const b0 = stepOffsets[sb], kb = stepOffsets[sb + 1] - b0;
-                rowPairs.push(ka > 0 && kb > 0 ? matchPair(a0, ka, b0, kb) : null);
+    const stepAt = (r, c) => r * gridN + ((r & 1) ? (gridN - 1 - c) : c);
+    function computeThreadMatches(axis) {
+        // threads climb the CURRENT z axis: t2 mode matches adjacent columns
+        // within a t1 row; t1 mode matches adjacent rows within a t2 column.
+        // Each entry keeps the two solves' z-parameters for the slice gate.
+        const entries = [];
+        const addPair = (sa, sb, ta, tb) => {
+            const a0 = stepOffsets[sa], ka = stepOffsets[sa + 1] - a0;
+            const b0 = stepOffsets[sb], kb = stepOffsets[sb + 1] - b0;
+            if (ka > 0 && kb > 0) entries.push({ m: matchPair(a0, ka, b0, kb), ta, tb });
+        };
+        if (axis === 't1') {
+            for (let c = 0; c < gridN; c++) {
+                for (let r = 0; r < gridN - 1; r++) {
+                    addPair(stepAt(r, c), stepAt(r + 1, c), r / gridN, (r + 1) / gridN);
+                }
             }
-            threadMatches.push(rowPairs);
+        } else {
+            for (let r = 0; r < gridN; r++) {
+                for (let c = 0; c < gridN - 1; c++) {
+                    addPair(stepAt(r, c), stepAt(r, c + 1), c / gridN, (c + 1) / gridN);
+                }
+            }
         }
+        return entries;
     }
     function buildThreads() {
-        // per slice: threads NEVER bridge plates — a t2 pair is drawn only
-        // when both columns land on the same plate (slices off: connect all)
+        // per slice: threads NEVER bridge plates — an adjacent pair is drawn
+        // only when both solves land on the same plate (slices off: all)
+        const axis = document.getElementById('ctl-zaxis').value === 't1' ? 't1' : 't2';
+        if (!threadMatches[axis]) threadMatches[axis] = computeThreadMatches(axis);
         const S = Math.max(0, parseInt(document.getElementById('ctl-slices').value, 10) || 0);
-        const level = c => Math.min(S - 1, Math.floor((c / gridN) * S));
-        let segs = 0;
-        for (let r = 0; r < gridN; r++) {
-            for (let c = 0; c < gridN - 1; c++) {
-                if (S > 0 && level(c) !== level(c + 1)) continue;
-                const m = threadMatches[r][c];
-                if (m) segs += m.length / 2;
-            }
-        }
+        const levelOf = t => Math.min(S - 1, Math.floor(t * S));
         const segPairs = [];
-        for (let r = 0; r < gridN; r++) {
-            for (let c = 0; c < gridN - 1; c++) {
-                if (S > 0 && level(c) !== level(c + 1)) continue;
-                const m = threadMatches[r][c];
-                if (!m) continue;
-                for (let t = 0; t < m.length; t += 2) {
-                    segPairs.push(m[t], m[t + 1], segLen2(m[t], m[t + 1]));
-                }
+        for (const entry of threadMatches[axis]) {
+            if (S > 0 && levelOf(entry.ta) !== levelOf(entry.tb)) continue;
+            const m = entry.m;
+            for (let t = 0; t < m.length; t += 2) {
+                segPairs.push(m[t], m[t + 1], segLen2(m[t], m[t + 1]));
             }
         }
         const geom = new THREE.BufferGeometry();
@@ -634,7 +643,7 @@ async function boot() {
     const updateStats = () => {
         document.getElementById('hud-stats').textContent =
             `${count.toLocaleString()} roots · grid ${gridN}×${gridN} · degree ${degree}` +
-            ` · z = t2 · clipped ${clipped.toLocaleString()}` +
+            ` · z = ${zaxisCtl.value} · clipped ${clipped.toLocaleString()}` +
             ` · ${ribbonSegments.toLocaleString()} ribbon segments` +
             (threadSegments ? ` · ${threadSegments.toLocaleString()} thread segments` : '') +
             (parseInt(slicesCtl.value, 10) > 0 ? ` · ${slicesCtl.value} slices` : '') +
@@ -647,6 +656,7 @@ async function boot() {
     const showThreadsCtl = document.getElementById('ctl-show-threads');
     const orderCtl = document.getElementById('ctl-order');
     const slicesCtl = document.getElementById('ctl-slices');
+    const zaxisCtl = document.getElementById('ctl-zaxis');
     const styleCtl = document.getElementById('ctl-style');
     // solid: opaque + depth-written — occlusion is correct from every angle
     // (depthWrite:false let bottom plates paint over nearer top plates: what
@@ -672,27 +682,25 @@ async function boot() {
     // intact on their plate — the sculpture becomes an exploded shadow.
     const applySlices = () => {
         const slices = Math.max(0, parseInt(slicesCtl.value, 10) || 0);
+        const zt = zaxisCtl.value === 't1' ? pointT1 : pointT2;
         for (let i = 0; i < count; i++) {
-            const t2 = pointT2[i];
-            let z = t2;
+            const t = zt[i];
+            let z = t;
             if (slices > 0) {
-                const level = Math.min(slices - 1, Math.floor(t2 * slices));
+                const level = Math.min(slices - 1, Math.floor(t * slices));
                 z = slices > 1 ? level / (slices - 1) : 0.5;
             }
             positions[i * 3 + 1] = z - 0.5;
         }
         geometry.getAttribute('position').needsUpdate = true;
         buildRibbons(orderCtl.value);
-        if (threadMatches) buildThreads();
+        if (showThreadsCtl.checked) buildThreads();
         updateStats();
     };
     const applyShow = () => {
         points.visible = showPointsCtl.checked;
         ribbons.visible = showRibbonsCtl.checked;
-        if (showThreadsCtl.checked && !threadMatches) {
-            computeThreadMatches();   // lazy: xz matching, cached for the session
-            buildThreads();
-        }
+        if (showThreadsCtl.checked) buildThreads();   // lazy per-axis matching, cached
         threads.visible = showThreadsCtl.checked;
         updateStats();
     };
@@ -705,6 +713,7 @@ async function boot() {
     showThreadsCtl.addEventListener('change', applyShow);
     orderCtl.addEventListener('change', applyOrder);
     slicesCtl.addEventListener('change', applySlices);
+    zaxisCtl.addEventListener('change', applySlices);
     styleCtl.addEventListener('change', applyStyle);
     const lenqCtl = document.getElementById('ctl-lenq');
     const lenqVal = document.getElementById('ctl-lenq-val');
@@ -763,6 +772,7 @@ async function boot() {
         if (Number.isFinite(Number(view.lenq))) {
             lenqCtl.value = String(Math.max(0, Math.min(100, Math.round(Number(view.lenq)))));
         }
+        if (view.zaxis === 't1' || view.zaxis === 't2') zaxisCtl.value = view.zaxis;
     };
     applyViewConfig(cfg.view);
     applyOrder();

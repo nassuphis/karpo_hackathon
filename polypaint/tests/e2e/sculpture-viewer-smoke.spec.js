@@ -974,6 +974,56 @@ test('tours: orbit and weave follow their parametric paths; interaction stops th
   expect(wv.yMax).toBeCloseTo(0.08, 3);        // ...and the top of the stack
   expect(wv.rBad).toBe(0);                     // circle radius constant
   expect(wv.dt2x).toBeCloseTo(2.0, 9);         // 2x speed doubles the clock
+
+  // GRAND: plateau circles with smoothstep laps between, radius adopted,
+  // always watching the center; plateaus default +1.5/-0.5, adopt the
+  // play-time height (mirrored through the center) when starting beyond
+  // them, and the cycle begins at the NEARER plateau
+  const gr = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const mode = document.getElementById('ctl-tour-mode');
+    mode.value = 'grand';
+    mode.dispatchEvent(new Event('change'));
+    const lapT = (2 * Math.PI) / 0.35;
+    const run = (y0) => {
+      v.camera.position.set(1.8, y0, 0);
+      v.tour.setPlaying(true);
+      const at = (laps) => v.tour.pose('grand', laps * lapT, v.sculpt.scale.y);
+      const out = {
+        blendStart: v.tour.state.blend,
+        gTop: v.tour.state.gTop, gBot: v.tour.state.gBot, phase0: v.tour.state.gPhase0,
+        first: at(0.5).pos[1], mid: at(1.5).pos[1], third: at(2.5).pos[1],
+        cycle: at(4.5).pos[1],
+        r: Math.hypot(at(0.5).pos[0], at(0.5).pos[2]),
+        look: at(1.5).look,
+      };
+      v.tour.setPlaying(false);
+      return out;
+    };
+    return { inside: run(0.3), high: run(2.0), low: run(-1.8) };
+  });
+  // inside the band: default plateaus; y=0.3 is nearer the BOTTOM (0.8 vs
+  // 1.2), so the cycle begins with the bottom circle, then ascends
+  expect(gr.inside.blendStart).toBe(0);           // eases in from the camera
+  expect(gr.inside.gTop).toBeCloseTo(1.5, 9);
+  expect(gr.inside.gBot).toBeCloseTo(-0.5, 9);
+  expect(gr.inside.phase0).toBe(2);
+  expect(gr.inside.first).toBeCloseTo(-0.5, 9);   // bottom circle lap first
+  expect(gr.inside.mid).toBeCloseTo(0.5, 9);      // ascent smoothstep midpoint
+  expect(gr.inside.third).toBeCloseTo(1.5, 9);    // then the overhead circle
+  expect(gr.inside.cycle).toBeCloseTo(-0.5, 9);   // the cycle repeats
+  expect(gr.inside.r).toBeCloseTo(1.8, 5);        // play-time radius adopted
+  expect(gr.inside.look).toEqual([0, 0, 0]);      // always watching the center
+  // starting high: your height IS the plateau, mirrored through the center
+  expect(gr.high.gTop).toBeCloseTo(2.0, 9);
+  expect(gr.high.gBot).toBeCloseTo(-2.0, 9);
+  expect(gr.high.phase0).toBe(0);                 // top is nearer — start there
+  expect(gr.high.first).toBeCloseTo(2.0, 9);
+  // starting low: same magnitude, cycle begins at the bottom circle
+  expect(gr.low.gTop).toBeCloseTo(1.8, 9);
+  expect(gr.low.gBot).toBeCloseTo(-1.8, 9);
+  expect(gr.low.phase0).toBe(2);
+  expect(gr.low.first).toBeCloseTo(-1.8, 9);      // starts circling at your level
 });
 
 test('clu ribbons: per-column k-means arcs, chained from the far end, never bridged', async ({ page }) => {

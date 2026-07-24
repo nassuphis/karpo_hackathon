@@ -93,7 +93,14 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   spanning the scaled stack, 3 bobs per lap = a closed crown;
   phase-matched to START at the play-time height and rise first, per
   user spec "start at my current height, continue to top then down" —
-  the galactic-disk vertical-oscillation motion), and **weave** (interior corkscrew with a breathing
+  the galactic-disk vertical-oscillation motion), **grand** (a stately
+  4-lap cycle at the play-time radius: a full circle at the TOP plateau,
+  a smoothstep descent lap, a full circle at the BOTTOM plateau, an
+  ascent lap, always watching the center; plateaus default to +1.5/−0.5
+  and adopt the play-time height — mirrored through the cube center —
+  when starting beyond them, with the cycle beginning at the NEARER
+  plateau so you start circling at your own level; eased entry), and
+  **weave** (interior corkscrew with a breathing
   radius sweeping the full height — the close-up detail pass). Tours
   ADOPT the camera pose at play time (user: "orbit too close — take my
   current distance; I navigate to where the orbit starts"): orbit

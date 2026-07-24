@@ -135,6 +135,7 @@
   <label>tour <select id="ctl-tour-mode">
     <option value="orbit" selected>orbit</option>
     <option value="wave">wave</option>
+    <option value="grand">grand</option>
     <option value="weave">weave</option>
   </select><select id="ctl-tour-speed" title="Tour speed">
     <option value="0.5">&#189;x</option>
@@ -784,7 +785,8 @@ async function boot() {
     // orbit circles at exactly the play-time radius, height, and azimuth
     // (zero jump by construction); weave keeps its programmed corkscrew but
     // starts at the play-time azimuth and EASES IN from the current pose.
-    const tour = { playing: false, t: 0, r0: 1.35, y0: 0.5, angle0: 0, blend: 1, wavePhase: 0 };
+    const tour = { playing: false, t: 0, r0: 1.35, y0: 0.5, angle0: 0, blend: 1, wavePhase: 0,
+                   gTop: 1.5, gBot: -0.5, gPhase0: 0 };
     const tourBlendFrom = new THREE.Vector3();
     const tourBlendLook = new THREE.Vector3();
     const tourBtn = document.getElementById('btn-tour-play');
@@ -799,6 +801,30 @@ async function boot() {
             const y = Math.sin(t * 0.11) * hh * 1.05;
             return { pos: [Math.cos(angle) * radius, y, Math.sin(angle) * radius],
                      look: [0, y * 0.6, 0] };
+        }
+        if (mode === 'grand') {
+            // grand: a stately 4-lap cycle at the play-time radius — a full
+            // circle at the TOP plateau, a smoothstep descent lap, a full
+            // circle at the BOTTOM plateau, an ascent lap — always watching
+            // the center. Plateaus default to +1.5/-0.5; starting beyond
+            // them adopts your height as the plateau magnitude, mirrored
+            // through the cube center, and the cycle begins at the nearer
+            // plateau so you start circling at your own level (user spec).
+            const angle = tour.angle0 + t * 0.35;
+            const phase = (((t * 0.35) / (2 * Math.PI)) + tour.gPhase0) % 4;
+            const yTop = tour.gTop, yBot = tour.gBot;
+            let y;
+            if (phase < 1) y = yTop;
+            else if (phase < 2) {
+                const u = phase - 1, w = u * u * (3 - 2 * u);
+                y = yTop + (yBot - yTop) * w;
+            } else if (phase < 3) y = yBot;
+            else {
+                const u = phase - 3, w = u * u * (3 - 2 * u);
+                y = yBot + (yTop - yBot) * w;
+            }
+            return { pos: [Math.cos(angle) * tour.r0, y, Math.sin(angle) * tour.r0],
+                     look: [0, 0, 0] };
         }
         if (mode === 'wave') {
             // wave: the orbit's circle plus a vertical sine spanning the
@@ -847,8 +873,13 @@ async function boot() {
             tour.angle0 = Math.atan2(p.z, p.x);
             const amp = waveAmp(Math.max(0.06, 0.5 * sculpt.scale.y));
             tour.wavePhase = Math.asin(Math.max(-1, Math.min(1, p.y / amp)));
-            // orbit and wave adopt the pose exactly (no jump); weave eases in
-            tour.blend = tourModeCtl.value === 'weave' ? 0 : 1;
+            const gMag = Math.max(1.5, Math.abs(p.y));
+            tour.gTop = gMag;
+            tour.gBot = gMag > 1.5 ? -gMag : -0.5;
+            tour.gPhase0 = p.y < (tour.gTop + tour.gBot) / 2 ? 2 : 0;
+            // orbit and wave adopt the pose exactly (no jump); weave and
+            // grand ease in (grand's plateaus are program levels)
+            tour.blend = (tourModeCtl.value === 'weave' || tourModeCtl.value === 'grand') ? 0 : 1;
             tourBlendFrom.copy(p);
             camera.getWorldDirection(tourBlendLook);
             tourBlendLook.multiplyScalar(1.0).add(p);
@@ -1075,7 +1106,7 @@ async function boot() {
     if (cfg.view && [0.5, 1, 2, 4].includes(Number(cfg.view.tourSpeed))) {
         tourSpeedCtl.value = String(Number(cfg.view.tourSpeed));
     }
-    if (cfg.view && ['orbit', 'wave', 'weave'].includes(cfg.view.tour)) {
+    if (cfg.view && ['orbit', 'wave', 'grand', 'weave'].includes(cfg.view.tour)) {
         tourModeCtl.value = cfg.view.tour;
         tourSetPlaying(true);
     }

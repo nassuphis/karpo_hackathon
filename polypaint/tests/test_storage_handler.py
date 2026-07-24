@@ -1281,7 +1281,7 @@ class TestSaveSculpture(unittest.TestCase):
             "palette": "inferno",
             "view": {"point": 12, "order": "angle",
                      "show": {"points": True, "clu": True},
-                     "tour": "wave", "tourSpeed": 2, "junk": "x"},
+                     "tour": "grand", "tourSpeed": 2, "junk": "x"},
         }
         p.update(over)
         return p
@@ -1319,7 +1319,7 @@ class TestSaveSculpture(unittest.TestCase):
         self.assertEqual(meta["view"], {
             "point": 12, "order": "angle",
             "show": {"points": True, "ribbons": False, "threads": False, "clu": True},
-            "tour": "wave", "tourSpeed": 2.0,
+            "tour": "grand", "tourSpeed": 2.0,
         })   # sanitized
         viewer = puts[f"sculptures/{sc['id']}/viewer.html"]
         repo_viewer = open(os.path.join(os.path.dirname(__file__), "..", "sculpture.html"), "rb").read()

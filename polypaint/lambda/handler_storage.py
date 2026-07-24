@@ -7193,7 +7193,7 @@ def _sculpture_view(raw):
         view["style"] = raw["style"]
     if raw.get("order") in ("nearest", "angle", "file"):
         view["order"] = raw["order"]
-    if raw.get("tour") in ("off", "orbit", "wave", "weave"):
+    if raw.get("tour") in ("off", "orbit", "wave", "grand", "weave"):
         view["tour"] = raw["tour"]
     try:
         speed = float(raw.get("tourSpeed"))

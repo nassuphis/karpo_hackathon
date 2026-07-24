@@ -37,6 +37,8 @@
   #panel label { display: flex; align-items: center; gap: 8px; margin: 4px 0;
                  color: #9fb0c3; }
   #panel input[type=range] { width: 130px; accent-color: #e94560; }
+  #panel select { background: #0d1320; color: #cfd8e3; border: 1px solid #232b3a;
+                  border-radius: 4px; font: inherit; padding: 1px 4px; }
   #panel .val { width: 4ch; text-align: right; color: #cfd8e3; }
   #message-box { position: fixed; inset: 0; display: none; z-index: 10;
                  align-items: center; justify-content: center; text-align: center;
@@ -56,6 +58,15 @@
 <div id="panel">
   <label>point <input id="ctl-size" type="range" min="1" max="40" value="10"><span class="val" id="ctl-size-val"></span></label>
   <label>height <input id="ctl-height" type="range" min="0" max="100" value="100"><span class="val" id="ctl-height-val"></span></label>
+  <label>show <select id="ctl-mode">
+    <option value="both">points + ribbons</option>
+    <option value="points">points</option>
+    <option value="ribbons">ribbons</option>
+  </select></label>
+  <label>connect <select id="ctl-order">
+    <option value="angle">angle</option>
+    <option value="file">file order</option>
+  </select></label>
 </div>
 <div id="message-box"><div><h1 id="message-title"></h1><div class="detail" id="message-detail"></div></div></div>
 <script type="module">
@@ -141,6 +152,7 @@ async function boot() {
     const side = Math.max(maxRe - minRe, maxIm - minIm);
     const positions = new Float32Array(passSteps * degree * 3);
     const colors = new Uint8Array(passSteps * degree * 3);
+    const stepOffsets = new Int32Array(passSteps + 1);
     let count = 0, clipped = 0;
     for (let step = 0; step < passSteps; step++) {
         const row = Math.floor(step / gridN);
@@ -165,6 +177,7 @@ async function boot() {
             colors[o] = cr; colors[o + 1] = cg; colors[o + 2] = cb;
             count++;
         }
+        stepOffsets[step + 1] = count;
     }
     if (!count) {
         fail('No roots inside the viewport', `${clipped} roots were outside the xy extent or non-finite.`);
@@ -195,7 +208,64 @@ async function boot() {
         transparent: true, opacity: 0.92, depthWrite: false,
     });
     const points = new THREE.Points(geometry, material);
-    scene.add(points);
+
+    // ribbons: one polyline per solve — all roots of a row connected at that
+    // row's z, monochrome by construction (the solve-score is per solve).
+    // 'angle' tours each row's constellation around its centroid (closed for
+    // 3+ roots); 'file' draws the solver's own row order open-ended — for the
+    // warm-started Aberth lores solve that order is a fossil of the chain.
+    const ribbons = new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({
+            vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false,
+        }));
+    let ribbonSegments = 0;
+    function buildRibbons(order) {
+        const lp = new Float32Array(passSteps * degree * 2 * 3);
+        const lc = new Uint8Array(passSteps * degree * 2 * 3);
+        let lv = 0;
+        const idx = [];
+        for (let step = 0; step < passSteps; step++) {
+            const a = stepOffsets[step], b = stepOffsets[step + 1];
+            const k = b - a;
+            if (k < 2) continue;
+            idx.length = 0;
+            for (let i = a; i < b; i++) idx.push(i);
+            if (order === 'angle') {
+                let mx = 0, mz = 0;
+                for (const i of idx) { mx += positions[i * 3]; mz += positions[i * 3 + 2]; }
+                mx /= k; mz /= k;
+                const ang = i => Math.atan2(positions[i * 3 + 2] - mz, positions[i * 3] - mx);
+                idx.sort((p, q) => ang(p) - ang(q));
+            }
+            const close = order === 'angle' && k >= 3;
+            const segs = close ? k : k - 1;
+            for (let t = 0; t < segs; t++) {
+                const pair = [idx[t], idx[(t + 1) % k]];
+                for (const i of pair) {
+                    lp[lv * 3] = positions[i * 3];
+                    lp[lv * 3 + 1] = positions[i * 3 + 1];
+                    lp[lv * 3 + 2] = positions[i * 3 + 2];
+                    lc[lv * 3] = colors[i * 3];
+                    lc[lv * 3 + 1] = colors[i * 3 + 1];
+                    lc[lv * 3 + 2] = colors[i * 3 + 2];
+                    lv++;
+                }
+            }
+        }
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.BufferAttribute(lp.subarray(0, lv * 3), 3));
+        geom.setAttribute('color', new THREE.BufferAttribute(lc.subarray(0, lv * 3), 3, true));
+        const old = ribbons.geometry;
+        ribbons.geometry = geom;
+        if (old) old.dispose();
+        ribbonSegments = lv / 2;
+    }
+
+    const sculpt = new THREE.Group();
+    sculpt.add(points);
+    sculpt.add(ribbons);
+    scene.add(sculpt);
 
     const frame = new THREE.LineSegments(
         new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
@@ -206,10 +276,25 @@ async function boot() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
 
-    document.getElementById('hud-stats').textContent =
-        `${count.toLocaleString()} roots · grid ${gridN}×${gridN} · degree ${degree}` +
-        ` · z = t2 · clipped ${clipped.toLocaleString()}`;
+    const updateStats = () => {
+        document.getElementById('hud-stats').textContent =
+            `${count.toLocaleString()} roots · grid ${gridN}×${gridN} · degree ${degree}` +
+            ` · z = t2 · clipped ${clipped.toLocaleString()}` +
+            ` · ${ribbonSegments.toLocaleString()} ribbon segments`;
+    };
 
+    const modeCtl = document.getElementById('ctl-mode');
+    const orderCtl = document.getElementById('ctl-order');
+    const applyMode = () => {
+        points.visible = modeCtl.value !== 'ribbons';
+        ribbons.visible = modeCtl.value !== 'points';
+    };
+    const applyOrder = () => {
+        buildRibbons(orderCtl.value);
+        updateStats();
+    };
+    modeCtl.addEventListener('change', applyMode);
+    orderCtl.addEventListener('change', applyOrder);
     const sizeCtl = document.getElementById('ctl-size');
     const sizeVal = document.getElementById('ctl-size-val');
     const heightCtl = document.getElementById('ctl-height');
@@ -222,12 +307,14 @@ async function boot() {
     // literally this shape's shadow, and the slider shows it
     const applyHeight = () => {
         const h = Number(heightCtl.value) / 100;
-        points.scale.y = h;
+        sculpt.scale.y = h;
         frame.scale.y = Math.max(h, 0.001);
         heightVal.textContent = h.toFixed(2);
     };
     sizeCtl.addEventListener('input', applySize);
     heightCtl.addEventListener('input', applyHeight);
+    applyOrder();
+    applyMode();
     applySize();
     applyHeight();
 
@@ -242,7 +329,7 @@ async function boot() {
     });
 
     window.__sculptureViewer = {
-        scene, camera, renderer, points, material, controls,
+        scene, camera, renderer, points, ribbons, sculpt, material, controls,
         count, clipped, gridN, degree,
     };
 }

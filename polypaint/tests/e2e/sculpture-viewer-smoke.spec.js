@@ -12,15 +12,18 @@ test.use({ launchOptions: { args: ['--enable-unsafe-swiftshader', '--use-gl=angl
 
 const VIEWER = 'http://localhost:8765/sculpture.html';
 
-// grid 4x4, degree 2: every step carries roots re=0.1,0.2 (im=0) so every
-// point lands inside the [-1,1]^2 viewport and indexing is deterministic.
-function rootsBuffer(gridN, degree) {
-  const buf = Buffer.alloc(gridN * gridN * degree * 2 * 4);
+// grid 4x4, degree 3: every step carries roots A=(0.4,0), B=(-0.4,0),
+// C=(0,0.4) — all inside the [-1,1]^2 viewport, and the triangle's angular
+// tour (C, A, B about the centroid) differs from file order (A, B, C), so
+// the ribbon connection modes are distinguishable. Interleaved [re,im] f32.
+const FIXTURE_ROOTS = [[0.4, 0.0], [-0.4, 0.0], [0.0, 0.4]];
+function rootsBuffer(gridN) {
+  const buf = Buffer.alloc(gridN * gridN * FIXTURE_ROOTS.length * 2 * 4);
   let o = 0;
   for (let step = 0; step < gridN * gridN; step++) {
-    for (let r = 0; r < degree; r++) {
-      buf.writeFloatLE(0.1 * (r + 1), o); o += 4;   // re
-      buf.writeFloatLE(0.0, o); o += 4;             // im
+    for (const [re, im] of FIXTURE_ROOTS) {
+      buf.writeFloatLE(re, o); o += 4;
+      buf.writeFloatLE(im, o); o += 4;
     }
   }
   return buf;
@@ -63,13 +66,13 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
     return c.toDataURL('image/png').split(',')[1];
   });
   await page.route('**/fx/roots.bin', (route) => route.fulfill({
-    status: 200, contentType: 'application/octet-stream', body: rootsBuffer(4, 2),
+    status: 200, contentType: 'application/octet-stream', body: rootsBuffer(4),
   }));
   await page.route('**/fx/palette.png', (route) => route.fulfill({
     status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
   }));
   const frag = new URLSearchParams({
-    v: '1', r: '/fx/roots.bin', p: '/fx/palette.png', n: '4', d: '2', s: '16',
+    v: '1', r: '/fx/roots.bin', p: '/fx/palette.png', n: '4', d: '3', s: '16',
     x0: '-1', x1: '1', y0: '-1', y1: '1', t: 'fixture sculpture',
   });
   // hash-only navigation would not reload the already-open viewer — hop away
@@ -98,16 +101,68 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
     expect(st.msg).toMatch(/WebGL/i);
     return;
   }
-  expect(st.count).toBe(32);        // 16 steps x degree 2, nothing clipped
+  expect(st.count).toBe(48);        // 16 steps x degree 3, nothing clipped
   expect(st.clipped).toBe(0);
   expect(st.title).toBe('fixture sculpture');
-  expect(st.hud).toContain('32 roots');
+  expect(st.hud).toContain('48 roots');
   expect(st.hud).toContain('grid 4×4');
   // global step 4 = row 1 (odd, serpentine) j=0 -> col 3 -> t2=0.75 -> Y=0.25;
   // palette pixel (col 3, row 1) -> rgb(60, 180, 17)
   expect(st.y4).toBeCloseTo(0.25, 5);
-  expect(st.x4).toBeCloseTo(0.05, 5);   // re=0.1 in a side-2 viewport
+  expect(st.x4).toBeCloseTo(0.2, 5);    // root A: re=0.4 in a side-2 viewport
   expect(st.c4).toEqual([60, 180, 17]);
+
+  // ribbons: one polyline per solve. Angle mode tours the triangle around
+  // its centroid CLOSED (3 segments); default mode shows points + ribbons.
+  const rb = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const pos = v.ribbons.geometry.getAttribute('position');
+    return {
+      verts: pos.count,
+      v0: [pos.array[0], pos.array[2]], v1: [pos.array[3], pos.array[5]],
+      pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible,
+      hud: document.getElementById('hud-stats').textContent || '',
+    };
+  });
+  expect(rb.verts).toBe(96);            // 16 solves x 3 closed segments x 2 verts
+  expect(rb.pointsVis).toBe(true);
+  expect(rb.ribbonsVis).toBe(true);
+  expect(rb.hud).toContain('48 ribbon segments');
+  // the angular tour starts at C (lowest angle about the centroid: z=-0.2)
+  // and walks C -> A: the file order A,B,C is reordered
+  expect(rb.v0[0]).toBeCloseTo(0.0, 5);
+  expect(rb.v0[1]).toBeCloseTo(-0.2, 5);
+  expect(rb.v1[0]).toBeCloseTo(0.2, 5);
+  expect(rb.v1[1]).toBeCloseTo(0.0, 5);
+  // file order draws the solver's own row order OPEN (A->B, B->C only)
+  const fo = await page.evaluate(() => {
+    const ctl = document.getElementById('ctl-order');
+    ctl.value = 'file';
+    ctl.dispatchEvent(new Event('change'));
+    const v = window.__sculptureViewer;
+    const pos = v.ribbons.geometry.getAttribute('position');
+    return {
+      verts: pos.count,
+      v0: [pos.array[0], pos.array[2]], v1: [pos.array[3], pos.array[5]],
+      hud: document.getElementById('hud-stats').textContent || '',
+    };
+  });
+  expect(fo.verts).toBe(64);            // 16 solves x 2 open segments x 2 verts
+  expect(fo.hud).toContain('32 ribbon segments');
+  expect(fo.v0[0]).toBeCloseTo(0.2, 5);   // A leads in file order
+  expect(fo.v1[0]).toBeCloseTo(-0.2, 5);  // then B
+  // the show selector hides the other primitive
+  const vis = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const ctl = document.getElementById('ctl-mode');
+    const set = (m) => { ctl.value = m; ctl.dispatchEvent(new Event('change')); };
+    const out = [];
+    set('ribbons'); out.push([v.points.visible, v.ribbons.visible]);
+    set('points'); out.push([v.points.visible, v.ribbons.visible]);
+    set('both'); out.push([v.points.visible, v.ribbons.visible]);
+    return out;
+  });
+  expect(vis).toEqual([[false, true], [true, false], [true, true]]);
 
   // the height slider flattens the sculpture onto its base plane — the 2D
   // art is literally this shape's shadow
@@ -115,7 +170,7 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
     const ctl = document.getElementById('ctl-height');
     ctl.value = '0';
     ctl.dispatchEvent(new Event('input'));
-    return window.__sculptureViewer.points.scale.y;
+    return window.__sculptureViewer.sculpt.scale.y;
   });
   expect(flat).toBe(0);
 });

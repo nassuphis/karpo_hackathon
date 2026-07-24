@@ -61,7 +61,22 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
 - Controls: orbit/damping, point-size slider, **height slider** — 0
   flattens the sculpture onto its base plane, showing the shadow ≙ the
   2D art.
-- `window.__sculptureViewer` exposes scene/points/counts for e2e.
+- **Ribbons** (per user spec): one polyline per solve — each row of the
+  root table (columns = degree) connected at that row's z, monochrome by
+  construction since the solve-score is per solve. `show` selector:
+  points / ribbons / both (default both). `connect` selector picks the
+  within-row order — roots have no intrinsic order, the table order is a
+  solver artifact:
+  - **angle** (default): tour each row's constellation by angle about
+    its centroid, CLOSED for 3+ roots. Solver-independent, coherent,
+    stable between neighboring solves.
+  - **file order**: the solver's own row order, OPEN-ended. For the
+    warm-started Aberth lores solve this order is a fossil of the chain;
+    for CM/JT rows it is essentially arbitrary (torn sheets expected).
+  One `LineSegments` draw call for all ribbons; rows with clipped roots
+  just tour the survivors. Plain WebGL lines are 1px — real thickness
+  would use the already-vendored fat-line addons.
+- `window.__sculptureViewer` exposes scene/points/ribbons/sculpt for e2e.
 
 **Failure modes** are readable messages (no params, fetch failure,
 truncated bin, nothing inside the viewport, no WebGL).
@@ -82,18 +97,23 @@ subsampled (which "logical" already does server-side).
 - `tests/e2e/sculpture-viewer-smoke.spec.js` (SwiftShader, gallery-smoke
   pattern): module graph + no-params message; truncated-bin message; real
   scene build with serpentine z pin (step 4 → col 3 → Y=0.25), exact
-  per-step color pin, clipped=0, shadow flatten.
+  per-step color pin, clipped=0, shadow flatten. Ribbon pins use a
+  degree-3 triangle whose angular tour (C,A,B closed) differs from file
+  order (A,B,C open) — degree-2 rows are DEGENERATE for order pins (both
+  orders draw the same segment; which vertex leads hinges on IEEE zero
+  signs in atan2).
 - `tests/e2e/render-solve-score.spec.js`: Sculpture button posts
   `sculpture: true`, opens exactly one window, fragment carries all data
   params; the plain Preview payload stays sculpture-free.
 
 ## Future (not in v1)
 
-- **Threads/ribbons**: root-identity polylines along t2. The full-render
-  transport keeps `matchRoots` identity along the serpentine chain, but
-  the lores paths solve with `match_roots: False` — a threads mode needs
-  either a match_roots lores variant or client-side matching. Fat-line
-  addons are already vendored.
+- **Threads**: root-identity polylines along t2 (across solves — distinct
+  from the per-solve ribbons above). The full-render transport keeps
+  `matchRoots` identity along the serpentine chain, but the lores paths
+  solve with `match_roots: False` — a threads mode needs either a
+  match_roots lores variant or client-side matching. Fat-line addons are
+  already vendored.
 - **z = t1 transpose toggle** (cheap, viewer-side reindex).
 - **Density voxels** (3D histogram — the true 3D analog of the density
   art) and **marching-cubes mesh export** (STL/GLB → printable sculpture).

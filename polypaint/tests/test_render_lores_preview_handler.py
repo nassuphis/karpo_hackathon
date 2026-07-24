@@ -737,6 +737,77 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
+    def test_sculpture_save_builds_self_contained_prefix(self, mock_s3, mock_run, mock_render):
+        from handler_render_lores_preview import TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, TMP_XFORMED_ROOTS, handler
+
+        mock_s3.get_object.return_value = {"Body": _ChunkBody(b"\x00" * (3 * 2 * 2 * 4))}
+        xformed_bytes = b"T" * (3 * 2 * 2 * 4)
+
+        def subprocess_fake(cmd, **kwargs):
+            if "--mode=clip" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "clip_lo": 0.0, "clip_hi": 1.0, "min_score": 0.0, "max_score": 1.0,
+                    "n_solves": 3, "threads": 1}), stderr="")
+            if "--mode=summary" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "degree": 2, "n_solves": 3, "clip_lo": 0.0, "clip_hi": 1.0,
+                    "min_score": 0.0, "q05": 0.1, "q95": 0.9, "max_score": 1.0,
+                    "threads": 1}), stderr="")
+            with open(TMP_FRAGMENT, "wb") as fh:
+                fh.write((0).to_bytes(4, "little") + bytes([10]))
+            with open(TMP_PALETTE_FRAGMENT, "wb") as fh:
+                fh.write((0).to_bytes(4, "little") + bytes([10]))
+            with open(TMP_XFORMED_ROOTS, "wb") as fh:
+                fh.write(xformed_bytes)
+            return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 2, "roots_clipped": 0}), stderr="")
+
+        def render_fake(**kwargs):
+            with open(kwargs["out_path"], "wb") as fh:
+                fh.write(PNG_1X1)
+            return {"file_size": len(PNG_1X1), "preview_file_size": 0}
+
+        mock_run.side_effect = subprocess_fake
+        mock_render.side_effect = render_fake
+
+        resp = handler(_event(lores_N=1, sculpture=True, sculpture_save=True,
+                              sculpture_title="Test Piece — v2"), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        sc = body["sculpture"]
+        self.assertTrue(sc["id"].startswith("scu_"))
+        self.assertEqual(sc["title"], "Test Piece — v2")
+        self.assertEqual(sc["prefix"], f"sculptures/{sc['id']}/")
+        self.assertTrue(sc["share_url"].endswith(f"/sculptures/{sc['id']}/viewer.html"))
+        self.assertEqual(sc["roots_key"], f"sculptures/{sc['id']}/roots.bin")
+        # four durable objects, nothing under renders/
+        by_key = {call.kwargs["Key"]: call.kwargs for call in mock_s3.put_object.call_args_list}
+        self.assertEqual(sorted(by_key), sorted([
+            f"sculptures/{sc['id']}/roots.bin",
+            f"sculptures/{sc['id']}/palette.png",
+            f"sculptures/{sc['id']}/meta.json",
+            f"sculptures/{sc['id']}/viewer.html",
+        ]))
+        self.assertEqual(by_key[f"sculptures/{sc['id']}/roots.bin"]["Body"], xformed_bytes)
+        self.assertEqual(by_key[f"sculptures/{sc['id']}/roots.bin"]["CacheControl"],
+                         "public, max-age=31536000, immutable")
+        self.assertEqual(by_key[f"sculptures/{sc['id']}/palette.png"]["Body"], PNG_1X1)
+        meta = json.loads(by_key[f"sculptures/{sc['id']}/meta.json"]["Body"])
+        self.assertEqual(meta["title"], "Test Piece — v2")
+        self.assertEqual(meta["job_id"], "j")
+        self.assertEqual(meta["grid_n"], 1)
+        self.assertEqual(meta["degree"], 2)
+        self.assertEqual(meta["roots_key"], "roots.bin")     # viewer-relative
+        self.assertEqual(meta["palette_key"], "palette.png")
+        self.assertIn("min_re", meta["viewport"])
+        # the frozen viewer copy is the real template
+        viewer = by_key[f"sculptures/{sc['id']}/viewer.html"]
+        self.assertEqual(viewer["ContentType"], "text/html")
+        repo_viewer = open(os.path.join(os.path.dirname(__file__), "..", "sculpture.html"), "rb").read()
+        self.assertEqual(viewer["Body"], repo_viewer)
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
     def test_sculpture_requires_square_grid(self, mock_s3, mock_run, mock_render):
         from handler_render_lores_preview import TMP_FRAGMENT, handler
 

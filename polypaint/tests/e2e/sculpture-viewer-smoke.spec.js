@@ -577,3 +577,53 @@ test('fly mode: double-click requests pointer lock; WASD moves along the look di
   expect(st.upDelta).toBeCloseTo(0.45 * 0.5, 3);
   expect(st.keyAfterSelect).toBe(0);                    // inputs keep their keys
 });
+
+test('saved-sculpture mode: no hash params, boots from sibling meta.json', async ({ page }) => {
+  // the saved prefix serves viewer.html + meta.json + data side by side; the
+  // viewer opened bare must read ./meta.json and resolve data relatively
+  await page.goto('http://localhost:8765/sculpture.html');
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 4;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgb(10,20,30)';
+    g.fillRect(0, 0, 4, 4);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  const meta = {
+    version: 1, id: 'scu_test', title: 'saved fixture', job_id: 'j',
+    grid_n: 4, degree: 3, step_count: 16, pass_count: 1,
+    roots_key: 'roots.bin', palette_key: 'palette.png',
+    viewport: { min_re: -1, max_re: 1, min_im: -1, max_im: 1 },
+  };
+  await page.route('**/sc/viewer.html', (route) => {
+    const fs = require('fs');
+    route.fulfill({ status: 200, contentType: 'text/html',
+      body: fs.readFileSync(require('path').join(__dirname, '..', '..', 'sculpture.html')) });
+  });
+  await page.route('**/sc/meta.json', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(meta),
+  }));
+  await page.route('**/sc/roots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: rootsBuffer(4),
+  }));
+  await page.route('**/sc/palette.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  await page.goto('http://localhost:8765/sc/viewer.html');
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const st = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    if (!v) return { built: false, msg: document.getElementById('message-title').textContent || '' };
+    return { built: true, count: v.count,
+             title: document.getElementById('hud-title').textContent };
+  });
+  if (!st.built) {
+    expect(st.msg).toMatch(/WebGL/i);
+    return;
+  }
+  expect(st.count).toBe(48);
+  expect(st.title).toBe('saved fixture');
+});

@@ -1364,7 +1364,7 @@ cp lambda/handler_render_lores_preview.py lambda/shared.py \
    lambda/pipeline_programs.py lambda/program_compile_helpers.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
-   lambda/root_legacy_registry.json lambda/merged_opcodes.py "$RENDER_LORES_PREVIEW_DIR/"
+   lambda/root_legacy_registry.json lambda/merged_opcodes.py sculpture.html "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt lambda/solve_proximity_stats lambda/score_raw_render \
    lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"

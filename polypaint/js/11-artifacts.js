@@ -1014,6 +1014,9 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         coeffs: withFamily('coeffs', families.coeffs),
         palette: withFamily('palette', families.palette),
         pdf: withFamily('pdf', families.pdf),
+        // global saved-sculpture list (session cache) — registered here so
+        // the family survives the rebuild and its tab count stays live
+        sculpture: window._sculptureInventory || [],
     };
     if (!_renderArtifacts[_renderActiveFamily]) _renderActiveFamily = 'color';
     for (const family of ['color', 'bilevel', 'coeffs', 'palette', 'pdf']) {
@@ -1041,11 +1044,32 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     const linkedPaletteId = _linkedPaletteIdForColorArtifact(activeArt);
     const linkedColorId = _linkedColorIdForPaletteArtifact(activeArt);
     const favoriteSelected = _renderActiveFamily === 'color' && activeArt && _isFavorite(jobId, activeArt.artifact_id);
-    const familyTabs = ['color', 'bilevel', 'coeffs', 'palette', 'pdf'].map((family) => {
+    const familyTabs = ['color', 'bilevel', 'coeffs', 'palette', 'pdf', 'sculpture'].map((family) => {
         const active = family === _renderActiveFamily;
         const count = (_renderArtifacts[family] || []).length;
         return `<button type="button" role="tab" class="subtab-btn${active ? ' active' : ''}" data-render-family="${family}" onclick="_renderSelectFamily('${family}')" aria-selected="${active ? 'true' : 'false'}">${_renderFamilyLabel(family)} <span class="subtab-count">(${count})</span></button>`;
     }).join('');
+
+    if (_renderActiveFamily === 'sculpture') {
+        // saved-sculpture pane: DeepZoom-style — a create block bound to the
+        // CURRENT render settings plus the global durable list. Selection /
+        // marquee / viewer machinery does not apply here.
+        preview.innerHTML = `
+        <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
+            <div class="subtab-bar render-artifact-family-tabs" role="tablist" aria-label="Render artifact family tabs">${familyTabs}</div>
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap">
+                <input type="text" id="sculpture-title" placeholder="sculpture title (optional)" style="flex:0 1 340px; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:5px 8px; font-family:monospace; font-size:12px">
+                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-create" onclick="runSculptureSave()">Create</button>
+                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)">Refresh</button>
+                <span style="font-size:11px; color:#666">Create solves with the current Solve-score settings and saves a permanent, shareable sculpture (frozen viewer + data under sculptures/).</span>
+            </div>
+            <div id="sculpture-list" style="max-height:520px; overflow-y:auto; border:1px solid #333; border-radius:4px">Loading…</div>
+        </div>`;
+        _sculptureRenderPane();
+        void _sculptureEnsureInventory();
+        info.textContent = 'Job: ' + jobId;
+        return;
+    }
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
@@ -1580,6 +1604,111 @@ async function _dzPatchInventoryAfterExport(jobId, exportId) {
         _dzRenderInventory();
     } catch (e) {
         _dzInventoryLoaded = false;   // stale — next tab entry does a full refresh
+    }
+}
+
+function _sculptureShareUrl(meta) {
+    const prefix = meta.prefix || `sculptures/${meta.id}/`;
+    return _publicStorageUrl(prefix + 'viewer.html');
+}
+
+function _sculptureRenderPane() {
+    const el = document.getElementById('sculpture-list');
+    if (!el) return;
+    if (!window._sculptureInventoryLoaded) {
+        el.innerHTML = '<div style="padding:10px; color:#666">Loading…</div>';
+        return;
+    }
+    const inv = window._sculptureInventory || [];
+    if (!inv.length) {
+        el.innerHTML = '<div style="padding:10px; color:#666">No saved sculptures yet. Set up a Solve-score render and press Create.</div>';
+        return;
+    }
+    el.innerHTML = inv.map((m, i) => `
+        <div style="display:flex; align-items:center; gap:10px; padding:6px 10px; border-bottom:1px solid #26263a; font-size:12px">
+            <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#e8eef5">${_escapeHtml(m.title || m.id || '')}</span>
+            <span style="color:#778599; font-family:monospace">${_escapeHtml(m.job_id || '')}</span>
+            <span style="color:#778599; white-space:nowrap">${Number(m.grid_n) || '?'}×${Number(m.grid_n) || '?'} · d${Number(m.degree) || '?'}</span>
+            <span style="color:#778599">${_escapeHtml(String(m.palette || ''))}</span>
+            <span style="color:#556; font-size:11px; white-space:nowrap">${_escapeHtml(String(m.created_at || '').slice(0, 16).replace('T', ' '))}</span>
+            <button type="button" class="btn-secondary btn-inline" onclick="_sculptureOpen(${i})">Open</button>
+            <button type="button" class="btn-secondary btn-inline" onclick="_sculptureCopyLink(${i}, this)">Copy link</button>
+            <button type="button" class="btn-secondary btn-inline" onclick="_sculptureDelete(${i}, this)">Delete</button>
+        </div>`).join('');
+}
+
+async function _sculptureEnsureInventory(force) {
+    if (window._sculptureInventoryLoaded && !force) return;
+    const btn = document.getElementById('btn-sculpture-refresh');
+    if (btn) btn.disabled = true;
+    try {
+        const data = await lambdaPost('storage', {}, '/list-sculptures');
+        window._sculptureInventory = data.sculptures || [];
+        window._sculptureInventoryLoaded = true;
+        _renderArtifacts.sculpture = window._sculptureInventory;   // family-tab count
+    } catch (e) {
+        if (!window._sculptureInventoryLoaded) window._sculptureInventory = [];
+        log(`Sculpture list failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+    _sculptureRenderPane();
+}
+
+function _sculptureOpen(idx) {
+    const m = (window._sculptureInventory || [])[idx];
+    if (m) window.open(_sculptureShareUrl(m), '_blank');
+}
+
+async function _sculptureCopyLink(idx, btn) {
+    const m = (window._sculptureInventory || [])[idx];
+    if (!m) return;
+    const url = _sculptureShareUrl(m);
+    const orig = btn ? btn.textContent : '';
+    try {
+        await navigator.clipboard.writeText(url);
+        if (btn) btn.textContent = '\u2713 Copied';
+    } catch (e) {
+        log(`Sculpture link (copy failed, select manually): ${url}`, 'err', 'render-log');
+        if (btn) btn.textContent = '\u2717 Copy';
+    }
+    if (btn) setTimeout(() => { btn.textContent = orig; }, 2000);
+}
+
+async function _sculptureDelete(idx, btn) {
+    const m = (window._sculptureInventory || [])[idx];
+    if (!m) return;
+    if (!confirm(`Delete sculpture "${m.title || m.id}"? The share link stops working.`)) return;
+    const prefix = m.prefix || `sculptures/${m.id}/`;
+    const orig = btn ? btn.textContent : 'Delete';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+        await lambdaPost('storage', { prefix }, '/delete-prefix');
+        window._sculptureInventory = (window._sculptureInventory || []).filter((_, i) => i !== idx);
+        _renderArtifacts.sculpture = window._sculptureInventory;
+        _sculptureRenderPane();
+        log(`Sculpture deleted: ${m.title || m.id}`, 'ok', 'render-log');
+    } catch (e) {
+        log(`Sculpture delete failed: ${e.message}`, 'err', 'render-log');
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
+async function runSculptureSave() {
+    const btn = document.getElementById('btn-sculpture-create');
+    const titleEl = document.getElementById('sculpture-title');
+    const title = titleEl ? titleEl.value.trim() : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+    let ok = false;
+    try {
+        ok = await runRenderLoresSculpture({ save: true, title });
+        if (ok) await _sculptureEnsureInventory(true);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = ok ? '\u2713 Created' : '\u2717 Create';
+            setTimeout(() => { btn.textContent = 'Create'; }, 2500);
+        }
     }
 }
 

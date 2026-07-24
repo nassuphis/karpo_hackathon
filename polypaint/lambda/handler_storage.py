@@ -1699,6 +1699,8 @@ def handler(event, context):
         return _handle_storage_route(handle_list_sheets, event)
     elif path.endswith("/list-deepzoom"):
         return _handle_storage_route(handle_list_deepzoom, event)
+    elif path.endswith("/list-sculptures"):
+        return _handle_storage_route(handle_list_sculptures, event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -7023,19 +7025,23 @@ def handle_delete_task(event):
 # issues. Broader prefixes (deepzoom/, deepzoom/<job>/) would wipe every
 # export or a whole job's exports through a direct API call (code-review-27 F11).
 _DEEPZOOM_EXPORT_PREFIX = re.compile(r"deepzoom/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}/")
+# exactly sculptures/<id>/ — one saved sculpture (same single-item discipline)
+_SCULPTURE_PREFIX = re.compile(r"sculptures/[A-Za-z0-9_-]{1,64}/")
 
 
 def handle_delete_prefix(event):
-    """Delete all S3 objects under one DeepZoom export prefix.
-    Input: {prefix} — must be exactly deepzoom/<job_id>/<export_id>/.
+    """Delete all S3 objects under one share prefix.
+    Input: {prefix} — exactly deepzoom/<job_id>/<export_id>/ or
+    sculptures/<id>/. Anything broader would wipe every export through a
+    direct API call (code-review-27 F11).
     """
     params = parse_body(event)
     prefix = str(params.get("prefix") or "")
-    if not _DEEPZOOM_EXPORT_PREFIX.fullmatch(prefix):
+    if not (_DEEPZOOM_EXPORT_PREFIX.fullmatch(prefix) or _SCULPTURE_PREFIX.fullmatch(prefix)):
         return {
             "statusCode": 400,
             "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"error": "delete-prefix requires exactly deepzoom/<job_id>/<export_id>/"}),
+            "body": json.dumps({"error": "delete-prefix requires exactly deepzoom/<job_id>/<export_id>/ or sculptures/<id>/"}),
         }
 
     objects = []
@@ -7138,6 +7144,33 @@ def handle_list_sheets(event):
         sheets = [row for row in pool.map(manifest_row, prefixes) if row]
     sheets.sort(key=lambda r: r["modified"], reverse=True)
     return ok_response({"sheets": sheets})
+
+
+def handle_list_sculptures(event):
+    """List saved sculptures: one delimiter pass over sculptures/ plus
+    parallel meta.json reads (the DeepZoom listing pattern, one level)."""
+    import concurrent.futures
+
+    paginator = s3.get_paginator("list_objects_v2")
+    prefixes = []
+    for page in paginator.paginate(Bucket=BUCKET, Prefix="sculptures/",
+                                   Delimiter="/"):
+        prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
+
+    def read_meta(prefix):
+        try:
+            obj = s3.get_object(Bucket=BUCKET, Key=prefix + "meta.json")
+            meta = json.loads(obj["Body"].read())
+            meta["prefix"] = prefix
+            return meta
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+        sculptures = [m for m in pool.map(read_meta, prefixes) if m]
+
+    sculptures.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+    return ok_response({"sculptures": sculptures, "count": len(sculptures)})
 
 
 def handle_list_deepzoom(event):

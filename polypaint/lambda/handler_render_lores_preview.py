@@ -207,6 +207,34 @@ def _run_json_binary(binary, out_path, spec, *, phase, timeout_s=300):
     return meta
 
 
+def _b36(n):
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    n = int(n)
+    while n:
+        out = digits[n % 36] + out
+        n //= 36
+    return out or "0"
+
+
+def _sculpture_title(raw, job_id):
+    title = "".join(ch for ch in str(raw or "").strip() if ch.isprintable())[:80]
+    return title or f"sculpture {job_id}"
+
+
+def _sculpture_viewer_template():
+    """The frozen viewer copied into every saved sculpture prefix. Deployed
+    zips carry sculpture.html at the package root; the repo keeps it one
+    level above lambda/."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (os.path.join(here, "sculpture.html"),
+                      os.path.join(here, "..", "sculpture.html")):
+        if os.path.exists(candidate):
+            with open(candidate, "rb") as fh:
+                return fh.read()
+    raise RuntimeError("sculpture.html viewer template not packaged with this lambda")
+
+
 def _preview_source_mode(params):
     raw = str(params.get("preview_source_mode") or "").strip().lower()
     if not raw:
@@ -1360,27 +1388,9 @@ def handler(event, context):
             if xformed_size != expected_xformed:
                 raise RuntimeError(
                     f"sculpture transformed-roots dump size mismatch: got {xformed_size}, expected {expected_xformed}")
-            sculpture_roots_key = f"renders/{job_id}/sculpture_roots.bin"
-            with open(TMP_XFORMED_ROOTS, "rb") as fh:
-                s3.put_object(
-                    Bucket=BUCKET, Key=sculpture_roots_key, Body=fh.read(),
-                    ContentType="application/octet-stream", CacheControl="no-cache")
-            sculpture_palette_key = f"renders/{job_id}/sculpture_palette.png"
-            with open(TMP_PALETTE_IMAGE, "rb") as fh:
-                s3.put_object(
-                    Bucket=BUCKET, Key=sculpture_palette_key, Body=fh.read(),
-                    ContentType="image/png", CacheControl="no-cache")
             region = os.environ.get("AWS_REGION", "us-east-1")
             base_url = f"https://{BUCKET}.s3.{region}.amazonaws.com"
-            # fixed keys + heuristic browser caching served STALE data to the
-            # viewer across runs ("it's not evaluating my score") — every run
-            # mints version-stamped URLs so the fetches can never cache-hit
-            stamp = int(time.time() * 1000)
             sculpture_export = {
-                "roots_key": sculpture_roots_key,
-                "roots_url": f"{base_url}/{sculpture_roots_key}?v={stamp}",
-                "palette_key": sculpture_palette_key,
-                "palette_url": f"{base_url}/{sculpture_palette_key}?v={stamp}",
                 "grid_n": int(palette_grid_n),
                 "degree": int(degree),
                 "step_count": int(step_count),
@@ -1389,6 +1399,80 @@ def handler(event, context):
                 "viewport": viewport,
                 "palette": str(params.get("palette") or "inferno"),
             }
+            if parse_boolish(params.get("sculpture_save", False), False, strict=True, label="sculpture_save"):
+                # durable save: a self-contained sculptures/{id}/ prefix — a
+                # FROZEN viewer copy + meta.json + data, DeepZoom-style. The
+                # id is minted from the clock so prefixes are immutable and
+                # cacheable forever; delete is the only mutation.
+                sid = "scu_" + _b36(int(time.time() * 1000))
+                title = _sculpture_title(params.get("sculpture_title"), job_id)
+                sprefix = f"sculptures/{sid}/"
+                viewer_template = _sculpture_viewer_template()
+                cache_forever = "public, max-age=31536000, immutable"
+                with open(TMP_XFORMED_ROOTS, "rb") as fh:
+                    s3.put_object(
+                        Bucket=BUCKET, Key=sprefix + "roots.bin", Body=fh.read(),
+                        ContentType="application/octet-stream", CacheControl=cache_forever)
+                with open(TMP_PALETTE_IMAGE, "rb") as fh:
+                    s3.put_object(
+                        Bucket=BUCKET, Key=sprefix + "palette.png", Body=fh.read(),
+                        ContentType="image/png", CacheControl=cache_forever)
+                meta = {
+                    "version": 1,
+                    "id": sid,
+                    "title": title,
+                    "job_id": str(job_id),
+                    "grid_n": int(palette_grid_n),
+                    "degree": int(degree),
+                    "step_count": int(step_count),
+                    "pass_count": int(step_count // (palette_grid_n * palette_grid_n)),
+                    "roots_key": "roots.bin",
+                    "palette_key": "palette.png",
+                    "roots_bytes": int(xformed_size),
+                    "viewport": viewport,
+                    "palette": str(params.get("palette") or "inferno"),
+                    "score_display": str(summary.get("solve_score_display") or ""),
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+                s3.put_object(
+                    Bucket=BUCKET, Key=sprefix + "meta.json",
+                    Body=json.dumps(meta).encode("utf-8"),
+                    ContentType="application/json", CacheControl="no-cache")
+                s3.put_object(
+                    Bucket=BUCKET, Key=sprefix + "viewer.html", Body=viewer_template,
+                    ContentType="text/html", CacheControl=cache_forever)
+                sculpture_export.update({
+                    "id": sid,
+                    "title": title,
+                    "prefix": sprefix,
+                    "share_url": f"{base_url}/{sprefix}viewer.html",
+                    "roots_key": sprefix + "roots.bin",
+                    "roots_url": f"{base_url}/{sprefix}roots.bin",
+                    "palette_key": sprefix + "palette.png",
+                    "palette_url": f"{base_url}/{sprefix}palette.png",
+                    "meta": meta,
+                })
+            else:
+                sculpture_roots_key = f"renders/{job_id}/sculpture_roots.bin"
+                with open(TMP_XFORMED_ROOTS, "rb") as fh:
+                    s3.put_object(
+                        Bucket=BUCKET, Key=sculpture_roots_key, Body=fh.read(),
+                        ContentType="application/octet-stream", CacheControl="no-cache")
+                sculpture_palette_key = f"renders/{job_id}/sculpture_palette.png"
+                with open(TMP_PALETTE_IMAGE, "rb") as fh:
+                    s3.put_object(
+                        Bucket=BUCKET, Key=sculpture_palette_key, Body=fh.read(),
+                        ContentType="image/png", CacheControl="no-cache")
+                # fixed keys + heuristic browser caching served STALE data to
+                # the viewer across runs ("it's not evaluating my score") —
+                # every run mints version-stamped URLs so fetches can't cache-hit
+                stamp = int(time.time() * 1000)
+                sculpture_export.update({
+                    "roots_key": sculpture_roots_key,
+                    "roots_url": f"{base_url}/{sculpture_roots_key}?v={stamp}",
+                    "palette_key": sculpture_palette_key,
+                    "palette_url": f"{base_url}/{sculpture_palette_key}?v={stamp}",
+                })
 
         total_ms = int((time.time() - t_start) * 1000)
         logs = []

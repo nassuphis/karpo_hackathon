@@ -3,7 +3,7 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from botocore.exceptions import ClientError
 
@@ -1243,7 +1243,9 @@ class TestDeletePrefixNarrowing(unittest.TestCase):
     def test_rejects_broad_prefixes(self, mock_s3):
         import handler_storage
         for bad in ("deepzoom/", "deepzoom/job1/", "deepzoom/job1/exp/extra/",
-                    "renders/job1/", "deepzoom/job1", "deepzoom/a b/exp/"):
+                    "renders/job1/", "deepzoom/job1", "deepzoom/a b/exp/",
+                    "sculptures/", "sculptures/a/extra/", "sculptures/a b/",
+                    "sculptures/scu_x"):
             resp = handler_storage.handler(_event("/delete-prefix", {"prefix": bad}), None)
             self.assertEqual(resp["statusCode"], 400, bad)
         mock_s3.delete_objects.assert_not_called()
@@ -1256,6 +1258,46 @@ class TestDeletePrefixNarrowing(unittest.TestCase):
         resp = handler_storage.handler(
             _event("/delete-prefix", {"prefix": "deepzoom/compute_abc/dz_123/"}), None)
         self.assertEqual(resp["statusCode"], 200)
+
+    @patch("handler_storage.s3")
+    def test_accepts_exact_sculpture_prefix(self, mock_s3):
+        import handler_storage
+        paginator = mock_s3.get_paginator.return_value
+        paginator.paginate.return_value = [{"Contents": []}]
+        resp = handler_storage.handler(
+            _event("/delete-prefix", {"prefix": "sculptures/scu_mryxyz12/"}), None)
+        self.assertEqual(resp["statusCode"], 200)
+
+
+class TestListSculptures(unittest.TestCase):
+    @patch("handler_storage.s3")
+    def test_lists_metas_newest_first_with_prefix(self, mock_s3):
+        import handler_storage
+        paginator = mock_s3.get_paginator.return_value
+        paginator.paginate.return_value = [{"CommonPrefixes": [
+            {"Prefix": "sculptures/scu_a/"},
+            {"Prefix": "sculptures/scu_b/"},
+            {"Prefix": "sculptures/scu_broken/"},
+        ]}]
+
+        def get_object(Bucket=None, Key=None):
+            metas = {
+                "sculptures/scu_a/meta.json": {"id": "scu_a", "title": "A", "created_at": "2026-07-24T10:00:00Z"},
+                "sculptures/scu_b/meta.json": {"id": "scu_b", "title": "B", "created_at": "2026-07-25T10:00:00Z"},
+            }
+            if Key in metas:
+                body = MagicMock()
+                body.read.return_value = json.dumps(metas[Key]).encode("utf-8")
+                return {"Body": body}
+            raise RuntimeError("missing meta")
+
+        mock_s3.get_object.side_effect = get_object
+        resp = handler_storage.handler(_event("/list-sculptures", {}), None)
+        self.assertEqual(resp["statusCode"], 200)
+        body = json.loads(resp["body"])
+        self.assertEqual(body["count"], 2)              # broken meta skipped
+        self.assertEqual([r["id"] for r in body["sculptures"]], ["scu_b", "scu_a"])
+        self.assertEqual(body["sculptures"][0]["prefix"], "sculptures/scu_b/")
 
 
 class TestWallPyramidKick(unittest.TestCase):

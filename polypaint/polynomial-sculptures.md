@@ -154,6 +154,33 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
 **Failure modes** are readable messages (no params, fetch failure,
 truncated bin, nothing inside the viewport, no WebGL).
 
+## Saved sculptures (the Sculpture tab)
+
+A sixth family tab in the Render artifact panel (after PDF): a create
+block plus the global list, DeepZoom-style. **Create** runs the lores
+solve with the current Solve-score settings (`sculpture_save: true` +
+`sculpture_title`) and publishes a self-contained prefix:
+
+```
+sculptures/{scu_<ms-base36>}/
+  viewer.html      frozen copy of sculpture.html (ships in the lores zip)
+  meta.json        title, job, grid_n, degree, viewport, palette, created_at
+  roots.bin        transformed dump (copied — never a reference into renders/)
+  palette.png
+```
+
+The share URL is `…/sculptures/{id}/viewer.html`; opened bare, the
+viewer reads its sibling `meta.json` and resolves data relatively
+(hash-param mode still serves the ephemeral button). The import map is
+ROOT-ANCHORED (`/vendor/…`) because the frozen copy lives one level
+deep — relative `./vendor` would 404 (caught by the saved-mode smoke
+test). Data objects are immutable-cached (unique ids); deletes go
+through the narrowed `/delete-prefix` (now also `sculptures/<id>/`);
+`/list-sculptures` is one delimiter pass + parallel meta reads. The
+list is session-cached; the family registers in `_renderArtifacts` so
+the active-family reset never bounces off it (the rebuild resets
+unknown families to color).
+
 ## Sizes
 
 lores/logical/recompute previews run ≤256²; 256² × degree 30 ≈ 2M points

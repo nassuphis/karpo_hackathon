@@ -14,12 +14,16 @@
   t = title. Everything is fetched same-origin from the public bucket; the
   page is fully self-contained (vendored three.js via the import map).
 -->
+<!-- ROOT-ANCHORED vendor paths: the frozen copy of this page lives inside
+     sculptures/{id}/, where relative ./vendor/... would resolve to a
+     nonexistent nested key. The site serves from the bucket root, so
+     absolute paths work at any depth (same convention as gallery.html). -->
 <script type="importmap">
 {
   "imports": {
-    "three": "./vendor/three-r160/three.module.js",
-    "three/addons/controls/OrbitControls.js": "./vendor/three-r160/addons/controls/OrbitControls.js",
-    "three/addons/controls/PointerLockControls.js": "./vendor/three-r160/addons/controls/PointerLockControls.js"
+    "three": "/vendor/three-r160/three.module.js",
+    "three/addons/controls/OrbitControls.js": "/vendor/three-r160/addons/controls/OrbitControls.js",
+    "three/addons/controls/PointerLockControls.js": "/vendor/three-r160/addons/controls/PointerLockControls.js"
   }
 }
 </script>
@@ -126,17 +130,45 @@ function loadImage(url) {
     });
 }
 
-async function boot() {
+async function bootConfig() {
     const qp = new URLSearchParams(location.hash.replace(/^#/, ''));
-    const rootsUrl = qp.get('r') || '';
-    const paletteUrl = qp.get('p') || '';
-    const gridN = intParam(qp, 'n');
-    const degree = intParam(qp, 'd');
-    const minRe = floatParam(qp, 'x0'), maxRe = floatParam(qp, 'x1');
-    const minIm = floatParam(qp, 'y0'), maxIm = floatParam(qp, 'y1');
-    const title = qp.get('t') || 'PolyPaint sculpture';
-    document.getElementById('hud-title').textContent = title;
-    if (!rootsUrl || !paletteUrl || !Number.isFinite(gridN) || !Number.isFinite(degree)
+    if (qp.get('r')) {
+        return {
+            rootsUrl: qp.get('r') || '',
+            paletteUrl: qp.get('p') || '',
+            gridN: intParam(qp, 'n'),
+            degree: intParam(qp, 'd'),
+            minRe: floatParam(qp, 'x0'), maxRe: floatParam(qp, 'x1'),
+            minIm: floatParam(qp, 'y0'), maxIm: floatParam(qp, 'y1'),
+            title: qp.get('t') || 'PolyPaint sculpture',
+        };
+    }
+    // saved sculpture: the page lives inside its sculptures/{id}/ prefix and
+    // reads its sibling meta.json; data keys resolve relative to the prefix
+    try {
+        const resp = await fetch('./meta.json', { cache: 'no-store' });
+        if (!resp.ok) return null;
+        const meta = await resp.json();
+        const vp = meta.viewport || {};
+        return {
+            rootsUrl: './' + (meta.roots_key || 'roots.bin'),
+            paletteUrl: './' + (meta.palette_key || 'palette.png'),
+            gridN: parseInt(meta.grid_n, 10),
+            degree: parseInt(meta.degree, 10),
+            minRe: parseFloat(vp.min_re), maxRe: parseFloat(vp.max_re),
+            minIm: parseFloat(vp.min_im), maxIm: parseFloat(vp.max_im),
+            title: String(meta.title || 'PolyPaint sculpture'),
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+async function boot() {
+    const cfg = await bootConfig();
+    const { rootsUrl, paletteUrl, gridN, degree, minRe, maxRe, minIm, maxIm, title } = cfg || {};
+    document.getElementById('hud-title').textContent = title || 'PolyPaint sculpture';
+    if (!cfg || !rootsUrl || !paletteUrl || !Number.isFinite(gridN) || !Number.isFinite(degree)
         || !Number.isFinite(minRe) || !Number.isFinite(maxRe)
         || !Number.isFinite(minIm) || !Number.isFinite(maxIm)
         || !(maxRe > minRe) || !(maxIm > minIm)) {

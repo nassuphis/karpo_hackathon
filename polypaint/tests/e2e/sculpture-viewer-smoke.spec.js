@@ -165,9 +165,14 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
     return { verts: pos.count, x0: pos.array[0], x1: pos.array[3], z1: pos.array[5] };
   });
   expect(fl.verts).toBe(64);
-  expect(fl.x0).toBeCloseTo(0.2, 5);     // A leads in file order
-  expect(fl.x1).toBeCloseTo(-0.2, 5);    // then B (not C)
-  expect(fl.z1).toBeCloseTo(0.0, 5);
+  // segments emit length-sorted (for the len% drawRange quantile): file
+  // order's chain is A->B (0.4) then B->C (0.283), so the SHORTER B->C
+  // lands first in the buffer — the pin identifies the file-order chain by
+  // its unique B->C edge (nearest connects A->C,C->B; angle C->A,A->B,B->C
+  // closed has 96 verts, distinguishing it by count)
+  expect(fl.x0).toBeCloseTo(-0.2, 5);    // B
+  expect(fl.x1).toBeCloseTo(0.0, 5);     // C
+  expect(fl.z1).toBeCloseTo(-0.2, 5);
   // the show checkboxes toggle each primitive independently
   const vis = await page.evaluate(() => {
     const v = window.__sculptureViewer;
@@ -186,6 +191,35 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
     return out;
   });
   expect(vis).toEqual([[false, true], [true, false], [true, true]]);
+
+  // len% quantile: segments emit length-sorted, so the slider is a pure
+  // drawRange. Order is FILE here: 32 segs = 16 short (B->C 0.283) + 16
+  // long (A->B 0.4); at 50% only the short edges survive — the "large
+  // jumps" vanish first when scrubbing down, the whole point of the control.
+  const lq = await page.evaluate(() => {
+    const ctl = document.getElementById('ctl-lenq');
+    ctl.value = '50';
+    ctl.dispatchEvent(new Event('input'));
+    const v = window.__sculptureViewer;
+    const g = v.ribbons.geometry;
+    const pos = g.getAttribute('position');
+    let maxLen = 0;
+    for (let i = 0; i < g.drawRange.count; i += 2) {
+      const dx = pos.array[i * 3] - pos.array[(i + 1) * 3];
+      const dy = pos.array[i * 3 + 1] - pos.array[(i + 1) * 3 + 1];
+      const dz = pos.array[i * 3 + 2] - pos.array[(i + 1) * 3 + 2];
+      maxLen = Math.max(maxLen, Math.hypot(dx, dy, dz));
+    }
+    const at50 = { count: g.drawRange.count, maxLen,
+                   hud: document.getElementById('hud-stats').textContent };
+    ctl.value = '100';
+    ctl.dispatchEvent(new Event('input'));
+    return { at50, at100: { count: v.ribbons.geometry.drawRange.count } };
+  });
+  expect(lq.at50.count).toBe(32);            // 16 of 32 segments drawn
+  expect(lq.at50.maxLen).toBeLessThan(0.3);  // only short edges survive
+  expect(lq.at50.hud).toContain('len \u2264 50%');
+  expect(lq.at100.count).toBe(64);
 
   // slices: t2 binned onto discrete plates. Grid 4 has t2 in {0,.25,.5,.75};
   // 3 slices -> levels floor(t2*3) = {0,0,1,2} -> Y in {-0.5, 0, +0.5}; whole
@@ -598,7 +632,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
     view: {
       point: 22, height: 0.4, slices: 3,
       show: { points: false, ribbons: true, threads: false },
-      style: 'ghost', order: 'angle', tour: 'weave',
+      style: 'ghost', order: 'angle', tour: 'weave', lenq: 50,
     },
   };
   await page.route('**/sc/viewer.html', (route) => {
@@ -634,6 +668,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
       title: document.getElementById('hud-title').textContent,
       point: val('ctl-size'), height: val('ctl-height'), slices: val('ctl-slices'),
       style: val('ctl-style'), order: val('ctl-order'), tourMode: val('ctl-tour-mode'),
+      lenq: val('ctl-lenq'), ribbonDraw: v.ribbons.geometry.drawRange.count,
       pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible, threadsVis: v.threads.visible,
       ghost: v.material.transparent === true && v.material.depthWrite === false,
       scaleY: v.sculpt.scale.y,
@@ -662,6 +697,9 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   // the captured tour autoplays for the recipient
   expect(st.tourMode).toBe('weave');
   expect(st.tourPlaying).toBe(true);
+  // len% travels with the view: 50% of the 48 angle segments drawn
+  expect(st.lenq).toBe('50');
+  expect(st.ribbonDraw).toBe(48);
 });
 
 test('tours: orbit and weave follow their parametric paths; interaction stops them', async ({ page }) => {

@@ -254,6 +254,9 @@ def _sculpture_view(raw):
         view["order"] = raw["order"]
     if raw.get("tour") in ("off", "orbit", "weave"):
         view["tour"] = raw["tour"]
+    lenq = _num("lenq", 0, 100)
+    if lenq is not None:
+        view["lenq"] = int(round(lenq))
     return view or None
 
 

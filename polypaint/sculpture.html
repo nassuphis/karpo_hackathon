@@ -100,6 +100,7 @@
     <option value="angle">angle</option>
     <option value="file">file order</option>
   </select></label>
+  <label>len% <input id="ctl-lenq" type="range" min="0" max="100" value="100"><span class="val" id="ctl-lenq-val"></span></label>
 </div>
 <div id="message-box"><div><h1 id="message-title"></h1><div class="detail" id="message-detail"></div></div></div>
 <script type="module">
@@ -288,10 +289,39 @@ async function boot() {
         new THREE.BufferGeometry(),
         new THREE.LineBasicMaterial({ vertexColors: true }));
     let ribbonSegments = 0;
-    function buildRibbons(order) {
-        const lp = new Float32Array(passSteps * degree * 2 * 3);
-        const lc = new Uint8Array(passSteps * degree * 2 * 3);
+    let applyLenqHook = null;   // assigned in the controls block; re-applied after rebuilds
+    // segments are emitted SORTED ascending by length, so the len% quantile
+    // slider is a plain setDrawRange — O(1) scrubbing, no geometry rebuild.
+    const fillSortedSegments = (geom, segPairs) => {
+        const n = segPairs.length / 3;
+        const orderIdx = Array.from({ length: n }, (_, i) => i);
+        orderIdx.sort((a, b) => segPairs[a * 3 + 2] - segPairs[b * 3 + 2]);
+        const lp = new Float32Array(n * 2 * 3);
+        const lc = new Uint8Array(n * 2 * 3);
         let lv = 0;
+        for (const t of orderIdx) {
+            for (const i of [segPairs[t * 3], segPairs[t * 3 + 1]]) {
+                lp[lv * 3] = positions[i * 3];
+                lp[lv * 3 + 1] = positions[i * 3 + 1];
+                lp[lv * 3 + 2] = positions[i * 3 + 2];
+                lc[lv * 3] = colors[i * 3];
+                lc[lv * 3 + 1] = colors[i * 3 + 1];
+                lc[lv * 3 + 2] = colors[i * 3 + 2];
+                lv++;
+            }
+        }
+        geom.setAttribute('position', new THREE.BufferAttribute(lp, 3));
+        geom.setAttribute('color', new THREE.BufferAttribute(lc, 3, true));
+        return n;
+    };
+    const segLen2 = (i0, i1) => {
+        const dx = positions[i0 * 3] - positions[i1 * 3];
+        const dy = positions[i0 * 3 + 1] - positions[i1 * 3 + 1];
+        const dz = positions[i0 * 3 + 2] - positions[i1 * 3 + 2];
+        return dx * dx + dy * dy + dz * dz;
+    };
+    function buildRibbons(order) {
+        const segPairs = [];   // [i0, i1, len2] triples, flat
         const idx = [];
         for (let step = 0; step < passSteps; step++) {
             const a = stepOffsets[step], b = stepOffsets[step + 1];
@@ -365,30 +395,22 @@ async function boot() {
                 cutSq = 6.25 * sorted[k >> 1];   // (2.5 x median NN)^2
             }
             for (let t = 0; t < segs; t++) {
-                const pair = [idx[t], idx[(t + 1) % k]];
+                const i0 = idx[t], i1 = idx[(t + 1) % k];
                 if (cutSq !== Infinity) {
-                    const dx = positions[pair[0] * 3] - positions[pair[1] * 3];
-                    const dz = positions[pair[0] * 3 + 2] - positions[pair[1] * 3 + 2];
+                    const dx = positions[i0 * 3] - positions[i1 * 3];
+                    const dz = positions[i0 * 3 + 2] - positions[i1 * 3 + 2];
                     if (dx * dx + dz * dz > cutSq) continue;
                 }
-                for (const i of pair) {
-                    lp[lv * 3] = positions[i * 3];
-                    lp[lv * 3 + 1] = positions[i * 3 + 1];
-                    lp[lv * 3 + 2] = positions[i * 3 + 2];
-                    lc[lv * 3] = colors[i * 3];
-                    lc[lv * 3 + 1] = colors[i * 3 + 1];
-                    lc[lv * 3 + 2] = colors[i * 3 + 2];
-                    lv++;
-                }
+                segPairs.push(i0, i1, segLen2(i0, i1));
             }
         }
         const geom = new THREE.BufferGeometry();
-        geom.setAttribute('position', new THREE.BufferAttribute(lp.subarray(0, lv * 3), 3));
-        geom.setAttribute('color', new THREE.BufferAttribute(lc.subarray(0, lv * 3), 3, true));
+        const n = fillSortedSegments(geom, segPairs);
         const old = ribbons.geometry;
         ribbons.geometry = geom;
         if (old) old.dispose();
-        ribbonSegments = lv / 2;
+        ribbonSegments = n;
+        if (applyLenqHook) applyLenqHook();
     }
 
     // threads: root trajectories along t2 — each solve matched to the NEXT
@@ -470,34 +492,24 @@ async function boot() {
                 if (m) segs += m.length / 2;
             }
         }
-        const lp = new Float32Array(segs * 2 * 3);
-        const lc = new Uint8Array(segs * 2 * 3);
-        let lv = 0;
+        const segPairs = [];
         for (let r = 0; r < gridN; r++) {
             for (let c = 0; c < gridN - 1; c++) {
                 if (S > 0 && level(c) !== level(c + 1)) continue;
                 const m = threadMatches[r][c];
                 if (!m) continue;
                 for (let t = 0; t < m.length; t += 2) {
-                    for (const i of [m[t], m[t + 1]]) {
-                        lp[lv * 3] = positions[i * 3];
-                        lp[lv * 3 + 1] = positions[i * 3 + 1];
-                        lp[lv * 3 + 2] = positions[i * 3 + 2];
-                        lc[lv * 3] = colors[i * 3];
-                        lc[lv * 3 + 1] = colors[i * 3 + 1];
-                        lc[lv * 3 + 2] = colors[i * 3 + 2];
-                        lv++;
-                    }
+                    segPairs.push(m[t], m[t + 1], segLen2(m[t], m[t + 1]));
                 }
             }
         }
         const geom = new THREE.BufferGeometry();
-        geom.setAttribute('position', new THREE.BufferAttribute(lp, 3));
-        geom.setAttribute('color', new THREE.BufferAttribute(lc, 3, true));
+        const n = fillSortedSegments(geom, segPairs);
         const oldGeom = threads.geometry;
         threads.geometry = geom;
         if (oldGeom) oldGeom.dispose();
-        threadSegments = segs;
+        threadSegments = n;
+        if (applyLenqHook) applyLenqHook();
     }
 
     const sculpt = new THREE.Group();
@@ -625,7 +637,9 @@ async function boot() {
             ` · z = t2 · clipped ${clipped.toLocaleString()}` +
             ` · ${ribbonSegments.toLocaleString()} ribbon segments` +
             (threadSegments ? ` · ${threadSegments.toLocaleString()} thread segments` : '') +
-            (parseInt(slicesCtl.value, 10) > 0 ? ` · ${slicesCtl.value} slices` : '');
+            (parseInt(slicesCtl.value, 10) > 0 ? ` · ${slicesCtl.value} slices` : '') +
+            (parseInt(document.getElementById('ctl-lenq').value, 10) < 100
+                ? ` · len ≤ ${document.getElementById('ctl-lenq').value}%` : '');
     };
 
     const showPointsCtl = document.getElementById('ctl-show-points');
@@ -692,6 +706,20 @@ async function boot() {
     orderCtl.addEventListener('change', applyOrder);
     slicesCtl.addEventListener('change', applySlices);
     styleCtl.addEventListener('change', applyStyle);
+    const lenqCtl = document.getElementById('ctl-lenq');
+    const lenqVal = document.getElementById('ctl-lenq-val');
+    // len% quantile: draw only the shortest q% of ribbon/thread segments.
+    // Scrubbing down watches the longest links die first — the jumpy regions
+    // announce themselves (a persistence filtration on the connection graph).
+    const applyLenq = () => {
+        const q = Math.max(0, Math.min(100, parseInt(lenqCtl.value, 10) || 0));
+        lenqVal.textContent = String(q);
+        ribbons.geometry.setDrawRange(0, 2 * Math.round((q / 100) * ribbonSegments));
+        threads.geometry.setDrawRange(0, 2 * Math.round((q / 100) * threadSegments));
+        updateStats();
+    };
+    applyLenqHook = applyLenq;
+    lenqCtl.addEventListener('input', applyLenq);
     const sizeCtl = document.getElementById('ctl-size');
     const sizeVal = document.getElementById('ctl-size-val');
     const heightCtl = document.getElementById('ctl-height');
@@ -732,6 +760,9 @@ async function boot() {
         }
         if (view.style === 'solid' || view.style === 'ghost') styleCtl.value = view.style;
         if (view.order === 'nearest' || view.order === 'angle' || view.order === 'file') orderCtl.value = view.order;
+        if (Number.isFinite(Number(view.lenq))) {
+            lenqCtl.value = String(Math.max(0, Math.min(100, Math.round(Number(view.lenq)))));
+        }
     };
     applyViewConfig(cfg.view);
     applyOrder();
@@ -740,6 +771,7 @@ async function boot() {
     applyStyle();
     applySize();
     applyHeight();
+    applyLenq();
     if (cfg.view && (cfg.view.tour === 'orbit' || cfg.view.tour === 'weave')) {
         tourModeCtl.value = cfg.view.tour;
         tourSetPlaying(true);

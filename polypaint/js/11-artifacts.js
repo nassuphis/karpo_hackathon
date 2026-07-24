@@ -1633,6 +1633,7 @@ function _sculptureCaptureViewSettings() {
             },
             style: val('ctl-style') || 'solid',
             order: val('ctl-order') || 'nearest',
+            lenq: Number.isFinite(parseInt(val('ctl-lenq'), 10)) ? parseInt(val('ctl-lenq'), 10) : 100,
             tour: playing ? (val('ctl-tour-mode') || 'orbit') : 'off',
         };
     } catch (e) {
@@ -1645,7 +1646,9 @@ function _sculptureViewSummary(view) {
     const show = ['points', 'ribbons', 'threads'].filter((k) => view.show && view.show[k])
         .map((k) => k.slice(0, 3)).join('+') || 'none';
     return `point ${view.point} · height ${view.height.toFixed(2)} · slices ${view.slices || 'off'}`
-        + ` · ${show} · ${view.style} · ${view.order} · tour: ${view.tour}`;
+        + ` · ${show} · ${view.style} · ${view.order}`
+        + (view.lenq < 100 ? ` · len ${view.lenq}%` : '')
+        + ` · tour: ${view.tour}`;
 }
 
 function _sculptureUpdateViewHint() {

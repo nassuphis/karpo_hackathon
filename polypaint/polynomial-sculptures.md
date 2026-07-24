@@ -125,6 +125,17 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   plate; slices off connects the whole chain unbroken. Clipped roots
   simply drop out (KNIFE punch-outs dissolve threads at the boundary).
   The show control is now three checkboxes (pts/rib/thr; default pts).
+- **len% quantile** (0–100 slider; user: "clip thr and rib paths above
+  the q-th quantile — so I can see which parts have the large jumps"):
+  draws only the shortest q% of ribbon AND thread segments. Segments
+  emit LENGTH-SORTED, so the slider is a pure `setDrawRange` — O(1)
+  scrubbing, no rebuild, at any size. Scrubbing down is a persistence
+  filtration on the connection graph: the longest links (forced
+  bridges, matching failures at collisions) vanish last/first
+  respectively, so the jumpy regions announce themselves. Travels with
+  saved views (capture → sanitizer → meta.view.lenq). NOTE the sort
+  changes buffer order, not the drawn set — pins that read "the first
+  segment" must account for it.
 - **Slices** (off/2..32): bin t2 onto S discrete plates spanning the
   cube (S=11 → z = 0, 0.1, …, 1.0). Every solve sits at one t2, so
   whole ribbons land intact on their plate; the sculpture becomes an

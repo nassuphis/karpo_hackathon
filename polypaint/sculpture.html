@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PolyPaint Sculpture</title>
+<!--
+  Standalone 3D root-sculpture viewer. The (t1,t2) parameter sweep's root sets
+  are lifted to z = t2, so the 2D root cloud becomes the shadow of this shape.
+  Data arrives via URL-hash params produced by the Render tab's Sculpture
+  button: r = roots .bin (f32 interleaved [re,im], serpentine step order),
+  p = per-step palette PNG (grid_n x grid_n, de-serpentined row/col layout),
+  n = grid_n, d = degree, s = step_count, x0/x1/y0/y1 = xy viewport,
+  t = title. Everything is fetched same-origin from the public bucket; the
+  page is fully self-contained (vendored three.js via the import map).
+-->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three-r160/three.module.js",
+    "three/addons/controls/OrbitControls.js": "./vendor/three-r160/addons/controls/OrbitControls.js"
+  }
+}
+</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #05070c; color: #cfd8e3;
+               font-family: monospace; overflow: hidden; }
+  #gl-root { position: fixed; inset: 0; }
+  #hud { position: fixed; top: 0; left: 0; right: 0; padding: 10px 14px;
+         background: linear-gradient(rgba(5,7,12,0.85), rgba(5,7,12,0));
+         pointer-events: none; z-index: 5; }
+  #hud-title { font-size: 14px; color: #e8eef5; }
+  #hud-stats { font-size: 11px; color: #778599; margin-top: 4px; }
+  #panel { position: fixed; bottom: 12px; left: 12px; z-index: 5;
+           background: rgba(10,14,22,0.82); border: 1px solid #232b3a;
+           border-radius: 6px; padding: 10px 12px; font-size: 11px; }
+  #panel label { display: flex; align-items: center; gap: 8px; margin: 4px 0;
+                 color: #9fb0c3; }
+  #panel input[type=range] { width: 130px; accent-color: #e94560; }
+  #panel .val { width: 4ch; text-align: right; color: #cfd8e3; }
+  #message-box { position: fixed; inset: 0; display: none; z-index: 10;
+                 align-items: center; justify-content: center; text-align: center;
+                 background: #05070c; padding: 24px; }
+  #message-box.show { display: flex; }
+  #message-box h1 { font-size: 16px; color: #e8eef5; font-weight: normal; }
+  #message-box .detail { font-size: 12px; color: #778599; margin-top: 10px;
+                         max-width: 60ch; word-break: break-word; }
+</style>
+</head>
+<body>
+<div id="gl-root"></div>
+<div id="hud">
+  <div id="hud-title">PolyPaint sculpture</div>
+  <div id="hud-stats">loading…</div>
+</div>
+<div id="panel">
+  <label>point <input id="ctl-size" type="range" min="1" max="40" value="10"><span class="val" id="ctl-size-val"></span></label>
+  <label>height <input id="ctl-height" type="range" min="0" max="100" value="100"><span class="val" id="ctl-height-val"></span></label>
+</div>
+<div id="message-box"><div><h1 id="message-title"></h1><div class="detail" id="message-detail"></div></div></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+function fail(title, detail) {
+    document.getElementById('message-title').textContent = title;
+    document.getElementById('message-detail').textContent = detail || '';
+    document.getElementById('message-box').classList.add('show');
+}
+
+function intParam(qp, name) {
+    const v = parseInt(qp.get(name) || '', 10);
+    return Number.isFinite(v) && v > 0 ? v : NaN;
+}
+
+function floatParam(qp, name) {
+    const v = parseFloat(qp.get(name) || '');
+    return Number.isFinite(v) ? v : NaN;
+}
+
+function loadImage(url) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('palette image failed to load: ' + url));
+        img.src = url;
+    });
+}
+
+async function boot() {
+    const qp = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const rootsUrl = qp.get('r') || '';
+    const paletteUrl = qp.get('p') || '';
+    const gridN = intParam(qp, 'n');
+    const degree = intParam(qp, 'd');
+    const minRe = floatParam(qp, 'x0'), maxRe = floatParam(qp, 'x1');
+    const minIm = floatParam(qp, 'y0'), maxIm = floatParam(qp, 'y1');
+    const title = qp.get('t') || 'PolyPaint sculpture';
+    document.getElementById('hud-title').textContent = title;
+    if (!rootsUrl || !paletteUrl || !Number.isFinite(gridN) || !Number.isFinite(degree)
+        || !Number.isFinite(minRe) || !Number.isFinite(maxRe)
+        || !Number.isFinite(minIm) || !Number.isFinite(maxIm)
+        || !(maxRe > minRe) || !(maxIm > minIm)) {
+        fail('No sculpture specified',
+             'Open this page from the Render tab’s Sculpture button — it supplies the data links.');
+        return;
+    }
+
+    let rootsBuf, palImg;
+    try {
+        [rootsBuf, palImg] = await Promise.all([
+            fetch(rootsUrl).then(r => {
+                if (!r.ok) throw new Error(`roots fetch ${r.status}`);
+                return r.arrayBuffer();
+            }),
+            loadImage(paletteUrl),
+        ]);
+    } catch (e) {
+        fail('Sculpture data failed to load', String(e && e.message ? e.message : e));
+        return;
+    }
+
+    const roots = new Float32Array(rootsBuf);
+    const passSteps = gridN * gridN;             // pass 0 only
+    if (roots.length < passSteps * degree * 2) {
+        fail('Sculpture data is too small',
+             `roots carry ${roots.length} floats, need ${passSteps * degree * 2} for grid ${gridN}×${gridN} at degree ${degree}.`);
+        return;
+    }
+    // per-step colors: the palette PNG is already de-serpentined to (row, col)
+    const palCanvas = document.createElement('canvas');
+    palCanvas.width = gridN; palCanvas.height = gridN;
+    const palCtx = palCanvas.getContext('2d', { willReadFrequently: true });
+    palCtx.imageSmoothingEnabled = false;
+    palCtx.drawImage(palImg, 0, 0, gridN, gridN);
+    const pal = palCtx.getImageData(0, 0, gridN, gridN).data;
+
+    // cube: xy from the viewport (isotropic by construction), z = t2 in [0,1]
+    const cx = (minRe + maxRe) / 2, cy = (minIm + maxIm) / 2;
+    const side = Math.max(maxRe - minRe, maxIm - minIm);
+    const positions = new Float32Array(passSteps * degree * 3);
+    const colors = new Uint8Array(passSteps * degree * 3);
+    let count = 0, clipped = 0;
+    for (let step = 0; step < passSteps; step++) {
+        const row = Math.floor(step / gridN);
+        const j = step % gridN;
+        const col = (row & 1) ? (gridN - 1 - j) : j;   // serpentine warm-start order
+        const t2 = col / gridN;
+        const pi = (row * gridN + col) * 4;
+        const cr = pal[pi], cg = pal[pi + 1], cb = pal[pi + 2];
+        const base = step * degree * 2;
+        for (let r = 0; r < degree; r++) {
+            const re = roots[base + r * 2];
+            const im = roots[base + r * 2 + 1];
+            if (!Number.isFinite(re) || !Number.isFinite(im)
+                || re < minRe || re > maxRe || im < minIm || im > maxIm) {
+                clipped++;
+                continue;
+            }
+            const o = count * 3;
+            positions[o] = (re - cx) / side;          // X = Re
+            positions[o + 1] = t2 - 0.5;              // Y (up) = t2
+            positions[o + 2] = -(im - cy) / side;     // Z = -Im (right-handed view)
+            colors[o] = cr; colors[o + 1] = cg; colors[o + 2] = cb;
+            count++;
+        }
+    }
+    if (!count) {
+        fail('No roots inside the viewport', `${clipped} roots were outside the xy extent or non-finite.`);
+        return;
+    }
+
+    let renderer;
+    try {
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+    } catch (e) {
+        fail('WebGL is not available in this browser', String(e && e.message ? e.message : e));
+        return;
+    }
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.getElementById('gl-root').appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x05070c);
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 50);
+    camera.position.set(1.25, 0.85, 1.25);
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions.subarray(0, count * 3), 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors.subarray(0, count * 3), 3, true));
+    const material = new THREE.PointsMaterial({
+        size: 0.004, vertexColors: true, sizeAttenuation: true,
+        transparent: true, opacity: 0.92, depthWrite: false,
+    });
+    const points = new THREE.Points(geometry, material);
+    scene.add(points);
+
+    const frame = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+        new THREE.LineBasicMaterial({ color: 0x2a3550 }));
+    scene.add(frame);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    document.getElementById('hud-stats').textContent =
+        `${count.toLocaleString()} roots · grid ${gridN}×${gridN} · degree ${degree}` +
+        ` · z = t2 · clipped ${clipped.toLocaleString()}`;
+
+    const sizeCtl = document.getElementById('ctl-size');
+    const sizeVal = document.getElementById('ctl-size-val');
+    const heightCtl = document.getElementById('ctl-height');
+    const heightVal = document.getElementById('ctl-height-val');
+    const applySize = () => {
+        material.size = Number(sizeCtl.value) * 0.0004;
+        sizeVal.textContent = sizeCtl.value;
+    };
+    // height 0 flattens the sculpture onto its base plane: the 2D art is
+    // literally this shape's shadow, and the slider shows it
+    const applyHeight = () => {
+        const h = Number(heightCtl.value) / 100;
+        points.scale.y = h;
+        frame.scale.y = Math.max(h, 0.001);
+        heightVal.textContent = h.toFixed(2);
+    };
+    sizeCtl.addEventListener('input', applySize);
+    heightCtl.addEventListener('input', applyHeight);
+    applySize();
+    applyHeight();
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    renderer.setAnimationLoop(() => {
+        controls.update();
+        renderer.render(scene, camera);
+    });
+
+    window.__sculptureViewer = {
+        scene, camera, renderer, points, material, controls,
+        count, clipped, gridN, degree,
+    };
+}
+
+boot();
+</script>
+</body>
+</html>

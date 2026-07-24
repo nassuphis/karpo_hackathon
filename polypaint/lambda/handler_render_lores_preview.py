@@ -1333,6 +1333,45 @@ def handler(event, context):
             with open(TMP_PALETTE_IMAGE, "rb") as fh:
                 palette_image_b64 = base64.b64encode(fh.read()).decode("ascii")
 
+        # Sculpture export: publish the raw lores roots + the per-step palette
+        # PNG so the standalone 3D viewer (sculpture.html) can lift each root
+        # set to z = t2. Physical mode reuses the existing lores.bin object;
+        # logical/recompute upload the freshly materialized /tmp roots.
+        sculpture_export = {}
+        if parse_boolish(params.get("sculpture", False), False, strict=True, label="sculpture"):
+            if palette_grid_n <= 0:
+                raise RuntimeError(
+                    "sculpture export needs a square parameter grid "
+                    f"(step count {step_count} is not a multiple of a grid square)")
+            if source_mode == "lores" and lores_bin_key:
+                sculpture_roots_key = lores_bin_key
+            else:
+                sculpture_roots_key = f"renders/{job_id}/sculpture_roots.bin"
+                with open(TMP_ROOTS, "rb") as fh:
+                    s3.put_object(
+                        Bucket=BUCKET, Key=sculpture_roots_key, Body=fh.read(),
+                        ContentType="application/octet-stream")
+            sculpture_palette_key = f"renders/{job_id}/sculpture_palette.png"
+            with open(TMP_PALETTE_IMAGE, "rb") as fh:
+                s3.put_object(
+                    Bucket=BUCKET, Key=sculpture_palette_key, Body=fh.read(),
+                    ContentType="image/png")
+            region = os.environ.get("AWS_REGION", "us-east-1")
+            base_url = f"https://{BUCKET}.s3.{region}.amazonaws.com"
+            sculpture_export = {
+                "roots_key": sculpture_roots_key,
+                "roots_url": f"{base_url}/{sculpture_roots_key}",
+                "palette_key": sculpture_palette_key,
+                "palette_url": f"{base_url}/{sculpture_palette_key}",
+                "grid_n": int(palette_grid_n),
+                "degree": int(degree),
+                "step_count": int(step_count),
+                "pass_count": int(step_count // (palette_grid_n * palette_grid_n)),
+                "roots_bytes": int(root_size),
+                "viewport": viewport,
+                "palette": str(params.get("palette") or "inferno"),
+            }
+
         total_ms = int((time.time() - t_start) * 1000)
         logs = []
         if source_mode == "logical":
@@ -1397,6 +1436,13 @@ def handler(event, context):
                 f"grid={palette_grid_n}x{palette_grid_n} entries={int(palette_entries)} "
                 f"zero=data"
             )
+        if sculpture_export:
+            logs.append(
+                "Sculpture export: "
+                f"grid={sculpture_export['grid_n']}x{sculpture_export['grid_n']} "
+                f"degree={sculpture_export['degree']} roots={sculpture_export['roots_bytes'] / (1024 * 1024):.1f}MB "
+                f"roots_key={sculpture_export['roots_key']} palette_key={sculpture_export['palette_key']}"
+            )
         for warning in preview_warnings:
             logs.append(f"Render preview warning: {warning}")
         logs.append(
@@ -1424,6 +1470,7 @@ def handler(event, context):
             "render": render_meta,
             "palette_render": palette_render_meta,
             "palette_fragment_entries": int(palette_entries),
+            "sculpture": sculpture_export,
             "emission_histograms": emission_histograms,
             "logs": logs,
             "solve_score": {

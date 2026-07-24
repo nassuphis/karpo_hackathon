@@ -621,6 +621,7 @@ assertIncludes("catalog[_solveScoreGenericMetricChipName] = {", 'solve-score cat
 assertIncludes("return [_solveScoreGenericMetricPublicName, ...(item.params || [])];", 'generic metric chip should serialize publicly without desugaring in saved programs');
 assertIncludes("id=\"render-preview-pix\" value=\"256\"", 'render output should expose default 256px lores preview size input');
 assertIncludes("id=\"btn-render-lores-preview\" onclick=\"runRenderLoresPreview()\"", 'render output should expose lores preview button');
+assertIncludes("id=\"btn-render-lores-sculpture\" onclick=\"runRenderLoresSculpture()\"", 'render output should expose the 3D sculpture button next to Preview');
 assertIncludes("id=\"render-lores-preview-stage\"", 'render output preview should expose a marquee stage wrapper');
 assertIncludes("id=\"render-lores-preview-marquee\"", 'render output preview should expose a marquee overlay');
 assertIncludes(".render-lores-preview-tabs {\n    width: 100%;", 'render output preview tabs should fill the Output box width');

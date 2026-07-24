@@ -87,6 +87,7 @@ frontend_asset_keys() {
         "artifact_mosaic_viewer.html" \
         "flipbook.html" \
         "gallery.html" \
+        "sculpture.html" \
         "vendor/page-flip.browser.js" \
         "program_profiles_js.js" \
         "merged_opcodes_js.js" \

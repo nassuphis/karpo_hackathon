@@ -1,0 +1,100 @@
+# Polynomial sculptures
+
+The sweep is parametrized by (t1, t2) ∈ [0,1]², and each (t1, t2) solve
+yields N roots on the complex plane. Lift every root set to height z = t2
+and the flat root cloud becomes a 3D shape in a cube: x, y span the root
+extent (the render viewport), z runs 0→1. The 2D art is literally this
+shape's shadow — the sweep marginalizes t2 away when it scatters all roots
+onto one plane.
+
+Geometry: a horizontal slice at height z is the root set swept over t1
+only — N root trajectories (curves), so the sculpture is generically a
+bundle of surface sheets, pinched where roots collide (discriminant
+crossings) and shattered where programs step (chessboard mixers). Smooth
+programs give continuous sheets; KNIFE/escape programs punch volumes out.
+
+## v1 (shipped): lores point cloud, solve-score colors
+
+**Data** rides the Render-tab lores preview (`render-lores-preview` +
+`sculpture: true`), so all three source modes work unchanged:
+
+- **lores** (physical): the existing `renders/{job}/lores.bin` is reused
+  as-is — no upload.
+- **logical**: the server-side subsample of the FULL solve (this is the
+  "subsample of a full render" path — no extra machinery).
+- **recompute**: fresh solve at the chosen size/solver.
+
+The handler uploads what the viewer needs (public bucket, no presigning):
+
+- roots: `renders/{job}/sculpture_roots.bin` (f32 interleaved `[re,im]`,
+  serpentine step order — reused `lores.bin` in physical mode)
+- colors: `renders/{job}/sculpture_palette.png` — the per-step palette
+  image (grid_n × grid_n, de-serpentined to (row, col), the job's actual
+  palette + equalization applied by `render_score_raw`). One solve = one
+  pixel = one color, exactly matching the app's Palette tab. PNG is
+  lossless, so per-step colors are exact.
+
+The response `sculpture` block carries `roots_url`, `palette_url`,
+`grid_n`, `degree`, `step_count`, `pass_count`, `viewport`, `roots_bytes`.
+
+**Frontend**: the `Sculpture` button next to Preview (`js/10`,
+`runRenderLoresSculpture()` → `runRenderLoresPreview({sculpture:true})`).
+The popup window opens synchronously in the click task (popup-blocker
+safe) and is pointed at the viewer once the links exist; blocked popups
+fall back to a URL line in the render log. Busy + lingering ✓/✗ feedback
+on the button.
+
+**Viewer**: `sculpture.html` — standalone, fully inline (no module
+stamping in deploy.sh; stable key), vendored three.js r160 +
+OrbitControls (newly vendored `addons/controls/OrbitControls.js`). Boot
+parses hash params (`r`, `p`, `n`, `d`, `s`, `x0/x1/y0/y1`, `t`), fetches
+roots + palette PNG, reconstructs each step's (row, col) with the
+serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
+`roots2pix_mt.c`), and builds one THREE.Points cloud:
+
+- X = Re, Z = −Im (right-handed view), Y (up) = t2 − ½; cube side 1,
+  wireframe frame; xy normalized by the isotropic viewport.
+- Pass 0 only (`gridN²` steps) — matches the palette image's semantics
+  for multi-pass jobs.
+- Non-finite roots and roots outside the xy viewport are dropped and
+  counted (`clipped` in the HUD).
+- Controls: orbit/damping, point-size slider, **height slider** — 0
+  flattens the sculpture onto its base plane, showing the shadow ≙ the
+  2D art.
+- `window.__sculptureViewer` exposes scene/points/counts for e2e.
+
+**Failure modes** are readable messages (no params, fetch failure,
+truncated bin, nothing inside the viewport, no WebGL).
+
+## Sizes
+
+lores/logical/recompute previews run ≤256²; 256² × degree 30 ≈ 2M points
+≈ 16MB f32 — comfortable for a fetch + a Points draw. The full-solve
+transport artifact (500²+) stays out of scope for the browser until it's
+subsampled (which "logical" already does server-side).
+
+## Tests
+
+- `tests/test_render_lores_preview_handler.py`: physical reuses
+  `lores.bin` + uploads only the palette PNG; recompute uploads fresh
+  roots (exact bytes + content types pinned); non-square grid → friendly
+  error; the no-flag path stays upload-free.
+- `tests/e2e/sculpture-viewer-smoke.spec.js` (SwiftShader, gallery-smoke
+  pattern): module graph + no-params message; truncated-bin message; real
+  scene build with serpentine z pin (step 4 → col 3 → Y=0.25), exact
+  per-step color pin, clipped=0, shadow flatten.
+- `tests/e2e/render-solve-score.spec.js`: Sculpture button posts
+  `sculpture: true`, opens exactly one window, fragment carries all data
+  params; the plain Preview payload stays sculpture-free.
+
+## Future (not in v1)
+
+- **Threads/ribbons**: root-identity polylines along t2. The full-render
+  transport keeps `matchRoots` identity along the serpentine chain, but
+  the lores paths solve with `match_roots: False` — a threads mode needs
+  either a match_roots lores variant or client-side matching. Fat-line
+  addons are already vendored.
+- **z = t1 transpose toggle** (cheap, viewer-side reindex).
+- **Density voxels** (3D histogram — the true 3D analog of the density
+  art) and **marching-cubes mesh export** (STL/GLB → printable sculpture).
+- **All-passes view** for times>1 jobs (extra sheets at the same z).

@@ -822,6 +822,9 @@ class TestDeployPackaging(unittest.TestCase):
         # all be published, with the module entry build-versioned and the shell
         # stamped (like index.html), and the OSD control PNGs served correctly.
         self.assertIn('"gallery.html"', DEPLOY_TEXT)
+        # Standalone 3D sculpture viewer: fully inline (no module stamping),
+        # stable key, rides the vendored three-r160 (incl. OrbitControls).
+        self.assertIn('"sculpture.html"', DEPLOY_TEXT)
         self.assertIn('find "gallery" -name "*.js" -type f | sort', DEPLOY_TEXT)
         self.assertIn('"vendor/three-r160"', DEPLOY_TEXT)
         self.assertIn('"vendor/openseadragon-r411"', DEPLOY_TEXT)

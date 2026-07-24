@@ -427,12 +427,19 @@ function _initRenderLoresPreviewMarquee(meta) {
     };
 }
 
-async function runRenderLoresPreview() {
+async function runRenderLoresPreview(opts = {}) {
     const btn = document.getElementById('btn-render-lores-preview');
     const statusEl = document.getElementById('render-lores-preview-status');
     const renderStatusEl = document.getElementById('render-status');
     const canvas = document.getElementById('render-lores-preview-canvas');
+    const sculpture = !!(opts && opts.sculpture);
+    const sculptureBtn = document.getElementById('btn-render-lores-sculpture');
+    let sculptureWin = null;
+    let runFailed = false;
     try {
+        // opened synchronously in the click task so popup blockers allow it;
+        // pointed at the viewer once the data links exist, closed on failure
+        if (sculpture) sculptureWin = window.open('', '_blank');
         if (renderColorMode !== 'solve_score') throw new Error('select Solve score mode first');
         const p = _renderCommonParams({ requireSolveScore: true });
         let previewPix = parseInt(document.getElementById('render-preview-pix')?.value || '256', 10);
@@ -441,7 +448,8 @@ async function runRenderLoresPreview() {
         const pixInput = document.getElementById('render-preview-pix');
         if (pixInput) pixInput.value = String(previewPix);
 
-        if (btn) { btn.disabled = true; btn.textContent = 'Preview...'; }
+        if (btn) { btn.disabled = true; if (!sculpture) btn.textContent = 'Preview...'; }
+        if (sculptureBtn) { sculptureBtn.disabled = true; if (sculpture) sculptureBtn.textContent = 'Sculpture...'; }
         if (statusEl) statusEl.textContent = 'calc';
         if (renderStatusEl) {
             renderStatusEl.textContent = 'Rendering lores preview...';
@@ -530,6 +538,7 @@ async function runRenderLoresPreview() {
             solve_score_threads: 4,
             raster_sectioned_retries: 2,
         };
+        if (sculpture) payload.sculpture = true;
         if (_viewMode === 'explicit') {
             payload.min_re = p.minRe;
             payload.max_re = p.maxRe;
@@ -578,7 +587,25 @@ async function runRenderLoresPreview() {
             renderStatusEl.className = 'status success';
         }
         log(`Render preview: ${msg}`, 'ok', 'render-log');
+        if (sculpture) {
+            const sc = result.sculpture || {};
+            const vp = sc.viewport || {};
+            if (!sc.roots_url || !sc.palette_url) throw new Error('preview response missing sculpture links');
+            const frag = new URLSearchParams({
+                v: '1', r: sc.roots_url, p: sc.palette_url,
+                n: String(sc.grid_n), d: String(sc.degree), s: String(sc.step_count),
+                x0: String(vp.min_re), x1: String(vp.max_re),
+                y0: String(vp.min_im), y1: String(vp.max_im),
+                t: `${p.jobId} · ${sc.grid_n}×${sc.grid_n} · ${sc.palette || ''}`,
+            });
+            const url = `sculpture.html#${frag.toString()}`;
+            if (sculptureWin && !sculptureWin.closed) sculptureWin.location = url;
+            else log(`Sculpture viewer (popup blocked, open manually): ${url}`, 'err', 'render-log');
+            log(`Sculpture: grid ${sc.grid_n}×${sc.grid_n} · degree ${sc.degree} · roots ${(Number(sc.roots_bytes || 0) / (1024 * 1024)).toFixed(1)}MB`, 'ok', 'render-log');
+        }
     } catch (e) {
+        runFailed = true;
+        if (sculptureWin && !sculptureWin.closed) sculptureWin.close();
         _initRenderLoresPreviewMarquee(null);
         // Keep the panes: the plot canvas keeps its last good frame on
         // error, so palette/histograms do too (scrubbing routinely passes
@@ -592,7 +619,18 @@ async function runRenderLoresPreview() {
         log('Render preview failed: ' + msg, 'err', 'render-log');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Preview'; }
+        if (sculptureBtn) {
+            sculptureBtn.disabled = false;
+            if (sculpture) {
+                sculptureBtn.textContent = runFailed ? '\u2717 Sculpture' : '\u2713 Sculpture';
+                setTimeout(() => { sculptureBtn.textContent = 'Sculpture'; }, 2500);
+            }
+        }
     }
+}
+
+async function runRenderLoresSculpture() {
+    return runRenderLoresPreview({ sculpture: true });
 }
 
 async function runSolveScoreHistogramDebug() {

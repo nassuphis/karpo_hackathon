@@ -1279,7 +1279,7 @@ class TestSaveSculpture(unittest.TestCase):
             "step_count": 4,
             "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -1.0, "max_im": 3.0},
             "palette": "inferno",
-            "view": {"point": 12, "order": "angle",
+            "view": {"point": 12, "order": "angle", "style": "cloud", "glow": 44,
                      "show": {"points": True, "clu": True},
                      "tour": "grand", "tourSpeed": 2, "junk": "x"},
         }
@@ -1317,7 +1317,7 @@ class TestSaveSculpture(unittest.TestCase):
         self.assertEqual(meta["roots_bytes"], 96)          # server truth via head
         self.assertEqual(meta["roots_key"], "roots.bin")
         self.assertEqual(meta["view"], {
-            "point": 12, "order": "angle",
+            "point": 12, "order": "angle", "style": "cloud", "glow": 44,
             "show": {"points": True, "ribbons": False, "threads": False, "clu": True},
             "tour": "grand", "tourSpeed": 2.0,
         })   # sanitized

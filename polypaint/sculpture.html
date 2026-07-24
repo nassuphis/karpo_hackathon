@@ -125,7 +125,9 @@
   <label>style <select id="ctl-style">
     <option value="solid" selected>solid</option>
     <option value="ghost">ghost</option>
+    <option value="cloud">cloud</option>
   </select></label>
+  <label>glow <input id="ctl-glow" type="range" min="1" max="100" value="30"><span class="val" id="ctl-glow-val"></span></label>
   <label>rib connect <select id="ctl-order">
     <option value="nearest" selected>nearest</option>
     <option value="angle">angle</option>
@@ -704,6 +706,70 @@ async function boot() {
     threads.material.clippingPlanes = [clipLo, clipHi];
     cluRibbons.material.clippingPlanes = [clipLo, clipHi];
 
+    // CLOUD style: soft gaussian splats accumulated ADDITIVELY into a
+    // half-float buffer, then tone-mapped 1-exp(-x·exposure) — the 2D
+    // pipeline's density aesthetic in 3D: stacked sheets glow, caustics
+    // bloom, isolated points stay faint. Lines go additive in this style.
+    const cloudUniforms = {
+        uSize: { value: 0.004 },
+        uScale: { value: 300 },
+        uIntensity: { value: 0.25 },
+    };
+    const cloudMat = new THREE.ShaderMaterial({
+        uniforms: cloudUniforms,
+        vertexColors: true,
+        clipping: true,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        vertexShader: [
+            '#include <clipping_planes_pars_vertex>',
+            'uniform float uSize;',
+            'uniform float uScale;',
+            'varying vec3 vColor;',
+            'void main() {',
+            '    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);',
+            '    gl_Position = projectionMatrix * mvPosition;',
+            '    gl_PointSize = uSize * uScale / -mvPosition.z;',
+            '    vColor = color;',
+            '    #include <clipping_planes_vertex>',
+            '}',
+        ].join('\n'),
+        fragmentShader: [
+            '#include <clipping_planes_pars_fragment>',
+            'uniform float uIntensity;',
+            'varying vec3 vColor;',
+            'void main() {',
+            '    #include <clipping_planes_fragment>',
+            '    vec2 c = gl_PointCoord * 2.0 - 1.0;',
+            '    float r2 = dot(c, c);',
+            '    if (r2 > 1.0) discard;',
+            '    float a = exp(-3.0 * r2);',
+            '    gl_FragColor = vec4(vColor * a * uIntensity, 1.0);',
+            '}',
+        ].join('\n'),
+    });
+    cloudMat.clippingPlanes = [clipLo, clipHi];
+    const cloudRT = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType });
+    const tonemapCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const tonemapMat = new THREE.ShaderMaterial({
+        uniforms: { tMap: { value: cloudRT.texture }, uExposure: { value: 1.5 } },
+        depthWrite: false,
+        depthTest: false,
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: [
+            'varying vec2 vUv;',
+            'uniform sampler2D tMap;',
+            'uniform float uExposure;',
+            'void main(){',
+            '    vec3 c = texture2D(tMap, vUv).rgb;',
+            '    gl_FragColor = vec4(vec3(1.0) - exp(-c * uExposure), 1.0);',
+            '}',
+        ].join('\n'),
+    });
+    const tonemapScene = new THREE.Scene();
+    tonemapScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), tonemapMat));
+
     const sculpt = new THREE.Group();
     sculpt.add(points);
     sculpt.add(ribbons);
@@ -930,22 +996,19 @@ async function boot() {
     // veil — unsorted transparency, ordering artifacts are inherent there.
     const applyStyle = () => {
         const ghost = styleCtl.value === 'ghost';
+        const cloud = styleCtl.value === 'cloud';
+        points.material = cloud ? cloudMat : material;
         material.transparent = ghost;
         material.opacity = ghost ? 0.92 : 1;
         material.depthWrite = !ghost;
         material.needsUpdate = true;
-        ribbons.material.transparent = ghost;
-        ribbons.material.opacity = ghost ? 0.55 : 1;
-        ribbons.material.depthWrite = !ghost;
-        ribbons.material.needsUpdate = true;
-        threads.material.transparent = ghost;
-        threads.material.opacity = ghost ? 0.55 : 1;
-        threads.material.depthWrite = !ghost;
-        threads.material.needsUpdate = true;
-        cluRibbons.material.transparent = ghost;
-        cluRibbons.material.opacity = ghost ? 0.55 : 1;
-        cluRibbons.material.depthWrite = !ghost;
-        cluRibbons.material.needsUpdate = true;
+        for (const m of [ribbons.material, threads.material, cluRibbons.material]) {
+            m.blending = cloud ? THREE.AdditiveBlending : THREE.NormalBlending;
+            m.transparent = ghost || cloud;
+            m.opacity = cloud ? 0.35 : (ghost ? 0.55 : 1);
+            m.depthWrite = !(ghost || cloud);
+            m.needsUpdate = true;
+        }
     };
     // slices: bin t2 onto S discrete plates spanning the cube (S=11 -> z = 0,
     // 0.1, ..., 1.0). Every solve sits at one t2, so whole ribbons land
@@ -1008,8 +1071,17 @@ async function boot() {
     const sizeVal = document.getElementById('ctl-size-val');
     const heightCtl = document.getElementById('ctl-height');
     const heightVal = document.getElementById('ctl-height-val');
+    const glowCtl = document.getElementById('ctl-glow');
+    const glowVal = document.getElementById('ctl-glow-val');
+    const applyGlow = () => {
+        const g = Math.max(1, Math.min(100, parseInt(glowCtl.value, 10) || 30));
+        tonemapMat.uniforms.uExposure.value = g / 20;
+        glowVal.textContent = String(g);
+    };
+    glowCtl.addEventListener('input', applyGlow);
     const applySize = () => {
         material.size = Number(sizeCtl.value) * 0.0004;
+        cloudUniforms.uSize.value = Number(sizeCtl.value) * 0.0004;
         sizeVal.textContent = sizeCtl.value;
     };
     // height 0 flattens the sculpture onto its base plane: the 2D art is
@@ -1080,7 +1152,10 @@ async function boot() {
             showThreadsCtl.checked = !!view.show.threads;
             showCluCtl.checked = !!view.show.clu;
         }
-        if (view.style === 'solid' || view.style === 'ghost') styleCtl.value = view.style;
+        if (['solid', 'ghost', 'cloud'].includes(view.style)) styleCtl.value = view.style;
+        if (Number.isFinite(Number(view.glow))) {
+            glowCtl.value = String(Math.max(1, Math.min(100, Math.round(Number(view.glow)))));
+        }
         if (['nearest', 'angle', 'file'].includes(view.order)) orderCtl.value = view.order;
         if (Number.isFinite(Number(view.lenq))) {
             lenqCtl.value = String(Math.max(0, Math.min(100, Math.round(Number(view.lenq)))));
@@ -1100,6 +1175,7 @@ async function boot() {
     applyShow();
     applyStyle();
     applySize();
+    applyGlow();
     applyHeight();
     applyLenq();
     applyZRange();
@@ -1116,6 +1192,23 @@ async function boot() {
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
+    const cloudBufSize = new THREE.Vector2();
+    const renderCloud = () => {
+        renderer.getDrawingBufferSize(cloudBufSize);
+        if (cloudRT.width !== cloudBufSize.x || cloudRT.height !== cloudBufSize.y) {
+            cloudRT.setSize(cloudBufSize.x, cloudBufSize.y);
+        }
+        cloudUniforms.uScale.value = cloudBufSize.y * 0.5;
+        const bg = scene.background;
+        scene.background = null;
+        renderer.setRenderTarget(cloudRT);
+        renderer.setClearColor(0x000000, 1);
+        renderer.clear();
+        renderer.render(scene, camera);
+        renderer.setRenderTarget(null);
+        renderer.render(tonemapScene, tonemapCam);
+        scene.background = bg;
+    };
     let lastT = performance.now();
     renderer.setAnimationLoop(() => {
         const now = performance.now();
@@ -1124,12 +1217,14 @@ async function boot() {
         tourTick(dt);
         flyTick(dt);
         if (controls.enabled) controls.update();
-        renderer.render(scene, camera);
+        if (styleCtl.value === 'cloud') renderCloud();
+        else renderer.render(scene, camera);
     });
 
     window.__sculptureViewer = {
         scene, camera, renderer, points, ribbons, threads, clu: cluRibbons, sculpt, material, controls,
         flight, tour: { state: tour, tick: tourTick, pose: tourPose, setPlaying: tourSetPlaying },
+        cloudMat, tonemapMat,
         count, clipped, gridN, degree,
     };
 }

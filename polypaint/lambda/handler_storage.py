@@ -7189,8 +7189,11 @@ def _sculpture_view(raw):
     show = raw.get("show")
     if isinstance(show, dict):
         view["show"] = {k: bool(show.get(k)) for k in ("points", "ribbons", "threads", "clu")}
-    if raw.get("style") in ("solid", "ghost"):
+    if raw.get("style") in ("solid", "ghost", "cloud"):
         view["style"] = raw["style"]
+    glow = _num("glow", 1, 100)
+    if glow is not None:
+        view["glow"] = int(round(glow))
     if raw.get("order") in ("nearest", "angle", "file"):
         view["order"] = raw["order"]
     if raw.get("tour") in ("off", "orbit", "wave", "grand", "weave"):

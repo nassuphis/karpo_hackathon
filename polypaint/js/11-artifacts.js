@@ -1633,6 +1633,7 @@ function _sculptureCaptureViewSettings() {
                 clu: chk('ctl-show-clu'),
             },
             style: val('ctl-style') || 'solid',
+            glow: Number.isFinite(parseInt(val('ctl-glow'), 10)) ? parseInt(val('ctl-glow'), 10) : 30,
             order: val('ctl-order') || 'nearest',
             lenq: Number.isFinite(parseInt(val('ctl-lenq'), 10)) ? parseInt(val('ctl-lenq'), 10) : 100,
             zaxis: val('ctl-zaxis') === 't1' ? 't1' : 't2',
@@ -1651,7 +1652,7 @@ function _sculptureViewSummary(view) {
     const show = ['points', 'ribbons', 'threads', 'clu'].filter((k) => view.show && view.show[k])
         .map((k) => k.slice(0, 3)).join('+') || 'none';
     return `point ${view.point} · height ${view.height.toFixed(2)} · slices ${view.slices || 'off'}`
-        + ` · ${show} · ${view.style} · ${view.order}`
+        + ` · ${show} · ${view.style}${view.style === 'cloud' && view.glow ? ` g${view.glow}` : ''} · ${view.order}`
         + (view.lenq < 100 ? ` · len ${view.lenq}%` : '')
         + (view.zaxis === 't1' ? ' · z=t1' : '')
         + ((view.zlo > 0 || view.zhi < 1) ? ` · z∈[${view.zlo.toFixed(2)},${view.zhi.toFixed(2)}]` : '')

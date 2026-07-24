@@ -1098,3 +1098,91 @@ test('clu ribbons: per-column k-means arcs, chained from the far end, never brid
   expect(st.maxLen).toBeLessThan(0.015);     // 0.01 steps only — no chords
   expect(st.notFlat).toBe(0);                // slice curves are flat per column
 });
+
+test('cloud style: additive splats through the tone-mapped pipeline', async ({ page }) => {
+  await page.goto('http://localhost:8765/sculpture.html');
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 4;
+    const g = c.getContext('2d');
+    for (let row = 0; row < 4; row++) for (let col = 0; col < 4; col++) {
+      g.fillStyle = `rgb(${row * 60},${col * 60},60)`;
+      g.fillRect(col, row, 1, 1);
+    }
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  await page.route('**/fx/cdroots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: rootsBuffer(4),
+  }));
+  await page.route('**/fx/cdpal.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  const frag = new URLSearchParams({
+    v: '1', r: '/fx/cdroots.bin', p: '/fx/cdpal.png', n: '4', d: '3', s: '16',
+    x0: '-1', x1: '1', y0: '-1', y1: '1', t: 'cloud fixture',
+  });
+  await page.goto('about:blank');
+  await page.goto('http://localhost:8765/sculpture.html#' + frag.toString());
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const built = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!built) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+  const st = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const style = document.getElementById('ctl-style');
+    style.value = 'cloud';
+    style.dispatchEvent(new Event('change'));
+    const read = () => {
+      // render one explicit cloud frame via the loop path
+      const gl = v.renderer.getContext();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const buf = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      let lit = 0, maxV = 0;
+      for (let i = 0; i < buf.length; i += 4) {
+        const m = Math.max(buf[i], buf[i + 1], buf[i + 2]);
+        if (m > 8) lit++;
+        maxV = Math.max(maxV, m);
+      }
+      return { lit, maxV };
+    };
+    const cloudState = {
+      swapped: v.points.material === v.cloudMat,
+      hasUniforms: !!(v.points.material.uniforms && v.points.material.uniforms.uIntensity),
+      ribbonsAdditive: v.ribbons.material.blending,
+      clipPlanes: v.cloudMat.clippingPlanes.length,
+    };
+    // enlarge splats so the readback sees them regardless of dpr
+    v.cloudMat.uniforms.uSize.value = 0.2;
+    // drive a frame exactly as the loop does (tone-mapped two-pass)
+    const glow = document.getElementById('ctl-glow');
+    glow.value = '60';
+    glow.dispatchEvent(new Event('input'));
+    const exposure = v.tonemapMat.uniforms.uExposure.value;
+    // force one frame through requestAnimationFrame timing
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        const shot = read();
+        style.value = 'solid';
+        style.dispatchEvent(new Event('change'));
+        requestAnimationFrame(() => {
+          resolve({ cloudState, exposure, shot,
+                    restored: window.__sculptureViewer.points.material === window.__sculptureViewer.material });
+        });
+      });
+    });
+  });
+  expect(st.cloudState.swapped).toBe(true);
+  expect(st.cloudState.hasUniforms).toBe(true);
+  expect(st.cloudState.ribbonsAdditive).toBe(2);   // THREE.AdditiveBlending
+  expect(st.cloudState.clipPlanes).toBe(2);        // z-window still applies
+  expect(st.exposure).toBeCloseTo(3.0, 5);         // glow 60 -> 60/20
+  expect(st.shot.lit).toBeGreaterThan(50);         // splats visible on screen
+  expect(st.shot.maxV).toBeLessThanOrEqual(255);   // tone map bounded
+  expect(st.restored).toBe(true);                  // solid restores the material
+});

@@ -64,7 +64,17 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
 
 - X = Re, Z = −Im (right-handed view), Y (up) = t2 − ½; cube side 1,
   wireframe frame; xy normalized by the isotropic viewport.
-- **Style: solid (default) / ghost.** Solid renders opaque with depth
+- **Style: solid (default) / ghost / cloud.** **Cloud** is the density
+  aesthetic in 3D: points render as soft gaussian splats accumulated
+  ADDITIVELY into a half-float buffer, then tone-mapped
+  1−exp(−x·exposure) — stacked sheets glow, caustics bloom, isolated
+  points stay faint, exactly how the 2D pipeline treats density. Lines
+  go additive in this style; the **glow** slider drives the exposure;
+  the z-window clips inside the splat shader (ShaderMaterial clipping
+  chunks); size feeds the splat radius; style and glow ride saved
+  views. Pinned with a real readback: splats visible through the
+  two-pass pipeline, bounded output, additive lines, plane count, and
+  the material swap restoring byte-exact solid. Solid renders opaque with depth
   writes — occlusion is correct from every angle. The original material
   had `depthWrite: false` (translucent point-cloud habit), so pixel
   ownership followed DRAW order, not distance: rotating the sliced

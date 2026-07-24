@@ -2165,12 +2165,19 @@ function _initMicPalettePopup() {
 let _picPopupState = { open: false, mode: null, fileName: '', name: '', colors: 12, sampling: 'med', style: 'editorial', bitmap: null, palette: [], busy: false, error: '', runToken: 0 };
 let _picLastStops = null;   // last extraction: the PIC swatch face (per session)
 
-const PIC_SAMPLING_TARGETS = { low: 4000, med: 12000, high: 40000 };
-const PIC_MAX_WIDTH = 400;
+// ultra exists for tiny-but-compositional details (a small red accent on a
+// brown/blue field): it must survive the downscale (800px vs 400), be
+// sampled (~every pixel), AND beat the cluster cull (0.05% vs 0.2%) —
+// raising sample count alone fixes only the middle constraint.
+const PIC_SAMPLING_TIERS = {
+    low:   { target: 4000,   maxWidth: 400, minCountFraction: 0.002 },
+    med:   { target: 12000,  maxWidth: 400, minCountFraction: 0.002 },
+    high:  { target: 40000,  maxWidth: 400, minCountFraction: 0.002 },
+    ultra: { target: 240000, maxWidth: 800, minCountFraction: 0.0005 },
+};
 const PIC_KMEANS_K = 28;
 const PIC_KMEANS_ITERS = 25;
 const PIC_MERGE_OKLAB = 0.04;
-const PIC_MIN_COUNT_FRACTION = 0.002;
 
 function _picRgbToOklab(r, g, b) {
     r /= 255; g /= 255; b /= 255;
@@ -2227,9 +2234,9 @@ function _picClassify(r, g, b, lab) {
     return { chroma, family, isEarth, isNeutral, isCoolMuted };
 }
 
-function _picSampleBitmap(bitmap, target) {
+function _picSampleBitmap(bitmap, target, maxWidth) {
     const w0 = bitmap.width, h0 = bitmap.height;
-    const w = Math.min(w0, PIC_MAX_WIDTH);
+    const w = Math.min(w0, maxWidth);
     const h = Math.max(1, Math.round(w * (h0 / w0)));
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
@@ -2394,12 +2401,13 @@ function _picSelectCandidates(candidates, target, style) {
 }
 
 function _picExtractPalette(bitmap, { colors = 12, sampling = 'med', style = 'editorial' } = {}) {
-    const samples = _picSampleBitmap(bitmap, PIC_SAMPLING_TARGETS[sampling] || PIC_SAMPLING_TARGETS.med);
+    const tier = PIC_SAMPLING_TIERS[sampling] || PIC_SAMPLING_TIERS.med;
+    const samples = _picSampleBitmap(bitmap, tier.target, tier.maxWidth);
     if (samples.length < 20) throw new Error('image yields too few opaque pixels');
     const { centers, counts } = _picKmeans(samples);
     const merged = _picMerge(centers, counts);
     const total = merged.reduce((acc, m) => acc + m.count, 0);
-    const minCount = Math.max(1, total * PIC_MIN_COUNT_FRACTION);
+    const minCount = Math.max(1, total * tier.minCountFraction);
     const candidates = _picBuildCandidates(merged.filter(m => m.count >= minCount), total, style);
     if (!candidates.length) throw new Error('no palette candidates survived');
     const chosen = _picSelectCandidates(candidates, colors, style);
@@ -2496,7 +2504,7 @@ function _picRecompute() {
 function _picSetControl(which, value) {
     const st = _picPopupState;
     if (which === 'colors') st.colors = Math.max(3, Math.min(32, Math.round(Number(value) || 12)));
-    else if (which === 'sampling') st.sampling = PIC_SAMPLING_TARGETS[value] ? value : 'med';
+    else if (which === 'sampling') st.sampling = PIC_SAMPLING_TIERS[value] ? value : 'med';
     else if (which === 'style') st.style = value === 'literal' ? 'literal' : 'editorial';
     _picRecompute();
 }

@@ -80,7 +80,7 @@ constants identical:
 | control | values | maps to |
 |---|---|---|
 | colors | 3..32 (default 12) | selection target (32 = `custom:` wire cap; 3 = our own MIC floor) |
-| sampling | low / med / high | TARGET_SAMPLES 4,000 / 12,000 / 40,000 |
+| sampling | low / med / high / ultra | 4,000 / 12,000 / 40,000 / 240,000 samples; ultra also raises the downscale cap to 800px and lowers the cluster cull to 0.05% — the three limits that jointly hide tiny compositional accents |
 | style | editorial / literal | editorial = full scoring above; **literal** = same cluster+merge+separation but score = sqrt(share) only — no boosts, no substrate penalty, no blue guarantee. For photos, literal is often the honest choice; editorial is the site's painting aesthetic |
 | 🎲 re-roll | — | new `Math.random()` seed for k-means++ |
 

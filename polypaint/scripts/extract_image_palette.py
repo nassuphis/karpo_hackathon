@@ -39,12 +39,18 @@ import urllib.request
 import numpy as np
 from PIL import Image
 
-MAX_WIDTH = 400
-TARGET_SAMPLES = 12000
+# ultra rescues tiny-but-compositional details (a small accent region must
+# survive the downscale, be sampled, AND beat the cluster cull — all three
+# limits move together; raising samples alone fixes only the middle one)
+SAMPLING_TIERS = {
+    "low":   {"target": 4000,   "max_width": 400, "min_count_fraction": 0.002},
+    "med":   {"target": 12000,  "max_width": 400, "min_count_fraction": 0.002},
+    "high":  {"target": 40000,  "max_width": 400, "min_count_fraction": 0.002},
+    "ultra": {"target": 240000, "max_width": 800, "min_count_fraction": 0.0005},
+}
 KMEANS_K = 28
 KMEANS_ITERS = 25
 MERGE_OKLAB = 0.04
-MIN_COUNT_FRACTION = 0.002
 
 
 def srgb_to_oklab(rgb):
@@ -114,16 +120,17 @@ def classify(r, g, b, lab):
     }
 
 
-def sample_image(img: Image.Image) -> np.ndarray:
+def sample_image(img: Image.Image, target: int = 12000,
+                 max_width: int = 400) -> np.ndarray:
     img = img.convert("RGBA")
     w0, h0 = img.size
-    w = min(w0, MAX_WIDTH)
+    w = min(w0, max_width)
     h = max(1, round(w * (h0 / w0)))
     # the site samples a canvas drawImage downscale; bilinear is the
     # closest Pillow match (exactness is impossible across resamplers)
     img = img.resize((w, h), Image.BILINEAR)
     px = np.asarray(img, dtype=np.float64)
-    step = max(1, int(math.floor(math.sqrt((w * h) / TARGET_SAMPLES))))
+    step = max(1, int(math.floor(math.sqrt((w * h) / target))))
     grid = px[::step, ::step].reshape(-1, 4)
     return grid[grid[:, 3] > 128][:, :3]
 
@@ -291,16 +298,17 @@ def select_candidates(candidates, target):
 
 
 def extract_palette(img: Image.Image, colors: int = 12,
-                    seed: int | None = None):
+                    seed: int | None = None, sampling: str = "med"):
     """Full pipeline; returns [{hex, share, family, score}...] best-first."""
+    tier = SAMPLING_TIERS.get(sampling, SAMPLING_TIERS["med"])
     rng = random.Random(seed)
-    samples = sample_image(img)
+    samples = sample_image(img, tier["target"], tier["max_width"])
     if len(samples) < 20:
         raise ValueError("image yields too few opaque samples")
     centers, counts = kmeans(samples, rng)
     merged = merge_centers(centers, counts)
     total = sum(m["count"] for m in merged)
-    min_count = max(1, total * MIN_COUNT_FRACTION)
+    min_count = max(1, total * tier["min_count_fraction"])
     candidates = build_candidates(
         [m for m in merged if m["count"] >= min_count], total)
     candidates.sort(key=lambda c: -c["score"])
@@ -333,10 +341,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", help="local path or http(s) URL")
     parser.add_argument("--colors", type=int, default=12)
+    parser.add_argument("--sampling", choices=sorted(SAMPLING_TIERS), default="med")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    palette = extract_palette(load_image(args.image), args.colors, args.seed)
+    palette = extract_palette(load_image(args.image), args.colors, args.seed,
+                              sampling=args.sampling)
     if args.json:
         print(json.dumps(palette, indent=2))
     else:

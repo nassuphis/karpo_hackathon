@@ -367,6 +367,46 @@ test.describe('Palette UI', () => {
 });
 
 test.describe('PIC photo palette', () => {
+  test('ultra sampling rescues a tiny compositional accent that med culls', async ({ page }) => {
+    await page.goto('http://localhost:8765/index.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.evaluate(() => {
+      window.lambdaPost = async function () { return {}; };
+    });
+    await page.click('.tab-btn:text("Palette")');
+    await page.click('#palette-circles-palette-tab .pal-circle-pic');
+    // brown/blue field with a 1x58px red sliver = 0.151% of the image:
+    // below med's 0.2% cluster cull, above ultra's 0.05% floor
+    const dataUrl = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 240; canvas.height = 160;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#7a5c3a'; ctx.fillRect(0, 0, 144, 160);
+      ctx.fillStyle = '#22447a'; ctx.fillRect(144, 0, 96, 160);
+      ctx.fillStyle = '#e01030'; ctx.fillRect(120, 50, 1, 58);
+      return canvas.toDataURL('image/png');
+    });
+    await page.setInputFiles('#pic-popup-file', {
+      name: 'accent.png', mimeType: 'image/png',
+      buffer: Buffer.from(dataUrl.split(',')[1], 'base64'),
+    });
+    await expect(page.locator('#pic-popup-status')).toContainText('colors', { timeout: 15000 });
+    const redDistance = () => page.evaluate(() => {
+      const dist = h => {
+        const p = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+        return Math.hypot(p[0] - 224, p[1] - 16, p[2] - 48);   // #e01030
+      };
+      return Math.min(...(_picPopupState.palette.map(p => dist(p.hex))));
+    });
+    // med (default): the sliver's cluster dies at the 0.2% cull
+    expect(await redDistance()).toBeGreaterThan(90);
+    // ultra: same photo, the accent survives and lands in the palette
+    await page.check('input[name="pic-popup-sampling"][value="ultra"]');
+    await expect(page.locator('#pic-popup-status')).toContainText('colors', { timeout: 30000 });
+    expect(await redDistance()).toBeLessThan(30);
+    await page.click('#pic-popup-close');
+  });
+
   test('photo -> extraction -> Use now + Save to HEX, styles reorder', async ({ page }) => {
     await page.goto('http://localhost:8765/index.html');
     await page.waitForLoadState('domcontentloaded');

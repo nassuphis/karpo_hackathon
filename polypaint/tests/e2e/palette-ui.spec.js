@@ -407,6 +407,58 @@ test.describe('PIC photo palette', () => {
     await page.click('#pic-popup-close');
   });
 
+  test('marquee region rescues the accent at med; Select all restores the full photo', async ({ page }) => {
+    await page.goto('http://localhost:8765/index.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.evaluate(() => {
+      window.lambdaPost = async function () { return {}; };
+    });
+    await page.click('.tab-btn:text("Palette")');
+    await page.click('#palette-circles-palette-tab .pal-circle-pic');
+    // same fixture as the ultra test: the sliver is 0.151% of the full image
+    // (med culls it) but ~1.8% of the marquee region below (med keeps it)
+    const dataUrl = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 240; canvas.height = 160;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#7a5c3a'; ctx.fillRect(0, 0, 144, 160);
+      ctx.fillStyle = '#22447a'; ctx.fillRect(144, 0, 96, 160);
+      ctx.fillStyle = '#e01030'; ctx.fillRect(120, 50, 1, 58);
+      return canvas.toDataURL('image/png');
+    });
+    await page.setInputFiles('#pic-popup-file', {
+      name: 'accent.png', mimeType: 'image/png',
+      buffer: Buffer.from(dataUrl.split(',')[1], 'base64'),
+    });
+    await expect(page.locator('#pic-popup-status')).toContainText('colors', { timeout: 15000 });
+    const redDistance = () => page.evaluate(() => {
+      const dist = h => {
+        const p = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+        return Math.hypot(p[0] - 224, p[1] - 16, p[2] - 48);   // #e01030
+      };
+      return Math.min(...(_picPopupState.palette.map(p => dist(p.hex))));
+    });
+    expect(await redDistance()).toBeGreaterThan(90);
+    await expect(page.locator('#pic-popup-select-all')).toBeDisabled();
+    // drag a marquee over image x:[100,140] y:[40,120] — the sliver's home
+    const canvas = page.locator('#pic-popup-preview-canvas');
+    const box = await canvas.boundingBox();
+    await page.mouse.move(box.x + box.width * (100 / 240), box.y + box.height * (40 / 160));
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * (140 / 240), box.y + box.height * (120 / 160), { steps: 4 });
+    await page.mouse.up();
+    // the sliver is ~1.8% of the region: it survives med's cull now
+    await expect.poll(redDistance, { timeout: 15000 }).toBeLessThan(30);
+    expect(await page.evaluate(() => _picPopupState.region)).toBeTruthy();
+    await expect(page.locator('#pic-popup-select-all')).toBeEnabled();
+    // Select all: back to the full photo, the accent dies at med again
+    await page.click('#pic-popup-select-all');
+    await expect.poll(redDistance, { timeout: 15000 }).toBeGreaterThan(90);
+    expect(await page.evaluate(() => _picPopupState.region)).toBeNull();
+    await expect(page.locator('#pic-popup-select-all')).toBeDisabled();
+    await page.click('#pic-popup-close');
+  });
+
   test('photo -> extraction -> Use now + Save to HEX, styles reorder', async ({ page }) => {
     await page.goto('http://localhost:8765/index.html');
     await page.waitForLoadState('domcontentloaded');

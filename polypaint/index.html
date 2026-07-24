@@ -468,7 +468,7 @@ button {
     justify-content: center; color: #727b94; font-size: 12px; text-align: center;
     border: 1px dashed #2b3a5e; border-radius: 8px; padding: 6px;
 }
-.pic-popup-preview canvas { max-width: 200px; max-height: 200px; border-radius: 4px; }
+.pic-popup-preview canvas { max-width: 200px; max-height: 200px; border-radius: 4px; cursor: crosshair; touch-action: none; }
 .pic-popup-controls {
     display: flex; flex-direction: column; gap: 8px; flex: 1;
     color: #9aa3b2; font-size: 12px;
@@ -2967,6 +2967,7 @@ button {
                 </div>
                 <div class="pic-popup-actions">
                     <button id="pic-popup-reroll" type="button" class="btn-secondary btn-inline" onclick="_picRecompute()" title="New random clustering seed" disabled>&#127922; Re-roll</button>
+                    <button id="pic-popup-select-all" type="button" class="btn-secondary btn-inline" title="Clear the marquee region — extract from the whole photo again" disabled>Select all</button>
                     <button id="pic-popup-use" type="button" class="btn-secondary btn-inline" onclick="_picUseNow()" disabled>Use now</button>
                     <button id="pic-popup-save" type="button" class="btn-secondary btn-inline" onclick="void _picSaveToHex()" disabled>Save to HEX</button>
                 </div>

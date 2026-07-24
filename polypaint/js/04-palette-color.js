@@ -2162,7 +2162,7 @@ function _initMicPalettePopup() {
    scripts/extract_image_palette.py) running fully client-side — the photo
    never leaves the browser; only name+stops go to the HEX catalog. */
 
-let _picPopupState = { open: false, mode: null, fileName: '', name: '', colors: 12, sampling: 'med', style: 'editorial', bitmap: null, palette: [], busy: false, error: '', runToken: 0 };
+let _picPopupState = { open: false, mode: null, fileName: '', name: '', colors: 12, sampling: 'med', style: 'editorial', bitmap: null, palette: [], busy: false, error: '', runToken: 0, region: null, dragRegion: null };
 let _picLastStops = null;   // last extraction: the PIC swatch face (per session)
 
 // ultra exists for tiny-but-compositional details (a small red accent on a
@@ -2234,14 +2234,20 @@ function _picClassify(r, g, b, lab) {
     return { chroma, family, isEarth, isNeutral, isCoolMuted };
 }
 
-function _picSampleBitmap(bitmap, target, maxWidth) {
-    const w0 = bitmap.width, h0 = bitmap.height;
-    const w = Math.min(w0, maxWidth);
-    const h = Math.max(1, Math.round(w * (h0 / w0)));
+function _picSampleBitmap(bitmap, target, maxWidth, region) {
+    // The marquee region crops BEFORE the downscale: a small region gets the
+    // ENTIRE pixel budget, so tiny accents become large sample shares — far
+    // stronger than any sampling tier on the full frame.
+    const sx = region ? Math.round(region.x0 * bitmap.width) : 0;
+    const sy = region ? Math.round(region.y0 * bitmap.height) : 0;
+    const sw = Math.max(1, region ? Math.round((region.x1 - region.x0) * bitmap.width) : bitmap.width);
+    const sh = Math.max(1, region ? Math.round((region.y1 - region.y0) * bitmap.height) : bitmap.height);
+    const w = Math.min(sw, maxWidth);
+    const h = Math.max(1, Math.round(w * (sh / sw)));
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(bitmap, 0, 0, w, h);
+    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, w, h);
     const px = ctx.getImageData(0, 0, w, h).data;
     const step = Math.max(1, Math.floor(Math.sqrt((w * h) / target)));
     const samples = [];
@@ -2400,9 +2406,9 @@ function _picSelectCandidates(candidates, target, style) {
     return selected.sort((a, b) => b.score - a.score);
 }
 
-function _picExtractPalette(bitmap, { colors = 12, sampling = 'med', style = 'editorial' } = {}) {
+function _picExtractPalette(bitmap, { colors = 12, sampling = 'med', style = 'editorial', region = null } = {}) {
     const tier = PIC_SAMPLING_TIERS[sampling] || PIC_SAMPLING_TIERS.med;
-    const samples = _picSampleBitmap(bitmap, tier.target, tier.maxWidth);
+    const samples = _picSampleBitmap(bitmap, tier.target, tier.maxWidth, region);
     if (samples.length < 20) throw new Error('image yields too few opaque pixels');
     const { centers, counts } = _picKmeans(samples);
     const merged = _picMerge(centers, counts);
@@ -2446,6 +2452,8 @@ async function _picLoadFile(file) {
     st.error = '';
     st.fileName = String(file.name || '');
     st.name = _picNameFromFilename(st.fileName);
+    st.region = null;
+    st.dragRegion = null;
     try {
         if (typeof createImageBitmap === 'function') {
             try {
@@ -2485,6 +2493,7 @@ function _picRecompute() {
         try {
             st.palette = _picExtractPalette(st.bitmap, {
                 colors: st.colors, sampling: st.sampling, style: st.style,
+                region: st.region,
             });
             _picLastStops = st.palette.map(p => p.hex);
             if (st.palette.length < st.colors) {
@@ -2583,10 +2592,31 @@ function _renderPicPalettePopup() {
         previewEl.replaceChildren();
         if (st.bitmap) {
             const canvas = document.createElement('canvas');
+            canvas.id = 'pic-popup-preview-canvas';
             const scale = Math.min(1, 200 / st.bitmap.width, 200 / st.bitmap.height);
             canvas.width = Math.max(1, Math.round(st.bitmap.width * scale));
             canvas.height = Math.max(1, Math.round(st.bitmap.height * scale));
-            canvas.getContext('2d').drawImage(st.bitmap, 0, 0, canvas.width, canvas.height);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(st.bitmap, 0, 0, canvas.width, canvas.height);
+            // the marquee (or the live drag) draws over the FULL image so the
+            // region can be adjusted outward at any time
+            const region = st.dragRegion || st.region;
+            if (region) {
+                const rx = region.x0 * canvas.width, ry = region.y0 * canvas.height;
+                const rw = (region.x1 - region.x0) * canvas.width;
+                const rh = (region.y1 - region.y0) * canvas.height;
+                ctx.save();
+                ctx.fillStyle = 'rgba(0,0,0,0.45)';
+                ctx.fillRect(0, 0, canvas.width, ry);
+                ctx.fillRect(0, ry + rh, canvas.width, canvas.height - ry - rh);
+                ctx.fillRect(0, ry, rx, rh);
+                ctx.fillRect(rx + rw, ry, canvas.width - rx - rw, rh);
+                ctx.strokeStyle = '#e94560';
+                ctx.setLineDash([4, 3]);
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(rx, ry, rw, rh);
+                ctx.restore();
+            }
             previewEl.appendChild(canvas);
         } else {
             previewEl.textContent = 'Pick a photo (or drop one here)';
@@ -2601,15 +2631,20 @@ function _renderPicPalettePopup() {
         cell.title = `${entry.hex} · ${(entry.share * 100).toFixed(1)}% · ${entry.family}`;
         stripEl.appendChild(cell);
     }
+    const regionNote = st.region
+        ? ` · region ${Math.round((st.region.x1 - st.region.x0) * 100)}%×${Math.round((st.region.y1 - st.region.y0) * 100)}%`
+        : '';
     statusEl.textContent = st.error
         ? st.error
         : (st.busy ? 'Extracting…'
-            : (st.palette.length ? `${st.palette.length} colors — the photo stays in your browser`
-                : 'The photo is processed locally; nothing uploads.'));
+            : (st.palette.length ? `${st.palette.length} colors${regionNote} — the photo stays in your browser`
+                : 'The photo is processed locally; nothing uploads. Drag on the preview to limit extraction to a region.'));
     const ready = !!st.palette.length && !st.busy;
     if (useBtn && !useBtn.dataset.busy) useBtn.disabled = !ready;
     if (saveBtn && !saveBtn.dataset.busy) saveBtn.disabled = !ready;
     if (rerollBtn) rerollBtn.disabled = !st.bitmap || st.busy;
+    const selectAllBtn = document.getElementById('pic-popup-select-all');
+    if (selectAllBtn) selectAllBtn.disabled = !st.region || st.busy;
 }
 
 function _initPicPalettePopup() {
@@ -2635,7 +2670,64 @@ function _initPicPalettePopup() {
             const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
             if (file) void _picLoadFile(file);
         });
+        // marquee: drag a rectangle on the preview to limit extraction to a
+        // region — the crop happens before the downscale, so the region gets
+        // the entire pixel budget. Sub-4px drags are ignored as clicks.
+        let press = null;
+        const canvasFrac = ev => {
+            const canvas = document.getElementById('pic-popup-preview-canvas');
+            if (!canvas) return null;
+            const rect = canvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) return null;
+            return {
+                x: Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width)),
+                y: Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height)),
+                px: ev.clientX, py: ev.clientY,
+            };
+        };
+        dropZone.addEventListener('pointerdown', ev => {
+            if (!_picPopupState.bitmap || ev.button !== 0) return;
+            const at = canvasFrac(ev);
+            if (!at) return;
+            ev.preventDefault();
+            press = at;
+            const move = mv => {
+                const cur = canvasFrac(mv);
+                if (!cur || !press) return;
+                _picPopupState.dragRegion = {
+                    x0: Math.min(press.x, cur.x), x1: Math.max(press.x, cur.x),
+                    y0: Math.min(press.y, cur.y), y1: Math.max(press.y, cur.y),
+                };
+                _renderPicPalettePopup();
+            };
+            const up = uv => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                const cur = canvasFrac(uv);
+                const start = press;
+                press = null;
+                _picPopupState.dragRegion = null;
+                if (!cur || !start) { _renderPicPalettePopup(); return; }
+                if (Math.abs(uv.clientX - start.px) < 4 && Math.abs(uv.clientY - start.py) < 4) {
+                    _renderPicPalettePopup();
+                    return;   // a click, not a marquee
+                }
+                _picPopupState.region = {
+                    x0: Math.min(start.x, cur.x), x1: Math.max(start.x, cur.x),
+                    y0: Math.min(start.y, cur.y), y1: Math.max(start.y, cur.y),
+                };
+                _picRecompute();
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+        });
     }
+    const selectAllBtn = document.getElementById('pic-popup-select-all');
+    if (selectAllBtn) selectAllBtn.addEventListener('click', () => {
+        _picPopupState.region = null;
+        _picPopupState.dragRegion = null;
+        _picRecompute();
+    });
 }
 
 function _picNameFromFilename(fileName) {

@@ -37,6 +37,12 @@
   #hud-title { font-size: 14px; color: #e8eef5; }
   #hud-stats { font-size: 11px; color: #778599; margin-top: 4px; }
   #hud-hint { font-size: 11px; color: #5b6b80; margin-top: 2px; }
+  #btn-menu { position: fixed; top: 10px; right: 12px; z-index: 6;
+              background: rgba(10,14,22,0.82); border: 1px solid #232b3a;
+              border-radius: 6px; color: #cfd8e3; font: inherit; font-size: 16px;
+              padding: 6px 12px; cursor: pointer; }
+  #btn-menu:hover { border-color: #e94560; }
+  #panel.hidden { display: none; }
   #panel { position: fixed; bottom: 12px; left: 12px; z-index: 5;
            background: rgba(10,14,22,0.82); border: 1px solid #232b3a;
            border-radius: 6px; padding: 10px 12px; font-size: 11px; }
@@ -82,6 +88,7 @@
   <div id="hud-stats">loading…</div>
   <div id="hud-hint"></div>
 </div>
+<button type="button" id="btn-menu" title="Show / hide controls">&#9776;</button>
 <div id="panel">
   <label>point <input id="ctl-size" type="range" min="1" max="40" value="10"><span class="val" id="ctl-size-val"></span></label>
   <label>height <input id="ctl-height" type="range" min="0" max="100" value="10"><span class="val" id="ctl-height-val"></span></label>
@@ -177,6 +184,7 @@ async function bootConfig() {
             minRe: floatParam(qp, 'x0'), maxRe: floatParam(qp, 'x1'),
             minIm: floatParam(qp, 'y0'), maxIm: floatParam(qp, 'y1'),
             title: qp.get('t') || 'PolyPaint sculpture',
+            saved: false,
         };
     }
     // saved sculpture: the page lives inside its sculptures/{id}/ prefix and
@@ -195,6 +203,7 @@ async function bootConfig() {
             minIm: parseFloat(vp.min_im), maxIm: parseFloat(vp.max_im),
             title: String(meta.title || 'PolyPaint sculpture'),
             view: (meta.view && typeof meta.view === 'object') ? meta.view : null,
+            saved: true,
         };
     } catch (e) {
         return null;
@@ -204,6 +213,16 @@ async function bootConfig() {
 async function boot() {
     const cfg = await bootConfig();
     const { rootsUrl, paletteUrl, gridN, degree, minRe, maxRe, minIm, maxIm, title } = cfg || {};
+    // menu toggle: shares open CLEAN (menu off — phone screens), the
+    // in-app ephemeral preview opens with controls; the button always works
+    const panel = document.getElementById('panel');
+    const menuBtn = document.getElementById('btn-menu');
+    const setMenu = (on) => {
+        panel.classList.toggle('hidden', !on);
+        menuBtn.style.opacity = on ? '1' : '0.75';
+    };
+    menuBtn.addEventListener('click', () => setMenu(panel.classList.contains('hidden')));
+    setMenu(!(cfg && cfg.saved));
     document.getElementById('hud-title').textContent = title || 'PolyPaint sculpture';
     if (!cfg || !rootsUrl || !paletteUrl || !Number.isFinite(gridN) || !Number.isFinite(degree)
         || !Number.isFinite(minRe) || !Number.isFinite(maxRe)

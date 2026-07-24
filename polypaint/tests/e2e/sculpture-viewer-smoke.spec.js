@@ -104,6 +104,12 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   expect(st.count).toBe(48);        // 16 steps x degree 3, nothing clipped
   expect(st.clipped).toBe(0);
   expect(st.title).toBe('fixture sculpture');
+  // ephemeral preview: menu ON by default; the toggle hides it
+  await expect(page.locator('#panel')).toBeVisible();
+  await page.click('#btn-menu');
+  await expect(page.locator('#panel')).toBeHidden();
+  await page.click('#btn-menu');
+  await expect(page.locator('#panel')).toBeVisible();
   expect(st.hud).toContain('48 roots');
   expect(st.hud).toContain('grid 4×4');
   // global step 4 = row 1 (odd, serpentine) j=0 -> col 3 -> t2=0.75 -> Y=0.25;
@@ -775,6 +781,10 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   }
   expect(st.count).toBe(48);
   expect(st.title).toBe('saved fixture');
+  // shares open CLEAN: menu OFF by default (phone screens); tap to open
+  await expect(page.locator('#panel')).toBeHidden();
+  await page.click('#btn-menu');
+  await expect(page.locator('#panel')).toBeVisible();
   // the saved view opens exactly as prepared: controls, materials, geometry
   expect(st.point).toBe('22');
   expect(st.height).toBe('40');

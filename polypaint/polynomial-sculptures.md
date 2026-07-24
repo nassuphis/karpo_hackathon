@@ -202,6 +202,13 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   would use the already-vendored fat-line addons.
 - `window.__sculptureViewer` exposes scene/points/ribbons/sculpt for e2e.
 
+**Menu toggle** (user: phone screens): a ☰ button (top-right) hides or
+shows the control panel. Shares open with the menu OFF (clean phone
+view — the recipient taps ☰ for controls); the in-app ephemeral
+preview opens with it ON. Mode comes from the boot config (`saved`
+flag), not from the captured view — the creator's panel state never
+overrides the share-clean default.
+
 **Failure modes** are readable messages (no params, fetch failure,
 truncated bin, nothing inside the viewport, no WebGL).
 

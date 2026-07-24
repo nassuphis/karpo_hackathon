@@ -629,27 +629,46 @@ async function boot() {
     // corkscrew with a breathing radius sweeping the full height (the
     // close-up detail pass). Both follow the HEIGHT-SCALED geometry, so a
     // squashed plate stack gets a low skimming pass instead of empty air.
-    const tour = { playing: false, t: 0 };
+    // tours adopt the camera pose at PLAY time (user: "orbit too close —
+    // take my current distance, I navigate to where the orbit starts"):
+    // orbit circles at exactly the play-time radius, height, and azimuth
+    // (zero jump by construction); weave keeps its programmed corkscrew but
+    // starts at the play-time azimuth and EASES IN from the current pose.
+    const tour = { playing: false, t: 0, r0: 1.35, y0: 0.5, angle0: 0, blend: 1 };
+    const tourBlendFrom = new THREE.Vector3();
+    const tourBlendLook = new THREE.Vector3();
     const tourBtn = document.getElementById('btn-tour-play');
     const tourModeCtl = document.getElementById('ctl-tour-mode');
     const tourPose = (mode, t, heightScale) => {
         const hh = Math.max(0.06, 0.5 * heightScale);
         if (mode === 'weave') {
-            const angle = t * 0.55;
+            const angle = tour.angle0 + t * 0.55;
             const radius = 0.5 + 0.4 * Math.sin(t * 0.23);
             const y = Math.sin(t * 0.11) * hh * 1.05;
             return { pos: [Math.cos(angle) * radius, y, Math.sin(angle) * radius],
                      look: [0, y * 0.6, 0] };
         }
-        const angle = t * 0.35;
-        const y = Math.sin(t * 0.17) * (hh + 0.35);
-        return { pos: [Math.cos(angle) * 1.35, y, Math.sin(angle) * 1.35],
+        const angle = tour.angle0 + t * 0.35;
+        return { pos: [Math.cos(angle) * tour.r0, tour.y0, Math.sin(angle) * tour.r0],
                  look: [0, 0, 0] };
     };
     const tourTick = (dt) => {
         if (!tour.playing) return;
         tour.t += dt;
         const p = tourPose(tourModeCtl.value, tour.t, sculpt.scale.y);
+        if (tour.blend < 1) {
+            tour.blend = Math.min(1, tour.blend + dt / 1.2);
+            const w = tour.blend * tour.blend * (3 - 2 * tour.blend);   // smoothstep
+            camera.position.set(
+                tourBlendFrom.x + (p.pos[0] - tourBlendFrom.x) * w,
+                tourBlendFrom.y + (p.pos[1] - tourBlendFrom.y) * w,
+                tourBlendFrom.z + (p.pos[2] - tourBlendFrom.z) * w);
+            camera.lookAt(
+                tourBlendLook.x + (p.look[0] - tourBlendLook.x) * w,
+                tourBlendLook.y + (p.look[1] - tourBlendLook.y) * w,
+                tourBlendLook.z + (p.look[2] - tourBlendLook.z) * w);
+            return;
+        }
         camera.position.set(p.pos[0], p.pos[1], p.pos[2]);
         camera.lookAt(p.look[0], p.look[1], p.look[2]);
     };
@@ -658,7 +677,18 @@ async function boot() {
         tour.playing = on;
         controls.enabled = !on && !fly.isLocked;
         if (tourBtn) tourBtn.textContent = on ? '\u25a0' : '\u25b6';
-        if (!on) {
+        if (on) {
+            const p = camera.position;
+            tour.t = 0;
+            tour.r0 = Math.max(0.05, Math.hypot(p.x, p.z));
+            tour.y0 = p.y;
+            tour.angle0 = Math.atan2(p.z, p.x);
+            // orbit adopts the pose exactly (no jump); weave eases in
+            tour.blend = tourModeCtl.value === 'weave' ? 0 : 1;
+            tourBlendFrom.copy(p);
+            camera.getWorldDirection(tourBlendLook);
+            tourBlendLook.multiplyScalar(1.0).add(p);
+        } else {
             const ahead = new THREE.Vector3();
             camera.getWorldDirection(ahead);
             controls.target.copy(camera.position).addScaledVector(ahead, 0.9);

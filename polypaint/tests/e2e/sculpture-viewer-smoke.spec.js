@@ -850,6 +850,7 @@ test('tours: orbit and weave follow their parametric paths; interaction stops th
       matches: Math.hypot(p1.x - want1.pos[0], p1.y - want1.pos[1], p1.z - want1.pos[2]) < 1e-9,
       moved: p1.distanceTo(p2) > 0.01,
       radius: Math.hypot(p2.x, p2.z),
+      y: p2.y,
     };
 
     // weave resets t and flies the interior
@@ -880,11 +881,41 @@ test('tours: orbit and weave follow their parametric paths; interaction stops th
   expect(st.playing).toEqual({ playing: true, btn: '\u25a0', orbit: false });
   expect(st.orbitPath.matches).toBe(true);
   expect(st.orbitPath.moved).toBe(true);
-  expect(st.orbitPath.radius).toBeCloseTo(1.35, 5);   // exterior turntable
+  // pose adoption: the orbit circles at the PLAY-TIME camera radius and
+  // height (boot camera sits at (1.25, 0.85, 1.25))
+  expect(st.orbitPath.radius).toBeCloseTo(Math.hypot(1.25, 1.25), 4);
+  expect(st.orbitPath.y).toBeCloseTo(0.85, 5);
   expect(st.weaveReset).toBe(0);
   expect(st.weavePath.matches).toBe(true);
   expect(st.weavePath.radius).toBeLessThan(1.0);      // interior pass
   expect(st.afterPointer).toEqual({ playing: false, btn: '\u25b6', orbit: true });
   expect(st.afterKey.playing).toBe(false);
   expect(st.afterKey.keyF).toBe(1);                   // the key still flies
+
+  // weave from a standing start EASES IN from the current pose (no snap),
+  // converges onto the parametric path, and adopts the play-time azimuth
+  const bl = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const mode = document.getElementById('ctl-tour-mode');
+    mode.value = 'weave';
+    mode.dispatchEvent(new Event('change'));
+    v.camera.position.set(2.0, 1.2, 0);
+    v.tour.setPlaying(true);
+    const blendStart = v.tour.state.blend;
+    v.tour.tick(0.5);
+    const mid = v.camera.position.clone();
+    const wantMid = v.tour.pose('weave', v.tour.state.t, v.sculpt.scale.y);
+    const midDelta = Math.hypot(mid.x - wantMid.pos[0], mid.y - wantMid.pos[1], mid.z - wantMid.pos[2]);
+    v.tour.tick(2.0);
+    const end = v.camera.position.clone();
+    const wantEnd = v.tour.pose('weave', v.tour.state.t, v.sculpt.scale.y);
+    const endDelta = Math.hypot(end.x - wantEnd.pos[0], end.y - wantEnd.pos[1], end.z - wantEnd.pos[2]);
+    v.tour.setPlaying(false);
+    return { blendStart, midDelta, endDelta, r0: v.tour.state.r0, angle0: v.tour.state.angle0 };
+  });
+  expect(bl.blendStart).toBe(0);
+  expect(bl.midDelta).toBeGreaterThan(0.05);   // easing, not snapped
+  expect(bl.endDelta).toBeLessThan(1e-9);      // converged onto the path
+  expect(bl.r0).toBeCloseTo(2.0, 5);           // adopted radius
+  expect(bl.angle0).toBeCloseTo(0, 5);         // adopted azimuth
 });

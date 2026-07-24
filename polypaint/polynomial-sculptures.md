@@ -88,9 +88,14 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
 - Non-finite roots and roots outside the xy viewport are dropped and
   counted (`clipped` in the HUD).
 - **Tours** (▶/■ next to the tour selector): two parametric camera
-  paths — **orbit**, an exterior helical turntable whose height breathes
-  past the whole stack, and **weave**, an interior corkscrew with a
-  breathing radius sweeping the full height (the close-up detail pass).
+  paths — **orbit** and **weave** (interior corkscrew with a breathing
+  radius sweeping the full height — the close-up detail pass). Tours
+  ADOPT the camera pose at play time (user: "orbit too close — take my
+  current distance; I navigate to where the orbit starts"): orbit
+  circles at exactly the play-time radius, height, and azimuth — zero
+  jump by construction — and weave starts at the play-time azimuth and
+  smoothstep-eases in from the current pose over ~1.2s before locking
+  onto its path.
   Both follow the height-SCALED geometry so squashed plate stacks get a
   skimming pass. Any manual interaction (canvas pointerdown, a movement
   key, entering fly) stops the tour and re-anchors the orbit target

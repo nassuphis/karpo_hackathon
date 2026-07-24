@@ -90,6 +90,18 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
 - Controls: orbit/damping, point-size slider (default 10), **height
   slider** (default 0.1) — 0 flattens the sculpture onto its base plane,
   showing the shadow ≙ the 2D art.
+- **Threads** (show checkbox; per user spec): root trajectories along
+  t2 — each solve matched to the NEXT t2 column in its t1 row by
+  mutual-nearest on complex-plane (xz) distance with greedy repair for
+  the leftovers (an earth-mover/assignment problem; exact JV/Sinkhorn
+  skipped deliberately — many tiny hard LAPs with a warm-start
+  near-identity prior, and root collisions are genuinely ambiguous so
+  optimality buys nothing visually). Matching ignores Y, computed
+  lazily once per session, cached. **Per slice: threads NEVER bridge
+  plates** — a t2 pair draws only when both columns land on the same
+  plate; slices off connects the whole chain unbroken. Clipped roots
+  simply drop out (KNIFE punch-outs dissolve threads at the boundary).
+  The show control is now three checkboxes (pts/rib/thr; default pts).
 - **Slices** (off/2..32): bin t2 onto S discrete plates spanning the
   cube (S=11 → z = 0, 0.1, …, 1.0). Every solve sits at one t2, so
   whole ribbons land intact on their plate; the sculpture becomes an
@@ -142,7 +154,11 @@ subsampled (which "logical" already does server-side).
   degree-3 triangle whose angular tour (C,A,B closed) differs from file
   order (A,B,C open) — degree-2 rows are DEGENERATE for order pins (both
   orders draw the same segment; which vertex leads hinges on IEEE zero
-  signs in atan2).
+  signs in atan2). Threads pins use a fixture whose ODD columns store
+  the two roots file-order-swapped, so slot-identity matching is
+  provably wrong at every even→odd boundary (mutation-tested); slices=2
+  drops the plate-1→2 bridge (24 → 16 segments, all flat on their
+  plate).
 - `tests/e2e/render-solve-score.spec.js`: Sculpture button posts
   `sculpture: true`, opens exactly one window, fragment carries all data
   params; the plain Preview payload stays sculpture-free.

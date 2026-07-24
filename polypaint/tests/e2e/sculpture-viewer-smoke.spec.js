@@ -153,15 +153,21 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   expect(ao.v0[1]).toBeCloseTo(-0.2, 5);
   expect(ao.v1[0]).toBeCloseTo(0.2, 5);
   expect(ao.v1[1]).toBeCloseTo(0.0, 5);
-  // the show selector hides the other primitive
+  // the show checkboxes toggle each primitive independently
   const vis = await page.evaluate(() => {
     const v = window.__sculptureViewer;
-    const ctl = document.getElementById('ctl-mode');
-    const set = (m) => { ctl.value = m; ctl.dispatchEvent(new Event('change')); };
+    const set = (id, on) => {
+      const ctl = document.getElementById(id);
+      ctl.checked = on;
+      ctl.dispatchEvent(new Event('change'));
+    };
     const out = [];
-    set('ribbons'); out.push([v.points.visible, v.ribbons.visible]);
-    set('points'); out.push([v.points.visible, v.ribbons.visible]);
-    set('both'); out.push([v.points.visible, v.ribbons.visible]);
+    set('ctl-show-points', false); set('ctl-show-ribbons', true);
+    out.push([v.points.visible, v.ribbons.visible]);
+    set('ctl-show-points', true); set('ctl-show-ribbons', false);
+    out.push([v.points.visible, v.ribbons.visible]);
+    set('ctl-show-ribbons', true);
+    out.push([v.points.visible, v.ribbons.visible]);
     return out;
   });
   expect(vis).toEqual([[false, true], [true, false], [true, true]]);
@@ -304,4 +310,100 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
     return window.__sculptureViewer.sculpt.scale.y;
   });
   expect(flat).toBe(0);
+});
+
+test('threads: mutual-nearest matching beats file order; slices split connectivity', async ({ page }) => {
+  // grid 4, degree 2. Column c carries P=(0.1+0.2c, 0.1) and Q=(0.1+0.2c,
+  // -0.3) — but ODD columns store them file-order-swapped [Q, P]. Correct
+  // matching is same-letter (0.2 apart vs 0.447 crossed), so slot-identity
+  // pairing is provably wrong at every even->odd boundary and the matcher
+  // has to actually match.
+  await page.goto('http://localhost:8765/sculpture.html');
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 4;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgb(10,20,30)';
+    g.fillRect(0, 0, 4, 4);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  const gridN = 4, degree = 2;
+  const buf = Buffer.alloc(gridN * gridN * degree * 2 * 4);
+  let o = 0;
+  for (let step = 0; step < gridN * gridN; step++) {
+    const row = Math.floor(step / gridN);
+    const j = step % gridN;
+    const col = (row & 1) ? (gridN - 1 - j) : j;
+    const x = 0.1 + 0.2 * col;
+    const P = [x, 0.1], Q = [x, -0.3];
+    for (const [re, im] of (col & 1) ? [Q, P] : [P, Q]) {
+      buf.writeFloatLE(re, o); o += 4;
+      buf.writeFloatLE(im, o); o += 4;
+    }
+  }
+  await page.route('**/fx/troots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: buf,
+  }));
+  await page.route('**/fx/tpal.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  const frag = new URLSearchParams({
+    v: '1', r: '/fx/troots.bin', p: '/fx/tpal.png', n: '4', d: '2', s: '16',
+    x0: '-1', x1: '1', y0: '-1', y1: '1', t: 'threads fixture',
+  });
+  await page.goto('about:blank');
+  await page.goto('http://localhost:8765/sculpture.html#' + frag.toString());
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const built = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!built) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+
+  const st = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const thr = document.getElementById('ctl-show-threads');
+    thr.checked = true;
+    thr.dispatchEvent(new Event('change'));
+    const read = () => {
+      const pos = v.threads.geometry.getAttribute('position');
+      const segs = [];
+      for (let i = 0; i < pos.count; i += 2) {
+        segs.push([
+          pos.array[i * 3], pos.array[i * 3 + 1], pos.array[i * 3 + 2],
+          pos.array[(i + 1) * 3], pos.array[(i + 1) * 3 + 1], pos.array[(i + 1) * 3 + 2],
+        ]);
+      }
+      return segs;
+    };
+    const continuous = read();
+    const slicesCtl = document.getElementById('ctl-slices');
+    slicesCtl.value = '2';
+    slicesCtl.dispatchEvent(new Event('change'));
+    const sliced = read();
+    slicesCtl.value = '0';
+    slicesCtl.dispatchEvent(new Event('change'));
+    return { continuous, sliced, visible: v.threads.visible };
+  });
+  expect(st.visible).toBe(true);
+  // no slicing: connect all — 3 t2 pairs x 2 roots x 4 rows = 24 segments
+  expect(st.continuous).toHaveLength(24);
+  // every segment connects SAME-letter roots: z endpoints equal (P z=-0.05,
+  // Q z=+0.15) and x differs by exactly one column (0.1 normalized) — the
+  // file-order-swapped odd columns would give z -0.05 -> +0.15 crossings
+  for (const [x0, , z0, x1, , z1] of st.continuous) {
+    expect(Math.abs(z1 - z0)).toBeLessThan(1e-6);
+    expect(Math.abs(x1 - x0)).toBeCloseTo(0.1, 5);
+  }
+  // slices=2: per slice only — pairs (0,1) and (2,3); the 1->2 bridge is
+  // GONE: 2 pairs x 2 roots x 4 rows = 16 segments, all flat on their plate
+  expect(st.sliced).toHaveLength(16);
+  for (const [, y0, , , y1] of st.sliced.map(sg => [sg[0], sg[1], sg[2], sg[3], sg[4], sg[5]])) {
+    expect(Math.abs(y1 - y0)).toBeLessThan(1e-6);
+  }
+  const plateYs = new Set(st.sliced.map(sg => Math.round(sg[1] * 1e5) / 1e5));
+  expect(Array.from(plateYs).sort((a, b) => a - b)).toEqual([-0.5, 0.5]);
 });

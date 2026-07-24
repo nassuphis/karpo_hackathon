@@ -37,6 +37,7 @@
   #panel label { display: flex; align-items: center; gap: 8px; margin: 4px 0;
                  color: #9fb0c3; }
   #panel input[type=range] { width: 130px; accent-color: #e94560; }
+  #panel input[type=checkbox] { accent-color: #e94560; margin-left: 6px; }
   #panel select { background: #0d1320; color: #cfd8e3; border: 1px solid #232b3a;
                   border-radius: 4px; font: inherit; padding: 1px 4px; }
   #panel .val { width: 4ch; text-align: right; color: #cfd8e3; }
@@ -70,11 +71,11 @@
     <option value="24">24</option>
     <option value="32">32</option>
   </select></label>
-  <label>show <select id="ctl-mode">
-    <option value="points" selected>points</option>
-    <option value="ribbons">ribbons</option>
-    <option value="both">points + ribbons</option>
-  </select></label>
+  <label>show
+    <input id="ctl-show-points" type="checkbox" checked> pts
+    <input id="ctl-show-ribbons" type="checkbox"> rib
+    <input id="ctl-show-threads" type="checkbox"> thr
+  </label>
   <label>style <select id="ctl-style">
     <option value="solid" selected>solid</option>
     <option value="ghost">ghost</option>
@@ -283,9 +284,119 @@ async function boot() {
         ribbonSegments = lv / 2;
     }
 
+    // threads: root trajectories along t2 — each solve matched to the NEXT
+    // t2 column in its t1 row by mutual-nearest on complex-plane (xz)
+    // distance, greedy repair for the leftovers (root collisions are
+    // genuinely ambiguous; warm-started solves are near-identity anyway).
+    // Matching ignores Y entirely, so slices/height never invalidate it.
+    const threads = new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ vertexColors: true }));
+    let threadMatches = null;   // per row, per t2 pair: Int32Array of point-index pairs
+    let threadSegments = 0;
+    function matchPair(a0, ka, b0, kb) {
+        const D = new Float32Array(ka * kb);
+        for (let i = 0; i < ka; i++) {
+            const ax = positions[(a0 + i) * 3], az = positions[(a0 + i) * 3 + 2];
+            for (let j = 0; j < kb; j++) {
+                const dx = ax - positions[(b0 + j) * 3];
+                const dz = az - positions[(b0 + j) * 3 + 2];
+                D[i * kb + j] = dx * dx + dz * dz;
+            }
+        }
+        const rowMin = new Int32Array(ka), colMin = new Int32Array(kb);
+        for (let i = 0; i < ka; i++) {
+            let best = 0;
+            for (let j = 1; j < kb; j++) if (D[i * kb + j] < D[i * kb + best]) best = j;
+            rowMin[i] = best;
+        }
+        for (let j = 0; j < kb; j++) {
+            let best = 0;
+            for (let i = 1; i < ka; i++) if (D[i * kb + j] < D[best * kb + j]) best = i;
+            colMin[j] = best;
+        }
+        const usedA = new Uint8Array(ka), usedB = new Uint8Array(kb);
+        const out = [];
+        for (let i = 0; i < ka; i++) {
+            const j = rowMin[i];
+            if (colMin[j] === i) { out.push(a0 + i, b0 + j); usedA[i] = 1; usedB[j] = 1; }
+        }
+        const ua = [], ub = [];
+        for (let i = 0; i < ka; i++) if (!usedA[i]) ua.push(i);
+        for (let j = 0; j < kb; j++) if (!usedB[j]) ub.push(j);
+        if (ua.length && ub.length) {
+            const cand = [];
+            for (const i of ua) for (const j of ub) cand.push([D[i * kb + j], i, j]);
+            cand.sort((p, q) => p[0] - q[0]);
+            for (const [, i, j] of cand) {
+                if (usedA[i] || usedB[j]) continue;
+                usedA[i] = 1; usedB[j] = 1;
+                out.push(a0 + i, b0 + j);
+            }
+        }
+        return Int32Array.from(out);
+    }
+    function computeThreadMatches() {
+        threadMatches = [];
+        for (let r = 0; r < gridN; r++) {
+            const rowPairs = [];
+            for (let c = 0; c < gridN - 1; c++) {
+                const sa = r * gridN + ((r & 1) ? (gridN - 1 - c) : c);
+                const sb = r * gridN + ((r & 1) ? (gridN - 1 - (c + 1)) : (c + 1));
+                const a0 = stepOffsets[sa], ka = stepOffsets[sa + 1] - a0;
+                const b0 = stepOffsets[sb], kb = stepOffsets[sb + 1] - b0;
+                rowPairs.push(ka > 0 && kb > 0 ? matchPair(a0, ka, b0, kb) : null);
+            }
+            threadMatches.push(rowPairs);
+        }
+    }
+    function buildThreads() {
+        // per slice: threads NEVER bridge plates — a t2 pair is drawn only
+        // when both columns land on the same plate (slices off: connect all)
+        const S = Math.max(0, parseInt(document.getElementById('ctl-slices').value, 10) || 0);
+        const level = c => Math.min(S - 1, Math.floor((c / gridN) * S));
+        let segs = 0;
+        for (let r = 0; r < gridN; r++) {
+            for (let c = 0; c < gridN - 1; c++) {
+                if (S > 0 && level(c) !== level(c + 1)) continue;
+                const m = threadMatches[r][c];
+                if (m) segs += m.length / 2;
+            }
+        }
+        const lp = new Float32Array(segs * 2 * 3);
+        const lc = new Uint8Array(segs * 2 * 3);
+        let lv = 0;
+        for (let r = 0; r < gridN; r++) {
+            for (let c = 0; c < gridN - 1; c++) {
+                if (S > 0 && level(c) !== level(c + 1)) continue;
+                const m = threadMatches[r][c];
+                if (!m) continue;
+                for (let t = 0; t < m.length; t += 2) {
+                    for (const i of [m[t], m[t + 1]]) {
+                        lp[lv * 3] = positions[i * 3];
+                        lp[lv * 3 + 1] = positions[i * 3 + 1];
+                        lp[lv * 3 + 2] = positions[i * 3 + 2];
+                        lc[lv * 3] = colors[i * 3];
+                        lc[lv * 3 + 1] = colors[i * 3 + 1];
+                        lc[lv * 3 + 2] = colors[i * 3 + 2];
+                        lv++;
+                    }
+                }
+            }
+        }
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.BufferAttribute(lp, 3));
+        geom.setAttribute('color', new THREE.BufferAttribute(lc, 3, true));
+        const oldGeom = threads.geometry;
+        threads.geometry = geom;
+        if (oldGeom) oldGeom.dispose();
+        threadSegments = segs;
+    }
+
     const sculpt = new THREE.Group();
     sculpt.add(points);
     sculpt.add(ribbons);
+    sculpt.add(threads);
     scene.add(sculpt);
 
     const frame = new THREE.LineSegments(
@@ -302,10 +413,13 @@ async function boot() {
             `${count.toLocaleString()} roots · grid ${gridN}×${gridN} · degree ${degree}` +
             ` · z = t2 · clipped ${clipped.toLocaleString()}` +
             ` · ${ribbonSegments.toLocaleString()} ribbon segments` +
+            (threadSegments ? ` · ${threadSegments.toLocaleString()} thread segments` : '') +
             (parseInt(slicesCtl.value, 10) > 0 ? ` · ${slicesCtl.value} slices` : '');
     };
 
-    const modeCtl = document.getElementById('ctl-mode');
+    const showPointsCtl = document.getElementById('ctl-show-points');
+    const showRibbonsCtl = document.getElementById('ctl-show-ribbons');
+    const showThreadsCtl = document.getElementById('ctl-show-threads');
     const orderCtl = document.getElementById('ctl-order');
     const slicesCtl = document.getElementById('ctl-slices');
     const styleCtl = document.getElementById('ctl-style');
@@ -323,6 +437,10 @@ async function boot() {
         ribbons.material.opacity = ghost ? 0.55 : 1;
         ribbons.material.depthWrite = !ghost;
         ribbons.material.needsUpdate = true;
+        threads.material.transparent = ghost;
+        threads.material.opacity = ghost ? 0.55 : 1;
+        threads.material.depthWrite = !ghost;
+        threads.material.needsUpdate = true;
     };
     // slices: bin t2 onto S discrete plates spanning the cube (S=11 -> z = 0,
     // 0.1, ..., 1.0). Every solve sits at one t2, so whole ribbons land
@@ -340,17 +458,26 @@ async function boot() {
         }
         geometry.getAttribute('position').needsUpdate = true;
         buildRibbons(orderCtl.value);
+        if (threadMatches) buildThreads();
         updateStats();
     };
-    const applyMode = () => {
-        points.visible = modeCtl.value !== 'ribbons';
-        ribbons.visible = modeCtl.value !== 'points';
+    const applyShow = () => {
+        points.visible = showPointsCtl.checked;
+        ribbons.visible = showRibbonsCtl.checked;
+        if (showThreadsCtl.checked && !threadMatches) {
+            computeThreadMatches();   // lazy: xz matching, cached for the session
+            buildThreads();
+        }
+        threads.visible = showThreadsCtl.checked;
+        updateStats();
     };
     const applyOrder = () => {
         buildRibbons(orderCtl.value);
         updateStats();
     };
-    modeCtl.addEventListener('change', applyMode);
+    showPointsCtl.addEventListener('change', applyShow);
+    showRibbonsCtl.addEventListener('change', applyShow);
+    showThreadsCtl.addEventListener('change', applyShow);
     orderCtl.addEventListener('change', applyOrder);
     slicesCtl.addEventListener('change', applySlices);
     styleCtl.addEventListener('change', applyStyle);
@@ -373,7 +500,7 @@ async function boot() {
     sizeCtl.addEventListener('input', applySize);
     heightCtl.addEventListener('input', applyHeight);
     applyOrder();
-    applyMode();
+    applyShow();
     applyStyle();
     applySize();
     applyHeight();
@@ -389,7 +516,7 @@ async function boot() {
     });
 
     window.__sculptureViewer = {
-        scene, camera, renderer, points, ribbons, sculpt, material, controls,
+        scene, camera, renderer, points, ribbons, threads, sculpt, material, controls,
         count, clipped, gridN, degree,
     };
 }

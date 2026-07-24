@@ -309,13 +309,18 @@ Hi-res runs take 2–3 minutes (measured: 110–188s at 512² in the
 lambda) — far past API Gateway's ~30s response ceiling, which ate the
 responses of the first synchronous attempt while the lambda finished
 invisibly (user-hit: "minutes, no joy"; each retry stacked another
-full run). The flow is now async: the app posts
-`/start-sculpture-hires` (storage pre-stamps
-`renders/{job}/sculpture_hires_result.json` with `starting` so pollers
-can never read a previous run, then async-invokes the lores lambda);
-the run publishes `running` → `done`+sculpture block (or `error`) to
-that key; the app polls it every 3s (same-origin public read, cache-
-busted) with elapsed feedback on the button, up to 6 minutes. The
+full run). The flow is a JOB on the
+common task infra (user: "can't this be a job like everything else —
+zoom, book, render? on the rail; not a fan of polling lambdas"):
+`/start-sculpture-hires` registers a DDB status row
+(`report_status(job, sculpture_hires_<ms>, running)`) and
+async-invokes the lores lambda, which owns the row's lifecycle —
+`running` → `done` with the sculpture block in `result_data`, or
+`error`. The app follows the row via `/check-status` every 3s, and the
+run rides the jobs rail (kind `sculpture`, elapsed progress,
+complete/failed terminal states) exactly like render/book/zoom. No
+bespoke S3 result keys, no direct lambda polling. Button feedback
+shows elapsed; 6-minute client cap. The
 Sculpture button + resolution selector live in the SCULPTURE TAB's
 create block (user: "it starts the instance Save snapshots — it
 belongs with Save"), not beside Preview.

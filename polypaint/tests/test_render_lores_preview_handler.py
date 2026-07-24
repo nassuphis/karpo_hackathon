@@ -814,31 +814,29 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         mock_run.side_effect = subprocess_fake
         mock_render.side_effect = render_fake
 
-        resp = handler(_event(lores_N=1, sculpture=True, sculpture_async=True), None)
+        with patch("handler_render_lores_preview.report_status") as mock_report:
+            resp = handler(_event(lores_N=1, sculpture=True,
+                                  sculpture_task_id="sculpture_hires_1"), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
-        statuses = [
-            json.loads(c.kwargs["Body"])
-            for c in mock_s3.put_object.call_args_list
-            if c.kwargs["Key"] == "renders/j/sculpture_hires_result.json"
-        ]
-        self.assertEqual([r["status"] for r in statuses], ["running", "done"])
-        self.assertEqual(statuses[1]["sculpture"]["roots_key"], "renders/j/sculpture_roots.bin")
-        self.assertEqual(statuses[1]["sculpture"]["grid_n"], 1)
+        calls = mock_report.call_args_list
+        self.assertEqual(calls[0].args, ("j", "sculpture_hires_1", "running"))
+        self.assertEqual(calls[-1].args, ("j", "sculpture_hires_1", "done"))
+        result = calls[-1].kwargs["result_data"]
+        self.assertEqual(result["sculpture"]["roots_key"], "renders/j/sculpture_roots.bin")
+        self.assertEqual(result["sculpture"]["grid_n"], 1)
 
+    @patch("handler_render_lores_preview.report_status")
     @patch("handler_render_lores_preview.s3")
-    def test_sculpture_async_publishes_error(self, mock_s3):
+    def test_sculpture_async_publishes_error(self, mock_s3, mock_report):
         from handler_render_lores_preview import handler
 
-        resp = handler(_event(lores_N=1, sculpture=True, sculpture_async=True,
+        resp = handler(_event(lores_N=1, sculpture=True,
+                              sculpture_task_id="sculpture_hires_1",
                               background_color="not-a-color"), None)
         self.assertEqual(resp["statusCode"], 500)
-        statuses = [
-            json.loads(c.kwargs["Body"])
-            for c in mock_s3.put_object.call_args_list
-            if c.kwargs["Key"] == "renders/j/sculpture_hires_result.json"
-        ]
-        self.assertEqual(statuses[-1]["status"], "error")
-        self.assertIn("background_color", statuses[-1]["detail"])
+        last = mock_report.call_args_list[-1]
+        self.assertEqual(last.args, ("j", "sculpture_hires_1", "error"))
+        self.assertIn("background_color", last.kwargs["error_msg"])
 
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")

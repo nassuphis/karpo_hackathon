@@ -648,6 +648,8 @@ assertIncludes("const nCoeffs = Number.isFinite(rawNCoeffs) && rawNCoeffs >= 1 ?
 assertIncludes("lores_bin_key: loresKey,", 'render lores preview payload should use the existing lores roots artifact');
 assertIncludes("result = await lambdaPost('render-lores-preview', payload);", 'render lores preview should call the direct preview endpoint on the non-hires path');
 assertIncludes("await lambdaPost('storage', { job_id: p.jobId, preview_payload: payload }, '/start-sculpture-hires');", 'hi-res sculptures should start async via storage, never the direct endpoint');
+assertIncludes("}, '/check-status');", 'hi-res sculptures should follow the common task infra, not bespoke polling');
+assertIncludes("id: railId, kind: 'sculpture'", 'hi-res sculptures should surface on the jobs rail');
 assertIncludes("const ctx = canvas.getContext('2d');", 'render lores preview should draw the returned image onto the canvas');
 assertIncludes("function _initRenderLoresPreviewMarquee(meta) {", 'render output preview marquee initializer missing');
 assertIncludes("function _applyRenderLoresPreviewSelectionBounds(meta, rect) {", 'render output preview selection should populate exact viewport bounds');

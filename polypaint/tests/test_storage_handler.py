@@ -1270,9 +1270,10 @@ class TestDeletePrefixNarrowing(unittest.TestCase):
 
 
 class TestStartSculptureHires(unittest.TestCase):
+    @patch("handler_storage.report_status")
     @patch("handler_storage.boto3")
     @patch("handler_storage.s3")
-    def test_stamps_the_result_key_and_invokes_async(self, mock_s3, mock_boto3):
+    def test_registers_the_task_and_invokes_async(self, mock_s3, mock_boto3, mock_report):
         import handler_storage
         resp = handler_storage.handler(_event("/start-sculpture-hires", {
             "job_id": "compute_j1",
@@ -1283,23 +1284,25 @@ class TestStartSculptureHires(unittest.TestCase):
         }), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
         body = json.loads(resp["body"])
-        self.assertEqual(body["result_key"], "renders/compute_j1/sculpture_hires_result.json")
-        stamp = mock_s3.put_object.call_args.kwargs
-        self.assertEqual(stamp["Key"], "renders/compute_j1/sculpture_hires_result.json")
-        self.assertEqual(json.loads(stamp["Body"])["status"], "starting")
+        task_id = body["task_id"]
+        self.assertTrue(task_id.startswith("sculpture_hires_"))
+        # registered on the COMMON task infra — the jobs rail follows this row
+        self.assertEqual(mock_report.call_args.args, ("compute_j1", task_id, "running"))
         invoke = mock_boto3.client.return_value.invoke.call_args.kwargs
         self.assertEqual(invoke["InvocationType"], "Event")
         self.assertEqual(invoke["FunctionName"], "polypaint-render-lores-preview")
         payload = json.loads(invoke["Payload"])
         self.assertEqual(payload["job_id"], "compute_j1")
         self.assertTrue(payload["sculpture"])
-        self.assertTrue(payload["sculpture_async"])
+        self.assertEqual(payload["sculpture_task_id"], task_id)
         self.assertEqual(payload["preview_source_size"], 512)
         self.assertEqual(payload["sculpture_format"], "u16")
+        mock_s3.put_object.assert_not_called()   # no bespoke S3 result keys
 
+    @patch("handler_storage.report_status")
     @patch("handler_storage.boto3")
     @patch("handler_storage.s3")
-    def test_rejects_bad_job_or_missing_payload(self, mock_s3, mock_boto3):
+    def test_rejects_bad_job_or_missing_payload(self, mock_s3, mock_boto3, mock_report):
         import handler_storage
         resp = handler_storage.handler(_event("/start-sculpture-hires", {
             "job_id": "../evil", "preview_payload": {}}), None)
@@ -1308,6 +1311,7 @@ class TestStartSculptureHires(unittest.TestCase):
             "job_id": "compute_j1"}), None)
         self.assertEqual(resp["statusCode"], 400)
         mock_boto3.client.return_value.invoke.assert_not_called()
+        mock_report.assert_not_called()
 
 
 class TestSaveSculpture(unittest.TestCase):

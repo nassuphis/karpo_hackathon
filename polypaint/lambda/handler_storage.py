@@ -7239,10 +7239,12 @@ _SCULPTURE_JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 def handle_start_sculpture_hires(event):
-    """Kick a hi-res sculpture generation ASYNC: 512-class runs take 2-3
-    minutes — far past API Gateway's ~30s response ceiling — so storage
-    async-invokes the lores lambda and the app polls the well-known result
-    key the run publishes (running/done/error)."""
+    """Kick a hi-res sculpture generation as a JOB through the common task
+    infra: 512-class runs take 2-3 minutes — past API Gateway's ~30s
+    response ceiling — so this registers a DDB status row and async-invokes
+    the lores lambda, which owns the row's lifecycle (running → done with
+    the sculpture block in result_data, or error). The app follows it via
+    /check-status on the jobs rail like every other job."""
     params = parse_body(event)
     job_id = str(params.get("job_id") or "").strip()
     if not _SCULPTURE_JOB_ID.fullmatch(job_id):
@@ -7250,23 +7252,18 @@ def handle_start_sculpture_hires(event):
     payload = params.get("preview_payload")
     if not isinstance(payload, dict):
         raise RuntimeError("start-sculpture-hires requires preview_payload")
+    task_id = f"sculpture_hires_{int(time.time() * 1000)}"
     payload = dict(payload)
     payload["job_id"] = job_id
     payload["sculpture"] = True
-    payload["sculpture_async"] = True
-    result_key = f"renders/{job_id}/sculpture_hires_result.json"
-    # pre-stamp the key so a poller can never read the PREVIOUS run's result
-    s3.put_object(
-        Bucket=BUCKET, Key=result_key,
-        Body=json.dumps({"status": "starting",
-                         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}).encode("utf-8"),
-        ContentType="application/json", CacheControl="no-cache")
+    payload["sculpture_task_id"] = task_id
+    report_status(job_id, task_id, "running")
     boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")).invoke(
         FunctionName=os.environ.get("RENDER_LORES_PREVIEW_FUNCTION", "polypaint-render-lores-preview"),
         InvocationType="Event",
         Payload=json.dumps(payload).encode("utf-8"),
     )
-    return ok_response({"result_key": result_key})
+    return ok_response({"task_id": task_id})
 
 
 def handle_save_sculpture(event):

@@ -605,27 +605,57 @@ async function runRenderLoresPreview(opts = {}) {
         }
         if (sculpture && hiresN) {
             // hi-res runs 2-3 minutes — past API Gateway's ~30s ceiling —
-            // so the job runs async and we poll its published result key
-            await lambdaPost('storage', { job_id: p.jobId, preview_payload: payload }, '/start-sculpture-hires');
-            const resultUrl = _publicStorageUrl(`renders/${p.jobId}/sculpture_hires_result.json`);
+            // so it runs as a JOB on the common task infra: a DDB status
+            // row followed via /check-status, surfaced on the jobs rail
+            // like render/book/zoom (no bespoke lambda/S3 polling)
+            const startResp = await lambdaPost('storage', { job_id: p.jobId, preview_payload: payload }, '/start-sculpture-hires');
+            const taskId = startResp && startResp.task_id;
+            if (!taskId) throw new Error('start-sculpture-hires returned no task_id');
+            const railId = 'sculpture:' + taskId;
+            const railLabel = `sculpture ${hiresN}\u00b2 \u00b7 ${p.jobId}`;
             const startedAt = Date.now();
-            let polled = null;
-            for (;;) {
-                const elapsed = Math.round((Date.now() - startedAt) / 1000);
-                if (elapsed > 360) throw new Error('hi-res sculpture timed out after 6 minutes');
-                if (sculptureBtn) sculptureBtn.textContent = `Sculpture ${elapsed}s\u2026`;
-                if (statusEl) statusEl.textContent = `hi-res ${elapsed}s`;
-                let st = null;
-                try {
-                    const resp = await fetch(`${resultUrl}?v=${Date.now()}`, { cache: 'no-store' });
-                    if (resp.ok) st = await resp.json();
-                } catch (err) { /* transient — keep polling */ }
-                if (st && st.status === 'done') { polled = st; break; }
-                if (st && st.status === 'error') throw new Error(st.detail || 'hi-res sculpture failed');
-                await new Promise((r) => setTimeout(r, 3000));
+            _jobsRailUpsert({ id: railId, kind: 'sculpture', label: railLabel,
+                              jobId: p.jobId, tab: 'render', state: 'running',
+                              startedAt, detail: 'starting' });
+            let sculptureResult = null;
+            try {
+                for (;;) {
+                    const elapsed = Math.round((Date.now() - startedAt) / 1000);
+                    if (elapsed > 360) throw new Error('hi-res sculpture timed out after 6 minutes');
+                    if (sculptureBtn) sculptureBtn.textContent = `Sculpture ${elapsed}s\u2026`;
+                    if (statusEl) statusEl.textContent = `hi-res ${elapsed}s`;
+                    _jobsRailProgress(railId, `solving ${hiresN}\u00b2 \u00b7 ${elapsed}s`);
+                    let check = null;
+                    try {
+                        check = await lambdaPost('storage', {
+                            job_id: p.jobId, task_prefix: taskId, expected: 1,
+                        }, '/check-status');
+                    } catch (err) { /* transient — keep polling */ }
+                    if (check && check.errors > 0) {
+                        const detail = (check.error_details && check.error_details[0]
+                            && check.error_details[0].error_msg) || 'hi-res sculpture failed';
+                        throw new Error(detail);
+                    }
+                    if (check && check.done >= 1) {
+                        const row = (check.results || []).find((r) => r && r.sculpture);
+                        if (!row) throw new Error('hi-res result row carries no sculpture block');
+                        sculptureResult = row.sculpture;
+                        break;
+                    }
+                    await new Promise((r) => setTimeout(r, 3000));
+                }
+            } catch (err) {
+                _jobsRailUpsert({ id: railId, kind: 'sculpture', label: railLabel,
+                                  jobId: p.jobId, tab: 'render', state: 'failed',
+                                  detail: err && err.message ? err.message : String(err) });
+                throw err;
             }
-            result = { ...result, sculpture: polled.sculpture };
-            log(`Sculpture hi-res done in ${Math.round((Date.now() - startedAt) / 1000)}s`, 'ok', 'render-log');
+            const doneSecs = Math.round((Date.now() - startedAt) / 1000);
+            _jobsRailUpsert({ id: railId, kind: 'sculpture', label: railLabel,
+                              jobId: p.jobId, tab: 'render', state: 'complete',
+                              detail: `done in ${doneSecs}s` });
+            result = { ...result, sculpture: sculptureResult };
+            log(`Sculpture hi-res done in ${doneSecs}s`, 'ok', 'render-log');
             if (statusEl) statusEl.textContent = 'done';
             if (renderStatusEl) {
                 renderStatusEl.textContent = 'Hi-res sculpture ready';

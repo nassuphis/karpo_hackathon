@@ -1863,7 +1863,12 @@ test.describe('Solve Score UI', () => {
         }
         if (name === 'storage' && path === '/start-sculpture-hires') {
           window._startCalls.push(JSON.parse(JSON.stringify(body)));
-          return { result_key: 'renders/job_sc/sculpture_hires_result.json' };
+          return { task_id: 'sculpture_hires_777' };
+        }
+        if (name === 'storage' && path === '/check-status') {
+          window._checkCalls = (window._checkCalls || 0) + 1;
+          return { done: 1, errors: 0, error_details: [],
+                   results: [{ sculpture: window._SC, total_ms: 120000 }] };
         }
         if (name === 'render-lores-preview') {
           window._loresBodies.push(JSON.parse(JSON.stringify(body)));
@@ -1877,14 +1882,7 @@ test.describe('Solve Score UI', () => {
         }
         return {};
       };
-      // the hi-res poll reads the public result key
-      const origFetch = window.fetch.bind(window);
-      window.fetch = function (url, opts) {
-        if (String(url).includes('sculpture_hires_result.json')) {
-          return Promise.resolve({ ok: true, json: async () => ({ status: 'done', sculpture: window._SC }) });
-        }
-        return origFetch(url, opts);
-      };
+
     });
 
     await page.click('[data-render-family="sculpture"]');
@@ -1909,7 +1907,11 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#btn-render-lores-sculpture')).toHaveText('\u2713 Sculpture');
     st = await page.evaluate(() => ({
       bodies: window._loresBodies.length, starts: window._startCalls.slice(),
+      checks: window._checkCalls || 0,
       opens: window._openCount, loc: String(window._fakeWin.location),
+      rail: (typeof _jobsRailJobs !== 'undefined' ? _jobsRailJobs : [])
+        .filter((j) => j.kind === 'sculpture')
+        .map((j) => ({ id: j.id, state: j.state, label: j.label })),
     }));
     expect(st.bodies).toBe(1);                        // unchanged — no sync call
     expect(st.starts).toHaveLength(1);
@@ -1917,6 +1919,11 @@ test.describe('Solve Score UI', () => {
     expect(st.starts[0].preview_payload.preview_source_mode).toBe('logical');
     expect(st.starts[0].preview_payload.preview_source_size).toBe(512);
     expect(st.starts[0].preview_payload.sculpture_format).toBe('u16');
+    expect(st.checks).toBeGreaterThan(0);             // followed via /check-status
+    // the run rides the jobs rail like every other job, ending complete
+    expect(st.rail).toEqual([{ id: 'sculpture:sculpture_hires_777',
+                               state: 'complete',
+                               label: 'sculpture 512\u00b2 \u00b7 job_sc' }]);
     expect(st.opens).toBe(2);
     const frag = new URLSearchParams(st.loc.split('#')[1]);
     expect(frag.get('fmt')).toBe('u16');

@@ -34,7 +34,7 @@ from logical_sections import (
 )
 from raw_score_render import histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
 from root_pipeline_programs import root_program_for_run
-from shared import BUCKET, REF_SIZE, compute_viewport_from_bin, ok_response, parse_body, parse_boolish
+from shared import BUCKET, REF_SIZE, compute_viewport_from_bin, ok_response, parse_body, parse_boolish, report_status
 from solve_score_pipeline_programs import solve_score_program_for_run
 from solve_score_chain import (
     compiled_solve_score_fingerprint,
@@ -1094,17 +1094,15 @@ def handler(event, context):
         if sculpture_format not in ("f32", "u16"):
             raise RuntimeError(f"sculpture_format must be f32 or u16, got {sculpture_format!r}")
         # hi-res sculptures run 2-3 minutes — past API Gateway's ~30s
-        # response ceiling — so they invoke async and publish their result
-        # to a well-known key the app polls (user-hit: the sync 512 call
-        # completed server-side while the browser saw only a dead request)
-        sculpture_async_key = ""
-        if sculpture_requested and parse_boolish(params.get("sculpture_async", False), False, strict=True, label="sculpture_async"):
-            sculpture_async_key = f"renders/{job_id}/sculpture_hires_result.json"
-            s3.put_object(
-                Bucket=BUCKET, Key=sculpture_async_key,
-                Body=json.dumps({"status": "running",
-                                 "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}).encode("utf-8"),
-                ContentType="application/json", CacheControl="no-cache")
+        # response ceiling — so they run as a JOB through the common task
+        # infra (DDB status rows + /check-status + the jobs rail), exactly
+        # like render/book/zoom. The presence of sculpture_task_id marks the
+        # async invocation; this run owns that row's lifecycle.
+        sculpture_task_id = str(params.get("sculpture_task_id") or "").strip()
+        if sculpture_task_id and not sculpture_requested:
+            raise RuntimeError("sculpture_task_id requires sculpture=true")
+        if sculpture_task_id:
+            report_status(job_id, sculpture_task_id, "running")
         lores_bin_key = str(params.get("lores_bin_key") or "").strip()
         if not lores_bin_key and source_mode == "lores":
             raise RuntimeError("lores_bin_key is required")
@@ -1493,16 +1491,12 @@ def handler(event, context):
             f"total={total_ms / 1000.0:.2f}s"
         )
 
-        if sculpture_async_key:
-            s3.put_object(
-                Bucket=BUCKET, Key=sculpture_async_key,
-                Body=json.dumps({
-                    "status": "done",
-                    "sculpture": sculpture_export,
-                    "n_solves": int(step_count),
-                    "total_ms": total_ms,
-                }).encode("utf-8"),
-                ContentType="application/json", CacheControl="no-cache")
+        if sculpture_task_id:
+            report_status(job_id, sculpture_task_id, "done", result_data={
+                "sculpture": sculpture_export,
+                "n_solves": int(step_count),
+                "total_ms": total_ms,
+            })
         return ok_response({
             "image_base64": image_b64,
             "palette_image_base64": palette_image_b64,
@@ -1548,13 +1542,9 @@ def handler(event, context):
         })
     except Exception as exc:
         try:
-            if (params.get("job_id") and parse_boolish(params.get("sculpture_async", False), False)
-                    and parse_boolish(params.get("sculpture", False), False)):
-                s3.put_object(
-                    Bucket=BUCKET,
-                    Key=f"renders/{params['job_id']}/sculpture_hires_result.json",
-                    Body=json.dumps({"status": "error", "detail": str(exc)}).encode("utf-8"),
-                    ContentType="application/json", CacheControl="no-cache")
+            task_id = str(params.get("sculpture_task_id") or "").strip()
+            if task_id and params.get("job_id"):
+                report_status(str(params["job_id"]), task_id, "error", error_msg=str(exc))
         except Exception:
             pass
         return _json_response(500, {

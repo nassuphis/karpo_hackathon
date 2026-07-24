@@ -397,17 +397,19 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
     zhi.dispatchEvent(new Event('input'));
     const cut = read();
     const cutPlanes = [v.material.clippingPlanes[0].constant, v.material.clippingPlanes[1].constant];
+    const fill = document.getElementById('zrange-fill');
+    const fillState = { left: fill.style.left, width: fill.style.width };
     zhi.value = '100';
     zhi.dispatchEvent(new Event('input'));
     const restored = read();
     slicesCtl.value = '0';
     slicesCtl.dispatchEvent(new Event('change'));
-    return { cut, cutPlanes, restored,
-             hudDuring: '' };
+    return { cut, cutPlanes, restored, fillState };
   });
   expect(slab.cut.top).toBe(0);            // top plate clipped away
   expect(slab.cut.bottom).toBe(25);        // bottom plate revealed
   expect(slab.cutPlanes[1]).toBeCloseTo(0.105, 5);   // (0.6-0.5)*1 + margin
+  expect(slab.fillState).toEqual({ left: '0%', width: '60%' });   // one-track fill
   expect(slab.restored.top).toBe(25);      // full window brings it back
 
   // the height slider flattens the sculpture onto its base plane — the 2D

@@ -135,8 +135,11 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   −0.25; the threads fixture (col-dependent roots) makes t1-threads
   purely vertical (dx=dz=0, dy=0.25 × 24 segments).
 - **z-window** (user ask: "two sliders, lo and hi, restrict the z
-  extent shown — good for exploration"): z lo / z hi sliders (0–1,
-  drag-clamped so lo ≤ hi) drive two world-space clipping planes on
+  extent shown — good for exploration"; refined to "same line, one
+  slider, two knobs"): a single-track dual-thumb range (two overlaid
+  inputs, thumb-only pointer-events, a fill bar marking the span, and a
+  coincident-thumb z-index rescue so stacked knobs stay grabbable —
+  drag-clamped so lo ≤ hi always) drive two world-space clipping planes on
   points/ribbons/threads — fragment-level slab, no rebuild, segments
   cut exactly at the plane; the cube frame stays as reference. Plane
   constants track the height scale live and carry a 0.005 OUTWARD

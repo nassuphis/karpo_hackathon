@@ -692,6 +692,11 @@ def _typed_lower_value(text):
             return _typed_lower_vector_literal(args)
         if name == "roots_literal":
             return _typed_lower_roots_literal(args)
+        if name == "root_pairs_literal":
+            raise CoeffProgramSourceError(
+                "root_pairs_literal pushes two vectors and only works as a "
+                "bare statement; blend the pushed vectors afterwards "
+                "(e.g. poly = multiply(pop, t1) then poly = add(poly, multiply(pop, 1-t1)))")
         if name in _ROOT_PATTERN_NAMES:
             return _typed_lower_roots_pattern(name, args)
         if name == "roots_ascii_literal":
@@ -925,6 +930,28 @@ def _lower_call(name, args, *, target="push"):
     if name == "roots_literal":
         chain, value_type = _typed_lower_roots_literal(args)
         return _append_typed_target(chain, value_type, target=target)
+    if name == "root_pairs_literal":
+        # Sugar over TWO roots_literal pool pushes: the first half is the
+        # START root set, the second half the END set — end lands on top of
+        # the stack. Blending the two coefficient vectors sweeps root
+        # trajectories. Statement-only: two pushes cannot sit in expression
+        # or assignment position.
+        if target != "push":
+            raise CoeffProgramSourceError(
+                "root_pairs_literal pushes two vectors; use it as a bare statement")
+        if len(args) < 2 or len(args) % 2 != 0:
+            raise CoeffProgramSourceError(
+                "root_pairs_literal requires an even number of roots "
+                f"(start half then end half of equal size), got {len(args)}")
+        half = len(args) // 2
+        if half > MAX_VECTOR_LEN - 1:
+            raise CoeffProgramSourceError(
+                f"root_pairs_literal halves have {half} roots; max is {MAX_VECTOR_LEN - 1}")
+        start_chain, _ = _typed_lower_static_pool_call(
+            "roots_literal", "root", MAX_VECTOR_LEN - 1, args[:half])
+        end_chain, _ = _typed_lower_static_pool_call(
+            "roots_literal", "root", MAX_VECTOR_LEN - 1, args[half:])
+        return start_chain + end_chain
     if name in _ROOT_PATTERN_NAMES:
         chain, value_type = _typed_lower_roots_pattern(name, args)
         return _append_typed_target(chain, value_type, target=target)
@@ -1173,6 +1200,7 @@ def _legacy_lower_statement(statement):
 # reserving corrupts programs.
 _LOCALS_RESERVED_EXTRA = frozenset({
     "legacy", "macro", "set", "affine", "linear", "scale", "shift",
+    "root_pairs_literal",
     "push", "push_scalar", "push_range", "push_linspace",
     "range", "arange", "linspace",
     "roll", "rolr", "argsort", "littlewood", "blend", "andy",

@@ -324,3 +324,37 @@ test.describe('Program help & search', () => {
     expect(await page.locator('.lang-block#param.lang-empty').count()).toBe(1);
   });
 });
+
+test.describe('Coeff program modal naming', () => {
+  test('default is a cfp timestamp; a loaded program suggests its next -vN', async ({ page }) => {
+    await page.click('.tab-btn:text("Compute")');
+    await page.evaluate(() => {
+      window._programRows = [
+        { id: 'fable-1', name: 'fable-1', saved_at: '2026-07-01T00:00:00Z' },
+        { id: 'fable-1-v1', name: 'fable-1-v1', saved_at: '2026-07-02T00:00:00Z' },
+      ];
+      window.lambdaPost = async function (name, body, path) {
+        if (name === 'storage' && path === '/list-coeff-programs') {
+          return { programs: window._programRows.slice() };
+        }
+        return {};
+      };
+    });
+    // no loaded program: timestamp default cfp-YYYY-MM-DD-HH-MM-SS
+    await page.click('#coeff-program-manage');
+    await expect(page.locator('#coeff-program-modal-name'))
+      .toHaveValue(/^cfp-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$/);
+    await page.click('#coeff-program-modal-overlay .tri-popup-close, #coeff-program-modal-close');
+
+    // loaded program "fable-1" with fable-1-v1 taken -> suggests fable-1-v2
+    await page.evaluate(() => { _setCoeffProgramLoadedName('fable-1'); });
+    await page.click('#coeff-program-manage');
+    await expect(page.locator('#coeff-program-modal-name')).toHaveValue('fable-1-v2');
+    await page.click('#coeff-program-modal-overlay .tri-popup-close, #coeff-program-modal-close');
+
+    // loading a -vN version strips the tail before suffixing
+    await page.evaluate(() => { _setCoeffProgramLoadedName('fable-1-v1'); });
+    await page.click('#coeff-program-manage');
+    await expect(page.locator('#coeff-program-modal-name')).toHaveValue('fable-1-v2');
+  });
+});

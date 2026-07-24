@@ -449,6 +449,7 @@ const _coeffProgramCheatSections = [
             { label: 'fill', snippet: 'fill(poly_len, 0)\nemit', title: 'Alias for push_vec/fill vector construction.' },
             { label: 'vector_literal', snippet: 'poly = vector_literal(1, -3, 2)\nemit', title: 'Compile a static leading-first coefficient vector once and load it from the program constant pool.' },
             { label: 'roots_literal', snippet: 'poly = roots_literal(1, 2)\nemit', title: 'Expand the monic polynomial with these static roots once at compile time; the pool stores the resulting coefficients. Double-click the name to drag the roots on the root pad.' },
+            { label: 'root_pairs_literal', snippet: 'root_pairs_literal(1, 2i, -1, -2i)\npoly = multiply(pop, t1)\npoly\nswap\npoly = multiply(pop, 1-t1)\npoly = add(poly, pop)\nemit', title: 'Push TWO monic coefficient vectors: the first half of the roots is the START set, the second half the END set (end on top). Blend them on the stack for root trajectories. Statement-only. Double-click the name for the pair pad: start roots red, end roots blue.' },
             { label: 'roots_chess_literal', snippet: 'poly = roots_chess_literal(5, 1, 0)\nemit', title: 'Dark cells of a d x d board (corners dark), full side w, centered on o. Scrub w on the 1D pad and o on the 2D pad.' },
             { label: 'roots_grid_literal', snippet: 'poly = roots_grid_literal(4, 1, 0)\nemit', title: 'The full d x d root lattice, side w, centered on o.' },
             { label: 'roots_ring_literal', snippet: 'poly = roots_ring_literal(7, 1, 0)\nemit', title: 'n roots on a circle: o + r*exp(2*pi*i*k/n). A complex r rotates the ring.' },
@@ -922,6 +923,15 @@ function _programHelpBuildCoeffRegistry() {
             forms: ['poly = roots_literal(1, 2)', 'poly = roots_literal(-8.5+3i, -7.5+3i, 8.5+0i)'],
             params: [{ name: 'r0..rk', title: 'One or more finite static complex roots (up to 255). The pushed vector has k+1 leading-first coefficients with leading coefficient 1.' }],
             effect: '(-- vector)',
+        }),
+        _programHelpItem('root_pairs_literal', 'root_pairs_literal(s0..sk, e0..ek)', 'Push TWO monic coefficient vectors from one even root list: the first half is the START root set, the second half the END set — end lands on the stack top. Blend the vectors for root trajectories (weight each branch in STATEMENT position; add(poly, multiply(pop, ...)) hits the nested-pop trap). Statement-only: it pushes two values, so it cannot sit in an expression or assignment. Double-click the name for the pair pad — start roots red, end roots blue, count is per half.', {
+            forms: ['root_pairs_literal(1, 2i, -1, -2i)'],
+            params: [
+                { name: 's0..sk', title: 'START roots (first half of the arguments): finite static complex literals.' },
+                { name: 'e0..ek', title: 'END roots (second half, same size): the trajectory destinations.' },
+            ],
+            effect: '(-- start end)',
+            examples: ['root_pairs_literal(1, 2i, -1, -2i)\npoly = multiply(pop, t1)\npoly\nswap\npoly = multiply(pop, 1-t1)\npoly = add(poly, pop)\nemit'],
         }),
         _programHelpItem('roots_chess_literal', 'roots_chess_literal(d, w, o)', 'The dark cells of a d x d chessboard (corners dark), expanded once at compile time into the constant pool. w is the FULL side of the board; o is its complex center. The parameters are plain literals: scrub w on the 1D pad and o on the 2D pad.', {
             forms: ['poly = roots_chess_literal(5, 1, 0)', 'poly = roots_chess_literal(5, 1, 1+1i)'],
@@ -1627,7 +1637,8 @@ function _rootPadParseArg(text) {
 
 function _programRootsLiteralSpanAtCursor(textarea) {
     const span = _programTokenSpanAtCursor(textarea);
-    if (!span || span.raw !== 'roots_literal') return null;
+    if (!span || (span.raw !== 'roots_literal' && span.raw !== 'root_pairs_literal')) return null;
+    const pairMode = span.raw === 'root_pairs_literal';
     const value = String(textarea.value || '');
     let open = span.end;
     while (open < value.length && /\s/.test(value[open])) open++;
@@ -1651,7 +1662,13 @@ function _programRootsLiteralSpanAtCursor(textarea) {
         roots.push(parsed);
     }
     if (roots.length > 255) return null;
-    return { raw: value.slice(span.start, close + 1), start: span.start, end: close + 1, roots };
+    if (pairMode) {
+        // pairs: even count, two equal halves (start set then end set)
+        if (roots.length < 2 || roots.length % 2 !== 0) return null;
+        const half = roots.length / 2;
+        roots.forEach((r, i) => { r.group = i < half ? 0 : 1; });
+    }
+    return { raw: value.slice(span.start, close + 1), start: span.start, end: close + 1, roots, pairMode };
 }
 
 function _scrubFormatRoot(re, im) {
@@ -1662,12 +1679,17 @@ function _scrubFormatRoot(re, im) {
     return _scrubFormatComplex(re, im);
 }
 
-function _rootPadFormatCall(roots) {
+function _rootPadFormatCall(roots, pairMode = false) {
     // one root per line, matching the generator layout (diff-friendly);
-    // roots the user never moved keep their ORIGINAL token text
+    // roots the user never moved keep their ORIGINAL token text. Pair calls
+    // separate the start and end halves with a blank line (pure whitespace
+    // to the parser, a visual seam for the reader).
     const lines = roots.map((r, i) =>
         `    ${r.raw != null ? r.raw : _scrubFormatRoot(r.re, r.im)}${i < roots.length - 1 ? ',' : ''}`);
-    return `roots_literal(\n${lines.join('\n')}\n)`;
+    if (pairMode && roots.length >= 2) {
+        lines.splice(roots.length / 2, 0, '');
+    }
+    return `${pairMode ? 'root_pairs_literal' : 'roots_literal'}(\n${lines.join('\n')}\n)`;
 }
 
 function _rootPadSnapValue(v, step) {
@@ -1852,7 +1874,8 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
     };
     const st = _scrubPadState;
     if (mode === 'roots') {
-        st.roots = span.roots.map(r => ({ re: r.re, im: r.im, raw: r.raw }));
+        st.pairMode = !!span.pairMode;
+        st.roots = span.roots.map(r => ({ re: r.re, im: r.im, raw: r.raw, group: r.group || 0 }));
         st.plane = _rootPadPlane(st.roots, 260);
         st.snapStep = 0.5;
         st.snapOn = true;
@@ -1952,7 +1975,7 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
         const extentEl = document.getElementById('program-scrub-extent');
         if (extentEl) extentEl.value = _scrubFormatNumber(st.plane.half);
         const countEl = document.getElementById('program-scrub-count');
-        if (countEl) countEl.value = String(st.roots.length);
+        if (countEl) countEl.value = String(st.pairMode ? st.roots.length / 2 : st.roots.length);
     } else if (mode === 'complex') {
         const spanEl = document.getElementById('program-scrub-span');
         if (spanEl) spanEl.value = _scrubFormatNumber(st.span);
@@ -1990,9 +2013,12 @@ function _renderProgramScrubPad() {
         if (valueEl) {
             const active = st.activeRoot >= 0 ? st.roots[st.activeRoot] : null;
             const dirty = st.rootsDirty && !st.liveWrite ? ' · unsaved' : '';
+            const summary = st.pairMode
+                ? `${st.roots.length / 2}+${st.roots.length / 2} roots (start red, end blue)`
+                : `${st.roots.length} roots`;
             valueEl.textContent = (active
-                ? `${st.roots.length} roots · ${_scrubFormatRoot(active.re, active.im)}`
-                : `${st.roots.length} roots`) + dirty;
+                ? `${summary} · ${_scrubFormatRoot(active.re, active.im)}`
+                : summary) + dirty;
         }
         _rootPadDraw();
         return;
@@ -2205,7 +2231,15 @@ function _rootPadDraw() {
         const x = plane.toX(r.re), y = plane.toY(r.im);
         ctx.beginPath();
         ctx.arc(x, y, i === st.activeRoot ? 5.5 : 4, 0, 2 * Math.PI);
-        ctx.fillStyle = i === st.activeRoot ? '#ff9d66' : '#6fc3ff';
+        // pair mode: START set red, END set blue; plain mode keeps the
+        // single blue family. The active point brightens within its family.
+        if (st.pairMode) {
+            ctx.fillStyle = r.group === 0
+                ? (i === st.activeRoot ? '#ff7a8c' : '#e94560')
+                : (i === st.activeRoot ? '#9fd8ff' : '#6fc3ff');
+        } else {
+            ctx.fillStyle = i === st.activeRoot ? '#ff9d66' : '#6fc3ff';
+        }
         ctx.fill();
     });
 }
@@ -2264,11 +2298,52 @@ function _rootPadDone() {
     _closeProgramScrubPad();
 }
 
+function _rootPadSpawnOnExtent(existing) {
+    // the |z| = extent circle, at the angle farthest from every existing root
+    const radius = _scrubPadState.plane.half;
+    let bestAngle = 0;
+    let bestScore = -Infinity;
+    for (let k = 0; k < 256; k++) {
+        const angle = (2 * Math.PI * k) / 256;
+        const re = radius * Math.cos(angle);
+        const im = radius * Math.sin(angle);
+        let nearest = Infinity;
+        for (const r of existing) {
+            const d = (r.re - re) * (r.re - re) + (r.im - im) * (r.im - im);
+            if (d < nearest) nearest = d;
+        }
+        if (nearest > bestScore) { bestScore = nearest; bestAngle = angle; }
+    }
+    return {
+        re: Number((radius * Math.cos(bestAngle)).toFixed(9)),
+        im: Number((radius * Math.sin(bestAngle)).toFixed(9)),
+        raw: null,
+    };
+}
+
 function _rootPadSetCount() {
     const st = _scrubPadState;
     if (!st || st.mode !== 'roots') return;
     const el = document.getElementById('program-scrub-count');
     let count = Math.round(Number(el && el.value));
+    if (st.pairMode) {
+        // count = roots PER HALF; grow/shrink keeps the halves equal
+        const half = st.roots.length / 2;
+        if (!Number.isFinite(count)) count = half;
+        count = Math.max(1, Math.min(127, count));
+        let start = st.roots.filter(r => r.group === 0);
+        let end = st.roots.filter(r => r.group !== 0);
+        while (start.length > count) start.pop();
+        while (end.length > count) end.pop();
+        while (start.length < count) start.push({ ..._rootPadSpawnOnExtent(start), group: 0 });
+        while (end.length < count) end.push({ ..._rootPadSpawnOnExtent(end), group: 1 });
+        st.roots = [...start, ...end];
+        st.activeRoot = -1;
+        if (el) el.value = String(count);
+        _rootPadMaybeWrite();
+        _rootPadDraw();
+        return;
+    }
     if (!Number.isFinite(count)) count = st.roots.length;
     count = Math.max(1, Math.min(255, count));
     if (count < st.roots.length) {
@@ -2278,25 +2353,7 @@ function _rootPadSetCount() {
         // Each new root lands on the |z| = extent circle at the angle
         // farthest from every existing root (user spec).
         while (st.roots.length < count) {
-            const radius = st.plane.half;
-            let bestAngle = 0;
-            let bestScore = -Infinity;
-            for (let k = 0; k < 256; k++) {
-                const angle = (2 * Math.PI * k) / 256;
-                const re = radius * Math.cos(angle);
-                const im = radius * Math.sin(angle);
-                let nearest = Infinity;
-                for (const r of st.roots) {
-                    const d = (r.re - re) * (r.re - re) + (r.im - im) * (r.im - im);
-                    if (d < nearest) nearest = d;
-                }
-                if (nearest > bestScore) { bestScore = nearest; bestAngle = angle; }
-            }
-            st.roots.push({
-                re: Number((radius * Math.cos(bestAngle)).toFixed(9)),
-                im: Number((radius * Math.sin(bestAngle)).toFixed(9)),
-                raw: null,
-            });
+            st.roots.push({ ..._rootPadSpawnOnExtent(st.roots), group: 0 });
         }
     }
     if (el) el.value = String(st.roots.length);
@@ -2307,7 +2364,7 @@ function _rootPadSetCount() {
 function _rootPadWrite() {
     const st = _scrubPadState;
     if (!st || st.mode !== 'roots') return;
-    _scrubPadWriteText(_rootPadFormatCall(st.roots));
+    _scrubPadWriteText(_rootPadFormatCall(st.roots, !!st.pairMode));
 }
 
 function _rootPadCanvasPoint(event) {
@@ -3647,17 +3704,34 @@ function _coeffProgramStatus(message, isError = false) {
 }
 
 function _coeffProgramDefaultName() {
-    try {
-        if (_coeffProgramTextModeSelected()) {
-            const basis = _coeffProgramSourceDisplay(_getCoeffProgramSourceText(), '-');
-            return basis.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'coeff-program';
-        }
-        const chain = _serializeCoeffProgramChain();
-        const basis = chain.length ? chain.map(row => Array.isArray(row) ? row[0] : String(row)).join('-') : 'coeff-program';
-        return basis.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'coeff-program';
-    } catch (_) {
-        return 'coeff-program';
+    // Timestamp, not instruction soup: "push-range-0-poly-len-1-..." names
+    // were unfindable (user request 2026-07-24). cfp-YYYY-MM-DD-HH-MM-SS
+    // sorts chronologically and is easy to locate again.
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `cfp-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+        + `-${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+}
+
+function _coeffProgramLoadedNameText() {
+    const el = document.getElementById('coeff-program-loaded-name');
+    return el ? String(el.textContent || '').trim() : '';
+}
+
+function _coeffProgramVersionedName(baseName, rows) {
+    // fable-1 -> fable-1-v1 (first free); fable-1-v3 -> fable-1-v4 (the
+    // -vN tail strips before suffixing, never fable-1-v3-v1)
+    const base = String(baseName || '').replace(/-v\d+$/, '');
+    if (!base) return '';
+    const taken = new Set((rows || []).flatMap(row => [
+        String(row && row.name || '').toLowerCase(),
+        String(row && row.id || '').toLowerCase(),
+    ]));
+    for (let n = 1; n < 1000; n++) {
+        const candidate = `${base}-v${n}`;
+        if (!taken.has(candidate.toLowerCase())) return candidate;
     }
+    return `${base}-v${Date.now()}`;
 }
 
 function _serializeCoeffProgramChain() {

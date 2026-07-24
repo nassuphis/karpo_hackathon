@@ -508,7 +508,7 @@ test.describe('Root pad (roots_literal geometry)', () => {
       };
     });
     expect(dragged.active).toBe(0);
-    expect(dragged.root0).toEqual({ re: 2, im: 0.5, raw: null });
+    expect(dragged.root0).toEqual({ re: 2, im: 0.5, raw: null, group: 0 });
     // default is buffered: the source is untouched and the readout says so
     expect(dragged.text).toBe(SRC);
     expect(dragged.readout).toBe('3 roots · 2+0.5i · unsaved');
@@ -619,7 +619,7 @@ test.describe('Root pad (roots_literal geometry)', () => {
     expect(after.cRe).toBe(0);
     expect(after.cIm).toBe(0);
     expect(after.half).toBe(15);
-    expect(after.root1).toEqual({ re: 5, im: -5, raw: null });
+    expect(after.root1).toEqual({ re: 5, im: -5, raw: null, group: 0 });
     expect(after.text).toBe(SRC);            // buffered until Done
     await page.click('#program-scrub-done');
     const written = await page.evaluate(() => document.getElementById('cp-source-text').value);
@@ -661,5 +661,77 @@ test.describe('Integer-context scrubbing', () => {
       return document.getElementById('cp-source-text').value;
     });
     expect(after).toBe('poly = roots_ascii_literal(floor(14))\nemit');
+  });
+});
+
+test.describe('Root pad (root_pairs_literal trajectories)', () => {
+  const PAIR_CALL = 'root_pairs_literal(\n    1,\n    2i,\n\n    -1,\n    -2i\n)';
+  const PAIR_SRC = PAIR_CALL + '\npoly = multiply(pop, 0.5)\npoly\nswap\npoly = multiply(pop, 0.5)\npoly = add(poly, pop)\nemit';
+
+  test('dblclick opens the pad with start/end groups and per-half count', async ({ page }) => {
+    const opened = await openPadOnCoeffLiteral(page, PAIR_SRC, 'root_pairs_literal');
+    expect(opened.padVisible).toBe(true);
+    const state = await page.evaluate(() => ({
+      pairMode: _scrubPadState.pairMode,
+      groups: _scrubPadState.roots.map(r => r.group),
+      count: document.getElementById('program-scrub-count').value,
+      readout: document.getElementById('program-scrub-value').textContent,
+    }));
+    expect(state.pairMode).toBe(true);
+    expect(state.groups).toEqual([0, 0, 1, 1]);
+    expect(state.count).toBe('2');                       // per HALF
+    expect(state.readout).toContain('2+2 roots');
+    expect(state.readout).toContain('start red, end blue');
+  });
+
+  test('dragging an END root buffers, Done rewrites the pair call with equal halves', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, PAIR_SRC, 'root_pairs_literal');
+    await page.evaluate(() => {
+      const st = _scrubPadState;
+      const canvas = document.getElementById('program-scrub-canvas');
+      const rect = canvas.getBoundingClientRect();
+      _rootPadDragStart({
+        clientX: rect.left + st.plane.toX(st.roots[2].re),   // first END root (-1)
+        clientY: rect.top + st.plane.toY(st.roots[2].im),
+        preventDefault() {},
+      });
+      _rootPadDragMove({
+        clientX: rect.left + st.plane.toX(-2.1),
+        clientY: rect.top + st.plane.toY(0.9),
+      });
+      document.dispatchEvent(new PointerEvent('pointerup'));
+    });
+    await page.click('#program-scrub-done');
+    const text = await page.evaluate(() => document.getElementById('cp-source-text').value);
+    expect(text.startsWith('root_pairs_literal(')).toBe(true);
+    expect(text).toContain('-2+1i');                       // snapped drag landed
+    expect(text).toContain('2i');                          // untouched start kept
+    const inner = text.slice(text.indexOf('(') + 1, text.indexOf(')'));
+    expect(inner.split(',').length).toBe(4);               // halves stay equal
+    expect(text.endsWith('emit')).toBe(true);
+  });
+
+  test('count grows BOTH halves on the extent circle', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, PAIR_SRC, 'root_pairs_literal');
+    const grown = await page.evaluate(() => {
+      document.getElementById('program-scrub-extent').value = '6';
+      _rootPadSetExtent();
+      document.getElementById('program-scrub-count').value = '3';
+      _rootPadSetCount();
+      const st = _scrubPadState;
+      return {
+        groups: st.roots.map(r => r.group),
+        radii: st.roots.slice().map(r => Math.hypot(r.re, r.im)),
+      };
+    });
+    expect(grown.groups).toEqual([0, 0, 0, 1, 1, 1]);
+    expect(grown.radii[2]).toBeCloseTo(6, 6);              // new start root on |z|=extent
+    expect(grown.radii[5]).toBeCloseTo(6, 6);              // new end root too
+  });
+
+  test('odd argument lists refuse the pad', async ({ page }) => {
+    const opened = await openPadOnCoeffLiteral(
+      page, 'root_pairs_literal(1, 2i, -1)\nemit', 'root_pairs_literal');
+    expect(opened.padVisible).toBe(false);
   });
 });

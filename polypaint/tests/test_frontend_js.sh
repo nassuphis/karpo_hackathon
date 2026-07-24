@@ -2208,6 +2208,7 @@ async function main() {
       extractFunction('_rootPadMaybeWrite'),
       extractFunction('_rootPadSetLiveWrite'),
       extractFunction('_rootPadDone'),
+      extractFunction('_rootPadSpawnOnExtent'),
       extractFunction('_rootPadSetCount'),
       extractFunction('_rootPadDraw'),
       extractFunction('_rootPadSetSnap'),

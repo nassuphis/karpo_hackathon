@@ -1327,15 +1327,36 @@ async function _selectCoeffProgram(id) {
     _renderCoeffProgramModal();
 }
 
+function _coeffProgramSuggestName() {
+    // A loaded program (the label right of Clear program) suggests its next
+    // free -vN version so edit->save-as-version is one keystrokeless flow;
+    // otherwise the timestamp default.
+    const loaded = _coeffProgramLoadedNameText();
+    if (loaded && _coeffProgramModalState.tableState === 'loaded') {
+        const versioned = _coeffProgramVersionedName(loaded, _coeffProgramModalState.rows);
+        if (versioned) return versioned;
+    }
+    return _coeffProgramDefaultName();
+}
+
 function openCoeffProgramModal() {
     _coeffProgramModalState.open = true;
     _coeffProgramModalState.actionBusy = false;
-    _coeffProgramModalState.nameInput = _coeffProgramDefaultName();
+    const provisional = _coeffProgramSuggestName();
+    _coeffProgramModalState.nameInput = provisional;
     _coeffProgramModalState.lastSelectedName = '';
     _setCoeffProgramModalStatus('', false);
     _renderCoeffProgramModal();
     if (_coeffProgramModalState.tableState !== 'loaded') {
-        void _refreshCoeffProgramRows({ preserveSelection: true });
+        void _refreshCoeffProgramRows({ preserveSelection: true }).then(() => {
+            // rows arrived: upgrade the provisional name to the versioned
+            // suggestion — but never clobber something the user typed
+            if (_coeffProgramModalState.open
+                    && _coeffProgramModalState.nameInput === provisional) {
+                _coeffProgramModalState.nameInput = _coeffProgramSuggestName();
+                _renderCoeffProgramModal();
+            }
+        });
     }
     const nameEl = document.getElementById('coeff-program-modal-name');
     if (nameEl && typeof nameEl.focus === 'function') nameEl.focus();

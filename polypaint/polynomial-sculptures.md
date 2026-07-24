@@ -182,7 +182,15 @@ sculptures/{scu_<ms-base36>}/
 
 The share URL is `…/sculptures/{id}/viewer.html`; opened bare, the
 viewer reads its sibling `meta.json` and resolves data relatively
-(hash-param mode still serves the ephemeral button). The import map is
+(hash-param mode still serves the ephemeral button). **Prepared
+flythroughs (user ask)**: Create snapshots the LAST viewer window the
+app opened (same-origin read of its live controls) — point, height,
+slices, show, style, connect, and whether a tour is PLAYING and which —
+whitelist-sanitized server-side into `meta.view`; the frozen viewer
+applies it on boot and autoplays the captured tour, so shares open
+exactly as tuned. The create block shows a live hint of what will be
+captured (or "viewer defaults" when no viewer is open). Workflow:
+press Sculpture, tune, start the tour you want, press Create. The import map is
 ROOT-ANCHORED (`/vendor/…`) because the frozen copy lives one level
 deep — relative `./vendor` would 404 (caught by the saved-mode smoke
 test). Data objects are immutable-cached (unique ids); deletes go

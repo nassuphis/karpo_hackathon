@@ -595,6 +595,11 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
     grid_n: 4, degree: 3, step_count: 16, pass_count: 1,
     roots_key: 'roots.bin', palette_key: 'palette.png',
     viewport: { min_re: -1, max_re: 1, min_im: -1, max_im: 1 },
+    view: {
+      point: 22, height: 0.4, slices: 3,
+      show: { points: false, ribbons: true, threads: false },
+      style: 'ghost', order: 'angle', tour: 'weave',
+    },
   };
   await page.route('**/sc/viewer.html', (route) => {
     const fs = require('fs');
@@ -617,8 +622,24 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   const st = await page.evaluate(() => {
     const v = window.__sculptureViewer;
     if (!v) return { built: false, msg: document.getElementById('message-title').textContent || '' };
-    return { built: true, count: v.count,
-             title: document.getElementById('hud-title').textContent };
+    const val = (id) => document.getElementById(id).value;
+    const distinctY = () => {
+      const a = v.points.geometry.getAttribute('position');
+      const ys = new Set();
+      for (let i = 0; i < a.count; i++) ys.add(Math.round(a.array[i * 3 + 1] * 1e5) / 1e5);
+      return ys.size;
+    };
+    return {
+      built: true, count: v.count,
+      title: document.getElementById('hud-title').textContent,
+      point: val('ctl-size'), height: val('ctl-height'), slices: val('ctl-slices'),
+      style: val('ctl-style'), order: val('ctl-order'), tourMode: val('ctl-tour-mode'),
+      pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible, threadsVis: v.threads.visible,
+      ghost: v.material.transparent === true && v.material.depthWrite === false,
+      scaleY: v.sculpt.scale.y,
+      plates: distinctY(),
+      tourPlaying: v.tour.state.playing,
+    };
   });
   if (!st.built) {
     expect(st.msg).toMatch(/WebGL/i);
@@ -626,6 +647,21 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   }
   expect(st.count).toBe(48);
   expect(st.title).toBe('saved fixture');
+  // the saved view opens exactly as prepared: controls, materials, geometry
+  expect(st.point).toBe('22');
+  expect(st.height).toBe('40');
+  expect(st.slices).toBe('3');
+  expect(st.style).toBe('ghost');
+  expect(st.order).toBe('angle');
+  expect(st.pointsVis).toBe(false);
+  expect(st.ribbonsVis).toBe(true);
+  expect(st.threadsVis).toBe(false);
+  expect(st.ghost).toBe(true);
+  expect(st.scaleY).toBeCloseTo(0.4, 5);
+  expect(st.plates).toBe(3);            // slices applied to the geometry
+  // the captured tour autoplays for the recipient
+  expect(st.tourMode).toBe('weave');
+  expect(st.tourPlaying).toBe(true);
 });
 
 test('tours: orbit and weave follow their parametric paths; interaction stops them', async ({ page }) => {

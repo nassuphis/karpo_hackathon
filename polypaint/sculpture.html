@@ -166,6 +166,7 @@ async function bootConfig() {
             minRe: parseFloat(vp.min_re), maxRe: parseFloat(vp.max_re),
             minIm: parseFloat(vp.min_im), maxIm: parseFloat(vp.max_im),
             title: String(meta.title || 'PolyPaint sculpture'),
+            view: (meta.view && typeof meta.view === 'object') ? meta.view : null,
         };
     } catch (e) {
         return null;
@@ -709,11 +710,40 @@ async function boot() {
     };
     sizeCtl.addEventListener('input', applySize);
     heightCtl.addEventListener('input', applyHeight);
+    // saved view settings: the creator tuned the ephemeral viewer and Create
+    // snapshotted it — apply controls, then re-run the apply chain, then
+    // autoplay the captured tour so shares open as prepared flythroughs
+    const applyViewConfig = (view) => {
+        if (!view) return;
+        if (Number.isFinite(Number(view.point))) {
+            sizeCtl.value = String(Math.max(1, Math.min(40, Math.round(Number(view.point)))));
+        }
+        if (Number.isFinite(Number(view.height))) {
+            heightCtl.value = String(Math.max(0, Math.min(100, Math.round(Number(view.height) * 100))));
+        }
+        if (Number.isFinite(Number(view.slices))) {
+            const v = String(Math.max(0, Math.min(64, Math.round(Number(view.slices)))));
+            if (Array.from(slicesCtl.options).some(o => o.value === v)) slicesCtl.value = v;
+        }
+        if (view.show && typeof view.show === 'object') {
+            showPointsCtl.checked = !!view.show.points;
+            showRibbonsCtl.checked = !!view.show.ribbons;
+            showThreadsCtl.checked = !!view.show.threads;
+        }
+        if (view.style === 'solid' || view.style === 'ghost') styleCtl.value = view.style;
+        if (view.order === 'nearest' || view.order === 'angle' || view.order === 'file') orderCtl.value = view.order;
+    };
+    applyViewConfig(cfg.view);
     applyOrder();
+    applySlices();
     applyShow();
     applyStyle();
     applySize();
     applyHeight();
+    if (cfg.view && (cfg.view.tour === 'orbit' || cfg.view.tour === 'weave')) {
+        tourModeCtl.value = cfg.view.tour;
+        tourSetPlaying(true);
+    }
 
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;

@@ -1966,6 +1966,21 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#sculpture-list')).toContainText('First Piece', { timeout: 5000 });
     await expect(page.locator('#sculpture-list')).toContainText('60×60 · d9');
 
+    // a tuned viewer window is open: Create must capture its live settings
+    await page.evaluate(() => {
+      const fakeCtl = (value) => ({ value });
+      const fakeChk = (checked) => ({ checked });
+      const ctls = {
+        'ctl-size': fakeCtl('14'), 'ctl-height': fakeCtl('35'), 'ctl-slices': fakeCtl('11'),
+        'ctl-show-points': fakeChk(false), 'ctl-show-ribbons': fakeChk(true), 'ctl-show-threads': fakeChk(true),
+        'ctl-style': fakeCtl('ghost'), 'ctl-order': fakeCtl('angle'), 'ctl-tour-mode': fakeCtl('weave'),
+      };
+      window._lastSculptureWin = {
+        closed: false,
+        document: { getElementById: (id) => ctls[id] || null },
+        __sculptureViewer: { tour: { state: { playing: true } } },
+      };
+    });
     await page.fill('#sculpture-title', 'Second Piece');
     await page.click('#btn-sculpture-create');
     await expect(page.locator('#btn-sculpture-create')).toHaveText('\u2713 Created');
@@ -1977,6 +1992,11 @@ test.describe('Solve Score UI', () => {
     expect(st.bodies[0].sculpture).toBe(true);
     expect(st.bodies[0].sculpture_save).toBe(true);
     expect(st.bodies[0].sculpture_title).toBe('Second Piece');
+    expect(st.bodies[0].sculpture_view).toEqual({
+      point: 14, height: 0.35, slices: 11,
+      show: { points: false, ribbons: true, threads: true },
+      style: 'ghost', order: 'angle', tour: 'weave',
+    });
     expect(st.openLoc).toBe('https://bkt.s3.r.amazonaws.com/sculptures/scu_bbb/viewer.html');
     await expect(page.locator('#sculpture-list')).toContainText('Second Piece');
 

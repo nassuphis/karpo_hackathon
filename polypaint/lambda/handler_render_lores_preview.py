@@ -222,6 +222,41 @@ def _sculpture_title(raw, job_id):
     return title or f"sculpture {job_id}"
 
 
+def _sculpture_view(raw):
+    """Whitelist-sanitize the captured viewer settings for meta.json. The
+    viewer re-validates on boot, but the meta must never carry junk."""
+    if not isinstance(raw, dict):
+        return None
+    view = {}
+
+    def _num(key, lo, hi):
+        try:
+            v = float(raw.get(key))
+        except (TypeError, ValueError):
+            return None
+        return v if lo <= v <= hi else None
+
+    point = _num("point", 1, 40)
+    if point is not None:
+        view["point"] = int(round(point))
+    height = _num("height", 0, 1)
+    if height is not None:
+        view["height"] = round(height, 3)
+    slices = _num("slices", 0, 64)
+    if slices is not None:
+        view["slices"] = int(round(slices))
+    show = raw.get("show")
+    if isinstance(show, dict):
+        view["show"] = {k: bool(show.get(k)) for k in ("points", "ribbons", "threads")}
+    if raw.get("style") in ("solid", "ghost"):
+        view["style"] = raw["style"]
+    if raw.get("order") in ("nearest", "angle", "file"):
+        view["order"] = raw["order"]
+    if raw.get("tour") in ("off", "orbit", "weave"):
+        view["tour"] = raw["tour"]
+    return view or None
+
+
 def _sculpture_viewer_template():
     """The frozen viewer copied into every saved sculpture prefix. Deployed
     zips carry sculpture.html at the package root; the repo keeps it one
@@ -1434,6 +1469,9 @@ def handler(event, context):
                     "score_display": str(summary.get("solve_score_display") or ""),
                     "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
+                view = _sculpture_view(params.get("sculpture_view"))
+                if view:
+                    meta["view"] = view
                 s3.put_object(
                     Bucket=BUCKET, Key=sprefix + "meta.json",
                     Body=json.dumps(meta).encode("utf-8"),

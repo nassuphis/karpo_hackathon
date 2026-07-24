@@ -1062,10 +1062,12 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-create" onclick="runSculptureSave()">Create</button>
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)">Refresh</button>
                 <span style="font-size:11px; color:#666">Create solves with the current Solve-score settings and saves a permanent, shareable sculpture (frozen viewer + data under sculptures/).</span>
+                <span id="sculpture-view-hint" style="font-size:11px; color:#8899aa; flex-basis:100%"></span>
             </div>
             <div id="sculpture-list" style="max-height:520px; overflow-y:auto; border:1px solid #333; border-radius:4px">Loading…</div>
         </div>`;
         _sculptureRenderPane();
+        _sculptureUpdateViewHint();
         void _sculptureEnsureInventory();
         info.textContent = 'Job: ' + jobId;
         return;
@@ -1607,6 +1609,54 @@ async function _dzPatchInventoryAfterExport(jobId, exportId) {
     }
 }
 
+function _sculptureCaptureViewSettings() {
+    // Create snapshots the LAST viewer window the app opened (same-origin):
+    // prepare a shared flythrough by tuning the ephemeral viewer — point,
+    // height, slices, show, style, connect — and leaving the tour you want
+    // PLAYING, then pressing Create.
+    try {
+        const win = window._lastSculptureWin;
+        if (!win || win.closed || !win.__sculptureViewer || !win.document) return null;
+        const doc = win.document;
+        const val = (id) => { const el = doc.getElementById(id); return el ? el.value : null; };
+        const chk = (id) => { const el = doc.getElementById(id); return !!(el && el.checked); };
+        const tourState = win.__sculptureViewer.tour;
+        const playing = !!(tourState && tourState.state && tourState.state.playing);
+        return {
+            point: parseInt(val('ctl-size'), 10) || 10,
+            height: (parseInt(val('ctl-height'), 10) || 0) / 100,
+            slices: parseInt(val('ctl-slices'), 10) || 0,
+            show: {
+                points: chk('ctl-show-points'),
+                ribbons: chk('ctl-show-ribbons'),
+                threads: chk('ctl-show-threads'),
+            },
+            style: val('ctl-style') || 'solid',
+            order: val('ctl-order') || 'nearest',
+            tour: playing ? (val('ctl-tour-mode') || 'orbit') : 'off',
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+function _sculptureViewSummary(view) {
+    if (!view) return '';
+    const show = ['points', 'ribbons', 'threads'].filter((k) => view.show && view.show[k])
+        .map((k) => k.slice(0, 3)).join('+') || 'none';
+    return `point ${view.point} · height ${view.height.toFixed(2)} · slices ${view.slices || 'off'}`
+        + ` · ${show} · ${view.style} · ${view.order} · tour: ${view.tour}`;
+}
+
+function _sculptureUpdateViewHint() {
+    const el = document.getElementById('sculpture-view-hint');
+    if (!el) return;
+    const view = _sculptureCaptureViewSettings();
+    el.textContent = view
+        ? `Create captures the open viewer: ${_sculptureViewSummary(view)}`
+        : 'View settings: viewer defaults — open a Sculpture preview, tune it (start a tour for autoplay), then Create.';
+}
+
 function _sculptureShareUrl(meta) {
     const prefix = meta.prefix || `sculptures/${meta.id}/`;
     return _publicStorageUrl(prefix + 'viewer.html');
@@ -1699,9 +1749,11 @@ async function runSculptureSave() {
     const titleEl = document.getElementById('sculpture-title');
     const title = titleEl ? titleEl.value.trim() : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+    const view = _sculptureCaptureViewSettings();
+    if (view) log(`Sculpture view captured: ${_sculptureViewSummary(view)}`, '', 'render-log');
     let ok = false;
     try {
-        ok = await runRenderLoresSculpture({ save: true, title });
+        ok = await runRenderLoresSculpture({ save: true, title, view });
         if (ok) await _sculptureEnsureInventory(true);
     } finally {
         if (btn) {

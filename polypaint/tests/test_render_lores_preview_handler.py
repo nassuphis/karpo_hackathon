@@ -770,7 +770,13 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         mock_render.side_effect = render_fake
 
         resp = handler(_event(lores_N=1, sculpture=True, sculpture_save=True,
-                              sculpture_title="Test Piece — v2"), None)
+                              sculpture_title="Test Piece — v2",
+                              sculpture_view={
+                                  "point": 14, "height": 0.35, "slices": 11,
+                                  "show": {"points": False, "ribbons": True, "threads": True},
+                                  "style": "ghost", "order": "angle", "tour": "weave",
+                                  "junk": "dropped", "extra": 9,
+                              }), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
         body = json.loads(resp["body"])
         sc = body["sculpture"]
@@ -799,6 +805,13 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(meta["roots_key"], "roots.bin")     # viewer-relative
         self.assertEqual(meta["palette_key"], "palette.png")
         self.assertIn("min_re", meta["viewport"])
+        # captured view settings sanitized into the meta: junk dropped,
+        # enums checked, autoplay tour preserved
+        self.assertEqual(meta["view"], {
+            "point": 14, "height": 0.35, "slices": 11,
+            "show": {"points": False, "ribbons": True, "threads": True},
+            "style": "ghost", "order": "angle", "tour": "weave",
+        })
         # the frozen viewer copy is the real template
         viewer = by_key[f"sculptures/{sc['id']}/viewer.html"]
         self.assertEqual(viewer["ContentType"], "text/html")

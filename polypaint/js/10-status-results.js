@@ -542,6 +542,7 @@ async function runRenderLoresPreview(opts = {}) {
         if (sculpture && opts.save) {
             payload.sculpture_save = true;
             payload.sculpture_title = String(opts.title || '');
+            if (opts.view) payload.sculpture_view = opts.view;
         }
         if (_viewMode === 'explicit') {
             payload.min_re = p.minRe;
@@ -603,8 +604,12 @@ async function runRenderLoresPreview(opts = {}) {
                 t: `${p.jobId} · ${sc.grid_n}×${sc.grid_n} · ${sc.palette || ''}`,
             });
             const url = sc.share_url ? sc.share_url : `sculpture.html#${frag.toString()}`;
-            if (sculptureWin && !sculptureWin.closed) sculptureWin.location = url;
-            else log(`Sculpture viewer (popup blocked, open manually): ${url}`, 'err', 'render-log');
+            if (sculptureWin && !sculptureWin.closed) {
+                sculptureWin.location = url;
+                // the Sculpture tab's Create snapshots this window's live view
+                // settings (same-origin) so saves capture the tuned state
+                window._lastSculptureWin = sculptureWin;
+            } else log(`Sculpture viewer (popup blocked, open manually): ${url}`, 'err', 'render-log');
             if (sc.share_url) log(`Sculpture saved: ${sc.title || sc.id} — ${sc.share_url}`, 'ok', 'render-log');
             log(`Sculpture: grid ${sc.grid_n}×${sc.grid_n} · degree ${sc.degree} · roots ${(Number(sc.roots_bytes || 0) / (1024 * 1024)).toFixed(1)}MB`, 'ok', 'render-log');
         }

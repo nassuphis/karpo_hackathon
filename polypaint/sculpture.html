@@ -137,6 +137,7 @@
   </select><button type="button" id="btn-tour-play" title="Play / stop the automated camera tour">&#9654;</button></label>
   <label>connect <select id="ctl-order">
     <option value="nearest" selected>nearest</option>
+    <option value="clu">clu</option>
     <option value="angle">angle</option>
     <option value="file">file order</option>
   </select></label>
@@ -375,8 +376,126 @@ async function boot() {
         const dz = positions[i0 * 3 + 2] - positions[i1 * 3 + 2];
         return dx * dx + dy * dy + dz * dz;
     };
+    // clu: per z-column, k-means the WHOLE slice (every root across the
+    // varying parameter) and chain each cluster from its FARTHEST point —
+    // mid-curve starts guarantee a backtrack chord (measured on real jobs).
+    // The clusters approximate the root-trajectory arcs, so clu ribbons are
+    // the slice curves themselves. Deterministic: strided init + 8 Lloyd
+    // iterations, no randomness (e2e must reproduce exactly).
+    function emitClusterChain(members, mx, mz, segPairs) {
+        const m = members.length;
+        if (m < 2) return;
+        let start = 0, bd = -1;
+        for (let a = 0; a < m; a++) {
+            const dx = positions[members[a] * 3] - mx;
+            const dz = positions[members[a] * 3 + 2] - mz;
+            const d = dx * dx + dz * dz;
+            if (d > bd) { bd = d; start = a; }
+        }
+        const used = new Uint8Array(m);
+        const seq = [members[start]];
+        used[start] = 1;
+        while (seq.length < m) {
+            const cur = seq[seq.length - 1];
+            const cxx = positions[cur * 3], czz = positions[cur * 3 + 2];
+            let best = -1, dmin = Infinity;
+            for (let a = 0; a < m; a++) {
+                if (used[a]) continue;
+                const dx = positions[members[a] * 3] - cxx;
+                const dz = positions[members[a] * 3 + 2] - czz;
+                const d = dx * dx + dz * dz;
+                if (d < dmin) { dmin = d; best = a; }
+            }
+            used[best] = 1;
+            seq.push(members[best]);
+        }
+        let cutSq = Infinity;
+        if (m > 2) {
+            const mins = new Float64Array(m);
+            for (let a = 0; a < m; a++) {
+                const ax = positions[members[a] * 3], az = positions[members[a] * 3 + 2];
+                let dmin = Infinity;
+                for (let b = 0; b < m; b++) {
+                    if (b === a) continue;
+                    const dx = ax - positions[members[b] * 3];
+                    const dz = az - positions[members[b] * 3 + 2];
+                    const d = dx * dx + dz * dz;
+                    if (d < dmin) dmin = d;
+                }
+                mins[a] = dmin;
+            }
+            const sorted = Array.from(mins).sort((x, y) => x - y);
+            cutSq = 6.25 * sorted[m >> 1];
+        }
+        for (let t = 0; t + 1 < seq.length; t++) {
+            const i0 = seq[t], i1 = seq[t + 1];
+            const dx = positions[i0 * 3] - positions[i1 * 3];
+            const dz = positions[i0 * 3 + 2] - positions[i1 * 3 + 2];
+            if (dx * dx + dz * dz > cutSq) continue;
+            segPairs.push(i0, i1, segLen2(i0, i1));
+        }
+    }
+    function cluSegments(segPairs) {
+        const axis = document.getElementById('ctl-zaxis').value === 't1' ? 't1' : 't2';
+        const pts = [];
+        for (let zi = 0; zi < gridN; zi++) {
+            pts.length = 0;
+            for (let vi = 0; vi < gridN; vi++) {
+                const st = axis === 't1' ? stepAt(zi, vi) : stepAt(vi, zi);
+                for (let i = stepOffsets[st]; i < stepOffsets[st + 1]; i++) pts.push(i);
+            }
+            const n = pts.length;
+            if (n < 2) continue;
+            const k = Math.max(1, Math.min(degree, n));
+            const cx = new Float64Array(k), cz = new Float64Array(k);
+            for (let j = 0; j < k; j++) {
+                const p = pts[Math.floor(j * n / k)];
+                cx[j] = positions[p * 3];
+                cz[j] = positions[p * 3 + 2];
+            }
+            const assign = new Int32Array(n);
+            for (let iter = 0; iter < 8; iter++) {
+                for (let a = 0; a < n; a++) {
+                    const px = positions[pts[a] * 3], pz = positions[pts[a] * 3 + 2];
+                    let best = 0, bdst = Infinity;
+                    for (let j = 0; j < k; j++) {
+                        const dx = px - cx[j], dz = pz - cz[j];
+                        const d = dx * dx + dz * dz;
+                        if (d < bdst) { bdst = d; best = j; }
+                    }
+                    assign[a] = best;
+                }
+                const sx = new Float64Array(k), sz = new Float64Array(k), cnt = new Int32Array(k);
+                for (let a = 0; a < n; a++) {
+                    const j = assign[a];
+                    sx[j] += positions[pts[a] * 3];
+                    sz[j] += positions[pts[a] * 3 + 2];
+                    cnt[j]++;
+                }
+                for (let j = 0; j < k; j++) {
+                    if (cnt[j]) { cx[j] = sx[j] / cnt[j]; cz[j] = sz[j] / cnt[j]; }
+                }
+            }
+            for (let j = 0; j < k; j++) {
+                const members = [];
+                for (let a = 0; a < n; a++) if (assign[a] === j) members.push(pts[a]);
+                emitClusterChain(members, cx[j], cz[j], segPairs);
+            }
+        }
+    }
     function buildRibbons(order) {
         const segPairs = [];   // [i0, i1, len2] triples, flat
+        if (order === 'clu') {
+            cluSegments(segPairs);
+            const geomClu = new THREE.BufferGeometry();
+            const nClu = fillSortedSegments(geomClu, segPairs);
+            const oldClu = ribbons.geometry;
+            ribbons.geometry = geomClu;
+            if (oldClu) oldClu.dispose();
+            ribbonSegments = nClu;
+            if (applyLenqHook) applyLenqHook();
+            return;
+        }
         const idx = [];
         for (let step = 0; step < passSteps; step++) {
             const a = stepOffsets[step], b = stepOffsets[step + 1];
@@ -913,7 +1032,7 @@ async function boot() {
             showThreadsCtl.checked = !!view.show.threads;
         }
         if (view.style === 'solid' || view.style === 'ghost') styleCtl.value = view.style;
-        if (view.order === 'nearest' || view.order === 'angle' || view.order === 'file') orderCtl.value = view.order;
+        if (['nearest', 'clu', 'angle', 'file'].includes(view.order)) orderCtl.value = view.order;
         if (Number.isFinite(Number(view.lenq))) {
             lenqCtl.value = String(Math.max(0, Math.min(100, Math.round(Number(view.lenq)))));
         }

@@ -200,6 +200,15 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
     with a ~3.3×-spacing chord — 2-opt measured useless (3.27→3.13)
     because the chords are topology, not greedy error. Ribboning "to
     nearest" therefore means refusing the bridge, not optimizing it.
+  - **clu** (user idea): per z-column, k-means the WHOLE slice (every
+    root across the varying parameter, k = degree, deterministic strided
+    init + 8 Lloyd iterations) and chain each cluster greedily from its
+    FARTHEST point (mid-curve starts guarantee a backtrack chord), with
+    the 2.5× median-NN cut per cluster. The clusters approximate the
+    root-trajectory arcs, so clu ribbons are the slice curves themselves
+    — long flowing lines instead of per-solve fragments; colors gradient
+    per point along each arc. Respects the z-axis transpose (clusters
+    the active z parameter's columns).
   - **angle**: tour each row's constellation by angle about its
     centroid, CLOSED for 3+ roots. Solver-independent, coherent, stable
     between neighboring solves.

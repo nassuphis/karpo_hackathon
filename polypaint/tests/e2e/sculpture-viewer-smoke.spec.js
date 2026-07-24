@@ -973,3 +973,72 @@ test('tours: orbit and weave follow their parametric paths; interaction stops th
   expect(wv.rBad).toBe(0);                     // circle radius constant
   expect(wv.dt2x).toBeCloseTo(2.0, 9);         // 2x speed doubles the clock
 });
+
+test('clu ribbons: per-column k-means arcs, chained from the far end, never bridged', async ({ page }) => {
+  // per column, each solve carries one root near x=-0.5 and one near
+  // x=+0.5, drifting slightly with t1 — two clean trajectory arcs. k-means
+  // (k = degree = 2) must separate them; each cluster chains its 4 points
+  // end-to-end (3 tiny segments), and no segment may bridge the arcs.
+  await page.goto('http://localhost:8765/sculpture.html');
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 4;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgb(10,20,30)';
+    g.fillRect(0, 0, 4, 4);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  const gridN = 4, degree = 2;
+  const buf = Buffer.alloc(gridN * gridN * degree * 2 * 4);
+  let o = 0;
+  for (let step = 0; step < gridN * gridN; step++) {
+    const row = Math.floor(step / gridN);
+    for (const re of [-0.5 + 0.02 * row, 0.5 + 0.02 * row]) {
+      buf.writeFloatLE(re, o); o += 4;
+      buf.writeFloatLE(0.0, o); o += 4;
+    }
+  }
+  await page.route('**/fx/clroots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: buf,
+  }));
+  await page.route('**/fx/clpal.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  const frag = new URLSearchParams({
+    v: '1', r: '/fx/clroots.bin', p: '/fx/clpal.png', n: '4', d: '2', s: '16',
+    x0: '-1', x1: '1', y0: '-1', y1: '1', t: 'clu fixture',
+  });
+  await page.goto('about:blank');
+  await page.goto('http://localhost:8765/sculpture.html#' + frag.toString());
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const built = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!built) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+  const st = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const ctl = document.getElementById('ctl-order');
+    ctl.value = 'clu';
+    ctl.dispatchEvent(new Event('change'));
+    const pos = v.ribbons.geometry.getAttribute('position');
+    let maxLen = 0, bridge = 0, notFlat = 0;
+    for (let i = 0; i < pos.count; i += 2) {
+      const x0 = pos.array[i * 3], x1 = pos.array[(i + 1) * 3];
+      const dy = Math.abs(pos.array[i * 3 + 1] - pos.array[(i + 1) * 3 + 1]);
+      const len = Math.hypot(x0 - x1, dy, pos.array[i * 3 + 2] - pos.array[(i + 1) * 3 + 2]);
+      maxLen = Math.max(maxLen, len);
+      if (Math.sign(x0) !== Math.sign(x1)) bridge++;
+      if (dy > 1e-9) notFlat++;
+    }
+    return { verts: pos.count, maxLen, bridge, notFlat };
+  });
+  // 4 columns x 2 clusters x 3 chain segments = 24 segments
+  expect(st.verts).toBe(48);
+  expect(st.bridge).toBe(0);                 // arcs never cross-stitched
+  expect(st.maxLen).toBeLessThan(0.015);     // 0.01 steps only — no chords
+  expect(st.notFlat).toBe(0);                // slice curves are flat per column
+});

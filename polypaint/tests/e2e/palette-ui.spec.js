@@ -135,6 +135,12 @@ test.describe('Palette UI', () => {
     const row = page.locator('#mic-popup-body .tri-popup-row').first();
     await expect(row).toContainText('Kandinsky');
     await row.click();
+    // selection KEEPS the popup open (pick -> Copy to HEX -> pick again);
+    // the applied marker and the banner update in place
+    await expect(page.locator('#mic-popup-overlay')).toBeVisible();
+    await expect(page.locator('#mic-popup-selected-name')).toContainText('Kandinsky');
+    await expect(page.locator('#mic-popup-body .tri-popup-row.active')).toHaveCount(1);
+    await page.click('#mic-popup-close');
     await expect(page.locator('#mic-popup-overlay')).toBeHidden();
 
     const applied = await page.evaluate(() => ({
@@ -290,6 +296,9 @@ test.describe('Palette UI', () => {
     await expect(page.locator('#builtin-popup-overlay')).toBeVisible();
     await page.locator('#builtin-popup-filter').fill('viri');
     await page.locator('#builtin-popup-body .tri-popup-row').filter({ hasText: 'viridis' }).first().click();
+    // selection keeps the popup open; close it before using the page below
+    await expect(page.locator('#builtin-popup-overlay')).toBeVisible();
+    await page.click('#builtin-popup-close');
     await expect(page.locator('#builtin-popup-overlay')).not.toBeVisible();
     await page.click('#btn-palette-create');
 
@@ -354,5 +363,109 @@ test.describe('Palette UI', () => {
     await page.keyboard.press('ArrowDown');
     const bg = await page.locator('.palette-inv-row').nth(1).evaluate(el => el.style.background);
     expect(bg).toContain('rgb(42, 42, 78)');
+  });
+});
+
+test.describe('PIC photo palette', () => {
+  test('photo -> extraction -> Use now + Save to HEX, styles reorder', async ({ page }) => {
+    await page.goto('http://localhost:8765/index.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.evaluate((palettes) => {
+      window._mockPalettes = palettes.slice();
+      window._customSaveBodies = [];
+      document.getElementById('palette-results-dir').value = 'job_palette';
+      window.lambdaPost = async function (name, body, path) {
+        if (name === 'storage' && path === '/list-palettes') return { palettes: window._mockPalettes.slice() };
+        if (name === 'storage' && path === '/list-custom-palettes') return { revision: 'r1', palettes: [] };
+        if (name === 'storage' && path === '/save-custom-palettes') {
+          window._customSaveBodies.push(JSON.parse(JSON.stringify(body)));
+          return { revision: 'r2', palettes: body.palettes.map(p => ({ name: p.name, stops: p.stops, palette: 'custom:' + p.stops.join('-') })) };
+        }
+        throw new Error(`unexpected storage path ${path}`);
+      };
+    }, PALETTES);
+    await page.click('.tab-btn:text("Palette")');
+    const pic = page.locator('#palette-circles-palette-tab .pal-circle-pic');
+    await expect(pic).toBeVisible();
+    await pic.click();
+    await expect(page.locator('#pic-popup-overlay')).toBeVisible();
+    await expect(page.locator('#pic-popup-status')).toContainText('processed locally');
+
+    // fixture: six uniform color blocks with known areas, generated in-page
+    const dataUrl = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 240; canvas.height = 160;
+      const ctx = canvas.getContext('2d');
+      const blocks = [['#d62839', 0.30], ['#2255aa', 0.25], ['#1f9e8e', 0.15],
+                      ['#e8a020', 0.10], ['#8a8a8a', 0.12], ['#7a5c3a', 0.08]];
+      let x = 0;
+      for (const [color, frac] of blocks) {
+        ctx.fillStyle = color;
+        const w = Math.round(240 * frac);
+        ctx.fillRect(x, 0, w, 160);
+        x += w;
+      }
+      ctx.fillStyle = '#7a5c3a';
+      ctx.fillRect(x, 0, 240 - x, 160);
+      return canvas.toDataURL('image/png');
+    });
+    await page.setInputFiles('#pic-popup-file', {
+      name: 'Sunset_Beach-001.png', mimeType: 'image/png',
+      buffer: Buffer.from(dataUrl.split(',')[1], 'base64'),
+    });
+    await expect(page.locator('#pic-popup-name')).toHaveValue('Sunset Beach 001');
+    await expect(page.locator('#pic-popup-status')).toContainText('colors', { timeout: 15000 });
+    expect(await page.locator('#pic-popup-strip .pic-popup-cell').count()).toBeGreaterThanOrEqual(5);
+
+    // every block color recovered (nearest-hex distance), editorial default
+    const order = await page.evaluate(() => {
+      const hexes = _picPopupState.palette.map(p => p.hex);
+      const dist = (a, b) => {
+        const pa = [1, 3, 5].map(i => parseInt(a.slice(i, i + 2), 16));
+        const pb = [1, 3, 5].map(i => parseInt(b.slice(i, i + 2), 16));
+        return Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]);
+      };
+      const nearest = target => hexes.reduce((best, h, i) =>
+        dist(h, target) < dist(hexes[best], target) ? i : best, 0);
+      return { hexes, grey: nearest('#8a8a8a'), orange: nearest('#e8a020') };
+    });
+    expect(order.hexes.length).toBeGreaterThanOrEqual(5);
+    // editorial: the substrate penalty sinks grey below vivid orange
+    expect(order.orange).toBeLessThan(order.grey);
+
+    // literal: pure pixel share — grey (12%) outranks orange (10%)
+    await page.check('input[name="pic-popup-style"][value="literal"]');
+    await expect(page.locator('#pic-popup-status')).toContainText('colors', { timeout: 15000 });
+    const literalOrder = await page.evaluate(() => {
+      const hexes = _picPopupState.palette.map(p => p.hex);
+      const dist = (a, b) => {
+        const pa = [1, 3, 5].map(i => parseInt(a.slice(i, i + 2), 16));
+        const pb = [1, 3, 5].map(i => parseInt(b.slice(i, i + 2), 16));
+        return Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]);
+      };
+      const nearest = target => hexes.reduce((best, h, i) =>
+        dist(h, target) < dist(hexes[best], target) ? i : best, 0);
+      return { grey: nearest('#8a8a8a'), orange: nearest('#e8a020') };
+    });
+    expect(literalOrder.grey).toBeLessThan(literalOrder.orange);
+
+    // Use now applies the wire + the sanitized filename as display name
+    await page.click('#pic-popup-use');
+    const applied = await page.evaluate(() => ({
+      palette: _currentPaletteForMode('palette_tab'),
+      displayName: _paletteDisplayNameForMode('palette_tab'),
+    }));
+    expect(applied.palette).toMatch(/^custom:[0-9a-f]{6}(-[0-9a-f]{6})+$/);
+    expect(applied.displayName).toBe('Sunset Beach 001');
+
+    // Save to HEX persists via the shared CAS flow with button feedback
+    await page.click('#pic-popup-save');
+    await expect(page.locator('#pic-popup-save')).toHaveText('✓ Saved to HEX');
+    const saves = await page.evaluate(() => window._customSaveBodies);
+    expect(saves).toHaveLength(1);
+    expect(saves[0].palettes[0].name).toBe('Sunset Beach 001');
+    expect(saves[0].palettes[0].stops.length).toBeGreaterThanOrEqual(5);
+    await page.click('#pic-popup-close');
+    await expect(page.locator('#pic-popup-overlay')).toBeHidden();
   });
 });

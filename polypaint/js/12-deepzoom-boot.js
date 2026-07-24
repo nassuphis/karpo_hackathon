@@ -1178,6 +1178,7 @@ _initBuiltinPalettePopup();
 _initLongPalettePopup();
 _initCustomPalettePopup();
 _initMicPalettePopup();
+_initPicPalettePopup();
 _initFunctionPopup();
 _initAutolevelPopup();
 _initResizePopup();

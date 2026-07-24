@@ -92,6 +92,9 @@ async function chooseBuiltinPalette(page, mode, name) {
   const row = page.locator('#builtin-popup-body .tri-popup-row').filter({ hasText: name }).first();
   await expect(row).toBeVisible();
   await row.click();
+  // selection keeps the popup open now — close so the page is clickable
+  await page.click('#builtin-popup-close');
+  await expect(page.locator('#builtin-popup-overlay')).not.toBeVisible();
 }
 
 async function chooseLongPalette(page, mode, name) {
@@ -101,6 +104,8 @@ async function chooseLongPalette(page, mode, name) {
   const row = page.locator('#long-popup-body .tri-popup-row').filter({ hasText: name }).first();
   await expect(row).toBeVisible();
   await row.click();
+  await page.click('#long-popup-close');
+  await expect(page.locator('#long-popup-overlay')).not.toBeVisible();
 }
 
 async function chooseSolveMetric(page, metric) {
@@ -233,7 +238,7 @@ test.describe('Solve Score UI', () => {
     await page.click('.tab-btn:text("Render")');
     const solveCircles = page.locator('#palette-circles-solve-score .pal-circle');
     const solveCount = await solveCircles.count();
-    expect(solveCount).toBe(5);   // PAL, TRI, LONG, HEX (custom), MIC
+    expect(solveCount).toBe(6);   // PAL, TRI, LONG, HEX (custom), MIC, PIC
   });
 
   test('render solve-score row shows built-in, TRI, LONG, and HEX swatches', async ({ page }) => {
@@ -355,6 +360,8 @@ test.describe('Solve Score UI', () => {
     const remembered = await page.evaluate(() => renderSolveScoreBuiltinPalette);
     expect(palette).toBe('viridis');
     expect(remembered).toBe('viridis');
+    await expect(page.locator('#builtin-popup-overlay')).toBeVisible();   // stays open on select
+    await page.click('#builtin-popup-close');
     await expect(page.locator('#builtin-popup-overlay')).not.toBeVisible();
     await expect(builtin).toHaveAttribute('title', /viridis/);
   });
@@ -369,6 +376,8 @@ test.describe('Solve Score UI', () => {
     const firstRow = page.locator('#tri-popup-body .tri-popup-row').first();
     await expect(firstRow).toBeVisible();
     await firstRow.click();
+    await expect(page.locator('#tri-popup-overlay')).toBeVisible();   // stays open on select
+    await page.click('#tri-popup-close');
     const palette = await page.evaluate(() => renderSolveScorePalette);
     const remembered = await page.evaluate(() => renderSolveScoreTriName);
     expect(palette).toBe('tri_redgold');
@@ -391,6 +400,8 @@ test.describe('Solve Score UI', () => {
     const remembered = await page.evaluate(() => renderSolveScoreLongName);
     expect(palette).toBe('long_marvel_spiderman_long');
     expect(remembered).toBe('marvel_spiderman_long');
+    await expect(page.locator('#long-popup-overlay')).toBeVisible();   // stays open on select
+    await page.click('#long-popup-close');
     await expect(page.locator('#long-popup-overlay')).not.toBeVisible();
     await expect(longSwatch).toHaveAttribute('title', /marvel_spiderman_long/);
   });
@@ -415,6 +426,7 @@ test.describe('Solve Score UI', () => {
     await tri.click();
     await page.locator('#tri-popup-filter').fill('rg');
     await page.locator('#tri-popup-body .tri-popup-row').first().click();
+    await page.click('#tri-popup-close');
     await chooseBuiltinPalette(page, 'solve_score', 'viridis');
     const remembered = await page.evaluate(() => renderSolveScoreTriName);
     const activePalette = await page.evaluate(() => renderSolveScorePalette);
@@ -477,12 +489,13 @@ test.describe('Solve Score UI', () => {
     await page.locator('#btn-render-repalette').click();
     await expect(page.locator('#repalette-popup-overlay')).toBeVisible();
     const swatches = page.locator('#palette-circles-repalette .pal-circle');
-    await expect(swatches).toHaveCount(5);
+    await expect(swatches).toHaveCount(6);
     await expect(swatches.nth(0)).toContainText('PAL');
     await expect(swatches.nth(1)).toContainText('TRI');
     await expect(swatches.nth(2)).toContainText('LONG');
     await expect(swatches.nth(3)).toContainText('HEX');
     await expect(swatches.nth(4)).toContainText('MIC');
+    await expect(swatches.nth(5)).toContainText('PIC');
 
     await page.locator('#palette-circles-repalette [data-palette-popup="builtin"]').click();
     await expect(page.locator('#builtin-popup-overlay')).toBeVisible();
@@ -508,6 +521,8 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#mic-popup-status')).toContainText('palettes', { timeout: 20000 });
     await page.fill('#mic-popup-filter', 'kandinsky points');
     await page.locator('#mic-popup-body .tri-popup-row').first().click();
+    await expect(page.locator('#mic-popup-overlay')).toBeVisible();   // stays open on select
+    await page.click('#mic-popup-close');
     await expect(page.locator('#mic-popup-overlay')).toBeHidden();
     const repaletteApplied = await page.evaluate(() => ({
       palette: _currentPaletteForMode('repalette'),

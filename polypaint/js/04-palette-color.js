@@ -753,6 +753,17 @@ function _renderPaletteRow(mode) {
     micSwatch.onclick = () => _openMicPalettePopup(mode);
     children.push(micSwatch);
 
+    const picSwatch = document.createElement('div');
+    picSwatch.className = 'pal-circle pal-circle-builtin pal-circle-pic';
+    picSwatch.dataset.palettePopup = 'pic';
+    picSwatch.textContent = 'PIC';
+    picSwatch.title = 'Extract palette from a photo (processed locally — never uploaded)';
+    picSwatch.style.background = _picLastStops && _picLastStops.length
+        ? _stopsToGradient(_picLastStops.length === 1 ? [_picLastStops[0], _picLastStops[0]] : _picLastStops)
+        : 'linear-gradient(135deg, #2b3a5e 0%, #6b7d9e 50%, #d7dce6 100%)';
+    picSwatch.onclick = () => _openPicPalettePopup(mode);
+    children.push(picSwatch);
+
     container.replaceChildren();
     children.forEach(child => container.appendChild(child));
 }
@@ -1233,6 +1244,7 @@ async function _openCustomPalettePopup(mode) {
     _closeTriPalettePopup();
     _closeLongPalettePopup();
     _closeMicPalettePopup();
+    _closePicPalettePopup();
     _customPalettePopupState.open = true;
     _customPalettePopupState.mode = mode;
     _customPalettePopupState.loading = !_customPaletteCatalogLoaded;
@@ -1478,7 +1490,7 @@ function _renderTriPalettePopup() {
         row.className = cls.join(' ');
         row.onclick = () => {
             _setTriPaletteForMode(_triPopupState.mode, entry.name, true);
-            _closeTriPalettePopup();
+            _renderTriPalettePopup();
         };
 
         const nameCell = document.createElement('td');
@@ -1514,6 +1526,7 @@ function _openTriPalettePopup(mode) {
     _closeBuiltinPalettePopup();
     _closeLongPalettePopup();
     _closeMicPalettePopup();
+    _closePicPalettePopup();
     _syncTriDefaults();
     const visible = _triCatalog();
     const activeName = _triPaletteForMode(mode);
@@ -1571,7 +1584,7 @@ function _renderLongPalettePopup() {
         row.className = cls.join(' ');
         row.onclick = () => {
             _setLongPaletteForMode(_longPopupState.mode, entry.name, true);
-            _closeLongPalettePopup();
+            _renderLongPalettePopup();
         };
 
         const nameCell = document.createElement('td');
@@ -1607,6 +1620,7 @@ function _openLongPalettePopup(mode) {
     _closeBuiltinPalettePopup();
     _closeTriPalettePopup();
     _closeMicPalettePopup();
+    _closePicPalettePopup();
     _syncLongDefaults();
     const visible = _longCatalog();
     const activeName = _longPaletteForMode(mode);
@@ -1664,7 +1678,7 @@ function _renderBuiltinPalettePopup() {
         row.className = cls.join(' ');
         row.onclick = () => {
             _setBuiltinPaletteForMode(_builtinPopupState.mode, entry.name, true);
-            _closeBuiltinPalettePopup();
+            _renderBuiltinPalettePopup();
         };
 
         const nameCell = document.createElement('td');
@@ -1693,6 +1707,7 @@ function _openBuiltinPalettePopup(mode) {
     _closeTriPalettePopup();
     _closeLongPalettePopup();
     _closeMicPalettePopup();
+    _closePicPalettePopup();
     _syncBuiltinDefaults();
     const visible = BUILTIN_PALETTE_ENTRIES;
     const activeName = _builtinPaletteForMode(mode);
@@ -1805,7 +1820,9 @@ function _micApplyEntry(mode, entry) {
     _micPaletteSelectionByMode[mode] = { palette: wire, displayName: entry.name };
     setPaletteForMode(mode, wire, entry.name, { rememberCustom: false });
     if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
-    _closeMicPalettePopup();
+    // Selection keeps the popup open (user workflow: pick, Copy to HEX,
+    // pick the next); the Close button / Esc / backdrop dismiss.
+    _renderMicPalettePopup();
 }
 
 function _micEntryWire(entry) {
@@ -1832,6 +1849,7 @@ function _openMicPalettePopup(mode) {
     _closeBuiltinPalettePopup();
     _closeTriPalettePopup();
     _closeLongPalettePopup();
+    _closePicPalettePopup();
     let filterText = String(_micPopupState.filter || '');
     let page = _micPopupState.page || 0;
     let highlightIdx = 0;
@@ -2009,37 +2027,21 @@ function _micPopupMoveHighlight(delta) {
     }
 }
 
-async function _micCopySelectionToHex(mode) {
-    /* Save the mode's selected MIC palette into the named HEX custom-palette
-       catalog (backend CAS catalog — the HEX popup's own store). Idempotent:
-       identical colors already saved -> report the existing name. */
-    const btn = document.getElementById('mic-popup-copy2hex');
-    const statusEl = document.getElementById('mic-popup-status');
-    const sel = _micPaletteSelectionByMode[mode];
-    const stops = sel && sel.palette ? _customStopsFromName(sel.palette) : null;
-    if (!btn || btn.dataset.busy || !stops || !sel.displayName) return;
-    btn.dataset.busy = '1';
-    btn.disabled = true;
-    btn.textContent = 'Copying…';
-    const finish = (label) => {
-        btn.textContent = label;
-        setTimeout(() => {
-            delete btn.dataset.busy;
-            btn.textContent = 'Copy to HEX';
-            const cur = _micPaletteSelectionByMode[_micPopupState.mode];
-            btn.disabled = !(cur && cur.palette);
-        }, 1600);
-    };
+async function _saveEntryToCustomCatalog(displayName, stops) {
+    /* Shared save core (Copy2HEX + the PIC photo picker): persist one named
+       palette into the HEX custom catalog via its CAS flow. Idempotent by
+       palette spec; name collisions get a numbered suffix; one automatic
+       retry after a revision conflict. Returns {saved} or {already}. */
     const saveOnce = async () => {
         const palette = _customPaletteNameFromStops(stops);
         const existing = _customPaletteCatalog.find(entry => entry.palette === palette);
         if (existing) return { already: existing.name };
-        let name = sel.displayName;
+        let name = displayName;
         const lower = new Set(_customPaletteCatalog.map(entry => entry.name.toLocaleLowerCase()));
         let counter = 2;
         while (lower.has(name.toLocaleLowerCase())) {
             const suffix = ` (${counter++})`;
-            name = sel.displayName.slice(0, CUSTOM_PALETTE_MAX_NAME_LEN - suffix.length) + suffix;
+            name = displayName.slice(0, CUSTOM_PALETTE_MAX_NAME_LEN - suffix.length) + suffix;
         }
         const entry = { name, stops, hexText: stops.join(', '), palette };
         const validation = _customPaletteValidation([..._customPaletteCatalog, entry]);
@@ -2058,17 +2060,39 @@ async function _micCopySelectionToHex(mode) {
             .forEach(m => _renderPaletteRow(m));
         return { saved: name };
     };
+    await _loadCustomPaletteCatalog();
     try {
-        await _loadCustomPaletteCatalog();
-        let outcome;
-        try {
-            outcome = await saveOnce();
-        } catch (error) {
-            if (!/\b409\b|custom_palette_revision|custom palette catalog changed/i.test(String(error && error.message || error))) throw error;
-            // another session moved the catalog — refetch once and retry
-            await _loadCustomPaletteCatalog(true);
-            outcome = await saveOnce();
-        }
+        return await saveOnce();
+    } catch (error) {
+        if (!/\b409\b|custom_palette_revision|custom palette catalog changed/i.test(String(error && error.message || error))) throw error;
+        // another session moved the catalog — refetch once and retry
+        await _loadCustomPaletteCatalog(true);
+        return await saveOnce();
+    }
+}
+
+async function _micCopySelectionToHex(mode) {
+    /* Save the mode's selected MIC palette into the named HEX custom-palette
+       catalog. Button carries busy + lingering result per the house rule. */
+    const btn = document.getElementById('mic-popup-copy2hex');
+    const statusEl = document.getElementById('mic-popup-status');
+    const sel = _micPaletteSelectionByMode[mode];
+    const stops = sel && sel.palette ? _customStopsFromName(sel.palette) : null;
+    if (!btn || btn.dataset.busy || !stops || !sel.displayName) return;
+    btn.dataset.busy = '1';
+    btn.disabled = true;
+    btn.textContent = 'Copying…';
+    const finish = (label) => {
+        btn.textContent = label;
+        setTimeout(() => {
+            delete btn.dataset.busy;
+            btn.textContent = 'Copy to HEX';
+            const cur = _micPaletteSelectionByMode[_micPopupState.mode];
+            btn.disabled = !(cur && cur.palette);
+        }, 1600);
+    };
+    try {
+        const outcome = await _saveEntryToCustomCatalog(sel.displayName, stops);
         if (statusEl) {
             statusEl.textContent = outcome.already
                 ? `Already saved in HEX as "${outcome.already}".`
@@ -2131,6 +2155,488 @@ function _initMicPalettePopup() {
             }
         });
     }
+}
+
+/* ---- PIC popup: extract a palette from a local photo ----
+   photo-palette.md: the MIC artwork algorithm (validated in
+   scripts/extract_image_palette.py) running fully client-side — the photo
+   never leaves the browser; only name+stops go to the HEX catalog. */
+
+let _picPopupState = { open: false, mode: null, fileName: '', name: '', colors: 12, sampling: 'med', style: 'editorial', bitmap: null, palette: [], busy: false, error: '', runToken: 0 };
+let _picLastStops = null;   // last extraction: the PIC swatch face (per session)
+
+const PIC_SAMPLING_TARGETS = { low: 4000, med: 12000, high: 40000 };
+const PIC_MAX_WIDTH = 400;
+const PIC_KMEANS_K = 28;
+const PIC_KMEANS_ITERS = 25;
+const PIC_MERGE_OKLAB = 0.04;
+const PIC_MIN_COUNT_FRACTION = 0.002;
+
+function _picRgbToOklab(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    r = r > 0.04045 ? Math.pow((r + 0.055) / 1.055, 2.4) : r / 12.92;
+    g = g > 0.04045 ? Math.pow((g + 0.055) / 1.055, 2.4) : g / 12.92;
+    b = b > 0.04045 ? Math.pow((b + 0.055) / 1.055, 2.4) : b / 12.92;
+    const l_ = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+    const m_ = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+    const s_ = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+    const l1 = Math.cbrt(l_), m1 = Math.cbrt(m_), s1 = Math.cbrt(s_);
+    return [
+        0.2104542553 * l1 + 0.7936177850 * m1 - 0.0040720468 * s1,
+        1.9779984951 * l1 - 2.4285922050 * m1 + 0.4505937099 * s1,
+        0.0259040371 * l1 + 0.7827717662 * m1 - 0.8086757660 * s1,
+    ];
+}
+
+function _picOklabDist(a, b) {
+    return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+function _picRgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let h = 0, sat = 0;
+    const l = (mx + mn) / 2;
+    if (d !== 0) {
+        sat = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+        if (mx === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+        else if (mx === g) h = ((b - r) / d + 2) / 6;
+        else h = ((r - g) / d + 4) / 6;
+    }
+    return { h: h * 360, s: sat, l };
+}
+
+function _picClassify(r, g, b, lab) {
+    const hsl = _picRgbToHsl(r, g, b);
+    const chroma = Math.hypot(lab[1], lab[2]);
+    const hue = hsl.h, sat = hsl.s, light = hsl.l;
+    const isCoolMuted = hue >= 185 && hue <= 250 && b >= r + 8 && b >= g + 4
+        && (sat >= 0.05 || chroma >= 0.018) && light > 0.18 && light < 0.82;
+    const isNeutral = !isCoolMuted && (chroma < 0.022 || sat < 0.10);
+    const isEarth = !isNeutral && hue >= 15 && hue <= 78 && sat < 0.45
+        && chroma < 0.11 && light > 0.12 && light < 0.76;
+    let family = 'red';
+    if (isEarth) family = 'earth';
+    else if (isNeutral) family = 'neutral';
+    else if (isCoolMuted || (hue >= 185 && hue < 265)) family = 'blue';
+    else if (hue >= 150 && hue < 185) family = 'teal';
+    else if (hue >= 85 && hue < 150) family = 'green';
+    else if (hue >= 55 && hue < 85) family = 'yellow';
+    else if (hue >= 25 && hue < 55) family = 'orange';
+    else if (hue >= 265 && hue < 330) family = 'violet';
+    return { chroma, family, isEarth, isNeutral, isCoolMuted };
+}
+
+function _picSampleBitmap(bitmap, target) {
+    const w0 = bitmap.width, h0 = bitmap.height;
+    const w = Math.min(w0, PIC_MAX_WIDTH);
+    const h = Math.max(1, Math.round(w * (h0 / w0)));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    const step = Math.max(1, Math.floor(Math.sqrt((w * h) / target)));
+    const samples = [];
+    for (let y = 0; y < h; y += step) {
+        for (let x = 0; x < w; x += step) {
+            const i = (y * w + x) * 4;
+            if (px[i + 3] > 128) samples.push([px[i], px[i + 1], px[i + 2]]);
+        }
+    }
+    return samples;
+}
+
+function _picKmeans(samples) {
+    const n = samples.length;
+    const centers = [samples[Math.floor(Math.random() * n)].slice()];
+    const d2 = new Float64Array(n).fill(Infinity);
+    for (let c = 1; c < PIC_KMEANS_K; c++) {
+        const last = centers[centers.length - 1];
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+            const s = samples[i];
+            const dd = (s[0] - last[0]) ** 2 + (s[1] - last[1]) ** 2 + (s[2] - last[2]) ** 2;
+            if (dd < d2[i]) d2[i] = dd;
+            total += d2[i];
+        }
+        let r = Math.random() * total;
+        let idx = n - 1;
+        for (let i = 0; i < n; i++) { r -= d2[i]; if (r <= 0) { idx = i; break; } }
+        centers.push(samples[idx].slice());
+    }
+    const assign = new Int32Array(n);
+    for (let iter = 0; iter < PIC_KMEANS_ITERS; iter++) {
+        const sums = centers.map(() => [0, 0, 0, 0]);
+        for (let i = 0; i < n; i++) {
+            const s = samples[i];
+            let bi = 0, bd = Infinity;
+            for (let c = 0; c < centers.length; c++) {
+                const ctr = centers[c];
+                const dd = (s[0] - ctr[0]) ** 2 + (s[1] - ctr[1]) ** 2 + (s[2] - ctr[2]) ** 2;
+                if (dd < bd) { bd = dd; bi = c; }
+            }
+            assign[i] = bi;
+            const acc = sums[bi];
+            acc[0] += s[0]; acc[1] += s[1]; acc[2] += s[2]; acc[3] += 1;
+        }
+        for (let c = 0; c < centers.length; c++) {
+            if (sums[c][3] > 0) centers[c] = [sums[c][0] / sums[c][3], sums[c][1] / sums[c][3], sums[c][2] / sums[c][3]];
+        }
+    }
+    const counts = new Array(PIC_KMEANS_K).fill(0);
+    for (let i = 0; i < n; i++) counts[assign[i]] += 1;
+    return { centers, counts };
+}
+
+function _picMerge(centers, counts) {
+    const labs = centers.map(c => _picRgbToOklab(c[0], c[1], c[2]));
+    const order = centers.map((_, i) => i).sort((a, b) => counts[b] - counts[a]);
+    const used = new Set();
+    const merged = [];
+    for (const i of order) {
+        if (used.has(i)) continue;
+        let mr = centers[i][0] * counts[i], mg = centers[i][1] * counts[i], mb = centers[i][2] * counts[i];
+        let mn = counts[i];
+        used.add(i);
+        for (const j of order) {
+            if (used.has(j)) continue;
+            if (_picOklabDist(labs[i], labs[j]) < PIC_MERGE_OKLAB) {
+                mr += centers[j][0] * counts[j]; mg += centers[j][1] * counts[j]; mb += centers[j][2] * counts[j];
+                mn += counts[j];
+                used.add(j);
+            }
+        }
+        const rgb = [mr / mn, mg / mn, mb / mn];
+        merged.push({ rgb, lab: _picRgbToOklab(rgb[0], rgb[1], rgb[2]), count: mn, i });
+    }
+    return merged;
+}
+
+function _picBuildCandidates(merged, totalCount, style) {
+    return merged.map(m => {
+        const info = _picClassify(m.rgb[0], m.rgb[1], m.rgb[2], m.lab);
+        const share = totalCount > 0 ? m.count / totalCount : 0;
+        let score = Math.sqrt(share);
+        if (style === 'editorial') {
+            score *= 1 + Math.min(info.chroma / 0.055, 2.25);
+            if (info.isCoolMuted) score *= 1.45;
+            if (info.family === 'blue') score *= 1.32;
+            else if (info.family === 'teal') score *= 1.18;
+            if (!info.isEarth && !info.isNeutral) score *= 1.08;
+            if (info.isEarth) score *= 0.58;
+            else if (info.isNeutral) score *= 0.82;
+        }
+        return { ...m, ...info, share, score };
+    }).sort((a, b) => b.score - a.score);
+}
+
+function _picSelectCandidates(candidates, target, style) {
+    target = Math.max(1, target);
+    const editorial = style === 'editorial';
+    const earthLimit = target <= 8 ? 2 : 3;
+    const neutralLimit = target <= 8 ? 1 : 2;
+    const familySoftLimit = target <= 8 ? 2 : 3;
+    const selected = [];
+    const selectedIds = new Set();
+    const familyCounts = {};
+    let earthCount = 0, neutralCount = 0;
+    const tooClose = cand => selected.some(ex => {
+        const thr = (cand.isEarth || ex.isEarth || cand.isNeutral || ex.isNeutral) ? 0.07 : 0.055;
+        return _picOklabDist(cand.lab, ex.lab) < thr;
+    });
+    const add = cand => {
+        if (!cand || selectedIds.has(cand.i)) return;
+        selected.push(cand);
+        selectedIds.add(cand.i);
+        familyCounts[cand.family] = (familyCounts[cand.family] || 0) + 1;
+        if (cand.isEarth) earthCount += 1;
+        if (cand.isNeutral) neutralCount += 1;
+    };
+    if (editorial) {
+        const accentByFamily = new Map();
+        for (const cand of candidates) {
+            if (cand.isEarth || cand.isNeutral) continue;
+            if (!accentByFamily.has(cand.family)) accentByFamily.set(cand.family, cand);
+        }
+        const accentSeeds = Array.from(accentByFamily.values()).sort((a, b) => b.score - a.score);
+        const accentTarget = Math.min(target, Math.max(3, Math.ceil(target / 3)));
+        for (const cand of accentSeeds) {
+            if (selected.length >= accentTarget) break;
+            if (tooClose(cand)) continue;
+            add(cand);
+        }
+        const blue = candidates.find(c => c.family === 'blue' && !selectedIds.has(c.i));
+        if (blue && selected.length < target && blue.share >= 0.004 && !tooClose(blue)) add(blue);
+    }
+    for (const cand of candidates) {
+        if (selected.length >= target) break;
+        if (selectedIds.has(cand.i)) continue;
+        if (editorial) {
+            if (cand.isEarth && earthCount >= earthLimit) continue;
+            if (cand.isNeutral && neutralCount >= neutralLimit) continue;
+            if (!cand.isEarth && !cand.isNeutral && (familyCounts[cand.family] || 0) >= familySoftLimit) continue;
+        }
+        if (tooClose(cand)) continue;
+        add(cand);
+    }
+    for (const cand of candidates) {
+        if (selected.length >= target) break;
+        if (selectedIds.has(cand.i) || tooClose(cand)) continue;
+        add(cand);
+    }
+    for (const cand of candidates) {
+        if (selected.length >= target) break;
+        if (selectedIds.has(cand.i)) continue;
+        add(cand);
+    }
+    return selected.sort((a, b) => b.score - a.score);
+}
+
+function _picExtractPalette(bitmap, { colors = 12, sampling = 'med', style = 'editorial' } = {}) {
+    const samples = _picSampleBitmap(bitmap, PIC_SAMPLING_TARGETS[sampling] || PIC_SAMPLING_TARGETS.med);
+    if (samples.length < 20) throw new Error('image yields too few opaque pixels');
+    const { centers, counts } = _picKmeans(samples);
+    const merged = _picMerge(centers, counts);
+    const total = merged.reduce((acc, m) => acc + m.count, 0);
+    const minCount = Math.max(1, total * PIC_MIN_COUNT_FRACTION);
+    const candidates = _picBuildCandidates(merged.filter(m => m.count >= minCount), total, style);
+    if (!candidates.length) throw new Error('no palette candidates survived');
+    const chosen = _picSelectCandidates(candidates, colors, style);
+    const pickedTotal = chosen.reduce((acc, c) => acc + c.count, 0) || 1;
+    return chosen.map(c => {
+        const hex = '#' + c.rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+        return { hex, share: c.count / pickedTotal, family: c.family };
+    });
+}
+
+function _openPicPalettePopup(mode) {
+    if (!_closeCustomPalettePopup()) return;
+    _closeBuiltinPalettePopup();
+    _closeTriPalettePopup();
+    _closeLongPalettePopup();
+    _closeMicPalettePopup();
+    // keep the loaded photo + palette across reopens within the session
+    _picPopupState.open = true;
+    _picPopupState.mode = mode;
+    _picPopupState.error = '';
+    _renderPicPalettePopup();
+}
+
+function _closePicPalettePopup() {
+    _picPopupState.open = false;
+    const overlay = document.getElementById('pic-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+async function _picLoadFile(file) {
+    if (!file) return;
+    const st = _picPopupState;
+    st.error = '';
+    st.fileName = String(file.name || '');
+    st.name = _picNameFromFilename(st.fileName);
+    try {
+        if (typeof createImageBitmap === 'function') {
+            try {
+                st.bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+            } catch (e) {
+                st.bitmap = await createImageBitmap(file);
+            }
+        } else {
+            st.bitmap = await new Promise((resolve, reject) => {
+                const url = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image failed to decode')); };
+                img.src = url;
+            });
+        }
+    } catch (e) {
+        st.bitmap = null;
+        st.palette = [];
+        st.error = 'This browser cannot decode that image (HEIC in Chrome? export as JPG).';
+        _renderPicPalettePopup();
+        return;
+    }
+    _picRecompute();
+}
+
+function _picRecompute() {
+    const st = _picPopupState;
+    if (!st.bitmap) { _renderPicPalettePopup(); return; }
+    const token = ++st.runToken;
+    st.busy = true;
+    st.error = '';
+    _renderPicPalettePopup();
+    // yield a frame so the busy state paints before the ~100-300ms crunch
+    setTimeout(() => {
+        if (token !== st.runToken) return;
+        try {
+            st.palette = _picExtractPalette(st.bitmap, {
+                colors: st.colors, sampling: st.sampling, style: st.style,
+            });
+            _picLastStops = st.palette.map(p => p.hex);
+            if (st.palette.length < st.colors) {
+                st.error = `image yields only ${st.palette.length} distinct colors`;
+            }
+        } catch (e) {
+            st.palette = [];
+            st.error = String(e && e.message ? e.message : e);
+        }
+        st.busy = false;
+        _renderPicPalettePopup();
+        ['proximity', 'solve_score', 'palette_tab', 'repalette', 'color_repalette']
+            .forEach(m => _renderPaletteRow(m));
+    }, 30);
+}
+
+function _picSetControl(which, value) {
+    const st = _picPopupState;
+    if (which === 'colors') st.colors = Math.max(3, Math.min(32, Math.round(Number(value) || 12)));
+    else if (which === 'sampling') st.sampling = PIC_SAMPLING_TARGETS[value] ? value : 'med';
+    else if (which === 'style') st.style = value === 'literal' ? 'literal' : 'editorial';
+    _picRecompute();
+}
+
+function _picUseNow() {
+    const st = _picPopupState;
+    const btn = document.getElementById('pic-popup-use');
+    if (!st.palette.length || !btn || btn.dataset.busy) return;
+    const stops = st.palette.map(p => p.hex);
+    const wire = _micPaletteWire(stops);
+    if (!wire) return;
+    setPaletteForMode(st.mode, wire, st.name);
+    if (st.mode === 'proximity' || st.mode === 'solve_score') setColorMode(st.mode);
+    btn.dataset.busy = '1';
+    btn.textContent = '✓ Applied';
+    setTimeout(() => { delete btn.dataset.busy; btn.textContent = 'Use now'; }, 1200);
+}
+
+async function _picSaveToHex() {
+    const st = _picPopupState;
+    const btn = document.getElementById('pic-popup-save');
+    const statusEl = document.getElementById('pic-popup-status');
+    if (!st.palette.length || !btn || btn.dataset.busy) return;
+    const stops = st.palette.map(p => p.hex);
+    btn.dataset.busy = '1';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    const finish = (label) => {
+        btn.textContent = label;
+        setTimeout(() => {
+            delete btn.dataset.busy;
+            btn.textContent = 'Save to HEX';
+            btn.disabled = !_picPopupState.palette.length;
+        }, 1600);
+    };
+    try {
+        const outcome = await _saveEntryToCustomCatalog(st.name || 'photo palette', stops);
+        if (statusEl) {
+            statusEl.textContent = outcome.already
+                ? `Already saved in HEX as "${outcome.already}".`
+                : `Saved to HEX as "${outcome.saved}".`;
+        }
+        finish(outcome.already ? '✓ Already in HEX' : '✓ Saved to HEX');
+    } catch (error) {
+        if (statusEl) statusEl.textContent = `Save failed: ${error && error.message ? error.message : error}`;
+        finish('✗ Save failed');
+    }
+}
+
+function _renderPicPalettePopup() {
+    const overlay = document.getElementById('pic-popup-overlay');
+    const titleEl = document.getElementById('pic-popup-title');
+    const statusEl = document.getElementById('pic-popup-status');
+    const stripEl = document.getElementById('pic-popup-strip');
+    const previewEl = document.getElementById('pic-popup-preview');
+    const nameEl = document.getElementById('pic-popup-name');
+    const colorsEl = document.getElementById('pic-popup-colors');
+    const useBtn = document.getElementById('pic-popup-use');
+    const saveBtn = document.getElementById('pic-popup-save');
+    const rerollBtn = document.getElementById('pic-popup-reroll');
+    if (!overlay || !titleEl || !statusEl || !stripEl) return;
+    const st = _picPopupState;
+    if (!st.open) { _closePicPalettePopup(); return; }
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    titleEl.textContent = 'Extract palette from a photo for ' + _popupModeLabel(st.mode);
+    if (nameEl && nameEl.value !== st.name) nameEl.value = st.name;
+    if (colorsEl && colorsEl.value !== String(st.colors)) colorsEl.value = String(st.colors);
+    document.querySelectorAll('input[name="pic-popup-sampling"]').forEach(radio => {
+        radio.checked = radio.value === st.sampling;
+    });
+    document.querySelectorAll('input[name="pic-popup-style"]').forEach(radio => {
+        radio.checked = radio.value === st.style;
+    });
+    if (previewEl) {
+        previewEl.replaceChildren();
+        if (st.bitmap) {
+            const canvas = document.createElement('canvas');
+            const scale = Math.min(1, 200 / st.bitmap.width, 200 / st.bitmap.height);
+            canvas.width = Math.max(1, Math.round(st.bitmap.width * scale));
+            canvas.height = Math.max(1, Math.round(st.bitmap.height * scale));
+            canvas.getContext('2d').drawImage(st.bitmap, 0, 0, canvas.width, canvas.height);
+            previewEl.appendChild(canvas);
+        } else {
+            previewEl.textContent = 'Pick a photo (or drop one here)';
+        }
+    }
+    stripEl.replaceChildren();
+    for (const entry of st.palette) {
+        const cell = document.createElement('div');
+        cell.className = 'pic-popup-cell';
+        cell.style.background = entry.hex;
+        cell.style.flexGrow = String(Math.max(entry.share, 0.02));
+        cell.title = `${entry.hex} · ${(entry.share * 100).toFixed(1)}% · ${entry.family}`;
+        stripEl.appendChild(cell);
+    }
+    statusEl.textContent = st.error
+        ? st.error
+        : (st.busy ? 'Extracting…'
+            : (st.palette.length ? `${st.palette.length} colors — the photo stays in your browser`
+                : 'The photo is processed locally; nothing uploads.'));
+    const ready = !!st.palette.length && !st.busy;
+    if (useBtn && !useBtn.dataset.busy) useBtn.disabled = !ready;
+    if (saveBtn && !saveBtn.dataset.busy) saveBtn.disabled = !ready;
+    if (rerollBtn) rerollBtn.disabled = !st.bitmap || st.busy;
+}
+
+function _initPicPalettePopup() {
+    _bindPopupShell({
+        overlayId: 'pic-popup-overlay',
+        closeId: 'pic-popup-close',
+        isOpen: () => !!_picPopupState.open,
+        onClose: _closePicPalettePopup,
+    });
+    const fileEl = document.getElementById('pic-popup-file');
+    if (fileEl) fileEl.addEventListener('change', () => {
+        void _picLoadFile(fileEl.files && fileEl.files[0]);
+    });
+    const nameEl = document.getElementById('pic-popup-name');
+    if (nameEl) nameEl.addEventListener('input', () => {
+        _picPopupState.name = nameEl.value.slice(0, CUSTOM_PALETTE_MAX_NAME_LEN);
+    });
+    const dropZone = document.getElementById('pic-popup-preview');
+    if (dropZone) {
+        dropZone.addEventListener('dragover', ev => { ev.preventDefault(); });
+        dropZone.addEventListener('drop', ev => {
+            ev.preventDefault();
+            const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+            if (file) void _picLoadFile(file);
+        });
+    }
+}
+
+function _picNameFromFilename(fileName) {
+    let stem = String(fileName || '').replace(/\.[^.]*$/, '');
+    stem = stem.replace(/[_\-]+/g, ' ');
+    stem = Array.from(stem).filter(ch => ch >= ' ' && ch !== '\u007f').join('');
+    stem = stem.replace(/\s+/g, ' ').trim();
+    if (!stem) stem = 'photo palette';
+    return stem.slice(0, CUSTOM_PALETTE_MAX_NAME_LEN);
 }
 
 function _bindPopupShell({ overlayId, closeId, cancelId, isOpen, onClose, onEnter, onArrowDown, onArrowUp }) {
@@ -2201,7 +2707,7 @@ function _initTriPalettePopup() {
             const entry = visible[Math.max(0, Math.min(_triPopupState.highlightIdx || 0, visible.length - 1))];
             if (!entry) return;
             _setTriPaletteForMode(_triPopupState.mode, entry.name, true);
-            _closeTriPalettePopup();
+            _renderTriPalettePopup();
         },
     });
     if (filterEl) filterEl.addEventListener('input', (ev) => _applyTriPopupFilter(ev.target.value));
@@ -2232,7 +2738,7 @@ function _initBuiltinPalettePopup() {
             const entry = visible[Math.max(0, Math.min(_builtinPopupState.highlightIdx || 0, visible.length - 1))];
             if (!entry) return;
             _setBuiltinPaletteForMode(_builtinPopupState.mode, entry.name, true);
-            _closeBuiltinPalettePopup();
+            _renderBuiltinPalettePopup();
         },
     });
     if (filterEl) filterEl.addEventListener('input', (ev) => _applyBuiltinPopupFilter(ev.target.value));
@@ -2263,7 +2769,7 @@ function _initLongPalettePopup() {
             const entry = visible[Math.max(0, Math.min(_longPopupState.highlightIdx || 0, visible.length - 1))];
             if (!entry) return;
             _setLongPaletteForMode(_longPopupState.mode, entry.name, true);
-            _closeLongPalettePopup();
+            _renderLongPalettePopup();
         },
     });
     if (filterEl) filterEl.addEventListener('input', (ev) => _applyLongPopupFilter(ev.target.value));

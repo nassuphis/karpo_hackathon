@@ -98,8 +98,12 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   onto its path.
   Both follow the height-SCALED geometry so squashed plate stacks get a
   skimming pass. Any manual interaction (canvas pointerdown, a movement
-  key, entering fly) stops the tour and re-anchors the orbit target
-  ahead of the camera; starting a tour exits pointer lock. Deterministic
+  key, entering fly) stops the tour and hands the ORBIT PIVOT back at
+  the tour's own look point — the cube middle for orbit (user-caught:
+  the fly-exit "0.9 ahead" anchor moved the rotation center to the
+  viewpoint, so post-tour drags orbited the camera and felt reversed).
+  Fly exit keeps the ahead-anchor (first-person semantics). Starting a
+  tour exits pointer lock. Deterministic
   in t — the smoke spec drives the tick and pins the parametrization,
   radii (exterior 1.35 vs interior <1), mode-switch reset, and the
   interaction-stops handoffs.

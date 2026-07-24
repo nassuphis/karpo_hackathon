@@ -708,9 +708,12 @@ async function boot() {
             camera.getWorldDirection(tourBlendLook);
             tourBlendLook.multiplyScalar(1.0).add(p);
         } else {
-            const ahead = new THREE.Vector3();
-            camera.getWorldDirection(ahead);
-            controls.target.copy(camera.position).addScaledVector(ahead, 0.9);
+            // hand the pivot back at the tour's own look point — the cube
+            // middle for orbit. The fly-exit "0.9 ahead" anchor moved the
+            // rotation center to the VIEWPOINT (user-caught: drags then
+            // orbited the camera, not the sculpture, feeling reversed).
+            const p = tourPose(tourModeCtl.value, tour.t, sculpt.scale.y);
+            controls.target.set(p.look[0], p.look[1], p.look[2]);
         }
     };
     tourBtn.addEventListener('click', () => tourSetPlaying(!tour.playing));

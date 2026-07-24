@@ -876,9 +876,14 @@ test('tours: orbit and weave follow their parametric paths; interaction stops th
       radius: Math.hypot(w.x, w.z),
     };
 
-    // pointerdown on the canvas hands control back
+    // pointerdown on the canvas hands control back — and the pivot returns
+    // to the ORBIT'S look point (the cube middle), never a point just ahead
+    // of the camera (that made drags orbit the viewpoint, feeling reversed)
+    const stopLook = v.tour.pose(mode.value, v.tour.state.t, v.sculpt.scale.y).look;
     v.renderer.domElement.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-    out.afterPointer = { playing: v.tour.state.playing, btn: btn.textContent, orbit: v.controls.enabled };
+    out.afterPointer = { playing: v.tour.state.playing, btn: btn.textContent, orbit: v.controls.enabled,
+                         target: [v.controls.target.x, v.controls.target.y, v.controls.target.z],
+                         stopLook };
 
     // movement keys stop a re-started tour too
     btn.click();
@@ -898,7 +903,10 @@ test('tours: orbit and weave follow their parametric paths; interaction stops th
   expect(st.weaveReset).toBe(0);
   expect(st.weavePath.matches).toBe(true);
   expect(st.weavePath.radius).toBeLessThan(1.0);      // interior pass
-  expect(st.afterPointer).toEqual({ playing: false, btn: '\u25b6', orbit: true });
+  expect(st.afterPointer.playing).toBe(false);
+  expect(st.afterPointer.btn).toBe('\u25b6');
+  expect(st.afterPointer.orbit).toBe(true);
+  expect(st.afterPointer.target).toEqual(st.afterPointer.stopLook);   // pivot = the tour's look point
   expect(st.afterKey.playing).toBe(false);
   expect(st.afterKey.keyF).toBe(1);                   // the key still flies
 

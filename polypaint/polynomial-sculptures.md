@@ -27,7 +27,13 @@ programs give continuous sheets; KNIFE/escape programs punch volumes out.
 The handler uploads what the viewer needs (public bucket, no presigning):
 
 - roots: `renders/{job}/sculpture_roots.bin` (f32 interleaved `[re,im]`,
-  serpentine step order — reused `lores.bin` in physical mode)
+  serpentine step order). These are the raster's TRANSFORMED dump
+  (`roots2pix_mt --xformed_roots_output`): the root-transform script (rt —
+  rotate_roots/CAMERA/KNIFE/…) and the viewport rotation applied by the
+  exact C code path that plots, recorded before the finite/viewport clip.
+  The raw transport artifact is never uploaded — it ignores both, so a
+  sculpture built from it diverges from the plot (user-caught on
+  escape-camera pieces). No `lores.bin` reuse in any mode.
 - colors: `renders/{job}/sculpture_palette.png` — the per-step palette
   image (grid_n × grid_n, de-serpentined to (row, col), the job's actual
   palette + equalization applied by `render_score_raw`). One solve = one
@@ -101,10 +107,14 @@ subsampled (which "logical" already does server-side).
 
 ## Tests
 
-- `tests/test_render_lores_preview_handler.py`: physical reuses
-  `lores.bin` + uploads only the palette PNG; recompute uploads fresh
-  roots (exact bytes + content types pinned); non-square grid → friendly
-  error; the no-flag path stays upload-free.
+- `tests/test_render_lores_preview_handler.py`: sculpture uploads the
+  transformed dump + palette PNG (exact bytes, content types, no-cache
+  pinned); non-square grid → friendly error; the no-flag path stays
+  upload-free and passes no `--xformed_roots_output`.
+- `tests/test_raster_mt_parity.py`: compiles the real C locally and pins
+  the dump against rotate_roots(0.25) + a 0.5-rad viewport rotation in
+  closed form, multi-worker (threads=2), including an out-of-viewport
+  root the plot clips but the dump must keep.
 - `tests/e2e/sculpture-viewer-smoke.spec.js` (SwiftShader, gallery-smoke
   pattern): module graph + no-params message; truncated-bin message; real
   scene build with serpentine z pin (step 4 → col 3 → Y=0.25), exact

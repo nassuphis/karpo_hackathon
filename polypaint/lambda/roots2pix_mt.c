@@ -93,6 +93,7 @@ typedef struct {
     unsigned char *stepScores;
     long stepScoreCount;
     int stepScoreChannels;
+    float *xformedRoots;      /* post-xform post-rotation [re,im] per assigned step, or NULL */
     long rootsPlotted;
     long rootsClipped;
     long rootsDeduped;
@@ -237,6 +238,7 @@ static void free_worker_storage(WorkerArgs *args, int nWorkers) {
         free(args[i].fragmentByteVec.data);
         free(args[i].paletteFragmentByteVec.data);
         free(args[i].stepScores);
+        free(args[i].xformedRoots);
     }
 }
 
@@ -529,6 +531,16 @@ static void *worker_main(void *arg_) {
             double dy = im - arg->centerIm;
             double rotRe = arg->centerRe + (dx * arg->cosA - dy * arg->sinA);
             double rotIm = arg->centerIm + (dx * arg->sinA + dy * arg->cosA);
+            if (arg->xformedRoots) {
+                long xLocalIdx = p - arg->start;
+                if (xLocalIdx < 0 || xLocalIdx >= arg->stepScoreCount) {
+                    worker_fail(arg, "xformed roots local index out of range");
+                    goto cleanup;
+                }
+                size_t xbase = ((size_t)xLocalIdx * (size_t)arg->degree + (size_t)r) * 2;
+                arg->xformedRoots[xbase] = (float)rotRe;
+                arg->xformedRoots[xbase + 1] = (float)rotIm;
+            }
             double pxf = (rotRe - arg->minRe) * arg->xScale;
             double pyf = (arg->maxIm - rotIm) * arg->yScale;
             if (!isfinite(pxf) || !isfinite(pyf)) {
@@ -590,6 +602,7 @@ int main(int argc, char **argv) {
                 "--fragment_prefix=/tmp/fused_fragment "
                 "[--associated_palette_fragment_prefix=/tmp/palette_fragment] [--palette_grid_n=N] [--palette_step_start=STEP] "
                 "[--step_scores_output=/tmp/step_scores.bin] "
+                "[--xformed_roots_output=/tmp/xformed_roots.bin] "
                 "[--root_xforms=file.json]\n");
         return 1;
     }
@@ -599,6 +612,7 @@ int main(int argc, char **argv) {
         "--rotation", "--degree", "--retries", "--threads", "--step_count",
         "--prelude_rows", "--score_coeff_prelude_rows", "--score_param_prelude_rows",
         "--fragment_prefix", "--associated_palette_fragment_prefix", "--step_scores_output",
+        "--xformed_roots_output",
         "--palette_grid_n", "--palette_step_start", "--root_xforms",
         "--score_metrics", "--score_sources",
         "--score_clip_los", "--score_clip_his", "--score_program",
@@ -633,6 +647,7 @@ int main(int argc, char **argv) {
     const char *fragmentPrefix = getArgStr(argc, argv, "--fragment_prefix", NULL);
     const char *paletteFragmentPrefix = getArgStr(argc, argv, "--associated_palette_fragment_prefix", NULL);
     const char *stepScoresOutputPath = getArgStr(argc, argv, "--step_scores_output", NULL);
+    const char *xformedRootsOutputPath = getArgStr(argc, argv, "--xformed_roots_output", NULL);
     int paletteGridN = getArgInt(argc, argv, "--palette_grid_n", 0);
     long long paletteStepStart = getArgLongLong(argc, argv, "--palette_step_start", 0);
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
@@ -954,6 +969,7 @@ int main(int argc, char **argv) {
     int emitFragments = fragmentPrefix && *fragmentPrefix;
     int emitPaletteBins = paletteFragmentPrefix && *paletteFragmentPrefix;
     int emitStepScores = stepScoresOutputPath && *stepScoresOutputPath;
+    int emitXformedRoots = xformedRootsOutputPath && *xformedRootsOutputPath;
     if (!emitFragments) {
         fprintf(stderr, "roots2pix_mt requires --fragment_prefix for fused fragment output\n");
         return 1;
@@ -1097,7 +1113,11 @@ int main(int argc, char **argv) {
             ? calloc((size_t)(width > 0 ? width : 1) * (size_t)args[i].stepScoreChannels, sizeof(unsigned char))
             : NULL;
         args[i].stepScoreCount = width;
-        if (emitStepScores && !args[i].stepScores) {
+        args[i].xformedRoots = emitXformedRoots
+            ? calloc((size_t)(width > 0 ? width : 1) * (size_t)args[i].degree * 2, sizeof(float))
+            : NULL;
+        if ((emitStepScores && !args[i].stepScores)
+            || (emitXformedRoots && !args[i].xformedRoots)) {
             fprintf(stderr, "Out of memory for worker vectors\n");
             goto cleanup;
         }
@@ -1211,6 +1231,24 @@ int main(int argc, char **argv) {
             }
         }
         fclose(fs);
+    }
+    if (emitXformedRoots) {
+        FILE *fx = fopen(xformedRootsOutputPath, "wb");
+        if (!fx) {
+            fprintf(stderr, "Cannot create %s\n", xformedRootsOutputPath);
+            goto cleanup;
+        }
+        for (int i = 0; i < threads; i++) {
+            if (args[i].stepScoreCount > 0 && args[i].xformedRoots) {
+                fwrite(
+                    args[i].xformedRoots,
+                    sizeof(float),
+                    (size_t)args[i].stepScoreCount * (size_t)args[i].degree * 2,
+                    fx
+                );
+            }
+        }
+        fclose(fx);
     }
 
     if (rootsDeduped > 0) {

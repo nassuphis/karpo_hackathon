@@ -220,6 +220,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertIn("--associated_palette_fragment_prefix=/tmp/render_lores_preview_palette_fragment", raster_cmd)
         self.assertIn("--palette_grid_n=1", raster_cmd)
         self.assertIn("--palette_step_start=0", raster_cmd)
+        self.assertFalse(any(arg.startswith("--xformed_roots_output=") for arg in raster_cmd))
         image_render_call = mock_render.call_args_list[0].kwargs
         self.assertEqual(image_render_call["background_color"], "aabbcc")
         palette_render_call = mock_render.call_args_list[1].kwargs
@@ -571,10 +572,11 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
-    def test_sculpture_physical_reuses_lores_bin_and_uploads_palette(self, mock_s3, mock_run, mock_render):
-        from handler_render_lores_preview import BUCKET, TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, handler
+    def test_sculpture_uploads_transformed_roots_and_palette(self, mock_s3, mock_run, mock_render):
+        from handler_render_lores_preview import BUCKET, TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, TMP_XFORMED_ROOTS, handler
 
         mock_s3.get_object.return_value = {"Body": _ChunkBody(b"\x00" * (3 * 2 * 2 * 4))}
+        xformed_bytes = b"T" * (3 * 2 * 2 * 4)
 
         def subprocess_fake(cmd, **kwargs):
             if "--mode=clip" in cmd:
@@ -590,6 +592,9 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
                 fh.write((0).to_bytes(4, "little") + bytes([10]))
             with open(TMP_PALETTE_FRAGMENT, "wb") as fh:
                 fh.write((0).to_bytes(4, "little") + bytes([10]))
+            self.assertIn(f"--xformed_roots_output={TMP_XFORMED_ROOTS}", cmd)
+            with open(TMP_XFORMED_ROOTS, "wb") as fh:
+                fh.write(xformed_bytes)
             return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 2, "roots_clipped": 0}), stderr="")
 
         def render_fake(**kwargs):
@@ -604,12 +609,14 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(resp["statusCode"], 200, resp["body"])
         body = json.loads(resp["body"])
         sc = body["sculpture"]
-        # physical mode: the roots object already lives on S3 — reused, not re-uploaded
-        self.assertEqual(sc["roots_key"], "renders/j/lores.bin")
+        # the uploaded roots are the raster's TRANSFORMED dump (root-transform
+        # script + rotation applied) — never the raw transport artifact, which
+        # ignores both. No lores.bin reuse even in physical mode.
+        self.assertEqual(sc["roots_key"], "renders/j/sculpture_roots.bin")
         self.assertTrue(sc["roots_url"].startswith("https://"))
         # version-stamped URLs: fixed keys + browser heuristic caching served
         # stale palettes across runs
-        self.assertIn("/renders/j/lores.bin?v=", sc["roots_url"])
+        self.assertIn("/renders/j/sculpture_roots.bin?v=", sc["roots_url"])
         self.assertEqual(sc["palette_key"], "renders/j/sculpture_palette.png")
         self.assertIn("/renders/j/sculpture_palette.png?v=", sc["palette_url"])
         self.assertEqual(sc["grid_n"], 1)
@@ -619,19 +626,23 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(sc["roots_bytes"], 3 * 2 * 2 * 4)
         self.assertIn("min_re", sc["viewport"])
         self.assertTrue(any(line.startswith("Sculpture export:") for line in body["logs"]))
-        self.assertEqual(mock_s3.put_object.call_count, 1)
-        put_kwargs = mock_s3.put_object.call_args.kwargs
-        self.assertEqual(put_kwargs["Bucket"], BUCKET)
-        self.assertEqual(put_kwargs["Key"], "renders/j/sculpture_palette.png")
-        self.assertEqual(put_kwargs["ContentType"], "image/png")
-        self.assertEqual(put_kwargs["CacheControl"], "no-cache")
-        self.assertEqual(put_kwargs["Body"], PNG_1X1)
+        self.assertEqual(mock_s3.put_object.call_count, 2)
+        by_key = {call.kwargs["Key"]: call.kwargs for call in mock_s3.put_object.call_args_list}
+        roots_put = by_key["renders/j/sculpture_roots.bin"]
+        self.assertEqual(roots_put["Bucket"], BUCKET)
+        self.assertEqual(roots_put["Body"], xformed_bytes)
+        self.assertEqual(roots_put["ContentType"], "application/octet-stream")
+        self.assertEqual(roots_put["CacheControl"], "no-cache")
+        pal_put = by_key["renders/j/sculpture_palette.png"]
+        self.assertEqual(pal_put["ContentType"], "image/png")
+        self.assertEqual(pal_put["CacheControl"], "no-cache")
+        self.assertEqual(pal_put["Body"], PNG_1X1)
 
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
     def test_sculpture_recompute_uploads_fresh_roots(self, mock_s3, mock_run, mock_render):
-        from handler_render_lores_preview import TMP_COEFFS, TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, TMP_PARAMS, TMP_ROOTS, handler
+        from handler_render_lores_preview import TMP_COEFFS, TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, TMP_PARAMS, TMP_ROOTS, TMP_XFORMED_ROOTS, handler
 
         calc = {
             "N": 5,
@@ -648,6 +659,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
             },
         }
         roots_bytes = b"\x00" * (25 * 1 * 2 * 4)
+        xformed_bytes = b"X" * (25 * 1 * 2 * 4)
 
         def get_object(**kwargs):
             key = kwargs.get("Key")
@@ -685,6 +697,8 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
             with open(TMP_PALETTE_FRAGMENT, "wb") as fh:
                 for idx in range(25):
                     fh.write(idx.to_bytes(4, "little") + bytes([idx + 1]))
+            with open(TMP_XFORMED_ROOTS, "wb") as fh:
+                fh.write(xformed_bytes)
             return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 1, "roots_clipped": 0}), stderr="")
 
         def render_fake(**kwargs):
@@ -715,7 +729,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(mock_s3.put_object.call_count, 2)
         by_key = {call.kwargs["Key"]: call.kwargs for call in mock_s3.put_object.call_args_list}
         self.assertEqual(sorted(by_key), ["renders/j/sculpture_palette.png", "renders/j/sculpture_roots.bin"])
-        self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["Body"], roots_bytes)
+        self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["Body"], xformed_bytes)
         self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["ContentType"], "application/octet-stream")
         self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["CacheControl"], "no-cache")
         self.assertIn("/renders/j/sculpture_roots.bin?v=", sc["roots_url"])

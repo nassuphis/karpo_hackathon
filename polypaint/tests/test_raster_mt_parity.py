@@ -256,6 +256,81 @@ class TestRasterMtParity(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_xformed_roots_output_matches_plot_transforms(self):
+        """--xformed_roots_output must capture EXACTLY what the raster plots:
+        the root-xform chain (prepare_step) followed by the viewport-center
+        rotation — including roots the plot then clips out of view. This is
+        the sculpture data path: the 3D viewer must see what the 2D saw."""
+        import math
+        degree = 2
+        step_count = 3
+        center_re, center_im = 0.3, -0.2
+        rotation = 0.5          # radians, about the viewport center
+        turns = 0.25            # rotate_roots: multiply by exp(2*pi*i*turns)
+        roots = []
+        for s in range(step_count):
+            for r in range(degree):
+                roots.extend([0.1 * (s + 1) + 0.01 * r, 0.05 * (s + 1)])
+        roots[-2:] = [50.0, 50.0]   # plot clips it; the dump must keep it
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(root / "xf_roots.bin", roots)
+            xforms_path = root / "xf_chain.json"
+            xforms_path.write_text(json.dumps([["rotate_roots", str(turns)]]), encoding="utf-8")
+            dump_path = root / "xf_dump.bin"
+            server, thread = self._serve_dir(root)
+            try:
+                manifest_path = self._write_single_span_manifest(
+                    root / "xf_manifest.json",
+                    file_name=roots_path.name,
+                    port=server.server_address[1],
+                    row_bytes=degree * 2 * 4,
+                    solve_count=step_count,
+                )
+                cmd = [
+                    str(self._binary),
+                    str(root / "xf_pix"),
+                    "--pix=8",
+                    *self._bounds_args(8, 8, center_re, center_im, 1.0),
+                    f"--degree={degree}",
+                    f"--rotation={rotation}",
+                    "--threads=2",
+                    f"--input_manifest={manifest_path}",
+                    f"--step_count={step_count}",
+                    *self._single_metric_program_args("centroid_re", 0, 1),
+                    f"--fragment_prefix={root / 'xf_fragment'}",
+                    f"--root_xforms={xforms_path}",
+                    f"--xformed_roots_output={dump_path}",
+                    "--retries=1",
+                ]
+                result = self._run_binary(cmd)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                meta = json.loads(result.stdout)
+                self.assertGreaterEqual(meta["roots_clipped"], 1)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+            dump = array("f")
+            dump.frombytes(dump_path.read_bytes())
+            self.assertEqual(len(dump), step_count * degree * 2)
+            theta = 2.0 * math.pi * turns
+            ct, st_ = math.cos(theta), math.sin(theta)
+            cr, sr = math.cos(rotation), math.sin(rotation)
+            for s in range(step_count):
+                for r in range(degree):
+                    idx = (s * degree + r) * 2
+                    re0, im0 = roots[idx], roots[idx + 1]
+                    xre = re0 * ct - im0 * st_
+                    xim = re0 * st_ + im0 * ct
+                    dx, dy = xre - center_re, xim - center_im
+                    want_re = center_re + dx * cr - dy * sr
+                    want_im = center_im + dx * sr + dy * cr
+                    self.assertAlmostEqual(dump[idx], want_re, delta=1e-3,
+                                           msg=f"step {s} root {r} re")
+                    self.assertAlmostEqual(dump[idx + 1], want_im, delta=1e-3,
+                                           msg=f"step {s} root {r} im")
+
     def test_multispan_sectioned_raster_matches_single_span_manifest_for_logical_section_mixed_sources(self):
         from logical_sections import build_native_multispan_manifest, build_solve_source_manifest
 

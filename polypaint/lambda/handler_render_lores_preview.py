@@ -81,6 +81,7 @@ TMP_EQ_LUT = "/tmp/render_lores_preview_eq.bin"
 TMP_PALETTE_EQ_LUT = "/tmp/render_lores_preview_palette_eq.bin"
 TMP_IMAGE = "/tmp/render_lores_preview.png"
 TMP_PALETTE_IMAGE = "/tmp/render_lores_preview_palette.png"
+TMP_XFORMED_ROOTS = "/tmp/render_lores_preview_xformed_roots.bin"
 
 MAX_PREVIEW_PIX = int(os.environ.get("RENDER_LORES_PREVIEW_MAX_PIX", "1024"))
 MAX_LOGICAL_LORES_N = int(os.environ.get("RENDER_LOGICAL_LORES_MAX_N", "256"))
@@ -112,6 +113,7 @@ def _cleanup_tmp():
         TMP_PALETTE_EQ_LUT,
         TMP_IMAGE,
         TMP_PALETTE_IMAGE,
+        TMP_XFORMED_ROOTS,
         TMP_FRAGMENT_PREFIX + "*",
         TMP_PALETTE_FRAGMENT_PREFIX + "*",
     ):
@@ -986,7 +988,7 @@ def _preview_palette_grid_n(source_meta, step_count):
     return 0
 
 
-def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeffs, step_count, include_coeff, include_param, palette_grid_n=0):
+def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeffs, step_count, include_coeff, include_param, palette_grid_n=0, xformed_roots_output=None):
     metrics = _metric_rows_from_summary(summary)
     payload = solve_score_program_cli_payload({
         "metrics": metrics,
@@ -1047,6 +1049,10 @@ def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeff
         cmd.append(f"--score_params_manifest={manifests['pm']}")
     if xforms_path:
         cmd.append(f"--root_xforms={xforms_path}")
+    if xformed_roots_output:
+        # sculpture data: the post-xform post-rotation roots exactly as the
+        # raster plotted them — the 3D viewer must see what the 2D saw
+        cmd.append(f"--xformed_roots_output={xformed_roots_output}")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
@@ -1250,6 +1256,7 @@ def handler(event, context):
             )
         manifest_ms = int((time.time() - t_manifest) * 1000)
         palette_grid_n = _preview_palette_grid_n(source_meta, step_count)
+        sculpture_requested = parse_boolish(params.get("sculpture", False), False, strict=True, label="sculpture")
 
         t_raster = time.time()
         raster_meta = _run_roots2pix(
@@ -1260,6 +1267,7 @@ def handler(event, context):
             pix=pix,
             degree=degree,
             n_coeffs=n_coeffs,
+            xformed_roots_output=TMP_XFORMED_ROOTS if sculpture_requested else None,
             step_count=step_count,
             include_coeff=include_coeff,
             include_param=include_param,
@@ -1338,19 +1346,25 @@ def handler(event, context):
         # set to z = t2. Physical mode reuses the existing lores.bin object;
         # logical/recompute upload the freshly materialized /tmp roots.
         sculpture_export = {}
-        if parse_boolish(params.get("sculpture", False), False, strict=True, label="sculpture"):
+        if sculpture_requested:
             if palette_grid_n <= 0:
                 raise RuntimeError(
                     "sculpture export needs a square parameter grid "
                     f"(step count {step_count} is not a multiple of a grid square)")
-            if source_mode == "lores" and lores_bin_key:
-                sculpture_roots_key = lores_bin_key
-            else:
-                sculpture_roots_key = f"renders/{job_id}/sculpture_roots.bin"
-                with open(TMP_ROOTS, "rb") as fh:
-                    s3.put_object(
-                        Bucket=BUCKET, Key=sculpture_roots_key, Body=fh.read(),
-                        ContentType="application/octet-stream", CacheControl="no-cache")
+            # ALWAYS upload the raster's transformed dump — the raw transport
+            # roots ignore the run's root-transform script and rotation, so a
+            # sculpture built from them diverges from the plot (user-caught on
+            # escape-camera pieces). No lores.bin reuse: raw != what was seen.
+            xformed_size = os.path.getsize(TMP_XFORMED_ROOTS) if os.path.exists(TMP_XFORMED_ROOTS) else 0
+            expected_xformed = step_count * degree * 2 * 4
+            if xformed_size != expected_xformed:
+                raise RuntimeError(
+                    f"sculpture transformed-roots dump size mismatch: got {xformed_size}, expected {expected_xformed}")
+            sculpture_roots_key = f"renders/{job_id}/sculpture_roots.bin"
+            with open(TMP_XFORMED_ROOTS, "rb") as fh:
+                s3.put_object(
+                    Bucket=BUCKET, Key=sculpture_roots_key, Body=fh.read(),
+                    ContentType="application/octet-stream", CacheControl="no-cache")
             sculpture_palette_key = f"renders/{job_id}/sculpture_palette.png"
             with open(TMP_PALETTE_IMAGE, "rb") as fh:
                 s3.put_object(
@@ -1371,7 +1385,7 @@ def handler(event, context):
                 "degree": int(degree),
                 "step_count": int(step_count),
                 "pass_count": int(step_count // (palette_grid_n * palette_grid_n)),
-                "roots_bytes": int(root_size),
+                "roots_bytes": int(xformed_size),
                 "viewport": viewport,
                 "palette": str(params.get("palette") or "inferno"),
             }

@@ -1951,8 +1951,8 @@ test.describe('Solve Score UI', () => {
       const ctls = {
         'ctl-size': fakeCtl('14'), 'ctl-height': fakeCtl('35'), 'ctl-slices': fakeCtl('11'),
         'ctl-show-points': fakeChk(false), 'ctl-show-ribbons': fakeChk(true), 'ctl-show-threads': fakeChk(true),
-        'ctl-style': fakeCtl('ghost'), 'ctl-order': fakeCtl('angle'), 'ctl-tour-mode': fakeCtl('weave'),
-        'ctl-lenq': fakeCtl('63'), 'ctl-zaxis': fakeCtl('t1'),
+        'ctl-style': fakeCtl('ghost'), 'ctl-order': fakeCtl('angle'), 'ctl-tour-mode': fakeCtl('wave'),
+        'ctl-tour-speed': fakeCtl('2'), 'ctl-lenq': fakeCtl('63'), 'ctl-zaxis': fakeCtl('t1'),
         'ctl-zlo': fakeCtl('20'), 'ctl-zhi': fakeCtl('90'),
       };
       window._lastSculptureWin = {
@@ -1985,7 +1985,7 @@ test.describe('Solve Score UI', () => {
       view: {
         point: 14, height: 0.35, slices: 11,
         show: { points: false, ribbons: true, threads: true },
-        style: 'ghost', order: 'angle', tour: 'weave', lenq: 63, zaxis: 't1',
+        style: 'ghost', order: 'angle', tour: 'wave', tourSpeed: 2, lenq: 63, zaxis: 't1',
         zlo: 0.2, zhi: 0.9,
       },
     });

@@ -1638,6 +1638,7 @@ function _sculptureCaptureViewSettings() {
             zlo: Number.isFinite(parseInt(val('ctl-zlo'), 10)) ? parseInt(val('ctl-zlo'), 10) / 100 : 0,
             zhi: Number.isFinite(parseInt(val('ctl-zhi'), 10)) ? parseInt(val('ctl-zhi'), 10) / 100 : 1,
             tour: playing ? (val('ctl-tour-mode') || 'orbit') : 'off',
+            tourSpeed: parseFloat(val('ctl-tour-speed')) || 1,
         };
     } catch (e) {
         return null;
@@ -1653,7 +1654,7 @@ function _sculptureViewSummary(view) {
         + (view.lenq < 100 ? ` · len ${view.lenq}%` : '')
         + (view.zaxis === 't1' ? ' · z=t1' : '')
         + ((view.zlo > 0 || view.zhi < 1) ? ` · z∈[${view.zlo.toFixed(2)},${view.zhi.toFixed(2)}]` : '')
-        + ` · tour: ${view.tour}`;
+        + ` · tour: ${view.tour}${view.tourSpeed && view.tourSpeed !== 1 ? ` ${view.tourSpeed}x` : ''}`;
 }
 
 function _sculptureUpdateViewHint() {

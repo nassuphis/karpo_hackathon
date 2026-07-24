@@ -127,7 +127,13 @@
   </select></label>
   <label>tour <select id="ctl-tour-mode">
     <option value="orbit" selected>orbit</option>
+    <option value="wave">wave</option>
     <option value="weave">weave</option>
+  </select><select id="ctl-tour-speed" title="Tour speed">
+    <option value="0.5">&#189;x</option>
+    <option value="1" selected>1x</option>
+    <option value="2">2x</option>
+    <option value="4">4x</option>
   </select><button type="button" id="btn-tour-play" title="Play / stop the automated camera tour">&#9654;</button></label>
   <label>connect <select id="ctl-order">
     <option value="nearest" selected>nearest</option>
@@ -653,11 +659,13 @@ async function boot() {
     // orbit circles at exactly the play-time radius, height, and azimuth
     // (zero jump by construction); weave keeps its programmed corkscrew but
     // starts at the play-time azimuth and EASES IN from the current pose.
-    const tour = { playing: false, t: 0, r0: 1.35, y0: 0.5, angle0: 0, blend: 1 };
+    const tour = { playing: false, t: 0, r0: 1.35, y0: 0.5, angle0: 0, blend: 1, wavePhase: 0 };
     const tourBlendFrom = new THREE.Vector3();
     const tourBlendLook = new THREE.Vector3();
     const tourBtn = document.getElementById('btn-tour-play');
     const tourModeCtl = document.getElementById('ctl-tour-mode');
+    const tourSpeedCtl = document.getElementById('ctl-tour-speed');
+    const waveAmp = (hh) => Math.max(0.08, hh * 1.05);
     const tourPose = (mode, t, heightScale) => {
         const hh = Math.max(0.06, 0.5 * heightScale);
         if (mode === 'weave') {
@@ -667,13 +675,23 @@ async function boot() {
             return { pos: [Math.cos(angle) * radius, y, Math.sin(angle) * radius],
                      look: [0, y * 0.6, 0] };
         }
+        if (mode === 'wave') {
+            // wave: the orbit's circle plus a vertical sine spanning the
+            // scaled stack — 3 bobs per lap (a closed crown), phase-matched
+            // to START at the play-time height and rise first (user spec:
+            // "start at my current height, continue to top then down")
+            const angle = tour.angle0 + t * 0.35;
+            const y = waveAmp(hh) * Math.sin(1.05 * t + tour.wavePhase);
+            return { pos: [Math.cos(angle) * tour.r0, y, Math.sin(angle) * tour.r0],
+                     look: [0, 0, 0] };
+        }
         const angle = tour.angle0 + t * 0.35;
         return { pos: [Math.cos(angle) * tour.r0, tour.y0, Math.sin(angle) * tour.r0],
                  look: [0, 0, 0] };
     };
     const tourTick = (dt) => {
         if (!tour.playing) return;
-        tour.t += dt;
+        tour.t += dt * (parseFloat(tourSpeedCtl.value) || 1);
         const p = tourPose(tourModeCtl.value, tour.t, sculpt.scale.y);
         if (tour.blend < 1) {
             tour.blend = Math.min(1, tour.blend + dt / 1.2);
@@ -702,7 +720,9 @@ async function boot() {
             tour.r0 = Math.max(0.05, Math.hypot(p.x, p.z));
             tour.y0 = p.y;
             tour.angle0 = Math.atan2(p.z, p.x);
-            // orbit adopts the pose exactly (no jump); weave eases in
+            const amp = waveAmp(Math.max(0.06, 0.5 * sculpt.scale.y));
+            tour.wavePhase = Math.asin(Math.max(-1, Math.min(1, p.y / amp)));
+            // orbit and wave adopt the pose exactly (no jump); weave eases in
             tour.blend = tourModeCtl.value === 'weave' ? 0 : 1;
             tourBlendFrom.copy(p);
             camera.getWorldDirection(tourBlendLook);
@@ -915,7 +935,10 @@ async function boot() {
     applyHeight();
     applyLenq();
     applyZRange();
-    if (cfg.view && (cfg.view.tour === 'orbit' || cfg.view.tour === 'weave')) {
+    if (cfg.view && [0.5, 1, 2, 4].includes(Number(cfg.view.tourSpeed))) {
+        tourSpeedCtl.value = String(Number(cfg.view.tourSpeed));
+    }
+    if (cfg.view && ['orbit', 'wave', 'weave'].includes(cfg.view.tour)) {
         tourModeCtl.value = cfg.view.tour;
         tourSetPlaying(true);
     }

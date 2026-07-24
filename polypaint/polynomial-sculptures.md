@@ -87,8 +87,13 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   for multi-pass jobs.
 - Non-finite roots and roots outside the xy viewport are dropped and
   counted (`clipped` in the HUD).
-- **Tours** (▶/■ next to the tour selector): two parametric camera
-  paths — **orbit** and **weave** (interior corkscrew with a breathing
+- **Tours** (▶/■ + a ½×/1×/2×/4× speed selector that scales the tour
+  clock and rides saved views as `tourSpeed`): three parametric camera
+  paths — **orbit**, **wave** (the orbit's circle plus a vertical sine
+  spanning the scaled stack, 3 bobs per lap = a closed crown;
+  phase-matched to START at the play-time height and rise first, per
+  user spec "start at my current height, continue to top then down" —
+  the galactic-disk vertical-oscillation motion), and **weave** (interior corkscrew with a breathing
   radius sweeping the full height — the close-up detail pass). Tours
   ADOPT the camera pose at play time (user: "orbit too close — take my
   current distance; I navigate to where the orbit starts"): orbit

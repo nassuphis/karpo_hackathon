@@ -728,7 +728,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
       point: 22, height: 0.4, slices: 3,
       show: { points: false, ribbons: true, threads: false },
       style: 'ghost', order: 'angle', tour: 'weave', lenq: 50, zaxis: 't1',
-      zlo: 0.25, zhi: 0.8,
+      zlo: 0.25, zhi: 0.8, tourSpeed: 2,
     },
   };
   await page.route('**/sc/viewer.html', (route) => {
@@ -766,6 +766,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
       style: val('ctl-style'), order: val('ctl-order'), tourMode: val('ctl-tour-mode'),
       lenq: val('ctl-lenq'), ribbonDraw: v.ribbons.geometry.drawRange.count,
       zaxis: val('ctl-zaxis'), zlo: val('ctl-zlo'), zhi: val('ctl-zhi'),
+      tourSpeed: val('ctl-tour-speed'),
       clipLoC: v.material.clippingPlanes[0].constant,
       clipHiC: v.material.clippingPlanes[1].constant,
       pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible, threadsVis: v.threads.visible,
@@ -806,6 +807,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   expect(st.zaxis).toBe('t1');
   expect(st.zlo).toBe('25');
   expect(st.zhi).toBe('80');
+  expect(st.tourSpeed).toBe('2');
   // world constants track the 0.4 height scale (+0.005 outward margin)
   expect(st.clipLoC).toBeCloseTo(-(0.25 - 0.5) * 0.4 + 0.005, 5);
   expect(st.clipHiC).toBeCloseTo((0.8 - 0.5) * 0.4 + 0.005, 5);
@@ -936,4 +938,38 @@ test('tours: orbit and weave follow their parametric paths; interaction stops th
   expect(bl.endDelta).toBeLessThan(1e-9);      // converged onto the path
   expect(bl.r0).toBeCloseTo(2.0, 5);           // adopted radius
   expect(bl.angle0).toBeCloseTo(0, 5);         // adopted azimuth
+
+  // WAVE: starts at the play-time height, rises first, sweeps top-to-bottom
+  // within the stack amplitude; radius constant; speed selector scales t
+  const wv = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const mode = document.getElementById('ctl-tour-mode');
+    mode.value = 'wave';
+    mode.dispatchEvent(new Event('change'));
+    v.camera.position.set(1.5, 0.05, 0);   // inside the amplitude (0.08 at height 0.1)
+    v.tour.setPlaying(true);
+    const y0 = v.tour.pose('wave', 0, v.sculpt.scale.y).pos[1];
+    const yRise = v.tour.pose('wave', 0.1, v.sculpt.scale.y).pos[1];
+    let yMin = Infinity, yMax = -Infinity, rBad = 0;
+    for (let t = 0; t < 20; t += 0.1) {
+      const p = v.tour.pose('wave', t, v.sculpt.scale.y).pos;
+      yMin = Math.min(yMin, p[1]); yMax = Math.max(yMax, p[1]);
+      if (Math.abs(Math.hypot(p[0], p[2]) - 1.5) > 1e-9) rBad++;
+    }
+    // speed: 2x advances the clock twice as fast
+    const spd = document.getElementById('ctl-tour-speed');
+    spd.value = '2';
+    const tBefore = v.tour.state.t;
+    v.tour.tick(1.0);
+    const tAfter = v.tour.state.t;
+    spd.value = '1';
+    v.tour.setPlaying(false);
+    return { y0, yRise, yMin, yMax, rBad, dt2x: tAfter - tBefore };
+  });
+  expect(wv.y0).toBeCloseTo(0.05, 5);          // starts AT the current height
+  expect(wv.yRise).toBeGreaterThan(0.05);      // and rises first
+  expect(wv.yMin).toBeCloseTo(-0.08, 3);       // sweeps to the bottom...
+  expect(wv.yMax).toBeCloseTo(0.08, 3);        // ...and the top of the stack
+  expect(wv.rBad).toBe(0);                     // circle radius constant
+  expect(wv.dt2x).toBeCloseTo(2.0, 9);         // 2x speed doubles the clock
 });

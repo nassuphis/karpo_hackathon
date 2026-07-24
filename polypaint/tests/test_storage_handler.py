@@ -1279,7 +1279,7 @@ class TestSaveSculpture(unittest.TestCase):
             "step_count": 4,
             "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -1.0, "max_im": 3.0},
             "palette": "inferno",
-            "view": {"point": 12, "tour": "orbit", "junk": "x"},
+            "view": {"point": 12, "tour": "wave", "tourSpeed": 2, "junk": "x"},
         }
         p.update(over)
         return p
@@ -1314,7 +1314,7 @@ class TestSaveSculpture(unittest.TestCase):
         self.assertEqual(meta["pass_count"], 1)
         self.assertEqual(meta["roots_bytes"], 96)          # server truth via head
         self.assertEqual(meta["roots_key"], "roots.bin")
-        self.assertEqual(meta["view"], {"point": 12, "tour": "orbit"})   # sanitized
+        self.assertEqual(meta["view"], {"point": 12, "tour": "wave", "tourSpeed": 2.0})   # sanitized
         viewer = puts[f"sculptures/{sc['id']}/viewer.html"]
         repo_viewer = open(os.path.join(os.path.dirname(__file__), "..", "sculpture.html"), "rb").read()
         self.assertEqual(viewer["Body"], repo_viewer)

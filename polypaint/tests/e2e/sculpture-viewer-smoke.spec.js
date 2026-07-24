@@ -490,3 +490,90 @@ test('nearest ribbons never bridge clusters: long chain chords are cut', async (
   // every kept segment is intra-pair (0.025 normalized), never the bridge (~0.4)
   expect(st.maxLen).toBeLessThan(0.06);
 });
+
+test('fly mode: double-click requests pointer lock; WASD moves along the look direction', async ({ page }) => {
+  await page.goto('http://localhost:8765/sculpture.html');
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 4;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgb(10,20,30)';
+    g.fillRect(0, 0, 4, 4);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  await page.route('**/fx/froots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: rootsBuffer(4),
+  }));
+  await page.route('**/fx/fpal.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  const frag = new URLSearchParams({
+    v: '1', r: '/fx/froots.bin', p: '/fx/fpal.png', n: '4', d: '3', s: '16',
+    x0: '-1', x1: '1', y0: '-1', y1: '1', t: 'fly fixture',
+  });
+  await page.goto('about:blank');
+  await page.goto('http://localhost:8765/sculpture.html#' + frag.toString());
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const built = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!built) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+
+  const st = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    // double-click must request pointer lock on the canvas
+    let plkCalls = 0;
+    Element.prototype.requestPointerLock = function () { plkCalls++; };
+    document.querySelector('#gl-root canvas').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+
+    // lock/unlock listeners hand off between fly and orbit
+    v.flight.plc.dispatchEvent({ type: 'lock' });
+    const orbitDuringFly = v.controls.enabled;
+    v.flight.plc.dispatchEvent({ type: 'unlock' });
+    const orbitAfterFly = v.controls.enabled;
+
+    // movement math: forward displacement follows the look direction; the
+    // test override stands in for a real OS pointer lock (headless CI)
+    v.flight.forceActive = true;
+    const dir = new (v.camera.position.constructor)();
+    v.camera.getWorldDirection(dir);
+    const before = v.camera.position.clone();
+    v.flight.keys.f = 1;
+    v.flight.tick(0.5);
+    const dispF = v.camera.position.clone().sub(before);
+    const alongLook = dispF.clone().normalize().dot(dir);
+    const forwardLen = dispF.length();
+    // sprint triples the speed
+    const beforeSprint = v.camera.position.clone();
+    v.flight.keys.sprint = 1;
+    v.flight.tick(0.5);
+    const sprintLen = v.camera.position.clone().sub(beforeSprint).length();
+    v.flight.keys.f = 0; v.flight.keys.sprint = 0;
+    // E climbs straight up
+    const beforeUp = v.camera.position.y;
+    v.flight.keys.u = 1;
+    v.flight.tick(0.5);
+    const upDelta = v.camera.position.y - beforeUp;
+    v.flight.keys.u = 0;
+    v.flight.forceActive = false;
+
+    // typing in a panel control must not move the camera
+    const sel = document.getElementById('ctl-order');
+    sel.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', bubbles: true }));
+    const keyAfterSelect = v.flight.keys.f;
+
+    return { plkCalls, orbitDuringFly, orbitAfterFly, alongLook, forwardLen, sprintLen, upDelta, keyAfterSelect };
+  });
+  expect(st.plkCalls).toBe(1);
+  expect(st.orbitDuringFly).toBe(false);
+  expect(st.orbitAfterFly).toBe(true);
+  expect(st.alongLook).toBeGreaterThan(0.999);          // true look-direction flight
+  expect(st.forwardLen).toBeCloseTo(0.45 * 0.5, 3);
+  expect(st.sprintLen).toBeCloseTo(0.45 * 3 * 0.5, 3);  // Shift = 3x
+  expect(st.upDelta).toBeCloseTo(0.45 * 0.5, 3);
+  expect(st.keyAfterSelect).toBe(0);                    // inputs keep their keys
+});

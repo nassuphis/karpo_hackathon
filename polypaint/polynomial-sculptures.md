@@ -87,9 +87,21 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   for multi-pass jobs.
 - Non-finite roots and roots outside the xy viewport are dropped and
   counted (`clipped` in the HUD).
-- Controls: orbit/damping, point-size slider (default 10), **height
-  slider** (default 0.1) — 0 flattens the sculpture onto its base plane,
-  showing the shadow ≙ the 2D art.
+- Controls: orbit/damping for outside-in, plus **fly mode** (user:
+  orbit alone was "terrible") — double-click the canvas to pointer-lock,
+  then mouse look + WASD along the TRUE look direction (not walk-plane),
+  Q/E down/up, Shift 3× sprint, Esc back to orbit; the orbit target
+  re-anchors 0.8 ahead of the flown pose so the handoff doesn't snap.
+  Keys are ignored while a panel input/select has focus. The HUD hint
+  line tracks the active mode. (PointerLockControls was already
+  vendored for gallery.html; movement is hand-rolled because PLC's
+  moveForward is walk-plane.) e2e uses a `flight.forceActive` escape
+  hatch since headless CI has no OS pointer lock — it pins dblclick →
+  requestPointerLock, orbit handoff on lock/unlock, look-direction
+  displacement, sprint 3×, Q/E vertical, and input-focus key guarding.
+  Point-size slider (default 10); **height slider** (default 0.1) — 0
+  flattens the sculpture onto its base plane, showing the shadow ≙ the
+  2D art.
 - **Threads** (show checkbox; per user spec): root trajectories along
   t2 — each solve matched to the NEXT t2 column in its t1 row by
   mutual-nearest on complex-plane (xz) distance with greedy repair for

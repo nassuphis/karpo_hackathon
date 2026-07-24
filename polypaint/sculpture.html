@@ -18,7 +18,8 @@
 {
   "imports": {
     "three": "./vendor/three-r160/three.module.js",
-    "three/addons/controls/OrbitControls.js": "./vendor/three-r160/addons/controls/OrbitControls.js"
+    "three/addons/controls/OrbitControls.js": "./vendor/three-r160/addons/controls/OrbitControls.js",
+    "three/addons/controls/PointerLockControls.js": "./vendor/three-r160/addons/controls/PointerLockControls.js"
   }
 }
 </script>
@@ -31,6 +32,7 @@
          pointer-events: none; z-index: 5; }
   #hud-title { font-size: 14px; color: #e8eef5; }
   #hud-stats { font-size: 11px; color: #778599; margin-top: 4px; }
+  #hud-hint { font-size: 11px; color: #5b6b80; margin-top: 2px; }
   #panel { position: fixed; bottom: 12px; left: 12px; z-index: 5;
            background: rgba(10,14,22,0.82); border: 1px solid #232b3a;
            border-radius: 6px; padding: 10px 12px; font-size: 11px; }
@@ -55,6 +57,7 @@
 <div id="hud">
   <div id="hud-title">PolyPaint sculpture</div>
   <div id="hud-stats">loading…</div>
+  <div id="hud-hint"></div>
 </div>
 <div id="panel">
   <label>point <input id="ctl-size" type="range" min="1" max="40" value="10"><span class="val" id="ctl-size-val"></span></label>
@@ -90,6 +93,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
 // exact color pass-through: the palette PNG's bytes ARE the artwork's colors.
 // Default color management treats vertex colors as linear and re-encodes on
@@ -470,6 +474,61 @@ async function boot() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
 
+    // fly mode: double-click locks the pointer for mouse look; WASD moves
+    // along the TRUE look direction (not walk-plane), Q/E down/up, Shift
+    // sprints, Esc exits back to orbit — the orbit target re-anchors ahead
+    // of wherever you flew so the handoff doesn't snap.
+    const fly = new PointerLockControls(camera, renderer.domElement);
+    const flyKeys = { f: 0, b: 0, l: 0, r: 0, u: 0, d: 0, sprint: 0 };
+    const flight = { keys: flyKeys, plc: fly, forceActive: false, tick: null };
+    const hintEl = document.getElementById('hud-hint');
+    const setHint = () => {
+        hintEl.textContent = fly.isLocked
+            ? 'flying — WASD move · Q/E down/up · Shift fast · Esc exits'
+            : 'drag: orbit · wheel: zoom · double-click: fly (WASD + mouse)';
+    };
+    renderer.domElement.addEventListener('dblclick', () => fly.lock());
+    fly.addEventListener('lock', () => { controls.enabled = false; setHint(); });
+    fly.addEventListener('unlock', () => {
+        const ahead = new THREE.Vector3();
+        camera.getWorldDirection(ahead);
+        controls.target.copy(camera.position).addScaledVector(ahead, 0.8);
+        controls.enabled = true;
+        setHint();
+    });
+    const setKey = (ev, v) => {
+        const tag = ev.target && ev.target.tagName;
+        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+        switch (ev.code) {
+            case 'KeyW': flyKeys.f = v; break;
+            case 'KeyS': flyKeys.b = v; break;
+            case 'KeyA': flyKeys.l = v; break;
+            case 'KeyD': flyKeys.r = v; break;
+            case 'KeyQ': flyKeys.d = v; break;
+            case 'KeyE': flyKeys.u = v; break;
+            case 'ShiftLeft':
+            case 'ShiftRight': flyKeys.sprint = v; break;
+            default: return;
+        }
+        ev.preventDefault();
+    };
+    document.addEventListener('keydown', ev => setKey(ev, 1));
+    document.addEventListener('keyup', ev => setKey(ev, 0));
+    const flyDir = new THREE.Vector3();
+    const flyRight = new THREE.Vector3();
+    const flyTick = (dt) => {
+        if (!fly.isLocked && !flight.forceActive) return;
+        const speed = 0.45 * (flyKeys.sprint ? 3 : 1) * dt;
+        if (!speed) return;
+        camera.getWorldDirection(flyDir);
+        flyRight.crossVectors(flyDir, camera.up).normalize();
+        camera.position.addScaledVector(flyDir, (flyKeys.f - flyKeys.b) * speed);
+        camera.position.addScaledVector(flyRight, (flyKeys.r - flyKeys.l) * speed);
+        camera.position.y += (flyKeys.u - flyKeys.d) * speed;
+    };
+    flight.tick = flyTick;
+    setHint();
+
     const updateStats = () => {
         document.getElementById('hud-stats').textContent =
             `${count.toLocaleString()} roots · grid ${gridN}×${gridN} · degree ${degree}` +
@@ -572,14 +631,19 @@ async function boot() {
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
+    let lastT = performance.now();
     renderer.setAnimationLoop(() => {
-        controls.update();
+        const now = performance.now();
+        const dt = Math.min(0.1, (now - lastT) / 1000);
+        lastT = now;
+        flyTick(dt);
+        if (controls.enabled) controls.update();
         renderer.render(scene, camera);
     });
 
     window.__sculptureViewer = {
         scene, camera, renderer, points, ribbons, threads, sculpt, material, controls,
-        count, clipped, gridN, degree,
+        flight, count, clipped, gridN, degree,
     };
 }
 

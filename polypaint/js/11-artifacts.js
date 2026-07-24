@@ -1635,6 +1635,8 @@ function _sculptureCaptureViewSettings() {
             order: val('ctl-order') || 'nearest',
             lenq: Number.isFinite(parseInt(val('ctl-lenq'), 10)) ? parseInt(val('ctl-lenq'), 10) : 100,
             zaxis: val('ctl-zaxis') === 't1' ? 't1' : 't2',
+            zlo: Number.isFinite(parseInt(val('ctl-zlo'), 10)) ? parseInt(val('ctl-zlo'), 10) / 100 : 0,
+            zhi: Number.isFinite(parseInt(val('ctl-zhi'), 10)) ? parseInt(val('ctl-zhi'), 10) / 100 : 1,
             tour: playing ? (val('ctl-tour-mode') || 'orbit') : 'off',
         };
     } catch (e) {
@@ -1650,6 +1652,7 @@ function _sculptureViewSummary(view) {
         + ` · ${show} · ${view.style} · ${view.order}`
         + (view.lenq < 100 ? ` · len ${view.lenq}%` : '')
         + (view.zaxis === 't1' ? ' · z=t1' : '')
+        + ((view.zlo > 0 || view.zhi < 1) ? ` · z∈[${view.zlo.toFixed(2)},${view.zhi.toFixed(2)}]` : '')
         + ` · tour: ${view.tour}`;
 }
 

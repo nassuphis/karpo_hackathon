@@ -1975,6 +1975,7 @@ test.describe('Solve Score UI', () => {
         'ctl-show-points': fakeChk(false), 'ctl-show-ribbons': fakeChk(true), 'ctl-show-threads': fakeChk(true),
         'ctl-style': fakeCtl('ghost'), 'ctl-order': fakeCtl('angle'), 'ctl-tour-mode': fakeCtl('weave'),
         'ctl-lenq': fakeCtl('63'), 'ctl-zaxis': fakeCtl('t1'),
+        'ctl-zlo': fakeCtl('20'), 'ctl-zhi': fakeCtl('90'),
       };
       window._lastSculptureWin = {
         closed: false,
@@ -1997,6 +1998,7 @@ test.describe('Solve Score UI', () => {
       point: 14, height: 0.35, slices: 11,
       show: { points: false, ribbons: true, threads: true },
       style: 'ghost', order: 'angle', tour: 'weave', lenq: 63, zaxis: 't1',
+      zlo: 0.2, zhi: 0.9,
     });
     expect(st.openLoc).toBe('https://bkt.s3.r.amazonaws.com/sculptures/scu_bbb/viewer.html');
     await expect(page.locator('#sculpture-list')).toContainText('Second Piece');

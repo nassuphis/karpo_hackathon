@@ -134,6 +134,18 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   (`meta.view.zaxis`). Pinned: step (row 1, col 3) flips Y +0.25 ↔
   −0.25; the threads fixture (col-dependent roots) makes t1-threads
   purely vertical (dx=dz=0, dy=0.25 × 24 segments).
+- **z-window** (user ask: "two sliders, lo and hi, restrict the z
+  extent shown — good for exploration"): z lo / z hi sliders (0–1,
+  drag-clamped so lo ≤ hi) drive two world-space clipping planes on
+  points/ribbons/threads — fragment-level slab, no rebuild, segments
+  cut exactly at the plane; the cube frame stays as reference. Plane
+  constants track the height scale live and carry a 0.005 OUTWARD
+  margin: geometry spans y = ±0.5·scale inclusive and a plane at
+  exactly that float culls boundary plates to rounding (caught by the
+  occlusion pin going dark). Travels with saved views (zlo/zhi,
+  sanitizer orders lo ≤ hi). Behavioral pin: clipping the top plate
+  makes the bottom plate visible from straight above, and [0,1]
+  restores it.
 - **len% quantile** (0–100 slider; user: "clip thr and rib paths above
   the q-th quantile — so I can see which parts have the large jumps"):
   draws only the shortest q% of ribbon AND thread segments. Segments

@@ -259,6 +259,14 @@ def _sculpture_view(raw):
         view["lenq"] = int(round(lenq))
     if raw.get("zaxis") in ("t1", "t2"):
         view["zaxis"] = raw["zaxis"]
+    zlo = _num("zlo", 0, 1)
+    zhi = _num("zhi", 0, 1)
+    if zlo is not None and zhi is not None and zlo > zhi:
+        zlo = zhi
+    if zlo is not None:
+        view["zlo"] = round(zlo, 3)
+    if zhi is not None:
+        view["zhi"] = round(zhi, 3)
     return view or None
 
 

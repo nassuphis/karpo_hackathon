@@ -367,6 +367,49 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   expect(occl.topPx).toBe(25);
   expect(occl.other).toBe(0);
 
+  // z-window: clipping the top plate away makes the BOTTOM plate visible
+  // from straight above — the same zero-parallax camera now sees a
+  // bottom-color (g <= 60) center patch; restoring [0,1] brings the top
+  // plate back. Behavioral proof the slab actually cuts geometry.
+  const slab = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const slicesCtl = document.getElementById('ctl-slices');
+    slicesCtl.value = '2';
+    slicesCtl.dispatchEvent(new Event('change'));
+    v.camera.position.set(0, 8.0, -0.2);
+    v.camera.lookAt(0, 0, -0.2);
+    const read = () => {
+      v.renderer.render(v.scene, v.camera);
+      const gl = v.renderer.getContext();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const patch = new Uint8Array(5 * 5 * 4);
+      gl.readPixels(Math.floor(w / 2) - 2, Math.floor(h / 2) - 2, 5, 5, gl.RGBA, gl.UNSIGNED_BYTE, patch);
+      let top = 0, bottom = 0;
+      for (let i = 0; i < patch.length; i += 4) {
+        if (patch[i + 2] !== 17) continue;
+        if (patch[i + 1] >= 120) top++;
+        else bottom++;
+      }
+      return { top, bottom };
+    };
+    const zhi = document.getElementById('ctl-zhi');
+    zhi.value = '60';
+    zhi.dispatchEvent(new Event('input'));
+    const cut = read();
+    const cutPlanes = [v.material.clippingPlanes[0].constant, v.material.clippingPlanes[1].constant];
+    zhi.value = '100';
+    zhi.dispatchEvent(new Event('input'));
+    const restored = read();
+    slicesCtl.value = '0';
+    slicesCtl.dispatchEvent(new Event('change'));
+    return { cut, cutPlanes, restored,
+             hudDuring: '' };
+  });
+  expect(slab.cut.top).toBe(0);            // top plate clipped away
+  expect(slab.cut.bottom).toBe(25);        // bottom plate revealed
+  expect(slab.cutPlanes[1]).toBeCloseTo(0.105, 5);   // (0.6-0.5)*1 + margin
+  expect(slab.restored.top).toBe(25);      // full window brings it back
+
   // the height slider flattens the sculpture onto its base plane — the 2D
   // art is literally this shape's shadow
   const flat = await page.evaluate(() => {
@@ -677,6 +720,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
       point: 22, height: 0.4, slices: 3,
       show: { points: false, ribbons: true, threads: false },
       style: 'ghost', order: 'angle', tour: 'weave', lenq: 50, zaxis: 't1',
+      zlo: 0.25, zhi: 0.8,
     },
   };
   await page.route('**/sc/viewer.html', (route) => {
@@ -713,7 +757,9 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
       point: val('ctl-size'), height: val('ctl-height'), slices: val('ctl-slices'),
       style: val('ctl-style'), order: val('ctl-order'), tourMode: val('ctl-tour-mode'),
       lenq: val('ctl-lenq'), ribbonDraw: v.ribbons.geometry.drawRange.count,
-      zaxis: val('ctl-zaxis'),
+      zaxis: val('ctl-zaxis'), zlo: val('ctl-zlo'), zhi: val('ctl-zhi'),
+      clipLoC: v.material.clippingPlanes[0].constant,
+      clipHiC: v.material.clippingPlanes[1].constant,
       pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible, threadsVis: v.threads.visible,
       ghost: v.material.transparent === true && v.material.depthWrite === false,
       scaleY: v.sculpt.scale.y,
@@ -746,6 +792,11 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   expect(st.lenq).toBe('50');
   expect(st.ribbonDraw).toBe(48);
   expect(st.zaxis).toBe('t1');
+  expect(st.zlo).toBe('25');
+  expect(st.zhi).toBe('80');
+  // world constants track the 0.4 height scale (+0.005 outward margin)
+  expect(st.clipLoC).toBeCloseTo(-(0.25 - 0.5) * 0.4 + 0.005, 5);
+  expect(st.clipHiC).toBeCloseTo((0.8 - 0.5) * 0.4 + 0.005, 5);
 });
 
 test('tours: orbit and weave follow their parametric paths; interaction stops them', async ({ page }) => {

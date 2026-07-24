@@ -74,6 +74,8 @@
     <option value="t2" selected>t2</option>
     <option value="t1">t1</option>
   </select></label>
+  <label>z lo <input id="ctl-zlo" type="range" min="0" max="100" value="0"><span class="val" id="ctl-zlo-val"></span></label>
+  <label>z hi <input id="ctl-zhi" type="range" min="0" max="100" value="100"><span class="val" id="ctl-zhi-val"></span></label>
   <label>slices <select id="ctl-slices">
     <option value="0" selected>off</option>
     <option value="2">2</option>
@@ -269,6 +271,7 @@ async function boot() {
         return;
     }
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    renderer.localClippingEnabled = true;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.getElementById('gl-root').appendChild(renderer.domElement);
@@ -521,6 +524,15 @@ async function boot() {
         if (applyLenqHook) applyLenqHook();
     }
 
+    // z-window: two world-space clipping planes slab the visible height
+    // range — fragment-level, no rebuild, segments cut exactly at the plane.
+    // The cube frame stays unclipped as the spatial reference.
+    const clipLo = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0.5);
+    const clipHi = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0.5);
+    material.clippingPlanes = [clipLo, clipHi];
+    ribbons.material.clippingPlanes = [clipLo, clipHi];
+    threads.material.clippingPlanes = [clipLo, clipHi];
+
     const sculpt = new THREE.Group();
     sculpt.add(points);
     sculpt.add(ribbons);
@@ -648,7 +660,10 @@ async function boot() {
             (threadSegments ? ` · ${threadSegments.toLocaleString()} thread segments` : '') +
             (parseInt(slicesCtl.value, 10) > 0 ? ` · ${slicesCtl.value} slices` : '') +
             (parseInt(document.getElementById('ctl-lenq').value, 10) < 100
-                ? ` · len ≤ ${document.getElementById('ctl-lenq').value}%` : '');
+                ? ` · len ≤ ${document.getElementById('ctl-lenq').value}%` : '') +
+            ((parseInt(document.getElementById('ctl-zlo').value, 10) > 0
+              || parseInt(document.getElementById('ctl-zhi').value, 10) < 100)
+                ? ` · z∈[${(parseInt(document.getElementById('ctl-zlo').value, 10) / 100).toFixed(2)},${(parseInt(document.getElementById('ctl-zhi').value, 10) / 100).toFixed(2)}]` : '');
     };
 
     const showPointsCtl = document.getElementById('ctl-show-points');
@@ -745,8 +760,35 @@ async function boot() {
         frame.scale.y = Math.max(h, 0.001);
         heightVal.textContent = h.toFixed(2);
     };
+    const zloCtl = document.getElementById('ctl-zlo');
+    const zloVal = document.getElementById('ctl-zlo-val');
+    const zhiCtl = document.getElementById('ctl-zhi');
+    const zhiVal = document.getElementById('ctl-zhi-val');
+    const applyZRange = () => {
+        const lo = Math.max(0, Math.min(100, parseInt(zloCtl.value, 10) || 0)) / 100;
+        const hi = Math.max(0, Math.min(100, parseInt(zhiCtl.value, 10) || 0)) / 100;
+        const sy = sculpt.scale.y;
+        // keep y >= (lo-0.5)*sy and y <= (hi-0.5)*sy, in world space. The
+        // 0.005 margin pushes both planes outward so the FULL range never
+        // clips boundary geometry (plates sit at exactly +-0.5*sy, and a
+        // plane at the same float value culls them to rounding).
+        clipLo.constant = -(lo - 0.5) * sy + 0.005;
+        clipHi.constant = (hi - 0.5) * sy + 0.005;
+        zloVal.textContent = lo.toFixed(2);
+        zhiVal.textContent = hi.toFixed(2);
+        updateStats();
+    };
+    zloCtl.addEventListener('input', () => {
+        if (parseInt(zloCtl.value, 10) > parseInt(zhiCtl.value, 10)) zloCtl.value = zhiCtl.value;
+        applyZRange();
+    });
+    zhiCtl.addEventListener('input', () => {
+        if (parseInt(zhiCtl.value, 10) < parseInt(zloCtl.value, 10)) zhiCtl.value = zloCtl.value;
+        applyZRange();
+    });
     sizeCtl.addEventListener('input', applySize);
     heightCtl.addEventListener('input', applyHeight);
+    heightCtl.addEventListener('input', applyZRange);   // world constants track the scale
     // saved view settings: the creator tuned the ephemeral viewer and Create
     // snapshotted it — apply controls, then re-run the apply chain, then
     // autoplay the captured tour so shares open as prepared flythroughs
@@ -773,6 +815,13 @@ async function boot() {
             lenqCtl.value = String(Math.max(0, Math.min(100, Math.round(Number(view.lenq)))));
         }
         if (view.zaxis === 't1' || view.zaxis === 't2') zaxisCtl.value = view.zaxis;
+        if (Number.isFinite(Number(view.zlo))) {
+            zloCtl.value = String(Math.max(0, Math.min(100, Math.round(Number(view.zlo) * 100))));
+        }
+        if (Number.isFinite(Number(view.zhi))) {
+            zhiCtl.value = String(Math.max(0, Math.min(100, Math.round(Number(view.zhi) * 100))));
+        }
+        if (parseInt(zloCtl.value, 10) > parseInt(zhiCtl.value, 10)) zloCtl.value = zhiCtl.value;
     };
     applyViewConfig(cfg.view);
     applyOrder();
@@ -782,6 +831,7 @@ async function boot() {
     applySize();
     applyHeight();
     applyLenq();
+    applyZRange();
     if (cfg.view && (cfg.view.tour === 'orbit' || cfg.view.tour === 'weave')) {
         tourModeCtl.value = cfg.view.tour;
         tourSetPlaying(true);

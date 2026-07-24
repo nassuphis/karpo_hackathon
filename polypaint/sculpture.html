@@ -57,15 +57,15 @@
 </div>
 <div id="panel">
   <label>point <input id="ctl-size" type="range" min="1" max="40" value="10"><span class="val" id="ctl-size-val"></span></label>
-  <label>height <input id="ctl-height" type="range" min="0" max="100" value="100"><span class="val" id="ctl-height-val"></span></label>
+  <label>height <input id="ctl-height" type="range" min="0" max="100" value="10"><span class="val" id="ctl-height-val"></span></label>
   <label>show <select id="ctl-mode">
-    <option value="both">points + ribbons</option>
-    <option value="points">points</option>
+    <option value="points" selected>points</option>
     <option value="ribbons">ribbons</option>
+    <option value="both">points + ribbons</option>
   </select></label>
   <label>connect <select id="ctl-order">
+    <option value="file" selected>file order</option>
     <option value="angle">angle</option>
-    <option value="file">file order</option>
   </select></label>
 </div>
 <div id="message-box"><div><h1 id="message-title"></h1><div class="detail" id="message-detail"></div></div></div>

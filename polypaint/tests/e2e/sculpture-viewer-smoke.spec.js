@@ -112,8 +112,9 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   expect(st.x4).toBeCloseTo(0.2, 5);    // root A: re=0.4 in a side-2 viewport
   expect(st.c4).toEqual([60, 180, 17]);
 
-  // ribbons: one polyline per solve. Angle mode tours the triangle around
-  // its centroid CLOSED (3 segments); default mode shows points + ribbons.
+  // defaults: show=points (ribbons built but hidden), connect=file order,
+  // height=0.1. File order draws the solver's own row order OPEN (A->B,
+  // B->C only — no closing chord).
   const rb = await page.evaluate(() => {
     const v = window.__sculptureViewer;
     const pos = v.ribbons.geometry.getAttribute('position');
@@ -121,23 +122,22 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
       verts: pos.count,
       v0: [pos.array[0], pos.array[2]], v1: [pos.array[3], pos.array[5]],
       pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible,
+      scaleY: v.sculpt.scale.y,
       hud: document.getElementById('hud-stats').textContent || '',
     };
   });
-  expect(rb.verts).toBe(96);            // 16 solves x 3 closed segments x 2 verts
-  expect(rb.pointsVis).toBe(true);
-  expect(rb.ribbonsVis).toBe(true);
-  expect(rb.hud).toContain('48 ribbon segments');
-  // the angular tour starts at C (lowest angle about the centroid: z=-0.2)
-  // and walks C -> A: the file order A,B,C is reordered
-  expect(rb.v0[0]).toBeCloseTo(0.0, 5);
-  expect(rb.v0[1]).toBeCloseTo(-0.2, 5);
-  expect(rb.v1[0]).toBeCloseTo(0.2, 5);
-  expect(rb.v1[1]).toBeCloseTo(0.0, 5);
-  // file order draws the solver's own row order OPEN (A->B, B->C only)
-  const fo = await page.evaluate(() => {
+  expect(rb.verts).toBe(64);            // 16 solves x 2 open segments x 2 verts
+  expect(rb.pointsVis).toBe(true);      // default show=points
+  expect(rb.ribbonsVis).toBe(false);
+  expect(rb.scaleY).toBeCloseTo(0.1, 5);   // default height=0.1
+  expect(rb.hud).toContain('32 ribbon segments');
+  expect(rb.v0[0]).toBeCloseTo(0.2, 5);    // A leads in file order
+  expect(rb.v1[0]).toBeCloseTo(-0.2, 5);   // then B
+  // angle mode tours the triangle around its centroid CLOSED (3 segments),
+  // starting at C (lowest angle: z=-0.2) — the file order A,B,C reorders
+  const ao = await page.evaluate(() => {
     const ctl = document.getElementById('ctl-order');
-    ctl.value = 'file';
+    ctl.value = 'angle';
     ctl.dispatchEvent(new Event('change'));
     const v = window.__sculptureViewer;
     const pos = v.ribbons.geometry.getAttribute('position');
@@ -147,10 +147,12 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
       hud: document.getElementById('hud-stats').textContent || '',
     };
   });
-  expect(fo.verts).toBe(64);            // 16 solves x 2 open segments x 2 verts
-  expect(fo.hud).toContain('32 ribbon segments');
-  expect(fo.v0[0]).toBeCloseTo(0.2, 5);   // A leads in file order
-  expect(fo.v1[0]).toBeCloseTo(-0.2, 5);  // then B
+  expect(ao.verts).toBe(96);            // 16 solves x 3 closed segments x 2 verts
+  expect(ao.hud).toContain('48 ribbon segments');
+  expect(ao.v0[0]).toBeCloseTo(0.0, 5);
+  expect(ao.v0[1]).toBeCloseTo(-0.2, 5);
+  expect(ao.v1[0]).toBeCloseTo(0.2, 5);
+  expect(ao.v1[1]).toBeCloseTo(0.0, 5);
   // the show selector hides the other primitive
   const vis = await page.evaluate(() => {
     const v = window.__sculptureViewer;

@@ -58,21 +58,22 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
   for multi-pass jobs.
 - Non-finite roots and roots outside the xy viewport are dropped and
   counted (`clipped` in the HUD).
-- Controls: orbit/damping, point-size slider, **height slider** — 0
-  flattens the sculpture onto its base plane, showing the shadow ≙ the
-  2D art.
+- Controls: orbit/damping, point-size slider (default 10), **height
+  slider** (default 0.1) — 0 flattens the sculpture onto its base plane,
+  showing the shadow ≙ the 2D art.
 - **Ribbons** (per user spec): one polyline per solve — each row of the
   root table (columns = degree) connected at that row's z, monochrome by
   construction since the solve-score is per solve. `show` selector:
-  points / ribbons / both (default both). `connect` selector picks the
+  points / ribbons / both (default points). `connect` selector picks the
   within-row order — roots have no intrinsic order, the table order is a
   solver artifact:
-  - **angle** (default): tour each row's constellation by angle about
-    its centroid, CLOSED for 3+ roots. Solver-independent, coherent,
-    stable between neighboring solves.
-  - **file order**: the solver's own row order, OPEN-ended. For the
-    warm-started Aberth lores solve this order is a fossil of the chain;
-    for CM/JT rows it is essentially arbitrary (torn sheets expected).
+  - **file order** (default): the solver's own row order, OPEN-ended.
+    For the warm-started Aberth lores solve this order is a fossil of
+    the chain; for CM/JT rows it is essentially arbitrary (torn sheets
+    expected).
+  - **angle**: tour each row's constellation by angle about its
+    centroid, CLOSED for 3+ roots. Solver-independent, coherent, stable
+    between neighboring solves.
   One `LineSegments` draw call for all ribbons; rows with clipped roots
   just tour the survivors. Plain WebGL lines are 1px — real thickness
   would use the already-vendored fat-line addons.

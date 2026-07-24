@@ -1152,6 +1152,11 @@ function _renderCustomPaletteRows() {
                     || _customPalettePopupState.mode === 'solve_score') {
                 setColorMode(_customPalettePopupState.mode);
             }
+            // Re-render AFTER the apply: the earlier render ran before the
+            // current palette changed, leaving 'active' on the PREVIOUS
+            // click's row — with a full catalog that read as two selected
+            // rows chasing each other (user bug report).
+            _renderCustomPaletteRows();
             _renderCustomPaletteStatus();
         };
 

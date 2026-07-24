@@ -193,6 +193,43 @@ test.describe('Palette UI', () => {
     await page.click('#mic-popup-close');
   });
 
+  test('HEX popup: sequential row clicks keep exactly one applied row', async ({ page }) => {
+    await page.evaluate((palettes) => {
+      window._mockPalettes = palettes.slice();
+      document.getElementById('palette-results-dir').value = 'job_palette';
+      window.lambdaPost = async function (name, body, path) {
+        if (name === 'storage' && path === '/list-palettes') return { palettes: window._mockPalettes.slice() };
+        if (name === 'storage' && path === '/list-custom-palettes') {
+          return { revision: 'r1', palettes: [
+            { name: 'Reef', stops: ['112233', '445566'], palette: 'custom:112233-445566' },
+            { name: 'Ember', stops: ['aa1100', 'ffcc00'], palette: 'custom:aa1100-ffcc00' },
+            { name: 'Moss', stops: ['0a3311', '88aa66'], palette: 'custom:0a3311-88aa66' },
+          ] };
+        }
+        throw new Error(`unexpected storage path ${path}`);
+      };
+    }, PALETTES);
+    await page.click('.tab-btn:text("Palette")');
+    await page.click('#palette-circles-palette-tab .pal-circle-custom');
+    await expect(page.locator('#custom-palette-popup-overlay')).toBeVisible();
+    const rows = page.locator('#custom-palette-popup-body tr');
+    await expect(rows).toHaveCount(3);
+    // click row 1 then row 2 then row 3: after each click the APPLIED marker
+    // must sit on the clicked row alone — no wandering pair (user bug)
+    for (const idx of [0, 1, 2]) {
+      await rows.nth(idx).click();
+      await expect(page.locator('#custom-palette-popup-body tr.active')).toHaveCount(1);
+      await expect(rows.nth(idx)).toHaveClass(/active/);
+      await expect(rows.nth(idx)).toHaveClass(/highlight/);
+    }
+    const applied = await page.evaluate(() => ({
+      palette: _currentPaletteForMode('palette_tab'),
+      displayName: _paletteDisplayNameForMode('palette_tab'),
+    }));
+    expect(applied.palette).toBe('custom:0a3311-88aa66');
+    expect(applied.displayName).toBe('Moss');
+  });
+
   test('palette create dispatches the current visible preset and palette selection', async ({ page }) => {
     await page.evaluate((palettes) => {
       window._mockPalettes = palettes.slice();

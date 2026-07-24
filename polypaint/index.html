@@ -401,9 +401,19 @@ button {
 .tri-popup-row td {
     padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: middle;
 }
-.tri-popup-row.active,
-.tri-popup-row.highlight {
+.tri-popup-row.active {
+    /* the APPLIED palette: filled */
     background: rgba(233,69,96,0.12);
+}
+.tri-popup-row.highlight {
+    /* the keyboard/click POSITION: outline only, so it never reads as a
+       second "selected" row (user bug: active+highlight looked identical) */
+    box-shadow: inset 2px 0 0 0 #e94560;
+    background: rgba(255,255,255,0.04);
+}
+.tri-popup-row.active.highlight {
+    background: rgba(233,69,96,0.12);
+    box-shadow: inset 2px 0 0 0 #e94560;
 }
 .tri-popup-row:hover {
     background: rgba(255,255,255,0.05);

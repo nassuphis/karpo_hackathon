@@ -64,6 +64,19 @@ serpentine rule `col = (row & 1) ? gridN-1-j : j` (mirroring
 
 - X = Re, Z = −Im (right-handed view), Y (up) = t2 − ½; cube side 1,
   wireframe frame; xy normalized by the isotropic viewport.
+- **Style: solid (default) / ghost.** Solid renders opaque with depth
+  writes — occlusion is correct from every angle. The original material
+  had `depthWrite: false` (translucent point-cloud habit), so pixel
+  ownership followed DRAW order, not distance: rotating the sliced
+  sculpture showed bottom-plate points painted over the top plate
+  (user-caught). Ghost keeps the translucent veil as an explicit choice
+  whose ordering artifacts are inherent (no per-point sorting). The
+  smoke spec pins occlusion behaviorally with a zero-parallax setup:
+  camera axis straight down through one root spot, center pixels must
+  be top-plate colored (mutation-tested against depthWrite:false; note
+  perspective parallax makes "look from above, count bottom pixels"
+  scenarios flaky — sprite scale uses h/2 while projection uses the
+  focal length, so cover margins mislead).
 - Exact colors: `THREE.ColorManagement.enabled = false` + renderer
   `LinearSRGBColorSpace` so the palette PNG's sRGB bytes pass through to
   the screen unconverted — the default pipeline treats vertex colors as

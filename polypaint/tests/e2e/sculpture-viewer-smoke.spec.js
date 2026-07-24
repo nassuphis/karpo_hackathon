@@ -201,6 +201,32 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   expect(sl.off.y4).toBeCloseTo(0.25, 5);   // continuous restored
   expect(sl.off.hud).not.toContain('slices');
 
+  // style: SOLID by default — opaque, depth-written, so nearer plates
+  // occlude farther ones from every angle (depthWrite:false let draw order
+  // beat distance: bottom-slice points painted over the top plate). ghost
+  // keeps the translucent veil as an explicit choice.
+  const style = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const read = () => ({
+      pt: [v.material.transparent, v.material.depthWrite, v.material.opacity],
+      rb: [v.ribbons.material.transparent, v.ribbons.material.depthWrite, v.ribbons.material.opacity],
+    });
+    const solid = read();
+    const ctl = document.getElementById('ctl-style');
+    ctl.value = 'ghost';
+    ctl.dispatchEvent(new Event('change'));
+    const ghost = read();
+    ctl.value = 'solid';
+    ctl.dispatchEvent(new Event('change'));
+    const back = read();
+    return { solid, ghost, back };
+  });
+  expect(style.solid.pt).toEqual([false, true, 1]);
+  expect(style.solid.rb).toEqual([false, true, 1]);
+  expect(style.ghost.pt).toEqual([true, false, 0.92]);
+  expect(style.ghost.rb).toEqual([true, false, 0.55]);
+  expect(style.back.pt).toEqual([false, true, 1]);
+
   // colors must reach the screen BYTE-FOR-BYTE (washed-out vertex colors —
   // three's default linear interpretation of sRGB bytes — were a real
   // user-facing bug): spread the stacks, enlarge + opacify the points,
@@ -231,6 +257,43 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   for (const [key, n] of Object.entries(px)) {
     expect(n, `exact on-screen pixels for rgb(${key})`).toBeGreaterThan(0);
   }
+
+  // OCCLUSION (the user's report): slices=2, big points, camera straight
+  // above — the top plate must fully hide the bottom plate. Fixture colors
+  // are (row*60, col*60, 17); cols {0,1} live on the bottom plate, cols
+  // {2,3} on top, so any exact bottom triple on screen is a depth failure
+  // (with depthWrite:false, last-drawn step 15 painted bottom color
+  // (180,0,17) straight over the top plate).
+  const occl = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const slicesCtl = document.getElementById('ctl-slices');
+    slicesCtl.value = '2';
+    slicesCtl.dispatchEvent(new Event('change'));
+    // zero-parallax by construction: the camera axis runs straight down
+    // THROUGH root C (0, -0.2) — C's top-plate point projects to the exact
+    // screen center directly over its bottom twin, so the center pixels
+    // must carry a TOP color (g in {120,180}). With the depthWrite:false
+    // bug, the last-drawn coincident C (step 15, bottom plate, g <= 60)
+    // painted over it — the user's "parts on top of top slice".
+    v.material.size = 0.5;
+    v.camera.position.set(0, 8.0, -0.2);
+    v.camera.lookAt(0, 0, -0.2);
+    v.renderer.render(v.scene, v.camera);
+    const gl = v.renderer.getContext();
+    const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+    const patch = new Uint8Array(5 * 5 * 4);
+    gl.readPixels(Math.floor(w / 2) - 2, Math.floor(h / 2) - 2, 5, 5, gl.RGBA, gl.UNSIGNED_BYTE, patch);
+    let topPx = 0, other = 0;
+    for (let i = 0; i < patch.length; i += 4) {
+      if (patch[i + 2] === 17 && patch[i + 1] >= 120) topPx++;
+      else other++;
+    }
+    slicesCtl.value = '0';
+    slicesCtl.dispatchEvent(new Event('change'));
+    return { topPx, other };
+  });
+  expect(occl.topPx).toBe(25);
+  expect(occl.other).toBe(0);
 
   // the height slider flattens the sculpture onto its base plane — the 2D
   // art is literally this shape's shadow

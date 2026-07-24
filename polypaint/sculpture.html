@@ -75,6 +75,10 @@
     <option value="ribbons">ribbons</option>
     <option value="both">points + ribbons</option>
   </select></label>
+  <label>style <select id="ctl-style">
+    <option value="solid" selected>solid</option>
+    <option value="ghost">ghost</option>
+  </select></label>
   <label>connect <select id="ctl-order">
     <option value="file" selected>file order</option>
     <option value="angle">angle</option>
@@ -225,7 +229,6 @@ async function boot() {
     geometry.setAttribute('color', new THREE.BufferAttribute(colors.subarray(0, count * 3), 3, true));
     const material = new THREE.PointsMaterial({
         size: 0.004, vertexColors: true, sizeAttenuation: true,
-        transparent: true, opacity: 0.92, depthWrite: false,
     });
     const points = new THREE.Points(geometry, material);
 
@@ -236,9 +239,7 @@ async function boot() {
     // warm-started Aberth lores solve that order is a fossil of the chain.
     const ribbons = new THREE.LineSegments(
         new THREE.BufferGeometry(),
-        new THREE.LineBasicMaterial({
-            vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false,
-        }));
+        new THREE.LineBasicMaterial({ vertexColors: true }));
     let ribbonSegments = 0;
     function buildRibbons(order) {
         const lp = new Float32Array(passSteps * degree * 2 * 3);
@@ -307,6 +308,22 @@ async function boot() {
     const modeCtl = document.getElementById('ctl-mode');
     const orderCtl = document.getElementById('ctl-order');
     const slicesCtl = document.getElementById('ctl-slices');
+    const styleCtl = document.getElementById('ctl-style');
+    // solid: opaque + depth-written — occlusion is correct from every angle
+    // (depthWrite:false let bottom plates paint over nearer top plates: what
+    // wins a pixel was DRAW order, not distance). ghost: the translucent
+    // veil — unsorted transparency, ordering artifacts are inherent there.
+    const applyStyle = () => {
+        const ghost = styleCtl.value === 'ghost';
+        material.transparent = ghost;
+        material.opacity = ghost ? 0.92 : 1;
+        material.depthWrite = !ghost;
+        material.needsUpdate = true;
+        ribbons.material.transparent = ghost;
+        ribbons.material.opacity = ghost ? 0.55 : 1;
+        ribbons.material.depthWrite = !ghost;
+        ribbons.material.needsUpdate = true;
+    };
     // slices: bin t2 onto S discrete plates spanning the cube (S=11 -> z = 0,
     // 0.1, ..., 1.0). Every solve sits at one t2, so whole ribbons land
     // intact on their plate — the sculpture becomes an exploded shadow.
@@ -336,6 +353,7 @@ async function boot() {
     modeCtl.addEventListener('change', applyMode);
     orderCtl.addEventListener('change', applyOrder);
     slicesCtl.addEventListener('change', applySlices);
+    styleCtl.addEventListener('change', applyStyle);
     const sizeCtl = document.getElementById('ctl-size');
     const sizeVal = document.getElementById('ctl-size-val');
     const heightCtl = document.getElementById('ctl-height');
@@ -356,6 +374,7 @@ async function boot() {
     heightCtl.addEventListener('input', applyHeight);
     applyOrder();
     applyMode();
+    applyStyle();
     applySize();
     applyHeight();
 

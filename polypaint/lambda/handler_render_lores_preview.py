@@ -16,7 +16,16 @@ import subprocess
 import time
 
 import boto3
-from botocore.config import Config as BotoConfig
+
+try:
+    # 32-connection pool: the parallel lattice materializer fans row fetches
+    # across threads, and botocore's default pool of 10 would serialize them
+    from botocore.config import Config as _BotoConfig
+    _S3_CLIENT_CONFIG = _BotoConfig(max_pool_connections=32)
+except ImportError:
+    # the Docker runtime container stubs boto3 WITHOUT botocore (real Lambda
+    # ships both); the stub's client ignores pooling anyway
+    _S3_CLIENT_CONFIG = None
 
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
 from png_rgb import decode_png_rgb
@@ -63,9 +72,8 @@ from program_compile_helpers import (
 )
 
 
-# 32-connection pool: the parallel lattice materializer fans row fetches
-# across threads, and botocore's default pool of 10 would serialize them
-s3 = boto3.client("s3", config=BotoConfig(max_pool_connections=32))
+s3 = (boto3.client("s3", config=_S3_CLIENT_CONFIG)
+      if _S3_CLIENT_CONFIG is not None else boto3.client("s3"))
 
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
 SPLAT_BAKE_BIN = os.path.join(os.path.dirname(__file__), "splat_bake")

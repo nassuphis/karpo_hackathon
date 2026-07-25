@@ -449,7 +449,12 @@ topology cache keeps a SINGLE entry (key = res:axis:slices — Y-
 dependent, unlike the line topologies); slices/z-axis/res changes
 rebuild through the standard worker machinery with progress + cancel.
 `show.splats` + `splatRes` ride the full saved-view convention
-(capture → sanitizer → meta.view → applyViewConfig). Pinned e2e: the
+(capture → sanitizer → meta.view → applyViewConfig). Splats follow
+the STYLE selector (user: "can the splats be made more opaque?"):
+solid = truly OPAQUE depth-written elliptical surfels (correct
+occlusion, a painted-flake look), ghost = translucent alpha, cloud =
+the additive glow — and the glow slider scales splat intensity in the
+translucent modes (g/30, default 1.0). Pinned e2e: the
 drift fixture yields exactly 16 x-elongated equal-weight splats with
 exact mean colors, slices=2 collapses centers onto the ±0.5 plates (8
 splats) and back, and the saved-mode boot builds splats from the view.

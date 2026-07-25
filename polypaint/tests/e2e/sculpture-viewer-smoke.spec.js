@@ -1628,4 +1628,38 @@ test('splats: voxel-binned anisotropic gaussians — elongation, weights, slices
   });
   expect(sliced.count).toEqual([-0.5, 0.5]);   // splat centers ON the plates
   expect(sliced.restored).toBe(16);            // slices off -> rebuilt full
+
+  // splats follow the STYLE: solid = truly opaque depth-written surfels
+  // (the "more opaque" ask), cloud = additive glow scaled by the glow
+  // slider, ghost = translucent alpha
+  const styles = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const mat = v.splats.material;
+    const styleCtl = document.getElementById('ctl-style');
+    const read = () => ({
+      mode: mat.uniforms.uMode.value,
+      blending: mat.blending,
+      depthWrite: mat.depthWrite,
+      transparent: mat.transparent,
+    });
+    const solid = read();                      // default style = solid
+    styleCtl.value = 'cloud';
+    styleCtl.dispatchEvent(new Event('change'));
+    const cloud = read();
+    const glowCtl = document.getElementById('ctl-glow');
+    glowCtl.value = '60';
+    glowCtl.dispatchEvent(new Event('input'));
+    const intensity = mat.uniforms.uIntensity.value;
+    styleCtl.value = 'ghost';
+    styleCtl.dispatchEvent(new Event('change'));
+    const ghost = read();
+    styleCtl.value = 'solid';
+    styleCtl.dispatchEvent(new Event('change'));
+    return { solid, cloud, ghost, intensity, back: read() };
+  });
+  expect(styles.solid).toEqual({ mode: 2, blending: 1, depthWrite: true, transparent: false });   // NormalBlending, opaque
+  expect(styles.cloud).toEqual({ mode: 0, blending: 2, depthWrite: false, transparent: true });   // AdditiveBlending
+  expect(styles.ghost).toEqual({ mode: 1, blending: 1, depthWrite: false, transparent: true });
+  expect(styles.intensity).toBeCloseTo(2, 5);   // glow 60 -> 60/30
+  expect(styles.back).toEqual(styles.solid);
 });

@@ -1154,7 +1154,7 @@ onmessage = function (ev) {
     // trajectory and 5M points collapse to a few 100k instanced quads
     // (far cheaper to orbit than the line primitives). Always additive:
     // splats are a density visualization, like the cloud style.
-    const splatUniforms = { uScaleMul: { value: 1 }, uIntensity: { value: 1 } };
+    const splatUniforms = { uScaleMul: { value: 1 }, uIntensity: { value: 1 }, uMode: { value: 2 } };
     const splatMat = new THREE.ShaderMaterial({
         uniforms: splatUniforms,
         clipping: true,
@@ -1186,6 +1186,7 @@ onmessage = function (ev) {
         fragmentShader: [
             '#include <clipping_planes_pars_fragment>',
             'uniform float uIntensity;',
+            'uniform float uMode;',   // 0 additive glow, 1 ghost alpha, 2 solid surfel
             'varying vec2 vCorner;',
             'varying vec3 vColor;',
             'varying float vW;',
@@ -1194,7 +1195,13 @@ onmessage = function (ev) {
             '    float r2 = dot(vCorner, vCorner);',
             '    if (r2 > 1.0) discard;',
             '    float a = exp(-3.0 * r2);',
-            '    gl_FragColor = vec4(vColor * a * vW * uIntensity, 1.0);',
+            '    if (uMode > 1.5) {',
+            '        gl_FragColor = vec4(vColor * (0.75 + 0.25 * a), 1.0);',
+            '    } else if (uMode > 0.5) {',
+            '        gl_FragColor = vec4(vColor, min(1.0, a * vW * 0.7 * uIntensity));',
+            '    } else {',
+            '        gl_FragColor = vec4(vColor * a * vW * uIntensity, 1.0);',
+            '    }',
             '}',
         ].join('\n'),
     });
@@ -1512,6 +1519,18 @@ onmessage = function (ev) {
     const slicesCtl = document.getElementById('ctl-slices');
     const zaxisCtl = document.getElementById('ctl-zaxis');
     const styleCtl = document.getElementById('ctl-style');
+    // splats follow the style too: solid = OPAQUE elliptical surfels
+    // (depth-written, correct occlusion — the "more opaque" ask), ghost =
+    // translucent alpha, cloud = the additive glow. glow scales splat
+    // intensity in the translucent modes.
+    const applySplatStyle = () => {
+        const mode = styleCtl.value === 'cloud' ? 0 : (styleCtl.value === 'ghost' ? 1 : 2);
+        splatUniforms.uMode.value = mode;
+        splatMat.blending = mode === 0 ? THREE.AdditiveBlending : THREE.NormalBlending;
+        splatMat.transparent = mode !== 2;
+        splatMat.depthWrite = mode === 2;
+        splatMat.needsUpdate = true;
+    };
     // solid: opaque + depth-written — occlusion is correct from every angle
     // (depthWrite:false let bottom plates paint over nearer top plates: what
     // wins a pixel was DRAW order, not distance). ghost: the translucent
@@ -1531,6 +1550,7 @@ onmessage = function (ev) {
             m.depthWrite = !(ghost || cloud);
             m.needsUpdate = true;
         }
+        applySplatStyle();
     };
     // slices: bin t2 onto S discrete plates spanning the cube (S=11 -> z = 0,
     // 0.1, ..., 1.0). Every solve sits at one t2, so whole ribbons land
@@ -1612,6 +1632,7 @@ onmessage = function (ev) {
     const applyGlow = () => {
         const g = Math.max(1, Math.min(100, parseInt(glowCtl.value, 10) || 30));
         tonemapMat.uniforms.uExposure.value = g / 20;
+        splatUniforms.uIntensity.value = g / 30;
         glowVal.textContent = String(g);
     };
     glowCtl.addEventListener('input', applyGlow);

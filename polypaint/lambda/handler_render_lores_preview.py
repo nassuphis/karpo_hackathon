@@ -10,13 +10,16 @@ import glob
 import json
 import math
 import os
+import re
 import subprocess
 import time
 
 import boto3
 
+from color_artifact_meta import load_color_artifact_head, parse_root_transforms
 from color_render_contract import normalize_background_color, validate_color_output_contract
 from logical_lores import (
+    _logical_row_mapping,
     calc_square_grid,
     estimate_logical_lores_bytes,
     logical_lores_default_n,
@@ -82,6 +85,7 @@ TMP_PALETTE_EQ_LUT = "/tmp/render_lores_preview_palette_eq.bin"
 TMP_IMAGE = "/tmp/render_lores_preview.png"
 TMP_PALETTE_IMAGE = "/tmp/render_lores_preview_palette.png"
 TMP_XFORMED_ROOTS = "/tmp/render_lores_preview_xformed_roots.bin"
+TMP_STEP_SCORES = "/tmp/render_lores_preview_step_scores.raw"
 
 MAX_PREVIEW_PIX = int(os.environ.get("RENDER_LORES_PREVIEW_MAX_PIX", "1024"))
 MAX_LOGICAL_LORES_N = int(os.environ.get("RENDER_LOGICAL_LORES_MAX_N", "256"))
@@ -114,6 +118,7 @@ def _cleanup_tmp():
         TMP_IMAGE,
         TMP_PALETTE_IMAGE,
         TMP_XFORMED_ROOTS,
+        TMP_STEP_SCORES,
         TMP_FRAGMENT_PREFIX + "*",
         TMP_PALETTE_FRAGMENT_PREFIX + "*",
     ):
@@ -988,13 +993,16 @@ def _preview_palette_grid_n(source_meta, step_count):
     return 0
 
 
-def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeffs, step_count, include_coeff, include_param, palette_grid_n=0, xformed_roots_output=None, xformed_roots_format="f32"):
+def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeffs, step_count, include_coeff, include_param, palette_grid_n=0, xformed_roots_output=None, xformed_roots_format="f32", root_transforms=None):
     metrics = _metric_rows_from_summary(summary)
     payload = solve_score_program_cli_payload({
         "metrics": metrics,
         "program_spec": str(summary.get("program") or "m0"),
     })
-    root_transforms = _root_transforms_for_run(params)
+    # artifact-sourced sculptures pass the COMPILED chain recorded in the
+    # color artifact's metadata; live previews compile from request params
+    if root_transforms is None:
+        root_transforms = _root_transforms_for_run(params)
     xforms_path = _write_xforms(root_transforms)
     cmd = [
         ROOTS2PIX_MT,
@@ -1066,6 +1074,272 @@ def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeff
     return meta
 
 
+_ARTIFACT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+
+
+def _artifact_sculpture_summary():
+    # minimal m0 scoring for the fused raster: the artifact's STORED
+    # step_scores provide every color, so the raster pass exists only to
+    # apply the artifact's transform chain + rotation and dump the plotted
+    # positions. proximity/m0 keeps the C contract satisfied at ~O(degree)
+    # per solve — negligible next to the range-GET materialization.
+    return {
+        "program": "m0",
+        "metrics": [{
+            "slot": 0,
+            "metric": "proximity",
+            "quantile": 1.0,
+            "source": "slv",
+            "clip_lo": 0.0,
+            "clip_hi": 1.0,
+        }],
+        "score_output_normalize": False,
+        "score_output_clip_lo": 0.0,
+        "score_output_clip_hi": 1.0,
+        "score_output_channels": [],
+        "score_output_channel_count": 1,
+        "score_output_interpretation": "scalar_lut",
+    }
+
+
+def _subsample_step_scores_pass0(src_path, out_path, *, full_n, view_n, channels):
+    """Pick the artifact's stored per-solve scores at EXACTLY the lattice the
+    logical roots materializer walks (_logical_row_mapping — same physical
+    solves as the dump), writing the palette raw de-serpentined to row-major
+    (row, col) — the palette PNG convention the viewer decodes. Pass 0 only,
+    matching the sculpture's pass convention."""
+    with open(src_path, "rb") as fh:
+        raw = fh.read()
+    need = full_n * full_n * channels
+    if len(raw) < need:
+        raise RuntimeError(
+            f"step_scores.raw too small: got {len(raw)} bytes, need {need} for grid {full_n} x{channels}ch")
+    dest = bytearray(view_n * view_n * channels)
+    for lrow in range(view_n):
+        physical_i1, physical_js = _logical_row_mapping(full_n, view_n, lrow)
+        for lj, physical_j in enumerate(physical_js):
+            src = (physical_i1 * full_n + physical_j) * channels
+            lcol = (view_n - 1 - lj) if (lrow & 1) else lj
+            dst = (lrow * view_n + lcol) * channels
+            dest[dst:dst + channels] = raw[src:src + channels]
+    with open(out_path, "wb") as fh:
+        fh.write(bytes(dest))
+    return len(dest)
+
+
+def _artifact_meta_viewport(meta, artifact_id):
+    viewport = {}
+    for key in ("min_re", "max_re", "min_im", "max_im"):
+        try:
+            viewport[key] = float(meta.get(key))
+        except (TypeError, ValueError):
+            raise RuntimeError(
+                f"color artifact {artifact_id} does not record its viewport ({key}) — "
+                "re-render it to sculpture it")
+        if not math.isfinite(viewport[key]):
+            raise RuntimeError(f"color artifact {artifact_id} viewport {key} is not finite")
+    if not (viewport["max_re"] > viewport["min_re"] and viewport["max_im"] > viewport["min_im"]):
+        raise RuntimeError(f"color artifact {artifact_id} viewport is degenerate")
+    return viewport
+
+
+def _run_artifact_sculpture(params, job_id, spec, t_start):
+    """Artifact-sourced sculpture: the ONLY generation path. Everything comes
+    from the selected color artifact's recorded provenance — viewport,
+    rotation, compiled root-transform chain, palette, interpretation, and the
+    stored per-solve scores — so the job is nearly pure I/O: range-GET the
+    transport roots at the lattice, apply the artifact's transforms in the
+    fused raster (trivial m0 score), subsample the stored step_scores for
+    colors, and upload the ephemeral viewer pair. No score evaluation."""
+    artifact_id = str((spec or {}).get("artifact_id") or "").strip()
+    if not _ARTIFACT_ID_RE.fullmatch(artifact_id):
+        raise RuntimeError("artifact_sculpture requires a valid artifact_id")
+    task_id = str(params.get("sculpture_task_id") or "").strip()
+    if task_id:
+        report_status(job_id, task_id, "running")
+    view_n = _coerce_int(params.get("preview_source_size"), "preview_source_size", min_value=2, max_value=512)
+    fmt = str(params.get("sculpture_format") or "u16").strip().lower()
+    if fmt not in ("f32", "u16"):
+        raise RuntimeError(f"sculpture_format must be f32 or u16, got {fmt!r}")
+
+    head = load_color_artifact_head(s3, BUCKET, job_id, artifact_id)
+    meta = dict(head.get("metadata") or {})
+    step_scores_key = str(meta.get("step_scores_key") or "").strip()
+    if not step_scores_key:
+        raise RuntimeError(
+            f"color artifact {artifact_id} has no stored per-solve scores (step_scores) — "
+            "re-render it to sculpture it")
+    full_n = int(meta.get("step_scores_grid_n") or 0)
+    if full_n < 1:
+        raise RuntimeError(f"color artifact {artifact_id} records step_scores_grid_n={full_n}")
+    channels = int(meta.get("score_output_channel_count") or 1)
+    if channels not in (1, 3):
+        raise RuntimeError(f"color artifact {artifact_id} has unsupported score channel count {channels}")
+    interpretation = str(meta.get("score_output_interpretation") or ("scalar_lut" if channels == 1 else "rgb"))
+    palette = str(meta.get("palette") or "inferno")
+    background_color = normalize_background_color(meta.get("background_color"))
+    viewport = _artifact_meta_viewport(meta, artifact_id)
+    rotation = float(meta.get("rotation") or 0.0)
+    root_transforms = parse_root_transforms(meta.get("root_transforms"))
+
+    calc = _load_calc(job_id)
+    degree = int(calc.get("degree") or 0)
+    if degree < 1:
+        raise RuntimeError("calc.json carries no degree")
+    n_coeffs = int(calc.get("n_coeffs") or (degree + 1))
+    if view_n > full_n:
+        raise RuntimeError(f"sculpture size {view_n} exceeds the solve grid {full_n}")
+
+    t_materialize = time.time()
+    source_meta = materialize_logical_lores(
+        s3_client=s3,
+        bucket=BUCKET,
+        calc=calc,
+        job_id=job_id,
+        degree=degree,
+        n_coeffs=n_coeffs,
+        view_n=view_n,
+        out_paths={"slv": TMP_ROOTS},
+        include_coeff=False,
+        include_param=False,
+    )
+    materialize_ms = int((time.time() - t_materialize) * 1000)
+    if int(source_meta["full_N"]) != full_n:
+        raise RuntimeError(
+            f"artifact step_scores grid {full_n} does not match the transport grid "
+            f"{source_meta['full_N']} — the artifact belongs to a different solve")
+    step_count = int(source_meta["n_solves"])
+
+    manifests = _write_local_manifests(
+        degree=degree,
+        n_coeffs=n_coeffs,
+        step_count=step_count,
+        include_coeff=False,
+        include_param=False,
+    )
+    t_raster = time.time()
+    raster_meta = _run_roots2pix(
+        params={
+            "rotation": rotation,
+            "raster_mt_threads": params.get("raster_mt_threads", 4),
+            "raster_sectioned_retries": params.get("raster_sectioned_retries", 2),
+        },
+        summary=_artifact_sculpture_summary(),
+        viewport=viewport,
+        manifests=manifests,
+        pix=64,
+        degree=degree,
+        n_coeffs=n_coeffs,
+        step_count=step_count,
+        include_coeff=False,
+        include_param=False,
+        palette_grid_n=0,
+        xformed_roots_output=TMP_XFORMED_ROOTS,
+        xformed_roots_format=fmt,
+        root_transforms=root_transforms,
+    )
+    raster_ms = int((time.time() - t_raster) * 1000)
+    xformed_size = os.path.getsize(TMP_XFORMED_ROOTS) if os.path.exists(TMP_XFORMED_ROOTS) else 0
+    expected_xformed = step_count * degree * 2 * (2 if fmt == "u16" else 4)
+    if xformed_size != expected_xformed:
+        raise RuntimeError(
+            f"sculpture transformed-roots dump size mismatch: got {xformed_size}, expected {expected_xformed}")
+
+    t_scores = time.time()
+    _download_to_file(step_scores_key, TMP_STEP_SCORES)
+    _subsample_step_scores_pass0(
+        TMP_STEP_SCORES,
+        TMP_PALETTE_RAW,
+        full_n=full_n,
+        view_n=view_n,
+        channels=channels,
+    )
+    palette_histogram = histogram_from_raw_path_channel0(
+        TMP_PALETTE_RAW,
+        channels=channels,
+        expected_size=view_n * view_n * channels,
+    )
+    write_equalization_lut(TMP_PALETTE_EQ_LUT, palette_histogram)
+    palette_render_meta = render_score_raw(
+        raw_path=TMP_PALETTE_RAW,
+        out_path=TMP_PALETTE_IMAGE,
+        preview_path="",
+        pix=view_n,
+        eq_lut_path=TMP_PALETTE_EQ_LUT,
+        palette=palette,
+        background_color=background_color,
+        quality=90,
+        channels=channels,
+        interpretation=interpretation,
+        zero_background=False,
+    )
+    scores_ms = int((time.time() - t_scores) * 1000)
+
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    base_url = f"https://{BUCKET}.s3.{region}.amazonaws.com"
+    sculpture_roots_key = f"renders/{job_id}/sculpture_roots.bin"
+    with open(TMP_XFORMED_ROOTS, "rb") as fh:
+        s3.put_object(
+            Bucket=BUCKET, Key=sculpture_roots_key, Body=fh.read(),
+            ContentType="application/octet-stream", CacheControl="no-cache")
+    sculpture_palette_key = f"renders/{job_id}/sculpture_palette.png"
+    with open(TMP_PALETTE_IMAGE, "rb") as fh:
+        s3.put_object(
+            Bucket=BUCKET, Key=sculpture_palette_key, Body=fh.read(),
+            ContentType="image/png", CacheControl="no-cache")
+    # version-stamped URLs: fixed keys + browser heuristic caching served
+    # stale viewer data across runs
+    stamp = int(time.time() * 1000)
+    sculpture_export = {
+        "format": fmt,
+        "grid_n": int(view_n),
+        "degree": int(degree),
+        "step_count": int(step_count),
+        "pass_count": int(step_count // (view_n * view_n)),
+        "roots_bytes": int(xformed_size),
+        "viewport": viewport,
+        "palette": palette,
+        "source_artifact_id": artifact_id,
+        "roots_key": sculpture_roots_key,
+        "roots_url": f"{base_url}/{sculpture_roots_key}?v={stamp}",
+        "palette_key": sculpture_palette_key,
+        "palette_url": f"{base_url}/{sculpture_palette_key}?v={stamp}",
+    }
+    total_ms = int((time.time() - t_start) * 1000)
+    logs = [
+        "Artifact sculpture: "
+        f"source={artifact_id} grid={view_n}x{view_n} degree={degree} "
+        f"channels={channels} palette={palette} rotation={rotation}",
+        "Artifact sculpture materialize: "
+        f"full_N={source_meta.get('full_N')} ranges={source_meta.get('range_gets')} "
+        f"read={int(source_meta.get('bytes_read') or 0) / (1024 * 1024):.1f}MB "
+        f"wall={materialize_ms / 1000.0:.2f}s",
+        "Artifact sculpture timings: "
+        f"materialize={materialize_ms / 1000.0:.2f}s raster={raster_ms / 1000.0:.2f}s "
+        f"scores={scores_ms / 1000.0:.2f}s total={total_ms / 1000.0:.2f}s",
+    ]
+    if task_id:
+        report_status(job_id, task_id, "done", result_data={
+            "sculpture": sculpture_export,
+            "n_solves": int(step_count),
+            "total_ms": total_ms,
+        })
+    return ok_response({
+        "sculpture": sculpture_export,
+        "source": source_meta,
+        "raster": raster_meta,
+        "palette_render": palette_render_meta,
+        "n_solves": int(step_count),
+        "logs": logs,
+        "timings_ms": {
+            "materialize": materialize_ms,
+            "raster": raster_ms,
+            "scores": scores_ms,
+            "total": total_ms,
+        },
+    })
+
+
 def handler(event, context):
     params = {}
     t_start = time.time()
@@ -1079,6 +1353,11 @@ def handler(event, context):
         job_id = str(params.get("job_id") or "").strip()
         if not job_id:
             raise RuntimeError("job_id is required")
+        if params.get("artifact_sculpture") is not None:
+            # artifact-sourced sculpture: a self-contained flow — geometry,
+            # colors, and provenance all come from the saved color artifact,
+            # never from live render state (degree comes from calc.json)
+            return _run_artifact_sculpture(params, job_id, params.get("artifact_sculpture"), t_start)
         degree = _coerce_int(params.get("degree"), "degree", min_value=1)
         n_coeffs = _coerce_n_coeffs(params.get("n_coeffs"), degree)
         pix = _coerce_int(
@@ -1089,20 +1368,6 @@ def handler(event, context):
             max_value=MAX_PREVIEW_PIX,
         )
         source_mode = _preview_source_mode(params)
-        sculpture_requested = parse_boolish(params.get("sculpture", False), False, strict=True, label="sculpture")
-        sculpture_format = str(params.get("sculpture_format") or "f32").strip().lower()
-        if sculpture_format not in ("f32", "u16"):
-            raise RuntimeError(f"sculpture_format must be f32 or u16, got {sculpture_format!r}")
-        # hi-res sculptures run 2-3 minutes — past API Gateway's ~30s
-        # response ceiling — so they run as a JOB through the common task
-        # infra (DDB status rows + /check-status + the jobs rail), exactly
-        # like render/book/zoom. The presence of sculpture_task_id marks the
-        # async invocation; this run owns that row's lifecycle.
-        sculpture_task_id = str(params.get("sculpture_task_id") or "").strip()
-        if sculpture_task_id and not sculpture_requested:
-            raise RuntimeError("sculpture_task_id requires sculpture=true")
-        if sculpture_task_id:
-            report_status(job_id, sculpture_task_id, "running")
         lores_bin_key = str(params.get("lores_bin_key") or "").strip()
         if not lores_bin_key and source_mode == "lores":
             raise RuntimeError("lores_bin_key is required")
@@ -1140,9 +1405,7 @@ def handler(event, context):
                 "preview_source_size",
                 default=default_logical_n,
                 min_value=5,
-                # hi-res sculptures subsample the FULL solve (range GETs, no
-                # solving) — the preview-cost cap does not apply to them
-                max_value=(512 if (sculpture_requested and source_mode == "logical") else MAX_LOGICAL_LORES_N),
+                max_value=MAX_LOGICAL_LORES_N,
             )
         if source_mode == "logical":
             estimate = estimate_logical_lores_bytes(
@@ -1284,8 +1547,6 @@ def handler(event, context):
             pix=pix,
             degree=degree,
             n_coeffs=n_coeffs,
-            xformed_roots_output=TMP_XFORMED_ROOTS if sculpture_requested else None,
-            xformed_roots_format=sculpture_format,
             step_count=step_count,
             include_coeff=include_coeff,
             include_param=include_param,
@@ -1359,58 +1620,6 @@ def handler(event, context):
             with open(TMP_PALETTE_IMAGE, "rb") as fh:
                 palette_image_b64 = base64.b64encode(fh.read()).decode("ascii")
 
-        # Sculpture export: publish the raw lores roots + the per-step palette
-        # PNG so the standalone 3D viewer (sculpture.html) can lift each root
-        # set to z = t2. Physical mode reuses the existing lores.bin object;
-        # logical/recompute upload the freshly materialized /tmp roots.
-        sculpture_export = {}
-        if sculpture_requested:
-            if palette_grid_n <= 0:
-                raise RuntimeError(
-                    "sculpture export needs a square parameter grid "
-                    f"(step count {step_count} is not a multiple of a grid square)")
-            # ALWAYS upload the raster's transformed dump — the raw transport
-            # roots ignore the run's root-transform script and rotation, so a
-            # sculpture built from them diverges from the plot (user-caught on
-            # escape-camera pieces). No lores.bin reuse: raw != what was seen.
-            xformed_size = os.path.getsize(TMP_XFORMED_ROOTS) if os.path.exists(TMP_XFORMED_ROOTS) else 0
-            expected_xformed = step_count * degree * 2 * (2 if sculpture_format == "u16" else 4)
-            if xformed_size != expected_xformed:
-                raise RuntimeError(
-                    f"sculpture transformed-roots dump size mismatch: got {xformed_size}, expected {expected_xformed}")
-            region = os.environ.get("AWS_REGION", "us-east-1")
-            base_url = f"https://{BUCKET}.s3.{region}.amazonaws.com"
-            sculpture_export = {
-                "format": sculpture_format,
-                "grid_n": int(palette_grid_n),
-                "degree": int(degree),
-                "step_count": int(step_count),
-                "pass_count": int(step_count // (palette_grid_n * palette_grid_n)),
-                "roots_bytes": int(xformed_size),
-                "viewport": viewport,
-                "palette": str(params.get("palette") or "inferno"),
-            }
-            sculpture_roots_key = f"renders/{job_id}/sculpture_roots.bin"
-            with open(TMP_XFORMED_ROOTS, "rb") as fh:
-                s3.put_object(
-                    Bucket=BUCKET, Key=sculpture_roots_key, Body=fh.read(),
-                    ContentType="application/octet-stream", CacheControl="no-cache")
-            sculpture_palette_key = f"renders/{job_id}/sculpture_palette.png"
-            with open(TMP_PALETTE_IMAGE, "rb") as fh:
-                s3.put_object(
-                    Bucket=BUCKET, Key=sculpture_palette_key, Body=fh.read(),
-                    ContentType="image/png", CacheControl="no-cache")
-            # fixed keys + heuristic browser caching served STALE data to
-            # the viewer across runs ("it's not evaluating my score") —
-            # every run mints version-stamped URLs so fetches can't cache-hit
-            stamp = int(time.time() * 1000)
-            sculpture_export.update({
-                "roots_key": sculpture_roots_key,
-                "roots_url": f"{base_url}/{sculpture_roots_key}?v={stamp}",
-                "palette_key": sculpture_palette_key,
-                "palette_url": f"{base_url}/{sculpture_palette_key}?v={stamp}",
-            })
-
         total_ms = int((time.time() - t_start) * 1000)
         logs = []
         if source_mode == "logical":
@@ -1475,13 +1684,6 @@ def handler(event, context):
                 f"grid={palette_grid_n}x{palette_grid_n} entries={int(palette_entries)} "
                 f"zero=data"
             )
-        if sculpture_export:
-            logs.append(
-                "Sculpture export: "
-                f"grid={sculpture_export['grid_n']}x{sculpture_export['grid_n']} "
-                f"degree={sculpture_export['degree']} roots={sculpture_export['roots_bytes'] / (1024 * 1024):.1f}MB "
-                f"roots_key={sculpture_export['roots_key']} palette_key={sculpture_export['palette_key']}"
-            )
         for warning in preview_warnings:
             logs.append(f"Render preview warning: {warning}")
         logs.append(
@@ -1491,12 +1693,6 @@ def handler(event, context):
             f"total={total_ms / 1000.0:.2f}s"
         )
 
-        if sculpture_task_id:
-            report_status(job_id, sculpture_task_id, "done", result_data={
-                "sculpture": sculpture_export,
-                "n_solves": int(step_count),
-                "total_ms": total_ms,
-            })
         return ok_response({
             "image_base64": image_b64,
             "palette_image_base64": palette_image_b64,
@@ -1515,7 +1711,6 @@ def handler(event, context):
             "render": render_meta,
             "palette_render": palette_render_meta,
             "palette_fragment_entries": int(palette_entries),
-            "sculpture": sculpture_export,
             "emission_histograms": emission_histograms,
             "logs": logs,
             "solve_score": {

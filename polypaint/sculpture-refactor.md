@@ -71,6 +71,22 @@ Viewer-only (`sculpture.html`); unblocks already-generated hi-res data.
 
 ## Wave B — generation: saved color artifact is the ONLY source
 
+**SHIPPED** (2026-07-25). As planned below. Outcomes: the lores
+lambda gained an `artifact_sculpture` mode (self-contained function —
+degree from calc.json, everything else from the artifact's metadata;
+trivial m0 raster for the transform+dump only; stored step_scores
+subsampled on the SAME `_logical_row_mapping` lattice the roots
+materializer walks, de-serpentined row-major); `/start-sculpture-hires`
+became `/start-sculpture-artifact` {job_id, artifact_id, n∈(384,512)}
+with a SYNCHRONOUS step-scores head check ("re-render it" beats a dead
+rail card); the tab's first line shows `source: <color id>` from the
+Color family's selection; `source_artifact_id` provenance rides the
+sculpture block, save payload, meta.json, and list rows. Deleted:
+preview mode, `sculpture: true`, the solve-score-mode requirement, the
+Sculpture-next-to-Preview flow, live-state coupling. One deviation:
+the backend accepts view_n 2–512 (tiny test grids); the 384/512
+restriction is enforced at the storage route + UI.
+
 User decision: remove preview from the loop completely. The sculpture
 derives from the **currently selected color artifact**; the tab's first
 line shows `source: <color artifact id>`. Sizes 384²/512² only; one

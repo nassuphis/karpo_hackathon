@@ -93,7 +93,7 @@
       "/share-mosaic",
       "/snapshot-book-cover",
       "/solve-score-chain-to-source",
-      "/start-sculpture-hires"
+      "/start-sculpture-artifact"
     ]
   },
   "deploy": {
@@ -179,7 +179,7 @@
       "/snapshot-book-cover",
       "/solve-proximity",
       "/solve-score-chain-to-source",
-      "/start-sculpture-hires",
+      "/start-sculpture-artifact",
       "/sweep-cm",
       "/sweep-mt",
       "/tiff-compat",
@@ -305,7 +305,7 @@
       "/share-mosaic",
       "/snapshot-book-cover",
       "/solve-score-chain-to-source",
-      "/start-sculpture-hires"
+      "/start-sculpture-artifact"
     ]
   },
   "version": 1

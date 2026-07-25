@@ -621,7 +621,10 @@ assertIncludes("catalog[_solveScoreGenericMetricChipName] = {", 'solve-score cat
 assertIncludes("return [_solveScoreGenericMetricPublicName, ...(item.params || [])];", 'generic metric chip should serialize publicly without desugaring in saved programs');
 assertIncludes("id=\"render-preview-pix\" value=\"256\"", 'render output should expose default 256px lores preview size input');
 assertIncludes("id=\"btn-render-lores-preview\" onclick=\"runRenderLoresPreview()\"", 'render output should expose lores preview button');
-assertIncludes("id=\"btn-render-lores-sculpture\" onclick=\"runRenderLoresSculpture()\"", 'render output should expose the 3D sculpture button next to Preview');
+assertIncludes("id=\"btn-sculpture-generate\" onclick=\"runSculptureGenerate()\"", 'sculpture tab should expose the artifact-sourced Generate button');
+assertIncludes("id=\"sculpture-source-line\"", 'sculpture tab first line should show the source color artifact id');
+assertIncludes("function _sculptureSourceColorArtifact() {", 'sculpture source should resolve from the color family selection');
+assertNotIncludes("<option value=\"preview\"", 'sculpture size select must not offer a preview mode — artifact-only sourcing');
 assertIncludes("id=\"render-lores-preview-stage\"", 'render output preview should expose a marquee stage wrapper');
 assertIncludes("id=\"render-lores-preview-marquee\"", 'render output preview should expose a marquee overlay');
 assertIncludes(".render-lores-preview-tabs {\n    width: 100%;", 'render output preview tabs should fill the Output box width');
@@ -647,9 +650,9 @@ assertIncludes("for (const line of (Array.isArray(result.logs) ? result.logs : [
 assertIncludes("const nCoeffs = Number.isFinite(rawNCoeffs) && rawNCoeffs >= 1 ? rawNCoeffs : degree + 1;", 'render lores preview should default missing n_coeffs to degree+1');
 assertIncludes("lores_bin_key: loresKey,", 'render lores preview payload should use the existing lores roots artifact');
 assertIncludes("result = await lambdaPost('render-lores-preview', payload);", 'render lores preview should call the direct preview endpoint on the non-hires path');
-assertIncludes("await lambdaPost('storage', { job_id: p.jobId, preview_payload: payload }, '/start-sculpture-hires');", 'hi-res sculptures should start async via storage, never the direct endpoint');
-assertIncludes("}, '/check-status');", 'hi-res sculptures should follow the common task infra, not bespoke polling');
-assertIncludes("id: railId, kind: 'sculpture'", 'hi-res sculptures should surface on the jobs rail');
+assertIncludes("await lambdaPost('storage', { job_id: jobId, artifact_id: artifactId, n }, '/start-sculpture-artifact');", 'sculptures should start async from the SELECTED color artifact — no live render state in the payload');
+assertIncludes("}, '/check-status');", 'sculptures should follow the common task infra, not bespoke polling');
+assertIncludes("id: railId, kind: 'sculpture'", 'sculptures should surface on the jobs rail');
 assertIncludes("const ctx = canvas.getContext('2d');", 'render lores preview should draw the returned image onto the canvas');
 assertIncludes("function _initRenderLoresPreviewMarquee(meta) {", 'render output preview marquee initializer missing');
 assertIncludes("function _applyRenderLoresPreviewSelectionBounds(meta, rect) {", 'render output preview selection should populate exact viewport bounds');

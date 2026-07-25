@@ -1834,16 +1834,14 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#render-log')).toContainText('Autolevels complete: autolevels_done (13.0s)');
   });
 
-  test('Sculpture generate: preview mode posts direct; hi-res goes async via start+poll', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
+  test('Sculpture generate: artifact-sourced async via start+poll', async ({ page }) => {
+    await page.click('.tab-btn:text(\"Render\")');
     await seedRenderPopupState(page);
     await page.evaluate(() => {
-      setColorMode('solve_score');
       document.getElementById('render-results-dir').value = 'job_sc';
-      const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-      window._loresBodies = [];
       window._startCalls = [];
       window._openCount = 0;
+      window._unexpectedLores = 0;
       window._fakeWin = { closed: false, location: '', close() { this.closed = true; } };
       window.open = function () { window._openCount++; return window._fakeWin; };
       const SC = {
@@ -1855,80 +1853,74 @@ test.describe('Solve Score UI', () => {
         roots_bytes: 5242880,
         viewport: { min_re: -2, max_re: 2, min_im: -1.5, max_im: 2.5 },
         palette: 'inferno',
+        source_artifact_id: 'color_1',
       };
       window._SC = SC;
       window.lambdaPost = async function (name, body, path) {
-        if (name === 'storage' && path === '/detail') {
-          return { calc: { exists: true, degree: 5, n_coeffs: 6, N: 1000, lores: { bin_key: 'renders/job_sc/lores.bin' } } };
-        }
-        if (name === 'storage' && path === '/start-sculpture-hires') {
+        if (name === 'storage' && path === '/start-sculpture-artifact') {
           window._startCalls.push(JSON.parse(JSON.stringify(body)));
-          return { task_id: 'sculpture_hires_777' };
+          return { task_id: 'sculpture_artifact_777', source_artifact_id: 'color_1' };
         }
         if (name === 'storage' && path === '/check-status') {
           window._checkCalls = (window._checkCalls || 0) + 1;
           return { done: 1, errors: 0, error_details: [],
-                   results: [{ sculpture: window._SC, total_ms: 120000 }] };
+                   results: [{ sculpture: window._SC, total_ms: 30000 }] };
         }
         if (name === 'render-lores-preview') {
-          window._loresBodies.push(JSON.parse(JSON.stringify(body)));
-          return {
-            image_base64: PNG, content_type: 'image/png',
-            palette_image_base64: PNG, palette_content_type: 'image/png', palette_pix: 1,
-            emission_histograms: [], raster: { roots_plotted: 10 }, timings_ms: { total: 5 },
-            source: { mode: 'lores' }, nonzero_pixels: 1, logs: [],
-            sculpture: { ...SC, format: 'f32', grid_n: 60, step_count: 3600 },
-          };
+          window._unexpectedLores++;   // preview is OUT of the loop entirely
+          return {};
         }
         return {};
       };
-
     });
 
-    await page.click('[data-render-family="sculpture"]');
-    await expect(page.locator('#btn-render-lores-sculpture')).toBeVisible();
+    await page.click('[data-render-family=\"sculpture\"]');
+    await expect(page.locator('#btn-sculpture-generate')).toBeVisible();
+    // first line of the tab: the source color artifact id
+    // the seeded results carry one color artifact — the rebuild path
+    // (families -> _renderArtifacts -> selection default) drives the line
+    await expect(page.locator('#sculpture-source-line')).toHaveText('source: color_1');
+    // only real sizes — the preview option is gone
+    const sizes = await page.$$eval('#render-sculpture-n option', (o) => o.map((x) => x.value));
+    expect(sizes).toEqual(['384', '512']);
 
-    // preview mode: the direct synchronous call, no async start
-    await page.click('#btn-render-lores-sculpture');
-    await expect(page.locator('#btn-render-lores-sculpture')).toHaveText('\u2713 Sculpture');
-    let st = await page.evaluate(() => ({
-      bodies: window._loresBodies.length, starts: window._startCalls.length,
-      opens: window._openCount, loc: String(window._fakeWin.location),
-    }));
-    expect(st.bodies).toBe(1);
-    expect(st.starts).toBe(0);
-    expect(st.opens).toBe(1);
-    expect(st.loc.startsWith('sculpture.html#')).toBe(true);
-
-    // hi-res 512: async start + poll; NO direct lores call; fragment carries
-    // the u16 format and the polled links
     await page.selectOption('#render-sculpture-n', '512');
-    await page.click('#btn-render-lores-sculpture');
-    await expect(page.locator('#btn-render-lores-sculpture')).toHaveText('\u2713 Sculpture');
-    st = await page.evaluate(() => ({
-      bodies: window._loresBodies.length, starts: window._startCalls.slice(),
+    await page.click('#btn-sculpture-generate');
+    await expect(page.locator('#btn-sculpture-generate')).toHaveText('\u2713 Generate');
+    const st = await page.evaluate(() => ({
+      starts: window._startCalls.slice(),
       checks: window._checkCalls || 0,
+      unexpectedLores: window._unexpectedLores,
       opens: window._openCount, loc: String(window._fakeWin.location),
+      lastData: JSON.parse(JSON.stringify(window._lastSculptureData || {})),
       rail: (typeof _jobsRailJobs !== 'undefined' ? _jobsRailJobs : [])
         .filter((j) => j.kind === 'sculpture')
         .map((j) => ({ id: j.id, state: j.state, label: j.label })),
     }));
-    expect(st.bodies).toBe(1);                        // unchanged — no sync call
-    expect(st.starts).toHaveLength(1);
-    expect(st.starts[0].job_id).toBe('job_sc');
-    expect(st.starts[0].preview_payload.preview_source_mode).toBe('logical');
-    expect(st.starts[0].preview_payload.preview_source_size).toBe(512);
-    expect(st.starts[0].preview_payload.sculpture_format).toBe('u16');
+    // EXACT dispatched payload: job + artifact + size, nothing else — no
+    // live render state travels with an artifact-sourced sculpture
+    expect(st.starts).toEqual([{ job_id: 'job_sc', artifact_id: 'color_1', n: 512 }]);
+    expect(st.unexpectedLores).toBe(0);
     expect(st.checks).toBeGreaterThan(0);             // followed via /check-status
     // the run rides the jobs rail like every other job, ending complete
-    expect(st.rail).toEqual([{ id: 'sculpture:sculpture_hires_777',
+    expect(st.rail).toEqual([{ id: 'sculpture:sculpture_artifact_777',
                                state: 'complete',
-                               label: 'sculpture 512\u00b2 \u00b7 job_sc' }]);
-    expect(st.opens).toBe(2);
+                               label: 'sculpture 512\u00b2 \u00b7 color_1' }]);
+    expect(st.opens).toBe(1);
     const frag = new URLSearchParams(st.loc.split('#')[1]);
     expect(frag.get('fmt')).toBe('u16');
     expect(frag.get('n')).toBe('512');
     expect(frag.get('r')).toContain('sculpture_roots.bin');
+    // Save's identity snapshot carries the provenance
+    expect(st.lastData.source_artifact_id).toBe('color_1');
+
+    // no color artifact -> the tab says so and Generate is disabled
+    await page.evaluate(() => {
+      _renderArtifacts.color = [];
+      _sculptureUpdateSourceLine();
+    });
+    await expect(page.locator('#sculpture-source-line')).toContainText('source: none');
+    expect(await page.locator('#btn-sculpture-generate').isDisabled()).toBe(true);
   });
 
   test('Sculpture tab: job-scoped list, snapshot save, delete', async ({ page }) => {
@@ -1972,6 +1964,7 @@ test.describe('Solve Score UI', () => {
         job_id: 'test_job', grid_n: 60, degree: 5, step_count: 3600, pass_count: 1,
         viewport: { min_re: -2, max_re: 2, min_im: -1.5, max_im: 2.5 },
         palette: 'inferno', roots_bytes: 144000,
+        source_artifact_id: 'color_run_abc',
       };
       // a tuned viewer window is open: Save captures its live settings
       const fakeCtl = (value) => ({ value });
@@ -2012,6 +2005,7 @@ test.describe('Solve Score UI', () => {
       viewport: { min_re: -2, max_re: 2, min_im: -1.5, max_im: 2.5 },
       palette: 'inferno',
       format: 'f32',
+      source_artifact_id: 'color_run_abc',
       view: {
         point: 14, height: 0.35, slices: 11,
         show: { points: false, ribbons: true, threads: true, clu: true },

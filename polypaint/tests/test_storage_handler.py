@@ -1269,49 +1269,103 @@ class TestDeletePrefixNarrowing(unittest.TestCase):
         self.assertEqual(resp["statusCode"], 200)
 
 
-class TestStartSculptureHires(unittest.TestCase):
+class TestStartSculptureFromArtifact(unittest.TestCase):
+    @staticmethod
+    def _head(**overrides):
+        metadata = {
+            "step_scores_key": "renders/compute_j1/step_scores.raw",
+            "step_scores_grid_n": "2000",
+        }
+        metadata.update(overrides)
+        metadata = {k: v for k, v in metadata.items() if v is not None}
+        return {"Metadata": metadata, "ContentType": "image/png", "ContentLength": 10}
+
+    @staticmethod
+    def _overlay_absent_get_object(**kwargs):
+        # the overlay meta.json is genuinely absent in these fixtures
+        raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
+
     @patch("handler_storage.report_status")
     @patch("handler_storage.boto3")
     @patch("handler_storage.s3")
-    def test_registers_the_task_and_invokes_async(self, mock_s3, mock_boto3, mock_report):
+    def test_registers_the_task_and_invokes_the_artifact_mode(self, mock_s3, mock_boto3, mock_report):
         import handler_storage
-        resp = handler_storage.handler(_event("/start-sculpture-hires", {
+        mock_s3.head_object.return_value = self._head()
+        mock_s3.get_object.side_effect = self._overlay_absent_get_object
+        resp = handler_storage.handler(_event("/start-sculpture-artifact", {
             "job_id": "compute_j1",
-            "preview_payload": {"preview_source_mode": "logical",
-                                "preview_source_size": 512,
-                                "sculpture_format": "u16",
-                                "degree": 9},
+            "artifact_id": "color_run_abc",
+            "n": 512,
         }), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
         body = json.loads(resp["body"])
         task_id = body["task_id"]
-        self.assertTrue(task_id.startswith("sculpture_hires_"))
+        self.assertTrue(task_id.startswith("sculpture_artifact_"))
+        self.assertEqual(body["source_artifact_id"], "color_run_abc")
         # registered on the COMMON task infra — the jobs rail follows this row
         self.assertEqual(mock_report.call_args.args, ("compute_j1", task_id, "running"))
         invoke = mock_boto3.client.return_value.invoke.call_args.kwargs
         self.assertEqual(invoke["InvocationType"], "Event")
         self.assertEqual(invoke["FunctionName"], "polypaint-render-lores-preview")
+        # EXACT dispatched payload: artifact-only sourcing means no live
+        # render state may travel — the lores lambda derives everything else
         payload = json.loads(invoke["Payload"])
-        self.assertEqual(payload["job_id"], "compute_j1")
-        self.assertTrue(payload["sculpture"])
-        self.assertEqual(payload["sculpture_task_id"], task_id)
-        self.assertEqual(payload["preview_source_size"], 512)
-        self.assertEqual(payload["sculpture_format"], "u16")
+        self.assertEqual(payload, {
+            "job_id": "compute_j1",
+            "artifact_sculpture": {"artifact_id": "color_run_abc"},
+            "preview_source_size": 512,
+            "sculpture_format": "u16",
+            "sculpture_task_id": task_id,
+        })
         mock_s3.put_object.assert_not_called()   # no bespoke S3 result keys
 
     @patch("handler_storage.report_status")
     @patch("handler_storage.boto3")
     @patch("handler_storage.s3")
-    def test_rejects_bad_job_or_missing_payload(self, mock_s3, mock_boto3, mock_report):
+    def test_fails_fast_when_the_artifact_has_no_stored_scores(self, mock_s3, mock_boto3, mock_report):
+        # the sync 400 is the UX: "re-render it" beats a dead rail card
         import handler_storage
-        resp = handler_storage.handler(_event("/start-sculpture-hires", {
-            "job_id": "../evil", "preview_payload": {}}), None)
+        mock_s3.head_object.return_value = self._head(step_scores_key="")
+        mock_s3.get_object.side_effect = self._overlay_absent_get_object
+        resp = handler_storage.handler(_event("/start-sculpture-artifact", {
+            "job_id": "compute_j1", "artifact_id": "color_run_abc", "n": 384,
+        }), None)
         self.assertEqual(resp["statusCode"], 400)
-        resp = handler_storage.handler(_event("/start-sculpture-hires", {
-            "job_id": "compute_j1"}), None)
-        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("re-render", json.loads(resp["body"])["error"])
         mock_boto3.client.return_value.invoke.assert_not_called()
         mock_report.assert_not_called()
+
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
+    @patch("handler_storage.s3")
+    def test_rejects_bad_inputs(self, mock_s3, mock_boto3, mock_report):
+        import handler_storage
+        mock_s3.head_object.return_value = self._head()
+        mock_s3.get_object.side_effect = self._overlay_absent_get_object
+        for params in (
+            {"job_id": "../evil", "artifact_id": "color_run_abc", "n": 384},
+            {"job_id": "compute_j1", "artifact_id": "", "n": 384},
+            {"job_id": "compute_j1", "artifact_id": "color_run_abc", "n": 640},
+            {"job_id": "compute_j1", "artifact_id": "color_run_abc"},
+        ):
+            resp = handler_storage.handler(_event("/start-sculpture-artifact", params), None)
+            self.assertEqual(resp["statusCode"], 400, resp["body"])
+        mock_boto3.client.return_value.invoke.assert_not_called()
+        mock_report.assert_not_called()
+
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
+    @patch("handler_storage.s3")
+    def test_rejects_sizes_beyond_the_solve_grid(self, mock_s3, mock_boto3, mock_report):
+        import handler_storage
+        mock_s3.head_object.return_value = self._head(step_scores_grid_n="400")
+        mock_s3.get_object.side_effect = self._overlay_absent_get_object
+        resp = handler_storage.handler(_event("/start-sculpture-artifact", {
+            "job_id": "compute_j1", "artifact_id": "color_run_abc", "n": 512,
+        }), None)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("exceeds the solve grid", json.loads(resp["body"])["error"])
+        mock_boto3.client.return_value.invoke.assert_not_called()
 
 
 class TestSaveSculpture(unittest.TestCase):
@@ -1324,6 +1378,7 @@ class TestSaveSculpture(unittest.TestCase):
             "step_count": 4,
             "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -1.0, "max_im": 3.0},
             "palette": "inferno",
+            "source_artifact_id": "color_run_abc",
             "view": {"point": 12, "order": "angle", "style": "cloud", "glow": 44,
                      "show": {"points": True, "clu": True},
                      "tour": "grand", "tourSpeed": 2, "junk": "x"},
@@ -1361,6 +1416,7 @@ class TestSaveSculpture(unittest.TestCase):
         self.assertEqual(meta["pass_count"], 1)
         self.assertEqual(meta["roots_bytes"], 96)          # server truth via head
         self.assertEqual(meta["roots_key"], "roots.bin")
+        self.assertEqual(meta["source_artifact_id"], "color_run_abc")   # provenance travels
         self.assertEqual(meta["view"], {
             "point": 12, "order": "angle", "style": "cloud", "glow": 44,
             "show": {"points": True, "ribbons": False, "threads": False, "clu": True},

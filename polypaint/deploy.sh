@@ -1358,6 +1358,7 @@ rm -rf "$RENDER_LORES_PREVIEW_DIR"
 mkdir -p "$RENDER_LORES_PREVIEW_DIR/lib"
 cp lambda/handler_render_lores_preview.py lambda/shared.py \
    lambda/logical_sections.py lambda/logical_lores.py lambda/calc_chunks.py lambda/param_source.py \
+   lambda/color_artifact_meta.py \
    lambda/color_render_contract.py lambda/solve_score_chain.py lambda/raw_score_render.py \
    lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/root_program_source.py \
    lambda/solve_score_program_source.py lambda/program_source_core.py lambda/registry_common.py lambda/program_profiles.py lambda/program_profiles.json \

@@ -33,7 +33,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from color_artifact_meta import color_artifact_meta_key
+from color_artifact_meta import color_artifact_meta_key, load_color_artifact_head
 from color_render_contract import normalize_color_interpretation
 from logical_sections import (
     AUTO_FIXED_OVERHEAD_MB,
@@ -1703,8 +1703,8 @@ def handler(event, context):
         return _handle_storage_route(handle_list_sculptures, event)
     elif path.endswith("/save-sculpture"):
         return _handle_storage_route(handle_save_sculpture, event)
-    elif path.endswith("/start-sculpture-hires"):
-        return _handle_storage_route(handle_start_sculpture_hires, event)
+    elif path.endswith("/start-sculpture-artifact"):
+        return _handle_storage_route(handle_start_sculpture_from_artifact, event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -7238,32 +7238,53 @@ def _sculpture_viewer_template():
 _SCULPTURE_JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
-def handle_start_sculpture_hires(event):
-    """Kick a hi-res sculpture generation as a JOB through the common task
-    infra: 512-class runs take 2-3 minutes — past API Gateway's ~30s
-    response ceiling — so this registers a DDB status row and async-invokes
-    the lores lambda, which owns the row's lifecycle (running → done with
-    the sculpture block in result_data, or error). The app follows it via
-    /check-status on the jobs rail like every other job."""
+_SCULPTURE_SOURCE_ARTIFACT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+
+
+def handle_start_sculpture_from_artifact(event):
+    """Kick an artifact-sourced sculpture as a JOB through the common task
+    infra (DDB status row + /check-status + the jobs rail). The selected
+    color artifact is the ONLY source: its stored step_scores, compiled
+    root-transform chain, viewport, rotation, and palette drive the lores
+    lambda's artifact mode — no live render state, no score evaluation.
+    Artifacts predating step-scores storage fail HERE, synchronously, so
+    the user sees "re-render it" instead of a dead rail card."""
     params = parse_body(event)
     job_id = str(params.get("job_id") or "").strip()
     if not _SCULPTURE_JOB_ID.fullmatch(job_id):
-        raise RuntimeError("start-sculpture-hires requires a valid job_id")
-    payload = params.get("preview_payload")
-    if not isinstance(payload, dict):
-        raise RuntimeError("start-sculpture-hires requires preview_payload")
-    task_id = f"sculpture_hires_{int(time.time() * 1000)}"
-    payload = dict(payload)
-    payload["job_id"] = job_id
-    payload["sculpture"] = True
-    payload["sculpture_task_id"] = task_id
+        raise RuntimeError("start-sculpture-artifact requires a valid job_id")
+    artifact_id = str(params.get("artifact_id") or "").strip()
+    if not _SCULPTURE_SOURCE_ARTIFACT.fullmatch(artifact_id):
+        raise RuntimeError("start-sculpture-artifact requires a valid artifact_id")
+    try:
+        n = int(params.get("n"))
+    except (TypeError, ValueError):
+        raise RuntimeError("start-sculpture-artifact requires integer n")
+    if n not in (384, 512):
+        raise RuntimeError(f"start-sculpture-artifact size must be 384 or 512, got {n}")
+    head = load_color_artifact_head(s3, BUCKET, job_id, artifact_id)
+    meta = dict(head.get("metadata") or {})
+    if not str(meta.get("step_scores_key") or "").strip():
+        raise RuntimeError(
+            f"color artifact {artifact_id} has no stored per-solve scores (step_scores) — "
+            "re-render it to sculpture it")
+    grid = int(meta.get("step_scores_grid_n") or 0)
+    if grid and n > grid:
+        raise RuntimeError(f"sculpture size {n} exceeds the solve grid {grid}")
+    task_id = f"sculpture_artifact_{int(time.time() * 1000)}"
     report_status(job_id, task_id, "running")
     boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")).invoke(
         FunctionName=os.environ.get("RENDER_LORES_PREVIEW_FUNCTION", "polypaint-render-lores-preview"),
         InvocationType="Event",
-        Payload=json.dumps(payload).encode("utf-8"),
+        Payload=json.dumps({
+            "job_id": job_id,
+            "artifact_sculpture": {"artifact_id": artifact_id},
+            "preview_source_size": n,
+            "sculpture_format": "u16",
+            "sculpture_task_id": task_id,
+        }).encode("utf-8"),
     )
-    return ok_response({"task_id": task_id})
+    return ok_response({"task_id": task_id, "source_artifact_id": artifact_id})
 
 
 def handle_save_sculpture(event):
@@ -7350,6 +7371,9 @@ def handle_save_sculpture(event):
         "score_display": "".join(ch for ch in str(params.get("score_display") or "") if ch.isprintable())[:160],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    source_artifact_id = str(params.get("source_artifact_id") or "").strip()
+    if source_artifact_id and _SCULPTURE_SOURCE_ARTIFACT.fullmatch(source_artifact_id):
+        meta["source_artifact_id"] = source_artifact_id
     view = _sculpture_view(params.get("view"))
     if view:
         meta["view"] = view

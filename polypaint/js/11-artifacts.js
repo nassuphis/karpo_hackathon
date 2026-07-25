@@ -1058,22 +1058,23 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
             <div class="subtab-bar render-artifact-family-tabs" role="tablist" aria-label="Render artifact family tabs">${familyTabs}</div>
             <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap">
-                <button type="button" class="btn-secondary btn-inline" id="btn-render-lores-sculpture" onclick="runRenderLoresSculpture()" title="Generate the sculpture from the current Solve-score settings and open the viewer">Sculpture</button>
-                <select id="render-sculpture-n" title="Resolution: preview follows the source settings; numeric sizes subsample the FULL solve async (logical mode, u16)" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
-                    <option value="preview" selected>preview</option>
-                    <option value="384">384&#178;</option>
+                <span id="sculpture-source-line" style="font-size:12px; color:#cfd8e3; flex-basis:100%; font-family:monospace">source: &#8230;</span>
+                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-generate" onclick="runSculptureGenerate()" title="Generate the sculpture from the selected color artifact's recorded scores, transforms, viewport, and palette (async job on the rail)">Generate</button>
+                <select id="render-sculpture-n" title="Lattice: subsamples the FULL solve at this grid (range GETs, no solving; u16 dump)" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
+                    <option value="384" selected>384&#178;</option>
                     <option value="512">512&#178;</option>
                 </select>
                 <span style="border-left:1px solid #333; height:18px"></span>
                 <input type="text" id="sculpture-title" placeholder="sculpture title (optional)" style="flex:0 1 300px; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:5px 8px; font-family:monospace; font-size:12px">
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-save" onclick="runSculptureSave()">Save</button>
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)">Refresh</button>
-                <span style="font-size:11px; color:#666; flex-basis:100%">Sculpture generates from the current Solve-score settings and opens the viewer (hi-res sizes run async, ~2-3 min). Save snapshots that run — exactly the data and settings of the open viewer.</span>
+                <span style="font-size:11px; color:#666; flex-basis:100%">Generate builds the sculpture from the SELECTED color artifact — its stored per-solve scores, root transforms, viewport, and palette (no re-evaluation; async on the rail, ~30s). Save snapshots the open viewer.</span>
                 <span id="sculpture-view-hint" style="font-size:11px; color:#8899aa; flex-basis:100%"></span>
             </div>
             <div id="sculpture-list" style="max-height:520px; overflow-y:auto; border:1px solid #333; border-radius:4px">Loading…</div>
         </div>`;
         _sculptureRenderPane();
+        _sculptureUpdateSourceLine();
         _sculptureUpdateViewHint();
         void _sculptureEnsureInventory();
         info.textContent = 'Job: ' + jobId;
@@ -1681,6 +1682,33 @@ function _sculptureUpdateViewHint() {
         : 'Save uses viewer defaults — tune the open Sculpture window (start a tour for autoplay) before saving.';
 }
 
+function _sculptureSourceColorArtifact() {
+    // the sculpture's source is the COLOR family's current selection —
+    // artifact-only sourcing means no live render state is consulted.
+    // (the selection globals are let-bound, not window properties)
+    const inv = (typeof _renderArtifacts !== 'undefined' && _renderArtifacts.color) || [];
+    if (!inv.length) return null;
+    let idx = (typeof _renderSelectedArtifact !== 'undefined') ? _renderSelectedArtifact.color : null;
+    if (idx == null || idx < 0 || idx >= inv.length) idx = 0;
+    return inv[idx] || null;
+}
+
+function _sculptureUpdateSourceLine() {
+    const el = document.getElementById('sculpture-source-line');
+    const btn = document.getElementById('btn-sculpture-generate');
+    if (!el) return;
+    const art = _sculptureSourceColorArtifact();
+    if (art && art.artifact_id) {
+        el.textContent = `source: ${art.artifact_id}`;
+        el.style.color = '#cfd8e3';
+        if (btn) btn.disabled = false;
+    } else {
+        el.textContent = 'source: none — render a color artifact first (Color tab)';
+        el.style.color = '#8899aa';
+        if (btn) btn.disabled = true;
+    }
+}
+
 function _sculptureShareUrl(meta) {
     const prefix = meta.prefix || `sculptures/${meta.id}/`;
     return _publicStorageUrl(prefix + 'viewer.html');
@@ -1696,12 +1724,13 @@ function _sculptureRenderPane() {
     const jobId = document.getElementById('render-results-dir').value.trim();
     const inv = (window._sculptureInventory || []).filter((m) => m.job_id === jobId);
     if (!inv.length) {
-        el.innerHTML = '<div style="padding:10px; color:#666">No saved sculptures for this job yet. Press Sculpture, tune the viewer, then Save.</div>';
+        el.innerHTML = '<div style="padding:10px; color:#666">No saved sculptures for this job yet. Select a color artifact, press Generate, tune the viewer, then Save.</div>';
         return;
     }
     el.innerHTML = inv.map((m) => `
         <div style="display:flex; align-items:center; gap:10px; padding:6px 10px; border-bottom:1px solid #26263a; font-size:12px">
             <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#e8eef5">${_escapeHtml(m.title || m.id || '')}</span>
+            <span style="color:#667a90; font-size:11px; white-space:nowrap; max-width:180px; overflow:hidden; text-overflow:ellipsis">${_escapeHtml(m.source_artifact_id ? 'src ' + m.source_artifact_id : '')}</span>
             <span style="color:#778599; white-space:nowrap">${Number(m.grid_n) || '?'}×${Number(m.grid_n) || '?'} · d${Number(m.degree) || '?'}</span>
             <span style="color:#778599">${_escapeHtml(String(m.palette || ''))}</span>
             <span style="color:#556; font-size:11px; white-space:nowrap">${_escapeHtml(String(m.created_at || '').slice(0, 16).replace('T', ' '))}</span>
@@ -1795,6 +1824,7 @@ async function runSculptureSave() {
             viewport: data.viewport,
             palette: data.palette,
             format: data.format || 'f32',
+            source_artifact_id: data.source_artifact_id || undefined,
             view: view || undefined,
         }, '/save-sculpture');
         const saved = resp && resp.sculpture;

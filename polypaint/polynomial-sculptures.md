@@ -13,10 +13,16 @@ bundle of surface sheets, pinched where roots collide (discriminant
 crossings) and shattered where programs step (chessboard mixers). Smooth
 programs give continuous sheets; KNIFE/escape programs punch volumes out.
 
-## v1 (shipped): lores point cloud, solve-score colors
+## v1 (HISTORY): lores point cloud, solve-score colors
 
-**Data** rides the Render-tab lores preview (`render-lores-preview` +
-`sculpture: true`), so all three source modes work unchanged:
+> Superseded by "Artifact-sourced generation" below (Wave B): the
+> preview-coupled sourcing, the `sculpture: true` flag, and the
+> Sculpture-next-to-Preview button are GONE. The upload keys, dump
+> semantics, palette-PNG conventions, and viewer described here remain
+> accurate.
+
+**Data** rode the Render-tab lores preview (`render-lores-preview` +
+`sculpture: true`), so all three source modes worked unchanged:
 
 - **lores** (physical): the existing `renders/{job}/lores.bin` is reused
   as-is — no upload.
@@ -303,42 +309,52 @@ list is session-cached; the family registers in `_renderArtifacts` so
 the active-family reset never bounces off it (the rebuild resets
 unknown families to color).
 
-## Hi-res sculptures (u16, ASYNC)
+## Artifact-sourced generation (Wave B of sculpture-refactor.md)
 
-Hi-res runs take 2–3 minutes (measured: 110–188s at 512² in the
-lambda) — far past API Gateway's ~30s response ceiling, which ate the
-responses of the first synchronous attempt while the lambda finished
-invisibly (user-hit: "minutes, no joy"; each retry stacked another
-full run). The flow is a JOB on the
-common task infra (user: "can't this be a job like everything else —
-zoom, book, render? on the rail; not a fan of polling lambdas"):
-`/start-sculpture-hires` registers a DDB status row
-(`report_status(job, sculpture_hires_<ms>, running)`) and
-async-invokes the lores lambda, which owns the row's lifecycle —
-`running` → `done` with the sculpture block in `result_data`, or
-`error`. The app follows the row via `/check-status` every 3s, and the
-run rides the jobs rail (kind `sculpture`, elapsed progress,
-complete/failed terminal states) exactly like render/book/zoom. No
-bespoke S3 result keys, no direct lambda polling. Button feedback
-shows elapsed; 6-minute client cap. The
-Sculpture button + resolution selector live in the SCULPTURE TAB's
-create block (user: "it starts the instance Save snapshots — it
-belongs with Save"), not beside Preview.
+**The saved color artifact is the ONLY source** (user: "remove preview
+from the loop completely; the data only comes from a saved hires color
+artifact, the one currently selected; only 384 and 512"). The
+Sculpture tab's first line shows `source: <color artifact id>` — the
+Color family's current selection; Generate is disabled without one.
 
+Everything derives from the artifact's recorded provenance, never
+from live render state:
 
-The resolution selector beside the Sculpture button (`preview` / 384² /
-512²): numeric sizes force the LOGICAL source — a subsample of the FULL
-solve via range GETs, no solving — with the preview-cost cap lifted for
-sculpture runs, and the transformed dump quantized to **u16** in C at
-flush time (`--xformed_roots_format=u16`): 0..65534 spans the viewport
-per axis, the pair (65535,65535) is the non-finite/out-of-viewport
-sentinel, half the bytes of f32 (512²×deg30 ≈ 31MB). The format rides
-the response, the fragment (`fmt`), `_lastSculptureData`, the save
-payload (size check switches to ×2), and `meta.format`; the viewer
-dequantizes over the viewport and counts sentinel pairs as clipped.
-Pinned at every layer: C closed-form quantization + sentinel, handler
-flag + halved dump size, save meta format, viewer dequantization to
-exact positions, and the dispatch payload (logical + size + u16).
+- geometry: the transport roots, logical-materialized at the 384²/512²
+  lattice (range GETs, no solving), transformed by the ARTIFACT's
+  compiled `root_transforms` chain + `rotation` over the ARTIFACT's
+  viewport in the fused raster (trivial m0 score — the raster pass
+  exists only to apply transforms and dump u16 positions);
+- colors: the artifact's STORED `step_scores.raw` (solve order, u8),
+  subsampled at EXACTLY the same lattice (`_logical_row_mapping`,
+  shared with the materializer), de-serpentined row-major, equalized,
+  and rendered through the artifact's palette/interpretation/
+  background — **zero score evaluation**;
+- provenance: `source_artifact_id` rides the sculpture block,
+  `_lastSculptureData`, the save payload, `meta.json`, and the saved
+  list row (`src …`).
+
+The job is nearly pure I/O (~30s-class vs the old 110–188s runs whose
+solve-score evaluation API Gateway could never wait for). It is ALWAYS
+async on the common task infra: `/start-sculpture-artifact`
+{job_id, artifact_id, n} head-checks the artifact **synchronously** —
+artifacts predating step-scores storage get an immediate "re-render it
+to sculpture it" instead of a dead rail card — then registers
+`sculpture_artifact_<ms>` and async-invokes the lores lambda's
+`artifact_sculpture` mode, which owns the row lifecycle (running →
+done with the sculpture block, or error). The app polls
+`/check-status` every 3s and the run rides the jobs rail; the Generate
+button shows elapsed and a lingering ✓/✗.
+
+Deleted concepts (the win): the preview-sized mode, the
+solve-score-mode requirement, live-settings coupling, the sync path,
+and the `preview` option in the size select. The u16 dump contract is
+unchanged: 0..65534 spans the viewport per axis, (65535,65535) is the
+sentinel, and the viewer dequantizes as before.
+
+Grid-integrity guards: the artifact's `step_scores_grid_n` must equal
+the transport grid (else scores and roots would describe different
+solves), and the requested size must not exceed it.
 
 ## Sizes
 
@@ -381,10 +397,14 @@ an inline Web Worker (Blob URL, no extra file):
 
 ## Tests
 
-- `tests/test_render_lores_preview_handler.py`: sculpture uploads the
-  transformed dump + palette PNG (exact bytes, content types, no-cache
-  pinned); non-square grid → friendly error; the no-flag path stays
-  upload-free and passes no `--xformed_roots_output`.
+- `tests/test_render_lores_preview_handler.py`: artifact mode pins —
+  the raster runs with the ARTIFACT's rotation/viewport/xforms (the
+  xforms file is read back inside the subprocess fake), stored
+  solve-order scores subsample to the exact de-serpentined palette raw
+  (`[0,1,2,3,7,6,5,4,…]` full-grid; `[0,2,8,10]` for view 2 over grid
+  4 — the logical-lattice identity), no clip/summary subprocess ever
+  runs, uploads + running→done row lifecycle, missing step_scores →
+  "re-render" error row, view>grid and grid-mismatch guards.
 - `tests/test_raster_mt_parity.py`: compiles the real C locally and pins
   the dump against rotate_roots(0.25) + a 0.5-rad viewport rotation in
   closed form, multi-worker (threads=2), including an out-of-viewport
@@ -407,9 +427,17 @@ an inline Web Worker (Blob URL, no extra file):
   build request (the worker round trip can't complete synchronously, so
   cancel deterministically wins; the old emission must survive and the
   re-check must rebuild).
-- `tests/e2e/render-solve-score.spec.js`: Sculpture button posts
-  `sculpture: true`, opens exactly one window, fragment carries all data
-  params; the plain Preview payload stays sculpture-free.
+- `tests/e2e/render-solve-score.spec.js`: the tab shows
+  `source: <color id>` from the seeded inventory rebuild, sizes are
+  exactly [384, 512], Generate dispatches the EXACT payload
+  {job_id, artifact_id, n} (no live render state), never calls
+  render-lores-preview, rides the rail to complete, and the no-artifact
+  state disables Generate; the save payload pins `source_artifact_id`.
+- `tests/test_storage_handler.py`: /start-sculpture-artifact registers
+  the task and invokes the artifact mode with the exact payload,
+  fails FAST (sync 400 "re-render") without step_scores, rejects bad
+  ids/sizes and sizes beyond the solve grid; save persists
+  `source_artifact_id` into meta.
 
 ## Future (not in v1)
 

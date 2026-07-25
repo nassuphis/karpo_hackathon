@@ -20,32 +20,57 @@ test('baked splat HTML: self-contained boot, solid render, tour stop', async ({ 
   expect(I1).toBeGreaterThan(I0);
 
   // run the real generator in a blank page: one big red solid splat facing
-  // the camera, plus a small green one off to the side, orbit tour playing
+  // the camera, one small green companion, and ~3k dust splats so the
+  // payload spans MULTIPLE base64 chunks — the user-hit empty-viewer bug
+  // was btoa padding ('=') at every 32,768-byte chunk boundary (not a
+  // multiple of 3), which makes the concatenation invalid and kills atob
+  // on the baked page's first line. Single-chunk fixtures can never see it.
   await page.goto('about:blank');
-  const html = await page.evaluate((gen) => {
+  const COUNT = 3000;
+  const html = await page.evaluate(({ gen, count }) => {
     // eslint-disable-next-line no-eval
     eval(gen);
+    const centers = new Float32Array(count * 3);
+    const axisA = new Float32Array(count * 3);
+    const axisB = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const weights = new Float32Array(count);
+    // splat 0: the big red one facing the camera
+    axisA.set([0.4, 0, 0], 0); axisB.set([0, 0.4, 0], 0);
+    colors.set([1, 0, 0], 0); weights[0] = 1;
+    // splat 1: the small green companion
+    centers.set([0.8, 0, 0], 3);
+    axisA.set([0.05, 0, 0], 3); axisB.set([0, 0.05, 0], 3);
+    colors.set([0, 1, 0], 3); weights[1] = 1;
+    // 2..n: deterministic blue dust spread behind the camera plane
+    for (let i = 2; i < count; i++) {
+      centers[i * 3] = ((i * 37) % 100) / 100 - 0.5;
+      centers[i * 3 + 1] = ((i * 61) % 100) / 100 - 0.5;
+      centers[i * 3 + 2] = -0.5 - ((i * 13) % 50) / 100;
+      axisA[i * 3] = 0.003; axisB[i * 3 + 1] = 0.003;
+      colors[i * 3 + 2] = 1; weights[i] = 0.5;
+    }
     // eslint-disable-next-line no-undef
     return _splatBakeHtml({
-      title: 'bake fixture',
-      count: 2,
-      centers: new Float32Array([0, 0, 0, 0.8, 0, 0]),
-      axisA: new Float32Array([0.4, 0, 0, 0.05, 0, 0]),
-      axisB: new Float32Array([0, 0.4, 0, 0, 0.05, 0]),
-      colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-      weights: new Float32Array([1, 1]),
-      mode: 2,
-      intensity: 1,
-      cam: [0, 0, 1.5],
-      target: [0, 0, 0],
-      tour: 'orbit',
-      tourSpeed: 1,
+      title: 'bake fixture', count,
+      centers, axisA, axisB, colors, weights,
+      mode: 2, intensity: 1,
+      cam: [0, 0, 1.5], target: [0, 0, 0],
+      tour: 'orbit', tourSpeed: 1,
     });
-  }, GENERATOR);
-  expect(html.length).toBeGreaterThan(2000);
+  }, { gen: GENERATOR, count: COUNT });
+  expect(html.length).toBeGreaterThan(22 * COUNT);
   expect(html).toContain('bake fixture');
   expect(html).not.toContain('vendor/');          // truly self-contained
   expect(html).not.toContain('three.module');
+  // the embedded payload must decode: exactly 22 bytes/splat, no mid-stream
+  // padding (atob THROWS here under the broken chunking)
+  const decoded = await page.evaluate(({ doc, count }) => {
+    const m = doc.match(/var B64 = "([^"]*)";/);
+    return { chunks: Math.ceil((22 * count) / 32766), bytes: atob(m[1]).length };
+  }, { doc: html, count: COUNT });
+  expect(decoded.chunks).toBeGreaterThan(1);       // multi-chunk for real
+  expect(decoded.bytes).toBe(22 * COUNT);
 
   await page.route('**/baked/fixture.html', (route) => route.fulfill({
     status: 200, contentType: 'text/html', body: html,
@@ -59,7 +84,7 @@ test('baked splat HTML: self-contained boot, solid render, tour stop', async ({ 
   if (noGl) return;   // environment without WebGL2 — nothing to pin
 
   const st = await page.evaluate(() => window.__bakedSplatViewer);
-  expect(st.count).toBe(2);
+  expect(st.count).toBe(3000);
   expect(st.mode).toBe(2);
   expect(st.playing).toBe(true);                  // baked tour autoplays
 

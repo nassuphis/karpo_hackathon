@@ -496,7 +496,16 @@ config. deploy.sh's ensure_bucket_website now puts a CORS policy
 (GET/HEAD/PUT, any origin — CORS grants nothing by itself, the
 presigned signature is the auth; runs on BOTH create and update). The
 tab's fetch wraps the PUT and turns the opaque network error into
-"upload blocked (host from host) — run ./deploy.sh update". Pinned e2e: a dedicated spec extracts the REAL generator
+"upload blocked (host from host) — run ./deploy.sh update". SECOND
+user-hit: every multi-chunk bake rendered an EMPTY viewer — the b64
+embedding chunked at 32,768 bytes, which is not a multiple of 3, so
+btoa emitted '=' padding at every chunk boundary and atob (which
+allows '=' only at the very end) threw on the baked page's first
+line. Chunk is now 32,766 (3×10,922); the bake spec bakes 3,000
+splats (3 chunks), pins atob length === 22n, and is mutation-tested
+(32,768 reproduces the user's InvalidCharacterError). RULE: chunked
+btoa MUST use multiple-of-3 chunks; single-chunk fixtures can never
+catch it. Pinned e2e: a dedicated spec extracts the REAL generator
 (marker-delimited in js/11), bakes a fixture, serves the file, and
 asserts boot + red/green pixel readback + tour autoplay + pointerdown
 stop; the tab flow pins bytes/count/title, zero lambda calls, and

@@ -1753,8 +1753,14 @@ function _splatBakeHtml(p) {
     for (let i = 0; i < n; i++) { dv.setUint8(o, Math.max(0, Math.min(255, Math.round(p.weights[i] * 255)))); o += 1; }
     const bytes = new Uint8Array(buf);
     let b64 = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) {
-        b64 += btoa(String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)));
+    // chunk size MUST be a multiple of 3: btoa pads any non-multiple-of-3
+    // input with '=', and a '=' anywhere but the very end makes the
+    // concatenation invalid base64 — atob throws and the baked page dies
+    // on its first line (user-hit: every multi-chunk bake rendered empty;
+    // the tests' 2-splat fixtures were single-chunk and never saw it)
+    const CHUNK = 32766;   // 3 * 10922
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        b64 += btoa(String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK)));
     }
     const header = {
         v: 1, count: n, cmin, cmax, amax,

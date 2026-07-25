@@ -1074,7 +1074,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                 <span style="border-left:1px solid #333; height:18px"></span>
                 <input type="text" id="sculpture-title" placeholder="sculpture title (optional)" style="flex:0 1 300px; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:5px 8px; font-family:monospace; font-size:12px">
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-save" onclick="runSculptureSave()">Save</button>
-                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-splatbake" onclick="runSculptureSplatBake()" title="Bake the open viewer's CURRENT splats into one self-contained hosted viewer — a light shareable row in the list below (no roots download for recipients)">SplatBake</button>
+                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-splatbake" onclick="_saveSplatOpenModal()" title="Bake a self-contained splat viewer from the selected color artifact — a popup sets resolution, splat res, z, height, and point; solid splats, no tour, hosted as a light shareable row">SaveSplat</button>
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)">Refresh</button>
                 <span style="font-size:11px; color:#666; flex-basis:100%">Generate builds the sculpture from the SELECTED color artifact — its stored per-solve scores, root transforms, viewport, and palette (no re-evaluation; async on the rail, ~30s). Save snapshots the open viewer.</span>
                 <span id="sculpture-view-hint" style="font-size:11px; color:#8899aa; flex-basis:100%"></span>
@@ -1708,14 +1708,17 @@ function _sculptureUpdateSourceLine() {
     const btn = document.getElementById('btn-sculpture-generate');
     if (!el) return;
     const art = _sculptureSourceColorArtifact();
+    const bakeBtn = document.getElementById('btn-sculpture-splatbake');
     if (art && art.artifact_id) {
         el.textContent = `source: ${art.artifact_id}`;
         el.style.color = '#cfd8e3';
         if (btn) btn.disabled = false;
+        if (bakeBtn) bakeBtn.disabled = false;
     } else {
         el.textContent = 'source: none — render a color artifact first (Color tab)';
         el.style.color = '#8899aa';
         if (btn) btn.disabled = true;
+        if (bakeBtn) bakeBtn.disabled = true;
     }
 }
 
@@ -1885,34 +1888,6 @@ async function runSculptureSave() {
     }
 }
 
-function _splatBakeParamsFromViewer(win) {
-    // the bake's settings blob — captured from the open viewer when there
-    // is one, defaults otherwise (server-side baking needs no tabs at all)
-    if (win && !win.closed && win.__sculptureViewer && win.document) {
-        try {
-            const v = win.__sculptureViewer;
-            const doc = win.document;
-            const val = (id) => { const el = doc.getElementById(id); return el ? el.value : null; };
-            const playing = !!(v.tour && v.tour.state && v.tour.state.playing);
-            return {
-                res: parseInt(val('ctl-splat-res'), 10) || 96,
-                zaxis: val('ctl-zaxis') === 't1' ? 't1' : 't2',
-                slices: parseInt(val('ctl-slices'), 10) || 0,
-                mode: v.splats.material.uniforms.uMode.value,
-                intensity: v.splats.material.uniforms.uIntensity.value,
-                yscale: v.sculpt.scale.y,
-                scalemul: v.splats.material.uniforms.uScaleMul.value,
-                cam: [v.camera.position.x, v.camera.position.y, v.camera.position.z],
-                target: [v.controls.target.x, v.controls.target.y, v.controls.target.z],
-                tour: playing ? (val('ctl-tour-mode') || 'orbit') : 'off',
-                tourSpeed: parseFloat(val('ctl-tour-speed')) || 1,
-            };
-        } catch (e) { /* dead window — fall through to defaults */ }
-    }
-    return { res: 96, zaxis: 't2', slices: 0, mode: 2, intensity: 1, yscale: 0.1,
-             scalemul: 1, cam: [1.25, 0.85, 1.25], target: [0, 0, 0], tour: 'off', tourSpeed: 1 };
-}
-
 async function _splatBakeStartAndFollow(jobId, source, params, btnId, railLabel) {
     // the shared bake driver: register the job, follow it on the rail,
     // insert the hosted row when it lands
@@ -1971,54 +1946,126 @@ async function _splatBakeStartAndFollow(jobId, source, params, btnId, railLabel)
     return row;
 }
 
-async function runSculptureSplatBake() {
-    // SERVER-SIDE bake: the splats are a pure function of data the server
-    // already holds, so the tab sends ~1KB of settings — never megabytes of
-    // buffers (user: "every second spent on mitigation is wasted"). Source:
-    // the open viewer's data identity (its generate's content-addressed
-    // cache) when a viewer is live, else the selected color artifact —
-    // parameters to hosted baked share in one job, no tabs required.
+function _saveSplatEnsureModal() {
+    if (document.getElementById('save-splat-modal-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'save-splat-modal-overlay';
+    overlay.className = 'tri-popup-overlay';
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.style.zIndex = '1600';
+    overlay.addEventListener('click', (ev) => { if (ev.target === overlay) _saveSplatClose(); });
+    overlay.innerHTML = `
+        <div style="background:#141424; border:1px solid #444; border-radius:8px; padding:16px 18px; width:360px; font-family:monospace; color:#eee" role="dialog" aria-label="Save Splat">
+            <div style="font-size:14px; color:#e8eef5; margin-bottom:2px">SaveSplat</div>
+            <div id="save-splat-source" style="font-size:11px; color:#8899aa; margin-bottom:10px"></div>
+            <div style="display:grid; grid-template-columns:90px 1fr 4ch; gap:8px 10px; align-items:center; font-size:12px">
+                <span>resolution</span>
+                <select id="save-splat-resolution" style="grid-column:2/4; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">
+                    <option value="128">128&#178;</option>
+                    <option value="192">192&#178;</option>
+                    <option value="384" selected>384&#178;</option>
+                    <option value="512">512&#178;</option>
+                </select>
+                <span>splat res</span>
+                <select id="save-splat-res" style="grid-column:2/4; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">
+                    <option value="64">64</option>
+                    <option value="96" selected>96</option>
+                    <option value="128">128</option>
+                    <option value="192">192</option>
+                </select>
+                <span>z</span>
+                <select id="save-splat-zaxis" style="grid-column:2/4; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">
+                    <option value="t2" selected>t2</option>
+                    <option value="t1">t1</option>
+                </select>
+                <span>height</span>
+                <input id="save-splat-height" type="range" min="10" max="100" value="10" style="accent-color:#e94560"
+                    oninput="document.getElementById('save-splat-height-val').textContent = (this.value / 100).toFixed(2)">
+                <span id="save-splat-height-val" style="text-align:right">0.10</span>
+                <span>point</span>
+                <input id="save-splat-point" type="range" min="1" max="40" value="20" style="accent-color:#e94560"
+                    oninput="document.getElementById('save-splat-point-val').textContent = this.value">
+                <span id="save-splat-point-val" style="text-align:right">20</span>
+                <span>title</span>
+                <input id="save-splat-title" type="text" placeholder="optional" style="grid-column:2/4; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:4px 8px; font-family:monospace; font-size:12px">
+            </div>
+            <div style="font-size:11px; color:#666; margin-top:10px">splats only \u00b7 solid \u00b7 no slices \u00b7 no tour \u2014 server-side, hosted as a list row</div>
+            <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+                <button type="button" class="btn-secondary btn-inline" onclick="_saveSplatClose()">Cancel</button>
+                <button type="button" class="btn-secondary btn-inline" id="save-splat-go" onclick="runSaveSplat()">Bake</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+function _saveSplatOpenModal() {
+    // the popup IS the settings surface: zero reference to open viewers or
+    // existing saves — the SELECTED color artifact is the source, and the
+    // fixed choices (show=spl, style=solid, no slices, no tour) are simply
+    // not offered (user spec)
+    const art = _sculptureSourceColorArtifact();
+    if (!art || !art.artifact_id) {
+        log('SaveSplat: no color artifact selected — render one first (Color tab)', 'err', 'render-log');
+        return;
+    }
+    _saveSplatEnsureModal();
+    document.getElementById('save-splat-source').textContent = `source: ${art.artifact_id}`;
+    const overlay = document.getElementById('save-splat-modal-overlay');
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    document.getElementById('save-splat-go').focus();
+}
+
+function _saveSplatClose() {
+    const overlay = document.getElementById('save-splat-modal-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+async function runSaveSplat() {
     const btn = document.getElementById('btn-sculpture-splatbake');
     let ok = false;
     try {
         const jobId = document.getElementById('render-results-dir').value.trim();
         if (!jobId) throw new Error('no job selected');
-        const win = window._lastSculptureWin;
-        const viewerLive = !!(win && !win.closed && win.__sculptureViewer);
-        const data = window._lastSculptureData;
-        let source = null;
-        let label = '';
-        if (viewerLive && data && data.job_id === jobId && data.cache_prefix) {
-            source = { kind: 'cache', cache_prefix: data.cache_prefix };
-            label = `${data.source_artifact_id || jobId} \u00b7 ${data.grid_n}\u00b2`;
-        } else {
-            const art = _sculptureSourceColorArtifact();
-            if (!art || !art.artifact_id) {
-                throw new Error('no bake source \u2014 generate a sculpture or select a color artifact');
-            }
-            const nSel = document.getElementById('render-sculpture-n');
-            const n = parseInt(nSel && nSel.value, 10) || 384;
-            source = { kind: 'artifact', artifact_id: String(art.artifact_id), n };
-            label = `${art.artifact_id} \u00b7 ${n}\u00b2`;
-        }
-        const params = _splatBakeParamsFromViewer(viewerLive ? win : null);
-        const titleInput = document.getElementById('sculpture-title');
-        const winTitle = viewerLive && win.document && win.document.getElementById('hud-title')
-            ? win.document.getElementById('hud-title').textContent : '';
-        params.title = (titleInput && titleInput.value.trim()) || winTitle || '';
+        const art = _sculptureSourceColorArtifact();
+        if (!art || !art.artifact_id) throw new Error('no color artifact selected');
+        const val = (id) => document.getElementById(id).value;
+        const n = parseInt(val('save-splat-resolution'), 10) || 384;
+        const params = {
+            res: parseInt(val('save-splat-res'), 10) || 96,
+            zaxis: val('save-splat-zaxis') === 't1' ? 't1' : 't2',
+            slices: 0,                       // hardwired: no slices in a splat share
+            mode: 2,                         // hardwired: solid
+            intensity: 1,
+            yscale: (parseInt(val('save-splat-height'), 10) || 10) / 100,
+            scalemul: (parseInt(val('save-splat-point'), 10) || 20) / 10,
+            cam: [1.25, 0.85, 1.25],
+            target: [0, 0, 0],
+            tour: 'off',                     // hardwired: no tour
+            tourSpeed: 1,
+            title: (document.getElementById('save-splat-title').value || '').trim(),
+        };
+        _saveSplatClose();
         if (btn) { btn.disabled = true; btn.textContent = 'Baking\u2026'; }
-        await _splatBakeStartAndFollow(jobId, source, params, 'btn-sculpture-splatbake',
-                                       `splat bake \u00b7 ${label}`);
+        await _splatBakeStartAndFollow(
+            jobId,
+            { kind: 'artifact', artifact_id: String(art.artifact_id), n },
+            params,
+            'btn-sculpture-splatbake',
+            `splat bake \u00b7 ${art.artifact_id} \u00b7 ${n}\u00b2`);
         ok = true;
     } catch (e) {
-        log(`SplatBake failed: ${e.message}`, 'err', 'render-log');
+        log(`SaveSplat failed: ${e.message}`, 'err', 'render-log');
     } finally {
         if (btn) {
             btn.disabled = false;
-            btn.textContent = ok ? '\u2713 Baked' : '\u2717 SplatBake';
+            btn.textContent = ok ? '\u2713 Baked' : '\u2717 SaveSplat';
             setTimeout(() => {
                 const b = document.getElementById('btn-sculpture-splatbake');
-                if (b && !b.disabled) b.textContent = 'SplatBake';
+                if (b && !b.disabled) b.textContent = 'SaveSplat';
             }, 2500);
         }
     }

@@ -1923,7 +1923,7 @@ test.describe('Solve Score UI', () => {
     expect(await page.locator('#btn-sculpture-generate').isDisabled()).toBe(true);
   });
 
-  test('Sculpture tab: SplatBake is server-side — ~1KB of settings, no upload', async ({ page }) => {
+  test('Sculpture tab: SaveSplat modal — explicit settings, hardwired rest', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page);
     await page.evaluate(() => {
@@ -1938,91 +1938,85 @@ test.describe('Solve Score UI', () => {
         if (path === '/start-splat-bake') return { task_id: 'splat_bake_777' };
         if (path === '/check-status') {
           return { done: 1, errors: 0, error_details: [], results: [{ sculpture: {
-            version: 1, kind: 'splatbake', id: 'scu_bake1', title: 'baked piece',
+            version: 1, kind: 'splatbake', id: 'scu_bake1', title: 'param bake',
             job_id: 'test_job', splat_count: 157675, bytes: 3600000,
-            source_artifact_id: 'color_run_abc',
+            source_artifact_id: 'color_1',
             created_at: '2026-07-25T12:00:00Z', prefix: 'sculptures/scu_bake1/',
             share_url: 'https://bkt.s3.r.amazonaws.com/sculptures/scu_bake1/viewer.html',
           } }] };
         }
         return {};
       };
-      window._lastSculptureData = {
-        job_id: 'test_job', grid_n: 512, source_artifact_id: 'color_run_abc',
-        cache_prefix: 'renders/test_job/sculpture_cache/0123456789abcdef/',
-      };
-      const ctls = {
-        'ctl-splat-res': { value: '128' }, 'ctl-zaxis': { value: 't1' },
-        'ctl-slices': { value: '4' }, 'ctl-tour-mode': { value: 'wave' },
-        'ctl-tour-speed': { value: '2' },
-      };
-      window._lastSculptureWin = {
-        closed: false,
-        document: {
-          getElementById: (id) => (id === 'hud-title' ? { textContent: 'baked piece' } : (ctls[id] || null)),
-        },
-        __sculptureViewer: {
-          splatCount: 157675,
-          splats: { material: { uniforms: { uMode: { value: 2 }, uIntensity: { value: 1.5 }, uScaleMul: { value: 2 } } } },
-          sculpt: { scale: { y: 0.4 } },
-          camera: { position: { x: 1, y: 0.5, z: 1 } },
-          controls: { target: { x: 0, y: 0.1, z: 0 } },
-          tour: { state: { playing: true } },
-        },
-      };
     });
     await page.click('[data-render-family="sculpture"]');
-    await expect(page.locator('#btn-sculpture-splatbake')).toBeVisible();
+    await expect(page.locator('#btn-sculpture-splatbake')).toHaveText('SaveSplat');
+
+    // the popup IS the settings surface — no viewer, no saved row involved
     await page.click('#btn-sculpture-splatbake');
+    await expect(page.locator('#save-splat-modal-overlay')).toBeVisible();
+    await expect(page.locator('#save-splat-source')).toHaveText('source: color_1');
+    await page.selectOption('#save-splat-resolution', '192');
+    await page.selectOption('#save-splat-res', '128');
+    await page.selectOption('#save-splat-zaxis', 't1');
+    await page.locator('#save-splat-height').fill('40');
+    await page.locator('#save-splat-point').fill('30');
+    await expect(page.locator('#save-splat-height-val')).toHaveText('0.40');
+    await expect(page.locator('#save-splat-point-val')).toHaveText('30');
+    await page.fill('#save-splat-title', 'param bake');
+    await page.click('#save-splat-go');
+    await expect(page.locator('#save-splat-modal-overlay')).toBeHidden();
     await expect(page.locator('#btn-sculpture-splatbake')).toHaveText('\u2713 Baked');
+
     const st = await page.evaluate(() => ({
-      calls: window._storageCalls.filter((c) => c[0] !== '/list-sculptures' && c[0] !== '/check-status'),
-      checks: window._storageCalls.filter((c) => c[0] === '/check-status').length,
+      calls: window._storageCalls.filter((c) => c[0] === '/start-splat-bake'),
       fetches: window._fetchCalls,
       bake: window.__lastSplatBake,
       rail: (typeof _jobsRailJobs !== 'undefined' ? _jobsRailJobs : [])
         .filter((j) => j.kind === 'splatbake')
         .map((j) => ({ id: j.id, state: j.state })),
     }));
-    // ONE tiny start call: the viewer's data identity (its generate's
-    // content-addressed cache) + the captured settings — no browser upload
+    // EXACT payload: the five modal choices + the hardwired rest — show is
+    // splats by construction, style solid (mode 2), no slices, no tour
     expect(st.fetches).toBe(0);
     expect(st.calls).toHaveLength(1);
-    expect(st.calls[0][0]).toBe('/start-splat-bake');
     expect(st.calls[0][1]).toEqual({
       job_id: 'test_job',
-      source: { kind: 'cache', cache_prefix: 'renders/test_job/sculpture_cache/0123456789abcdef/' },
+      source: { kind: 'artifact', artifact_id: 'color_1', n: 192 },
       params: {
-        res: 128, zaxis: 't1', slices: 4, mode: 2, intensity: 1.5,
-        yscale: 0.4, scalemul: 2, cam: [1, 0.5, 1], target: [0, 0.1, 0],
-        tour: 'wave', tourSpeed: 2, title: 'baked piece',
+        res: 128, zaxis: 't1', slices: 0, mode: 2, intensity: 1,
+        yscale: 0.4, scalemul: 3, cam: [1.25, 0.85, 1.25], target: [0, 0, 0],
+        tour: 'off', tourSpeed: 1, title: 'param bake',
       },
     });
-    expect(st.checks).toBeGreaterThan(0);
     expect(st.rail).toEqual([{ id: 'splatbake:splat_bake_777', state: 'complete' }]);
     expect(st.bake.id).toBe('scu_bake1');
-    expect(st.bake.count).toBe(157675);
-    await expect(page.locator('#sculpture-list')).toContainText('baked piece');
+    await expect(page.locator('#sculpture-list')).toContainText('param bake');
     await expect(page.locator('#sculpture-list')).toContainText('baked \u00b7 157,675 splats \u00b7 3.4MB');
     await expect(page.locator('[data-render-family="sculpture"] .subtab-count')).toHaveText('(1)');
 
-    // NO viewer open -> the selected color artifact is the source:
-    // parameters to hosted baked share, no tabs (defaults ride the params)
-    await page.evaluate(() => {
-      window._lastSculptureWin = null;
-      window._storageCalls = [];
-      document.getElementById('sculpture-title').value = 'param bake';
-    });
+    // defaults: reopen and bake untouched -> 384/96/t2, height 0.4 and
+    // point 30 PERSIST from the last use (the modal keeps its state)
+    await page.evaluate(() => { window._storageCalls = []; });
     await page.click('#btn-sculpture-splatbake');
+    await page.fill('#save-splat-title', '');
+    await page.selectOption('#save-splat-resolution', '384');
+    await page.selectOption('#save-splat-res', '96');
+    await page.selectOption('#save-splat-zaxis', 't2');
+    await page.click('#save-splat-go');
     await expect(page.locator('#btn-sculpture-splatbake')).toHaveText('\u2713 Baked');
     const p2 = await page.evaluate(() =>
       window._storageCalls.find((c) => c[0] === '/start-splat-bake')[1]);
     expect(p2.source).toEqual({ kind: 'artifact', artifact_id: 'color_1', n: 384 });
     expect(p2.params.res).toBe(96);
-    expect(p2.params.mode).toBe(2);
-    expect(p2.params.cam).toEqual([1.25, 0.85, 1.25]);
-    expect(p2.params.tour).toBe('off');
-    expect(p2.params.title).toBe('param bake');
+    expect(p2.params.zaxis).toBe('t2');
+    expect(p2.params.title).toBe('');
+
+    // no color artifact -> SaveSplat is disabled with the source line
+    await page.evaluate(() => {
+      _renderArtifacts.color = [];
+      _sculptureUpdateSourceLine();
+    });
+    expect(await page.locator('#btn-sculpture-splatbake').isDisabled()).toBe(true);
   });
 
   test('Sculpture tab: saved rows bake server-side from their own data', async ({ page }) => {

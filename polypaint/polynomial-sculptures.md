@@ -495,9 +495,9 @@ agree). Python's base64 has no chunk padding to get wrong.
 
 **Sources** (`/start-splat-bake` {job_id, source, params} → the
 common task infra → the lores lambda's `splat_bake` mode):
-- `cache` — the open viewer's data identity: its generate's
-  content-addressed prefix (now carried as `cache_prefix` in the
-  sculpture block → `_lastSculptureData`), job-bound server-side;
+- `cache` — a generate's content-addressed prefix (carried as
+  `cache_prefix` in the sculpture block), job-bound server-side —
+  kept as a backend source, no UI drives it today;
 - `saved` — ANY saved sculpture row's own roots + palette + meta;
   the row's captured view supplies the settings (style→mode,
   glow→intensity, point→scalemul, height→yscale). A **Bake** button
@@ -505,8 +505,19 @@ common task infra → the lores lambda's `splat_bake` mode):
 - `artifact` — artifact id + size: the bake runs the artifact
   generate core first (compose-don't-fork: it calls the generate and
   reads its response contract; warm cache = seconds), then bakes —
-  **parameters → hosted baked share in one job, no tabs**. With no
-  viewer open, the tab's SplatBake uses exactly this.
+  **parameters → hosted baked share in one job, no tabs**.
+
+**The SaveSplat modal** (user spec: "full popup, zero reference to
+open viewers or existing saves"): the tab button is `SaveSplat` and
+opens a popup that IS the settings surface — resolution (128–512²,
+the generate lattice), splat res (64/96/128/192), z (t1/t2), height
+(0.1–1 slider), point (1–40 slider, default 20), optional title —
+always the `artifact` source (the selected color artifact, shown in
+the popup; button disabled without one). The rest is hardwired and
+simply not offered: show=splats by construction, style=solid
+(mode 2), no slices, no len% (no lines exist), no tour, default
+camera. The modal keeps its values between opens. The earlier
+viewer-capture path is deleted.
 
 Per-kind fast-fails run in storage synchronously (missing roots,
 step_scores-less artifacts, foreign-job cache prefixes). The result

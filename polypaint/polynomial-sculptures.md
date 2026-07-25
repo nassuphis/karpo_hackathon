@@ -316,6 +316,9 @@ from the loop completely; the data only comes from a saved hires color
 artifact, the one currently selected; only 384 and 512"). The
 Sculpture tab's first line shows `source: <color artifact id>` — the
 Color family's current selection; Generate is disabled without one.
+Sizes: 128²/192²/384²/512² — 128/192 were added later as the fast
+quick looks the deleted preview mode used to provide (with the cache,
+repeats regenerate near-instantly).
 
 Everything derives from the artifact's recorded provenance, never
 from live render state:
@@ -423,6 +426,35 @@ Recording is transient — it does not ride saved views. Pinned e2e:
 headless capture produces a real encoded blob (>1KB, video/webm|mp4),
 the button cycles ●→■→✓→●, and the recorder releases for a second
 take.
+
+## Splats (viewer)
+
+The `spl` show checkbox renders the sculpture as **voxel-binned
+anisotropic gaussian splats** (user construction: "bin them in voxels;
+each voxel bin determines color, elongation and the like" — which is
+exactly the classic way to build a gaussian mixture from a point
+cloud). The worker bins every point into a `splat res`³ grid
+(64/96/128/192, default 96) over the unit cube — Y recomputed from
+t1/t2 + the CURRENT slices binning, mirroring applySlices — and each
+occupied voxel becomes ONE splat: mean position, mean color, weight
+√(count/max), and the top-2 eigenvectors of the voxel's 3D covariance
+(cyclic-Jacobi, verified to machine precision) as its in-space ellipse
+axes at 2σ, floored at ~⅓ voxel. Points along an arc inside a voxel
+come out stretched ALONG the trajectory — elongation for free. 5M
+points collapse to a few hundred thousand instanced quads (double-
+sided, additive, gaussian falloff, z-window clipping in-shader, point
+slider scales the ellipses), so splats are also far cheaper to orbit
+than the line primitives. Splat results are ~tens of MB, so the
+topology cache keeps a SINGLE entry (key = res:axis:slices — Y-
+dependent, unlike the line topologies); slices/z-axis/res changes
+rebuild through the standard worker machinery with progress + cancel.
+`show.splats` + `splatRes` ride the full saved-view convention
+(capture → sanitizer → meta.view → applyViewConfig). Pinned e2e: the
+drift fixture yields exactly 16 x-elongated equal-weight splats with
+exact mean colors, slices=2 collapses centers onto the ±0.5 plates (8
+splats) and back, and the saved-mode boot builds splats from the view.
+TDZ trap: splatMat.clippingPlanes must be assigned AFTER the material
+exists — the shared clip block runs earlier in boot.
 
 ## Motion LOD (viewer)
 

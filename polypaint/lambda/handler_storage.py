@@ -7190,7 +7190,7 @@ def _sculpture_view(raw):
         view["slices"] = int(round(slices))
     show = raw.get("show")
     if isinstance(show, dict):
-        view["show"] = {k: bool(show.get(k)) for k in ("points", "ribbons", "threads", "clu")}
+        view["show"] = {k: bool(show.get(k)) for k in ("points", "ribbons", "threads", "clu", "splats")}
     if raw.get("style") in ("solid", "ghost", "cloud"):
         view["style"] = raw["style"]
     glow = _num("glow", 1, 100)
@@ -7211,6 +7211,12 @@ def _sculpture_view(raw):
         view["lenq"] = int(round(lenq))
     if raw.get("zaxis") in ("t1", "t2"):
         view["zaxis"] = raw["zaxis"]
+    try:
+        splat_res = int(raw.get("splatRes"))
+    except (TypeError, ValueError):
+        splat_res = None
+    if splat_res in (64, 96, 128, 192):
+        view["splatRes"] = splat_res
     zlo = _num("zlo", 0, 1)
     zhi = _num("zhi", 0, 1)
     if zlo is not None and zhi is not None and zlo > zhi:
@@ -7260,8 +7266,8 @@ def handle_start_sculpture_from_artifact(event):
         n = int(params.get("n"))
     except (TypeError, ValueError):
         raise RuntimeError("start-sculpture-artifact requires integer n")
-    if n not in (384, 512):
-        raise RuntimeError(f"start-sculpture-artifact size must be 384 or 512, got {n}")
+    if n not in (128, 192, 384, 512):
+        raise RuntimeError(f"start-sculpture-artifact size must be one of 128/192/384/512, got {n}")
     head = load_color_artifact_head(s3, BUCKET, job_id, artifact_id)
     meta = dict(head.get("metadata") or {})
     if not str(meta.get("step_scores_key") or "").strip():

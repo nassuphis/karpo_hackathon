@@ -124,6 +124,7 @@
     <input id="ctl-show-ribbons" type="checkbox"> rib
     <input id="ctl-show-threads" type="checkbox"> thr
     <input id="ctl-show-clu" type="checkbox"> clu
+    <input id="ctl-show-splats" type="checkbox"> spl
   </label>
   <label>style <select id="ctl-style">
     <option value="solid" selected>solid</option>
@@ -135,6 +136,12 @@
     <option value="nearest" selected>nearest</option>
     <option value="angle">angle</option>
     <option value="file">file order</option>
+  </select></label>
+  <label>splat res <select id="ctl-splat-res" title="Voxel grid for splat binning — each occupied voxel becomes one anisotropic splat">
+    <option value="64">64</option>
+    <option value="96" selected>96</option>
+    <option value="128">128</option>
+    <option value="192">192</option>
   </select></label>
   <label>len% <input id="ctl-lenq" type="range" min="0" max="100" value="100"><span class="val" id="ctl-lenq-val"></span></label>
   <label>tour <select id="ctl-tour-mode">
@@ -453,6 +460,7 @@ async function boot() {
     // rendering, and unchecking a primitive cancels its build mid-flight.
     const WORKER_SRC = `
 var P = null, SO = null, gridN = 0, degree = 0, passSteps = 0;
+var T1 = null, T2 = null, C = null;
 var job = null, queue = [], pumpScheduled = false;
 function stepAt(r, c) { return r * gridN + ((r & 1) ? (gridN - 1 - c) : c); }
 function I32Buf() {
@@ -692,7 +700,136 @@ function cluColumn(axis, zi, out) {
     }
     for (j = 0; j < k; j++) chainCluster(buckets[j], out);
 }
+// symmetric 3x3 eigen via cyclic Jacobi — returns the two largest
+// eigenpairs (the splat's in-space ellipse axes)
+function jacobi3(xx, xy, xz, yy, yz, zz) {
+    var a = [xx, xy, xz, xy, yy, yz, xz, yz, zz];
+    var v = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    for (var sweep = 0; sweep < 10; sweep++) {
+        if (Math.abs(a[1]) + Math.abs(a[2]) + Math.abs(a[5]) < 1e-15) break;
+        for (var pi = 0; pi < 3; pi++) {
+            var p = pi === 2 ? 1 : 0;
+            var q = pi === 0 ? 1 : 2;
+            var apq = a[p * 3 + q];
+            if (Math.abs(apq) < 1e-18) continue;
+            var th = 0.5 * Math.atan2(2 * apq, a[q * 3 + q] - a[p * 3 + p]);
+            var c = Math.cos(th), sn = Math.sin(th);
+            for (var k = 0; k < 3; k++) {
+                var akp = a[k * 3 + p], akq = a[k * 3 + q];
+                a[k * 3 + p] = c * akp - sn * akq;
+                a[k * 3 + q] = sn * akp + c * akq;
+            }
+            for (k = 0; k < 3; k++) {
+                var apk = a[p * 3 + k], aqk = a[q * 3 + k];
+                a[p * 3 + k] = c * apk - sn * aqk;
+                a[q * 3 + k] = sn * apk + c * aqk;
+            }
+            for (k = 0; k < 3; k++) {
+                var vkp = v[k * 3 + p], vkq = v[k * 3 + q];
+                v[k * 3 + p] = c * vkp - sn * vkq;
+                v[k * 3 + q] = sn * vkp + c * vkq;
+            }
+        }
+    }
+    var lam = [a[0], a[4], a[8]];
+    var ord = [0, 1, 2].sort(function (i, j) { return lam[j] - lam[i]; });
+    return {
+        l1: lam[ord[0]], l2: lam[ord[1]],
+        v1: [v[ord[0]], v[3 + ord[0]], v[6 + ord[0]]],
+        v2: [v[ord[1]], v[3 + ord[1]], v[6 + ord[1]]],
+    };
+}
+// voxel-binned splats: every point lands in a res^3 cell (Y recomputed
+// from t1/t2 + the CURRENT slices binning, mirroring applySlices); each
+// occupied cell becomes one splat — mean position, mean color, and the
+// top-2 covariance eigenvectors as 2-sigma ellipse axes (floored at
+// ~1/3 voxel so flat cells stay visible). Arcs through a cell come out
+// stretched ALONG the trajectory, which is the whole point.
+function splatJob(m) {
+    var parts = String(m.key).split(':');
+    var res = Math.max(8, Math.min(256, parseInt(parts[0], 10) || 96));
+    var zaxis = parts[1] === 't1' ? 't1' : 't2';
+    var slices = Math.max(0, parseInt(parts[2], 10) || 0);
+    var count = P.length / 3;
+    var map = new Map();
+    var cap = 1 << 12;
+    var acc = new Float64Array(cap * 13);
+    var used = 0;
+    var CHUNK = 65536;
+    return { id: m.id, unit: 'points', total: count, cursor: 0,
+        work: function () {
+            var end = Math.min(count, this.cursor + CHUNK);
+            for (var i = this.cursor; i < end; i++) {
+                var t = zaxis === 't1' ? T1[i] : T2[i];
+                var y;
+                if (slices > 0) {
+                    var level = Math.min(slices - 1, Math.floor(t * slices));
+                    y = slices > 1 ? level / (slices - 1) : 0.5;
+                } else {
+                    y = t;
+                }
+                y -= 0.5;
+                var x = P[i * 3], z = P[i * 3 + 2];
+                var vx = Math.min(res - 1, Math.max(0, Math.floor((x + 0.5) * res)));
+                var vy = Math.min(res - 1, Math.max(0, Math.floor((y + 0.5) * res)));
+                var vz = Math.min(res - 1, Math.max(0, Math.floor((z + 0.5) * res)));
+                var key = (vx * res + vy) * res + vz;
+                var slot = map.get(key);
+                if (slot === undefined) {
+                    if (used >= cap) {
+                        cap *= 2;
+                        var na = new Float64Array(cap * 13);
+                        na.set(acc);
+                        acc = na;
+                    }
+                    slot = used++;
+                    map.set(key, slot);
+                }
+                var o = slot * 13;
+                acc[o] += 1;
+                acc[o + 1] += x; acc[o + 2] += y; acc[o + 3] += z;
+                acc[o + 4] += x * x; acc[o + 5] += x * y; acc[o + 6] += x * z;
+                acc[o + 7] += y * y; acc[o + 8] += y * z; acc[o + 9] += z * z;
+                acc[o + 10] += C[i * 3]; acc[o + 11] += C[i * 3 + 1]; acc[o + 12] += C[i * 3 + 2];
+            }
+            this.cursor = end;
+        },
+        finish: function () {
+            var m2 = used;
+            var centers = new Float32Array(m2 * 3);
+            var axisA = new Float32Array(m2 * 3);
+            var axisB = new Float32Array(m2 * 3);
+            var cols = new Float32Array(m2 * 3);
+            var weights = new Float32Array(m2);
+            var minS = 0.35 / res;
+            var wmax = 0;
+            for (var s2 = 0; s2 < m2; s2++) {
+                var o = s2 * 13;
+                var n = acc[o];
+                var mx = acc[o + 1] / n, my = acc[o + 2] / n, mz = acc[o + 3] / n;
+                var eig = jacobi3(
+                    acc[o + 4] / n - mx * mx, acc[o + 5] / n - mx * my, acc[o + 6] / n - mx * mz,
+                    acc[o + 7] / n - my * my, acc[o + 8] / n - my * mz, acc[o + 9] / n - mz * mz);
+                var la = Math.max(minS, 2 * Math.sqrt(Math.max(0, eig.l1)));
+                var lb = Math.max(minS, 2 * Math.sqrt(Math.max(0, eig.l2)));
+                centers[s2 * 3] = mx; centers[s2 * 3 + 1] = my; centers[s2 * 3 + 2] = mz;
+                axisA[s2 * 3] = eig.v1[0] * la; axisA[s2 * 3 + 1] = eig.v1[1] * la; axisA[s2 * 3 + 2] = eig.v1[2] * la;
+                axisB[s2 * 3] = eig.v2[0] * lb; axisB[s2 * 3 + 1] = eig.v2[1] * lb; axisB[s2 * 3 + 2] = eig.v2[2] * lb;
+                cols[s2 * 3] = acc[o + 10] / n / 255;
+                cols[s2 * 3 + 1] = acc[o + 11] / n / 255;
+                cols[s2 * 3 + 2] = acc[o + 12] / n / 255;
+                weights[s2] = n;
+                if (n > wmax) wmax = n;
+            }
+            for (s2 = 0; s2 < m2; s2++) weights[s2] = Math.sqrt(weights[s2] / (wmax || 1));
+            return { msg: { type: 'done', id: m.id,
+                            splats: { centers: centers, axisA: axisA, axisB: axisB,
+                                      colors: cols, weights: weights, count: m2 } },
+                     transfer: [centers.buffer, axisA.buffer, axisB.buffer, cols.buffer, weights.buffer] };
+        } };
+}
 function startJob(m) {
+    if (m.kind === 'splats') return splatJob(m);
     if (m.kind === 'ribbons') {
         var rOut = I32Buf();
         return { id: m.id, unit: 'solves', total: passSteps, cursor: 0,
@@ -769,6 +906,7 @@ onmessage = function (ev) {
     var m = ev.data;
     if (m.type === 'init') {
         P = m.positions; SO = m.stepOffsets;
+        T1 = m.pointT1; T2 = m.pointT2; C = m.colors;
         gridN = m.gridN; degree = m.degree; passSteps = m.passSteps;
         return;
     }
@@ -794,9 +932,14 @@ onmessage = function (ev) {
         topoWorker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: 'application/javascript' })));
         const wPos = positions.slice(0, count * 3);
         const wOff = stepOffsets.slice();
+        const wT1 = pointT1.slice(0, count);
+        const wT2 = pointT2.slice(0, count);
+        const wCol = colors.slice(0, count * 3);
         topoWorker.postMessage(
-            { type: 'init', positions: wPos, stepOffsets: wOff, gridN, degree, passSteps },
-            [wPos.buffer, wOff.buffer]);
+            { type: 'init', positions: wPos, stepOffsets: wOff,
+              pointT1: wT1, pointT2: wT2, colors: wCol,
+              gridN, degree, passSteps },
+            [wPos.buffer, wOff.buffer, wT1.buffer, wT2.buffer, wCol.buffer]);
         topoWorker.onmessage = (ev) => {
             const m = ev.data;
             const cb = jobCbs.get(m.id);
@@ -823,9 +966,9 @@ onmessage = function (ev) {
         topoWorker = null;
         buildHudEl.textContent = 'topology worker unavailable: ' + (e && e.message ? e.message : String(e));
     }
-    const topo = { ribbons: {}, threads: {}, clu: {} };   // key -> cached result
+    const topo = { ribbons: {}, threads: {}, clu: {}, splats: {} };   // key -> cached result
     const inflight = new Map();               // "kind:key" -> { id, promise }
-    const KIND_LABEL = { ribbons: 'rib', threads: 'thr', clu: 'clu' };
+    const KIND_LABEL = { ribbons: 'rib', threads: 'thr', clu: 'clu', splats: 'spl' };
     const ensureTopo = (kind, key) => {
         if (topo[kind][key]) return Promise.resolve(topo[kind][key]);
         const ck = kind + ':' + key;
@@ -840,6 +983,7 @@ onmessage = function (ev) {
             if (!msg) return null;            // cancelled or worker error
             const data = kind === 'threads'
                 ? { pairs: msg.pairs, ta: msg.ta, tb: msg.tb }
+                : kind === 'splats' ? { splats: msg.splats }
                 : { pairs: msg.pairs };
             topo[kind][key] = data;
             return data;
@@ -901,6 +1045,28 @@ onmessage = function (ev) {
                 && document.getElementById('ctl-show-clu').checked) {
                 cluSegCount = emitSortedSegments(cluRibbons, data.pairs, null, null);
                 if (lodEmitHook) lodEmitHook(); else if (applyLenqHook) applyLenqHook();
+            }
+            pendingBuilds--;
+        });
+    };
+    const splatKey = () => {
+        const res = document.getElementById('ctl-splat-res').value;
+        const axis = document.getElementById('ctl-zaxis').value === 't1' ? 't1' : 't2';
+        const S = Math.max(0, parseInt(document.getElementById('ctl-slices').value, 10) || 0);
+        return res + ':' + axis + ':' + S;
+    };
+    const refreshSplats = () => {
+        if (!document.getElementById('ctl-show-splats').checked) return;
+        const key = splatKey();
+        // splats depend on Y (3D bins), so the key carries axis+slices too;
+        // results are ~tens of MB — keep a SINGLE cache entry, not one per
+        // combination ever visited
+        for (const k of Object.keys(topo.splats)) if (k !== key) delete topo.splats[k];
+        pendingBuilds++;
+        ensureTopo('splats', key).then((data) => {
+            if (data && key === splatKey()
+                && document.getElementById('ctl-show-splats').checked) {
+                applySplatData(data.splats);
             }
             pendingBuilds--;
         });
@@ -980,11 +1146,91 @@ onmessage = function (ev) {
     const tonemapScene = new THREE.Scene();
     tonemapScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), tonemapMat));
 
+    // SPLATS: voxel-binned anisotropic gaussians (user construction: "bin
+    // them in voxels; each voxel bin determines color, elongation and the
+    // like"). The worker turns every occupied res^3 cell into ONE splat —
+    // mean position, mean color, the top-2 covariance eigenvectors as its
+    // in-space ellipse axes — so arcs come out stretched along their
+    // trajectory and 5M points collapse to a few 100k instanced quads
+    // (far cheaper to orbit than the line primitives). Always additive:
+    // splats are a density visualization, like the cloud style.
+    const splatUniforms = { uScaleMul: { value: 1 }, uIntensity: { value: 1 } };
+    const splatMat = new THREE.ShaderMaterial({
+        uniforms: splatUniforms,
+        clipping: true,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        vertexShader: [
+            '#include <clipping_planes_pars_vertex>',
+            'attribute vec3 iCenter;',
+            'attribute vec3 iAxisA;',
+            'attribute vec3 iAxisB;',
+            'attribute vec3 iColor;',
+            'attribute float iWeight;',
+            'uniform float uScaleMul;',
+            'varying vec2 vCorner;',
+            'varying vec3 vColor;',
+            'varying float vW;',
+            'void main() {',
+            '    vCorner = position.xy;',
+            '    vColor = iColor;',
+            '    vW = iWeight;',
+            '    vec3 wp = iCenter + (position.x * iAxisA + position.y * iAxisB) * uScaleMul;',
+            '    vec4 mvPosition = modelViewMatrix * vec4(wp, 1.0);',
+            '    gl_Position = projectionMatrix * mvPosition;',
+            '    #include <clipping_planes_vertex>',
+            '}',
+        ].join('\n'),
+        fragmentShader: [
+            '#include <clipping_planes_pars_fragment>',
+            'uniform float uIntensity;',
+            'varying vec2 vCorner;',
+            'varying vec3 vColor;',
+            'varying float vW;',
+            'void main() {',
+            '    #include <clipping_planes_fragment>',
+            '    float r2 = dot(vCorner, vCorner);',
+            '    if (r2 > 1.0) discard;',
+            '    float a = exp(-3.0 * r2);',
+            '    gl_FragColor = vec4(vColor * a * vW * uIntensity, 1.0);',
+            '}',
+        ].join('\n'),
+    });
+    splatMat.clippingPlanes = [clipLo, clipHi];
+    const splatBaseGeom = () => {
+        const g = new THREE.InstancedBufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(
+            new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
+        g.setIndex([0, 1, 2, 0, 2, 3]);
+        return g;
+    };
+    const splats = new THREE.Mesh(splatBaseGeom(), splatMat);
+    splats.frustumCulled = false;
+    splats.visible = false;
+    let splatCount = 0;
+    const applySplatData = (d) => {
+        const g = splatBaseGeom();
+        g.setAttribute('iCenter', new THREE.InstancedBufferAttribute(d.centers, 3));
+        g.setAttribute('iAxisA', new THREE.InstancedBufferAttribute(d.axisA, 3));
+        g.setAttribute('iAxisB', new THREE.InstancedBufferAttribute(d.axisB, 3));
+        g.setAttribute('iColor', new THREE.InstancedBufferAttribute(d.colors, 3));
+        g.setAttribute('iWeight', new THREE.InstancedBufferAttribute(d.weights, 1));
+        g.instanceCount = d.count;
+        const old = splats.geometry;
+        splats.geometry = g;
+        if (old) old.dispose();
+        splatCount = d.count;
+        updateStats();
+    };
+
     const sculpt = new THREE.Group();
     sculpt.add(points);
     sculpt.add(ribbons);
     sculpt.add(threads);
     sculpt.add(cluRibbons);
+    sculpt.add(splats);
     scene.add(sculpt);
 
     const frame = new THREE.LineSegments(
@@ -1247,6 +1493,7 @@ onmessage = function (ev) {
             ` · ${ribbonSegments.toLocaleString()} ribbon segments` +
             (threadSegments ? ` · ${threadSegments.toLocaleString()} thread segments` : '') +
             (cluSegCount ? ` · ${cluSegCount.toLocaleString()} clu segments` : '') +
+            (splatCount ? ` · ${splatCount.toLocaleString()} splats` : '') +
             (parseInt(slicesCtl.value, 10) > 0 ? ` · ${slicesCtl.value} slices` : '') +
             (parseInt(document.getElementById('ctl-lenq').value, 10) < 100
                 ? ` · len ≤ ${document.getElementById('ctl-lenq').value}%` : '') +
@@ -1259,6 +1506,8 @@ onmessage = function (ev) {
     const showRibbonsCtl = document.getElementById('ctl-show-ribbons');
     const showThreadsCtl = document.getElementById('ctl-show-threads');
     const showCluCtl = document.getElementById('ctl-show-clu');
+    const showSplatsCtl = document.getElementById('ctl-show-splats');
+    const splatResCtl = document.getElementById('ctl-splat-res');
     const orderCtl = document.getElementById('ctl-order');
     const slicesCtl = document.getElementById('ctl-slices');
     const zaxisCtl = document.getElementById('ctl-zaxis');
@@ -1302,6 +1551,7 @@ onmessage = function (ev) {
         refreshRibbons();
         refreshThreads();
         refreshClu();
+        refreshSplats();
         updateStats();
     };
     const applyShow = () => {
@@ -1309,9 +1559,11 @@ onmessage = function (ev) {
         ribbons.visible = showRibbonsCtl.checked;
         threads.visible = showThreadsCtl.checked;
         cluRibbons.visible = showCluCtl.checked;
+        splats.visible = showSplatsCtl.checked;
         if (showRibbonsCtl.checked) refreshRibbons(); else cancelBuild('ribbons');
         if (showThreadsCtl.checked) refreshThreads(); else cancelBuild('threads');
         if (showCluCtl.checked) refreshClu(); else cancelBuild('clu');
+        if (showSplatsCtl.checked) refreshSplats(); else cancelBuild('splats');
         updateStats();
     };
     const applyOrder = () => {
@@ -1322,6 +1574,8 @@ onmessage = function (ev) {
     showRibbonsCtl.addEventListener('change', applyShow);
     showThreadsCtl.addEventListener('change', applyShow);
     showCluCtl.addEventListener('change', applyShow);
+    showSplatsCtl.addEventListener('change', applyShow);
+    splatResCtl.addEventListener('change', () => refreshSplats());
     orderCtl.addEventListener('change', applyOrder);
     slicesCtl.addEventListener('change', applySlices);
     zaxisCtl.addEventListener('change', applySlices);
@@ -1364,6 +1618,7 @@ onmessage = function (ev) {
     const applySize = () => {
         material.size = Number(sizeCtl.value) * 0.0004;
         cloudUniforms.uSize.value = Number(sizeCtl.value) * 0.0004;
+        splatUniforms.uScaleMul.value = Number(sizeCtl.value) / 10;
         sizeVal.textContent = sizeCtl.value;
     };
     // height 0 flattens the sculpture onto its base plane: the 2D art is
@@ -1525,6 +1780,10 @@ onmessage = function (ev) {
             showRibbonsCtl.checked = !!view.show.ribbons;
             showThreadsCtl.checked = !!view.show.threads;
             showCluCtl.checked = !!view.show.clu;
+            showSplatsCtl.checked = !!view.show.splats;
+        }
+        if ([64, 96, 128, 192].includes(Number(view.splatRes))) {
+            splatResCtl.value = String(Number(view.splatRes));
         }
         if (['solid', 'ghost', 'cloud'].includes(view.style)) styleCtl.value = view.style;
         if (Number.isFinite(Number(view.glow))) {
@@ -1604,6 +1863,8 @@ onmessage = function (ev) {
         get pendingBuilds() { return pendingBuilds; },
         recording: rec,
         lod: { state: lod, set: lodSet, apply: lodApplyAll },
+        splats,
+        get splatCount() { return splatCount; },
     };
 }
 

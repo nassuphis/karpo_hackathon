@@ -1882,7 +1882,7 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#sculpture-source-line')).toHaveText('source: color_1');
     // only real sizes — the preview option is gone
     const sizes = await page.$$eval('#render-sculpture-n option', (o) => o.map((x) => x.value));
-    expect(sizes).toEqual(['384', '512']);
+    expect(sizes).toEqual(['128', '192', '384', '512']);
 
     await page.selectOption('#render-sculpture-n', '512');
     await page.click('#btn-sculpture-generate');
@@ -1972,7 +1972,7 @@ test.describe('Solve Score UI', () => {
       const ctls = {
         'ctl-size': fakeCtl('14'), 'ctl-height': fakeCtl('35'), 'ctl-slices': fakeCtl('11'),
         'ctl-show-points': fakeChk(false), 'ctl-show-ribbons': fakeChk(true), 'ctl-show-threads': fakeChk(true),
-        'ctl-show-clu': fakeChk(true),
+        'ctl-show-clu': fakeChk(true), 'ctl-show-splats': fakeChk(true), 'ctl-splat-res': fakeCtl('128'),
         'ctl-style': fakeCtl('cloud'), 'ctl-glow': fakeCtl('44'), 'ctl-order': fakeCtl('angle'), 'ctl-tour-mode': fakeCtl('wave'),
         'ctl-tour-speed': fakeCtl('2'), 'ctl-lenq': fakeCtl('63'), 'ctl-zaxis': fakeCtl('t1'),
         'ctl-zlo': fakeCtl('20'), 'ctl-zhi': fakeCtl('90'),
@@ -2008,7 +2008,8 @@ test.describe('Solve Score UI', () => {
       source_artifact_id: 'color_run_abc',
       view: {
         point: 14, height: 0.35, slices: 11,
-        show: { points: false, ribbons: true, threads: true, clu: true },
+        show: { points: false, ribbons: true, threads: true, clu: true, splats: true },
+        splatRes: 128,
         style: 'cloud', glow: 44, order: 'angle', tour: 'wave', tourSpeed: 2, lenq: 63, zaxis: 't1',
         zlo: 0.2, zhi: 0.9,
       },

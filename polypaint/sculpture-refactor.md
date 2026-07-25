@@ -165,7 +165,12 @@ sculpture keeps its pass-0 convention.
    k=ceil(segs/1.5M)x adaptive boost, full geometry at rest. The
    WebGPU question was answered with arithmetic: the frame is
    vertex+raster bound on the same silicon — draw less, not port.
-5. Remaining backlog (stripe fan-out, progressive tiles, lambda knobs,
+5. Fast sizes + splats (2026-07-25): 128²/192² artifact sizes (the
+   quick looks the deleted preview mode used to provide), and voxel-
+   binned anisotropic gaussian splats as a fourth show primitive —
+   the user's own construction (per-voxel mean/covariance), which is
+   both the new look AND far cheaper to orbit than the line soup.
+6. Remaining backlog (stripe fan-out, progressive tiles, lambda knobs,
    WebGPU) stays gated on demonstrated need: they exist to fix a
    slowness Wave B was built to remove — the first deployed artifact
    run's timing decides.

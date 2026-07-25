@@ -788,7 +788,8 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
     viewport: { min_re: -1, max_re: 1, min_im: -1, max_im: 1 },
     view: {
       point: 22, height: 0.4, slices: 3,
-      show: { points: false, ribbons: true, threads: false, clu: true },
+      show: { points: false, ribbons: true, threads: false, clu: true, splats: true },
+      splatRes: 64,
       style: 'ghost', order: 'angle', tour: 'weave', lenq: 50, zaxis: 't1',
       zlo: 0.25, zhi: 0.8, tourSpeed: 2,
     },
@@ -836,6 +837,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
       lenq: val('ctl-lenq'), ribbonDraw: v.ribbons.geometry.drawRange.count,
       zaxis: val('ctl-zaxis'), zlo: val('ctl-zlo'), zhi: val('ctl-zhi'),
       tourSpeed: val('ctl-tour-speed'),
+      splatRes: val('ctl-splat-res'), splatsVis: v.splats.visible, splatCount: v.splatCount,
       clipLoC: v.material.clippingPlanes[0].constant,
       clipHiC: v.material.clippingPlanes[1].constant,
       pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible, threadsVis: v.threads.visible,
@@ -875,6 +877,9 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   expect(st.zlo).toBe('25');
   expect(st.zhi).toBe('80');
   expect(st.tourSpeed).toBe('2');
+  expect(st.splatRes).toBe('64');
+  expect(st.splatsVis).toBe(true);
+  expect(st.splatCount).toBeGreaterThan(0);   // built at boot from the view
   // world constants track the 0.4 height scale (+0.005 outward margin)
   expect(st.clipLoC).toBeCloseTo(-(0.25 - 0.5) * 0.4 + 0.005, 5);
   expect(st.clipHiC).toBeCloseTo((0.8 - 0.5) * 0.4 + 0.005, 5);
@@ -1508,4 +1513,119 @@ test('motion LOD: thin index while the camera moves, full geometry at rest', asy
   expect(rest.indexed).toBe(false);
   expect(rest.draw).toBe(32);                  // 50% of the full 32 segments
   expect(rest.hud).not.toContain('LOD');
+});
+
+test('splats: voxel-binned anisotropic gaussians — elongation, weights, slices rebuild', async ({ page }) => {
+  // the clu-style drift fixture: per column two x-clusters whose 4 points
+  // drift 0.02/row — at res 64 each cluster spans exactly TWO voxels of
+  // TWO points each, collinear along x, so every splat must come out
+  // x-elongated with equal weights
+  await page.goto(VIEWER);
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 4;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgb(10,20,30)';
+    g.fillRect(0, 0, 4, 4);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  const gridN = 4, degree = 2;
+  const buf = Buffer.alloc(gridN * gridN * degree * 2 * 4);
+  let o = 0;
+  for (let step = 0; step < gridN * gridN; step++) {
+    const row = Math.floor(step / gridN);
+    for (const re of [-0.5 + 0.02 * row, 0.5 + 0.02 * row]) {
+      buf.writeFloatLE(re, o); o += 4;
+      buf.writeFloatLE(0.0, o); o += 4;
+    }
+  }
+  await page.route('**/fx/sproots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: buf,
+  }));
+  await page.route('**/fx/sppal.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  const frag = new URLSearchParams({
+    v: '1', r: '/fx/sproots.bin', p: '/fx/sppal.png', n: '4', d: '2', s: '16',
+    x0: '-1', x1: '1', y0: '-1', y1: '1', t: 'splat fixture',
+  });
+  await page.goto('about:blank');
+  await page.goto(VIEWER + '#' + frag.toString());
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const built = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!built) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+  await page.evaluate(() => {
+    document.getElementById('ctl-splat-res').value = '64';
+    const ctl = document.getElementById('ctl-show-splats');
+    ctl.checked = true;
+    ctl.dispatchEvent(new Event('change'));
+  });
+  await waitBuildsIdle(page);
+  const st = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const g = v.splats.geometry;
+    const A = g.getAttribute('iAxisA').array;
+    const B = g.getAttribute('iAxisB').array;
+    const W = g.getAttribute('iWeight').array;
+    const C = g.getAttribute('iColor').array;
+    const P = g.getAttribute('iCenter').array;
+    const n = v.splatCount;
+    let xDominant = 0, aLonger = 0, wOne = 0, centered = 0;
+    for (let i = 0; i < n; i++) {
+      const ax = Math.abs(A[i * 3]), ay = Math.abs(A[i * 3 + 1]), az = Math.abs(A[i * 3 + 2]);
+      if (ax > ay && ax > az) xDominant++;
+      const la = Math.hypot(A[i * 3], A[i * 3 + 1], A[i * 3 + 2]);
+      const lb = Math.hypot(B[i * 3], B[i * 3 + 1], B[i * 3 + 2]);
+      if (la >= lb - 1e-9) aLonger++;
+      if (Math.abs(W[i] - 1) < 1e-6) wOne++;   // all voxels hold 2 points -> weight 1
+      if (Math.abs(P[i * 3 + 2]) < 1e-6) centered++;   // im=0 fixture -> z=0
+    }
+    return {
+      count: n, xDominant, aLonger, wOne, centered,
+      visible: v.splats.visible,
+      c0: [C[0], C[1], C[2]],
+      hud: document.getElementById('hud-stats').textContent || '',
+    };
+  });
+  // 2 clusters x 2 voxels x 4 columns = 16 splats
+  expect(st.count).toBe(16);
+  expect(st.visible).toBe(true);
+  expect(st.xDominant).toBe(16);   // covariance elongated along the drift
+  expect(st.aLonger).toBe(16);     // major axis is the longer one
+  expect(st.wOne).toBe(16);        // uniform occupancy -> uniform weights
+  expect(st.centered).toBe(16);
+  expect(st.hud).toContain('16 splats');
+  // mean color of identical members = the member color, in floats
+  expect(st.c0[0]).toBeCloseTo(10 / 255, 5);
+  expect(st.c0[1]).toBeCloseTo(20 / 255, 5);
+  expect(st.c0[2]).toBeCloseTo(30 / 255, 5);
+
+  // slices=2 collapses Y onto two plates: 4 y-levels merge pairwise, so
+  // the same xz voxels now hold 4 points each -> 8 splats, still weight 1
+  const sliced = await page.evaluate(async () => {
+    const v = window.__sculptureViewer;
+    const idle = () => new Promise((res) => {
+      const chk = () => (v.pendingBuilds === 0 ? res() : setTimeout(chk, 10));
+      chk();
+    });
+    const ctl = document.getElementById('ctl-slices');
+    ctl.value = '2';
+    ctl.dispatchEvent(new Event('change'));
+    await idle();
+    const P = v.splats.geometry.getAttribute('iCenter').array;
+    const ys = new Set();
+    for (let i = 0; i < v.splatCount; i++) ys.add(Math.round(P[i * 3 + 1] * 1e4) / 1e4);
+    ctl.value = '0';
+    ctl.dispatchEvent(new Event('change'));
+    await idle();
+    return { count: v.splatCount === undefined ? -1 : ys.size >= 0 ? Array.from(ys).sort((a, b) => a - b) : [], n: ys.size, restored: v.splatCount };
+  });
+  expect(sliced.count).toEqual([-0.5, 0.5]);   // splat centers ON the plates
+  expect(sliced.restored).toBe(16);            // slices off -> rebuilt full
 });

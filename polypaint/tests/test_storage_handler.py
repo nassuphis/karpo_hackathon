@@ -1346,6 +1346,7 @@ class TestStartSculptureFromArtifact(unittest.TestCase):
             {"job_id": "../evil", "artifact_id": "color_run_abc", "n": 384},
             {"job_id": "compute_j1", "artifact_id": "", "n": 384},
             {"job_id": "compute_j1", "artifact_id": "color_run_abc", "n": 640},
+            {"job_id": "compute_j1", "artifact_id": "color_run_abc", "n": 256},
             {"job_id": "compute_j1", "artifact_id": "color_run_abc"},
         ):
             resp = handler_storage.handler(_event("/start-sculpture-artifact", params), None)
@@ -1380,7 +1381,8 @@ class TestSaveSculpture(unittest.TestCase):
             "palette": "inferno",
             "source_artifact_id": "color_run_abc",
             "view": {"point": 12, "order": "angle", "style": "cloud", "glow": 44,
-                     "show": {"points": True, "clu": True},
+                     "show": {"points": True, "clu": True, "splats": True},
+                     "splatRes": 128,
                      "tour": "grand", "tourSpeed": 2, "junk": "x"},
         }
         p.update(over)
@@ -1419,7 +1421,8 @@ class TestSaveSculpture(unittest.TestCase):
         self.assertEqual(meta["source_artifact_id"], "color_run_abc")   # provenance travels
         self.assertEqual(meta["view"], {
             "point": 12, "order": "angle", "style": "cloud", "glow": 44,
-            "show": {"points": True, "ribbons": False, "threads": False, "clu": True},
+            "show": {"points": True, "ribbons": False, "threads": False, "clu": True, "splats": True},
+            "splatRes": 128,
             "tour": "grand", "tourSpeed": 2.0,
         })   # sanitized
         viewer = puts[f"sculptures/{sc['id']}/viewer.html"]

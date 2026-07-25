@@ -1060,7 +1060,9 @@ function renderArtifactPanel(jobId, summary, options = {}) {
             <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap">
                 <span id="sculpture-source-line" style="font-size:12px; color:#cfd8e3; flex-basis:100%; font-family:monospace">source: &#8230;</span>
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-generate" onclick="runSculptureGenerate()" title="Generate the sculpture from the selected color artifact's recorded scores, transforms, viewport, and palette (async job on the rail)">Generate</button>
-                <select id="render-sculpture-n" title="Lattice: subsamples the FULL solve at this grid (range GETs, no solving; u16 dump)" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
+                <select id="render-sculpture-n" title="Lattice: subsamples the FULL solve at this grid (range GETs, no solving; u16 dump). 128/192 = fast quick looks" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
+                    <option value="128">128&#178;</option>
+                    <option value="192">192&#178;</option>
                     <option value="384" selected>384&#178;</option>
                     <option value="512">512&#178;</option>
                 </select>
@@ -1639,7 +1641,9 @@ function _sculptureCaptureViewSettings() {
                 ribbons: chk('ctl-show-ribbons'),
                 threads: chk('ctl-show-threads'),
                 clu: chk('ctl-show-clu'),
+                splats: chk('ctl-show-splats'),
             },
+            splatRes: parseInt(val('ctl-splat-res'), 10) || 96,
             style: val('ctl-style') || 'solid',
             glow: Number.isFinite(parseInt(val('ctl-glow'), 10)) ? parseInt(val('ctl-glow'), 10) : 30,
             order: val('ctl-order') || 'nearest',
@@ -1657,7 +1661,7 @@ function _sculptureCaptureViewSettings() {
 
 function _sculptureViewSummary(view) {
     if (!view) return '';
-    const show = ['points', 'ribbons', 'threads', 'clu'].filter((k) => view.show && view.show[k])
+    const show = ['points', 'ribbons', 'threads', 'clu', 'splats'].filter((k) => view.show && view.show[k])
         .map((k) => k.slice(0, 3)).join('+') || 'none';
     return `point ${view.point} · height ${view.height.toFixed(2)} · slices ${view.slices || 'off'}`
         + ` · ${show} · ${view.style}${view.style === 'cloud' && view.glow ? ` g${view.glow}` : ''} · ${view.order}`

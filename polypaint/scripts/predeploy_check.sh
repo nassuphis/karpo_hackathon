@@ -220,7 +220,11 @@ bash tests/test_frontend_js.sh
 # Browser regression specs (code-review-30 F13): EVERY load-bearing e2e suite
 # is gated — tests/test_predeploy_gate_completeness.py accounts for each
 # tests/e2e/*.spec.js as gated here or explicitly excluded with a reason.
-npx playwright test \
+# --retries=1: a transient (a starved worker blowing a navigation timeout
+# under parallel SwiftShader load) must not FATAL the gate — user-hit as a
+# single beforeEach goto timeout with 227 green in the same run. A retried
+# pass is reported as "flaky" (still visible); a REAL failure fails twice.
+npx playwright test --retries=1 \
     tests/e2e/gallery-logic.spec.js \
     tests/e2e/gallery-tab.spec.js \
     tests/e2e/gallery-viewer-smoke.spec.js \

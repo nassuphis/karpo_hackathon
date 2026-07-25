@@ -225,6 +225,7 @@ npx playwright test \
     tests/e2e/gallery-tab.spec.js \
     tests/e2e/gallery-viewer-smoke.spec.js \
     tests/e2e/sculpture-viewer-smoke.spec.js \
+    tests/e2e/splat-bake.spec.js \
     tests/e2e/gallery-texture-manager.spec.js \
     tests/e2e/gallery-curation.spec.js \
     tests/e2e/favorites-ui.spec.js \

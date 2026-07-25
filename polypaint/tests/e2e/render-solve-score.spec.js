@@ -1923,6 +1923,69 @@ test.describe('Solve Score UI', () => {
     expect(await page.locator('#btn-sculpture-generate').isDisabled()).toBe(true);
   });
 
+  test('Sculpture tab: SplatBake bakes the open viewer into one HTML download', async ({ page }) => {
+    await page.click('.tab-btn:text(\"Render\")');
+    await seedRenderPopupState(page);
+    await page.evaluate(() => {
+      window._lambdaCalls = [];
+      window.lambdaPost = async function (name, body, path) {
+        window._lambdaCalls.push([name, path]);
+        if (path === '/list-sculptures') return { sculptures: [], count: 0 };
+        return {};
+      };
+      const attr = (arr) => ({ array: Float32Array.from(arr) });
+      const ctls = { 'ctl-tour-mode': { value: 'wave' }, 'ctl-tour-speed': { value: '2' } };
+      window._lastSculptureWin = {
+        closed: false,
+        document: {
+          getElementById: (id) => (id === 'hud-title' ? { textContent: 'baked piece' } : (ctls[id] || null)),
+        },
+        __sculptureViewer: {
+          splatCount: 2,
+          splats: {
+            visible: true,
+            geometry: { getAttribute: (n) => ({
+              iCenter: attr([0, 0.5, 0, 0.2, -0.5, 0]),
+              iAxisA: attr([0.1, 0, 0, 0.05, 0, 0]),
+              iAxisB: attr([0, 0.1, 0, 0, 0.05, 0]),
+              iColor: attr([1, 0, 0, 0, 1, 0]),
+              iWeight: attr([1, 0.5]),
+            })[n] },
+            material: { uniforms: { uMode: { value: 2 }, uIntensity: { value: 1.5 }, uScaleMul: { value: 2 } } },
+          },
+          sculpt: { scale: { y: 0.4 } },
+          camera: { position: { x: 1, y: 0.5, z: 1 } },
+          controls: { target: { x: 0, y: 0, z: 0 } },
+          tour: { state: { playing: true } },
+        },
+      };
+    });
+    await page.click('[data-render-family=\"sculpture\"]');
+    await expect(page.locator('#btn-sculpture-splatbake')).toBeVisible();
+    await page.click('#btn-sculpture-splatbake');
+    await expect(page.locator('#btn-sculpture-splatbake')).toHaveText('\u2713 Baked');
+    const st = await page.evaluate(() => ({
+      bake: window.__lastSplatBake,
+      lambdas: window._lambdaCalls.filter((c) => c[1] !== '/list-sculptures'),
+    }));
+    // one self-contained artifact: real bytes, the viewer's splat count and
+    // title — and ZERO backend calls (fully client-side)
+    expect(st.bake.count).toBe(2);
+    expect(st.bake.title).toBe('baked piece');
+    expect(st.bake.bytes).toBeGreaterThan(2000);
+    expect(st.lambdas).toEqual([]);
+
+    // no viewer / splats hidden -> readable errors, no bake artifact
+    await page.evaluate(() => {
+      window.__lastSplatBake = null;
+      window._lastSculptureWin.__sculptureViewer.splats.visible = false;
+    });
+    await page.click('#btn-sculpture-splatbake');
+    await expect(page.locator('#btn-sculpture-splatbake')).toHaveText('\u2717 SplatBake');
+    const none = await page.evaluate(() => window.__lastSplatBake);
+    expect(none).toBe(null);
+  });
+
   test('Sculpture tab: job-scoped list, snapshot save, delete', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page);

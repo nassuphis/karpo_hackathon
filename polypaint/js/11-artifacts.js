@@ -1069,6 +1069,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                 <span style="border-left:1px solid #333; height:18px"></span>
                 <input type="text" id="sculpture-title" placeholder="sculpture title (optional)" style="flex:0 1 300px; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:5px 8px; font-family:monospace; font-size:12px">
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-save" onclick="runSculptureSave()">Save</button>
+                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-splatbake" onclick="runSculptureSplatBake()" title="Bake the open viewer's CURRENT splats into one self-contained HTML file (no data links, works offline) and download it">SplatBake</button>
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)">Refresh</button>
                 <span style="font-size:11px; color:#666; flex-basis:100%">Generate builds the sculpture from the SELECTED color artifact — its stored per-solve scores, root transforms, viewport, and palette (no re-evaluation; async on the rail, ~30s). Save snapshots the open viewer.</span>
                 <span id="sculpture-view-hint" style="font-size:11px; color:#8899aa; flex-basis:100%"></span>
@@ -1713,6 +1714,310 @@ function _sculptureUpdateSourceLine() {
     }
 }
 
+// SPLATBAKE_TEMPLATE_START
+// Pure generator: one totally self-contained HTML file — the baked splats
+// (quantized, base64-embedded), a hand-rolled WebGL2 instanced-quad splat
+// renderer (~no dependencies: no three.js, no vendor fetches, works from
+// file:// and offline), orbit/pinch controls, and the four tours with
+// pose adoption. Everything the share needs, nothing it doesn't: the
+// 5M-point cloud never travels — the averaging already happened.
+function _splatBakeHtml(p) {
+    const n = p.count;
+    const cmin = [Infinity, Infinity, Infinity];
+    const cmax = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < n; i++) {
+        for (let k = 0; k < 3; k++) {
+            const v = p.centers[i * 3 + k];
+            if (v < cmin[k]) cmin[k] = v;
+            if (v > cmax[k]) cmax[k] = v;
+        }
+    }
+    let amax = 1e-6;
+    for (let i = 0; i < n * 3; i++) {
+        const a = Math.abs(p.axisA[i]);
+        const b = Math.abs(p.axisB[i]);
+        if (a > amax) amax = a;
+        if (b > amax) amax = b;
+    }
+    const buf = new ArrayBuffer(n * 22);
+    const dv = new DataView(buf);
+    let o = 0;
+    const q16 = (v, lo, hi) => Math.max(0, Math.min(65535, Math.round((v - lo) / ((hi - lo) || 1) * 65535)));
+    const qi16 = (v) => Math.max(-32767, Math.min(32767, Math.round(v / amax * 32767)));
+    for (let i = 0; i < n; i++) {
+        for (let k = 0; k < 3; k++) { dv.setUint16(o, q16(p.centers[i * 3 + k], cmin[k], cmax[k]), true); o += 2; }
+    }
+    for (let i = 0; i < n * 3; i++) { dv.setInt16(o, qi16(p.axisA[i]), true); o += 2; }
+    for (let i = 0; i < n * 3; i++) { dv.setInt16(o, qi16(p.axisB[i]), true); o += 2; }
+    for (let i = 0; i < n * 3; i++) { dv.setUint8(o, Math.max(0, Math.min(255, Math.round(p.colors[i] * 255)))); o += 1; }
+    for (let i = 0; i < n; i++) { dv.setUint8(o, Math.max(0, Math.min(255, Math.round(p.weights[i] * 255)))); o += 1; }
+    const bytes = new Uint8Array(buf);
+    let b64 = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+        b64 += btoa(String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)));
+    }
+    const header = {
+        v: 1, count: n, cmin, cmax, amax,
+        mode: p.mode, intensity: p.intensity,
+        cam: p.cam, target: p.target,
+        tour: p.tour || 'off', tourSpeed: p.tourSpeed || 1,
+        title: String(p.title || 'PolyPaint splats'),
+    };
+    const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+        + '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">\n'
+        + '<title>' + esc(header.title) + '</title>\n'
+        + '<style>html,body{margin:0;height:100%;background:#05070c;overflow:hidden;font-family:monospace}'
+        + 'canvas{display:block;width:100%;height:100%;touch-action:none}'
+        + '#t{position:fixed;top:10px;left:14px;color:#e8eef5;font-size:14px;pointer-events:none}'
+        + '#h{position:fixed;bottom:10px;left:14px;color:#5b6b80;font-size:11px;pointer-events:none}'
+        + '#m{position:fixed;inset:0;display:none;align-items:center;justify-content:center;color:#e8eef5}'
+        + '</style>\n</head>\n<body>\n<canvas id="c"></canvas>'
+        + '<div id="t">' + esc(header.title) + '</div>'
+        + '<div id="h">drag: orbit · wheel/pinch: zoom · interaction stops the tour</div>'
+        + '<div id="m">WebGL2 is not available in this browser</div>\n'
+        + '<script>\n'
+        + 'var H = ' + JSON.stringify(header) + ';\n'
+        + 'var B64 = "' + b64 + '";\n'
+        + _splatBakeRuntime()
+        + '\n</' + 'script>\n</body>\n</html>\n';
+}
+
+// the baked page's runtime, as source text (kept separate so the template
+// stays readable; MUST stay dependency-free and template-literal-free)
+function _splatBakeRuntime() {
+    return [
+'(function () {',
+'    var raw = atob(B64);',
+'    var bytes = new Uint8Array(raw.length);',
+'    for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);',
+'    var dv = new DataView(bytes.buffer);',
+'    var n = H.count;',
+'    var centers = new Float32Array(n * 3);',
+'    var axisA = new Float32Array(n * 3);',
+'    var axisB = new Float32Array(n * 3);',
+'    var colors = new Float32Array(n * 3);',
+'    var weights = new Float32Array(n);',
+'    var o = 0, i, k;',
+'    for (i = 0; i < n; i++) {',
+'        for (k = 0; k < 3; k++) {',
+'            centers[i * 3 + k] = H.cmin[k] + dv.getUint16(o, true) / 65535 * (H.cmax[k] - H.cmin[k]);',
+'            o += 2;',
+'        }',
+'    }',
+'    for (i = 0; i < n * 3; i++) { axisA[i] = dv.getInt16(o, true) / 32767 * H.amax; o += 2; }',
+'    for (i = 0; i < n * 3; i++) { axisB[i] = dv.getInt16(o, true) / 32767 * H.amax; o += 2; }',
+'    for (i = 0; i < n * 3; i++) { colors[i] = dv.getUint8(o) / 255; o += 1; }',
+'    for (i = 0; i < n; i++) { weights[i] = dv.getUint8(o) / 255; o += 1; }',
+'    var canvas = document.getElementById("c");',
+'    var gl = canvas.getContext("webgl2", { antialias: true, preserveDrawingBuffer: true });',
+'    if (!gl) { document.getElementById("m").style.display = "flex"; return; }',
+'    var VS = "#version 300 es\\n"',
+'        + "layout(location=0) in vec2 corner;"',
+'        + "layout(location=1) in vec3 iCenter;"',
+'        + "layout(location=2) in vec3 iAxisA;"',
+'        + "layout(location=3) in vec3 iAxisB;"',
+'        + "layout(location=4) in vec3 iColor;"',
+'        + "layout(location=5) in float iWeight;"',
+'        + "uniform mat4 uProj; uniform mat4 uView;"',
+'        + "out vec2 vC; out vec3 vCol; out float vW;"',
+'        + "void main(){ vC = corner; vCol = iColor; vW = iWeight;"',
+'        + "vec3 wp = iCenter + corner.x * iAxisA + corner.y * iAxisB;"',
+'        + "gl_Position = uProj * uView * vec4(wp, 1.0); }";',
+'    var FS = "#version 300 es\\nprecision highp float;"',
+'        + "uniform float uMode; uniform float uIntensity;"',
+'        + "in vec2 vC; in vec3 vCol; in float vW; out vec4 fc;"',
+'        + "void main(){ float r2 = dot(vC, vC); if (r2 > 1.0) discard;"',
+'        + "float a = exp(-3.0 * r2);"',
+'        + "if (uMode > 1.5) { fc = vec4(vCol * (0.75 + 0.25 * a), 1.0); }"',
+'        + "else if (uMode > 0.5) { fc = vec4(vCol, min(1.0, a * vW * 0.7 * uIntensity)); }"',
+'        + "else { fc = vec4(vCol * a * vW * uIntensity, 1.0); } }";',
+'    function shader(type, src) {',
+'        var sh = gl.createShader(type);',
+'        gl.shaderSource(sh, src);',
+'        gl.compileShader(sh);',
+'        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));',
+'        return sh;',
+'    }',
+'    var prog = gl.createProgram();',
+'    gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));',
+'    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));',
+'    gl.linkProgram(prog);',
+'    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));',
+'    gl.useProgram(prog);',
+'    var uProj = gl.getUniformLocation(prog, "uProj");',
+'    var uView = gl.getUniformLocation(prog, "uView");',
+'    gl.uniform1f(gl.getUniformLocation(prog, "uMode"), H.mode);',
+'    gl.uniform1f(gl.getUniformLocation(prog, "uIntensity"), H.intensity);',
+'    var vao = gl.createVertexArray();',
+'    gl.bindVertexArray(vao);',
+'    function attr(loc, data, size, divisor) {',
+'        var b = gl.createBuffer();',
+'        gl.bindBuffer(gl.ARRAY_BUFFER, b);',
+'        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);',
+'        gl.enableVertexAttribArray(loc);',
+'        gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);',
+'        gl.vertexAttribDivisor(loc, divisor);',
+'    }',
+'    attr(0, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), 2, 0);',
+'    attr(1, centers, 3, 1);',
+'    attr(2, axisA, 3, 1);',
+'    attr(3, axisB, 3, 1);',
+'    attr(4, colors, 3, 1);',
+'    attr(5, weights, 1, 1);',
+'    var target = [H.target[0], H.target[1], H.target[2]];',
+'    var dx = H.cam[0] - target[0], dy = H.cam[1] - target[1], dz = H.cam[2] - target[2];',
+'    var radius = Math.max(0.05, Math.sqrt(dx * dx + dy * dy + dz * dz));',
+'    var yaw = Math.atan2(dz, dx);',
+'    var pitch = Math.asin(Math.max(-1, Math.min(1, dy / radius)));',
+'    var proj = new Float32Array(16), view = new Float32Array(16);',
+'    function perspective(out, fovy, aspect, near, far) {',
+'        var f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);',
+'        out.fill(0);',
+'        out[0] = f / aspect; out[5] = f;',
+'        out[10] = (far + near) * nf; out[11] = -1;',
+'        out[14] = 2 * far * near * nf;',
+'    }',
+'    function lookAt(out, ex, ey, ez, cx, cy, cz) {',
+'        var zx = ex - cx, zy = ey - cy, zz = ez - cz;',
+'        var zl = 1 / (Math.hypot(zx, zy, zz) || 1); zx *= zl; zy *= zl; zz *= zl;',
+'        var ux = 0, uy = 1, uz = 0;',
+'        var xx = uy * zz - uz * zy, xy = uz * zx - ux * zz, xz = ux * zy - uy * zx;',
+'        var xl = 1 / (Math.hypot(xx, xy, xz) || 1); xx *= xl; xy *= xl; xz *= xl;',
+'        var yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;',
+'        out[0] = xx; out[1] = yx; out[2] = zx; out[3] = 0;',
+'        out[4] = xy; out[5] = yy; out[6] = zy; out[7] = 0;',
+'        out[8] = xz; out[9] = yz; out[10] = zz; out[11] = 0;',
+'        out[12] = -(xx * ex + xy * ey + xz * ez);',
+'        out[13] = -(yx * ex + yy * ey + yz * ez);',
+'        out[14] = -(zx * ex + zy * ey + zz * ez);',
+'        out[15] = 1;',
+'    }',
+'    var tour = { mode: H.tour, playing: H.tour !== "off", t: 0,',
+'                 r0: radius, y0: H.cam[1], angle0: Math.atan2(H.cam[2], H.cam[0]) };',
+'    function tourPose(t) {',
+'        var m = tour.mode, hh = 0.5;',
+'        if (m === "weave") {',
+'            var ang = tour.angle0 + t * 0.55;',
+'            var rad = 0.5 + 0.4 * Math.sin(t * 0.23);',
+'            var y = Math.sin(t * 0.11) * hh * 1.05;',
+'            return [Math.cos(ang) * rad, y, Math.sin(ang) * rad, 0, y * 0.6, 0];',
+'        }',
+'        if (m === "grand") {',
+'            var ang2 = tour.angle0 + t * 0.35;',
+'            var gTop = Math.max(1.5, Math.abs(tour.y0));',
+'            var gBot = gTop > 1.5 ? -gTop : -0.5;',
+'            var ph = (((t * 0.35) / (2 * Math.PI)) + (tour.y0 < (gTop + gBot) / 2 ? 2 : 0)) % 4;',
+'            var y2;',
+'            if (ph < 1) y2 = gTop;',
+'            else if (ph < 2) { var u = ph - 1, w = u * u * (3 - 2 * u); y2 = gTop + (gBot - gTop) * w; }',
+'            else if (ph < 3) y2 = gBot;',
+'            else { var u2 = ph - 3, w2 = u2 * u2 * (3 - 2 * u2); y2 = gBot + (gTop - gBot) * w2; }',
+'            return [Math.cos(ang2) * tour.r0, y2, Math.sin(ang2) * tour.r0, 0, 0, 0];',
+'        }',
+'        if (m === "wave") {',
+'            var ang3 = tour.angle0 + t * 0.35;',
+'            var amp = Math.max(0.08, hh * 1.05);',
+'            var phase = Math.asin(Math.max(-1, Math.min(1, tour.y0 / amp)));',
+'            var y3 = amp * Math.sin(1.05 * t + phase);',
+'            return [Math.cos(ang3) * tour.r0, y3, Math.sin(ang3) * tour.r0, 0, 0, 0];',
+'        }',
+'        var ang4 = tour.angle0 + t * 0.35;',
+'        return [Math.cos(ang4) * tour.r0, tour.y0, Math.sin(ang4) * tour.r0, 0, 0, 0];',
+'    }',
+'    function stopTour() {',
+'        if (!tour.playing) return;',
+'        tour.playing = false;',
+'        var pz = tourPose(tour.t);',
+'        target = [pz[3], pz[4], pz[5]];',
+'        var ddx = cam[0] - target[0], ddy = cam[1] - target[1], ddz = cam[2] - target[2];',
+'        radius = Math.max(0.05, Math.hypot(ddx, ddy, ddz));',
+'        yaw = Math.atan2(ddz, ddx);',
+'        pitch = Math.asin(Math.max(-1, Math.min(1, ddy / radius)));',
+'    }',
+'    var cam = [H.cam[0], H.cam[1], H.cam[2]];',
+'    var pointers = new Map();',
+'    var pinchD = 0;',
+'    canvas.addEventListener("pointerdown", function (ev) {',
+'        stopTour();',
+'        pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);',
+'        canvas.setPointerCapture(ev.pointerId);',
+'        if (pointers.size === 2) {',
+'            var ps = Array.from(pointers.values());',
+'            pinchD = Math.hypot(ps[0][0] - ps[1][0], ps[0][1] - ps[1][1]);',
+'        }',
+'    });',
+'    canvas.addEventListener("pointermove", function (ev) {',
+'        if (!pointers.has(ev.pointerId)) return;',
+'        var prev = pointers.get(ev.pointerId);',
+'        pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);',
+'        if (pointers.size === 1) {',
+'            yaw += (ev.clientX - prev[0]) * 0.005;',
+'            pitch += (ev.clientY - prev[1]) * 0.005;',
+'            pitch = Math.max(-1.5, Math.min(1.5, pitch));',
+'        } else if (pointers.size === 2) {',
+'            var ps = Array.from(pointers.values());',
+'            var d = Math.hypot(ps[0][0] - ps[1][0], ps[0][1] - ps[1][1]);',
+'            if (pinchD > 0) radius = Math.max(0.05, Math.min(20, radius * pinchD / (d || 1)));',
+'            pinchD = d;',
+'        }',
+'    });',
+'    function drop(ev) { pointers.delete(ev.pointerId); pinchD = 0; }',
+'    canvas.addEventListener("pointerup", drop);',
+'    canvas.addEventListener("pointercancel", drop);',
+'    canvas.addEventListener("wheel", function (ev) {',
+'        stopTour();',
+'        ev.preventDefault();',
+'        radius = Math.max(0.05, Math.min(20, radius * Math.exp(ev.deltaY * 0.001)));',
+'    }, { passive: false });',
+'    var last = performance.now();',
+'    var frames = 0;',
+'    function frame(now) {',
+'        var dt = Math.min(0.1, (now - last) / 1000);',
+'        last = now;',
+'        var w = Math.round(canvas.clientWidth * (window.devicePixelRatio || 1));',
+'        var h = Math.round(canvas.clientHeight * (window.devicePixelRatio || 1));',
+'        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }',
+'        gl.viewport(0, 0, w, h);',
+'        if (tour.playing) {',
+'            tour.t += dt * (H.tourSpeed || 1);',
+'            var pz = tourPose(tour.t);',
+'            cam = [pz[0], pz[1], pz[2]];',
+'            lookAt(view, cam[0], cam[1], cam[2], pz[3], pz[4], pz[5]);',
+'        } else {',
+'            var cp = Math.cos(pitch);',
+'            cam = [target[0] + radius * cp * Math.cos(yaw),',
+'                   target[1] + radius * Math.sin(pitch),',
+'                   target[2] + radius * cp * Math.sin(yaw)];',
+'            lookAt(view, cam[0], cam[1], cam[2], target[0], target[1], target[2]);',
+'        }',
+'        perspective(proj, 50 * Math.PI / 180, w / (h || 1), 0.01, 50);',
+'        gl.uniformMatrix4fv(uProj, false, proj);',
+'        gl.uniformMatrix4fv(uView, false, view);',
+'        gl.clearColor(0.0196, 0.0275, 0.0471, 1);',
+'        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);',
+'        if (H.mode === 2) {',
+'            gl.disable(gl.BLEND);',
+'            gl.enable(gl.DEPTH_TEST);',
+'            gl.depthMask(true);',
+'        } else {',
+'            gl.enable(gl.BLEND);',
+'            gl.disable(gl.DEPTH_TEST);',
+'            gl.depthMask(false);',
+'            if (H.mode === 0) gl.blendFunc(gl.ONE, gl.ONE);',
+'            else gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);',
+'        }',
+'        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n);',
+'        frames++;',
+'        window.__bakedSplatViewer = { count: n, frames: frames, mode: H.mode, tour: tour.mode, playing: tour.playing };',
+'        requestAnimationFrame(frame);',
+'    }',
+'    requestAnimationFrame(frame);',
+'})();',
+    ].join('\n');
+}
+// SPLATBAKE_TEMPLATE_END
+
 function _sculptureShareUrl(meta) {
     const prefix = meta.prefix || `sculptures/${meta.id}/`;
     return _publicStorageUrl(prefix + 'viewer.html');
@@ -1845,6 +2150,81 @@ async function runSculptureSave() {
             btn.disabled = false;
             btn.textContent = ok ? '\u2713 Saved' : '\u2717 Save';
             setTimeout(() => { btn.textContent = 'Save'; }, 2500);
+        }
+    }
+}
+
+async function runSculptureSplatBake() {
+    // bake the open viewer's CURRENT splats into ONE self-contained HTML:
+    // height + point scaling folded into the geometry, style/glow/camera/
+    // playing-tour carried in the header, buffers quantized (u16 centers,
+    // i16 axes, u8 color/weight) and embedded base64. The 5M-point cloud
+    // never travels — the averaging already happened (user construction).
+    const btn = document.getElementById('btn-sculpture-splatbake');
+    let ok = false;
+    try {
+        const win = window._lastSculptureWin;
+        if (!win || win.closed || !win.__sculptureViewer || !win.document) {
+            throw new Error('open a sculpture viewer first — SplatBake bakes its live splats');
+        }
+        const v = win.__sculptureViewer;
+        if (!v.splats || !v.splatCount || !v.splats.visible) {
+            throw new Error('enable spl in the viewer first — SplatBake bakes exactly the splats being shown');
+        }
+        if (btn) { btn.disabled = true; btn.textContent = 'Baking…'; }
+        const g = v.splats.geometry;
+        const arr = (name) => g.getAttribute(name).array;
+        const n = v.splatCount;
+        const yScale = v.sculpt.scale.y;
+        const scaleMul = v.splats.material.uniforms.uScaleMul.value;
+        const centers = new Float32Array(n * 3);
+        const axisA = new Float32Array(n * 3);
+        const axisB = new Float32Array(n * 3);
+        const c0 = arr('iCenter'), a0 = arr('iAxisA'), b0 = arr('iAxisB');
+        for (let i = 0; i < n; i++) {
+            centers[i * 3] = c0[i * 3];
+            centers[i * 3 + 1] = c0[i * 3 + 1] * yScale;
+            centers[i * 3 + 2] = c0[i * 3 + 2];
+            axisA[i * 3] = a0[i * 3] * scaleMul;
+            axisA[i * 3 + 1] = a0[i * 3 + 1] * scaleMul * yScale;
+            axisA[i * 3 + 2] = a0[i * 3 + 2] * scaleMul;
+            axisB[i * 3] = b0[i * 3] * scaleMul;
+            axisB[i * 3 + 1] = b0[i * 3 + 1] * scaleMul * yScale;
+            axisB[i * 3 + 2] = b0[i * 3 + 2] * scaleMul;
+        }
+        const wdoc = win.document;
+        const wval = (id) => { const el = wdoc.getElementById(id); return el ? el.value : null; };
+        const playing = !!(v.tour && v.tour.state && v.tour.state.playing);
+        const title = (wdoc.getElementById('hud-title') && wdoc.getElementById('hud-title').textContent) || 'PolyPaint splats';
+        const html = _splatBakeHtml({
+            title,
+            count: n,
+            centers, axisA, axisB,
+            colors: arr('iColor'),
+            weights: arr('iWeight'),
+            mode: v.splats.material.uniforms.uMode.value,
+            intensity: v.splats.material.uniforms.uIntensity.value,
+            cam: [v.camera.position.x, v.camera.position.y, v.camera.position.z],
+            target: [v.controls.target.x, v.controls.target.y, v.controls.target.z],
+            tour: playing ? (wval('ctl-tour-mode') || 'orbit') : 'off',
+            tourSpeed: parseFloat(wval('ctl-tour-speed')) || 1,
+        });
+        window.__lastSplatBake = { bytes: html.length, count: n, title };
+        const blob = new Blob([html], { type: 'text/html' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = (title.replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'sculpture') + '-splats.html';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+        log(`SplatBake: ${n.toLocaleString()} splats → ${(html.length / (1024 * 1024)).toFixed(1)}MB self-contained HTML`, 'ok', 'render-log');
+        ok = true;
+    } catch (e) {
+        log(`SplatBake failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = ok ? '✓ Baked' : '✗ SplatBake';
+            setTimeout(() => { btn.textContent = 'SplatBake'; }, 2500);
         }
     }
 }

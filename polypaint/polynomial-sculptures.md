@@ -461,6 +461,29 @@ splats) and back, and the saved-mode boot builds splats from the view.
 TDZ trap: splatMat.clippingPlanes must be assigned AFTER the material
 exists — the shared clip block runs earlier in boot.
 
+## SplatBake (self-contained baked shares)
+
+The **SplatBake** button beside Save answers "saved viewers load slow"
++ "video gets downsampled": it bakes the open viewer's CURRENT splats
+into ONE self-contained HTML file and downloads it — no data links, no
+vendor fetches, no three.js, works from file:// and offline, renders
+live (resolution-independent, unlike a recording). The 5M-point cloud
+never travels: the averaging already happened, so only the few hundred
+thousand splats ship — quantized (u16 centers over per-axis bounds,
+i16 axes over a shared max, u8 colors/weights = 22B/splat) and
+base64-embedded, typically a few MB total. Height and point scaling
+are folded INTO the geometry at bake time; style mode, glow intensity,
+camera pose, and the PLAYING tour ride a JSON header. The embedded
+runtime is a dependency-free WebGL2 instanced-quad renderer (~250
+lines: hand-rolled perspective/lookAt, orbit + pinch + wheel, the four
+tours with pose adoption, per-mode blending, preserveDrawingBuffer so
+recipients can screenshot). Baking is fully client-side — zero backend
+calls. Pinned e2e: a dedicated spec extracts the REAL generator
+(marker-delimited in js/11), bakes a fixture, serves the file, and
+asserts boot + red/green pixel readback + tour autoplay + pointerdown
+stop; the tab flow pins bytes/count/title, zero lambda calls, and
+readable errors when no viewer or no visible splats.
+
 ## Motion LOD (viewer)
 
 At 384² × degree ~34, threads alone are ~5M segments = 10M vertices

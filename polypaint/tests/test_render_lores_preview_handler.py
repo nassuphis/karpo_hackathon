@@ -1087,13 +1087,18 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
             "params": {"res": 96},
         }), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
-        row = json.loads(resp["body"])["sculpture"]
+        body2 = json.loads(resp["body"])
+        row = body2["sculpture"]
         self.assertEqual(row["kind"], "splatbake")
         self.assertEqual(row["source_artifact_id"], "color_run_abc")
         # the generate core really ran: its ephemeral keys were uploaded and
         # the baked viewer landed as a hosted prefix
         self.assertIn("renders/j/sculpture_roots.bin", uploaded)
         self.assertIn(f"sculptures/{row['id']}/viewer.html", uploaded)
+        # provenance says what happened, and the fresh dump was reused from
+        # local disk — no 36MB S3 round trip after a miss
+        self.assertEqual(body2["provenance"]["generate_cache_hit"], False)
+        self.assertTrue(body2["provenance"]["roots_reused_locally"])
 
     @patch("handler_render_lores_preview.s3")
     def test_splat_bake_sanitizes_params_and_sources(self, mock_s3):

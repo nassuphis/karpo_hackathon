@@ -1921,6 +1921,7 @@ async function _splatBakeStartAndFollow(jobId, source, params, btnId, railLabel)
                 const r = (check.results || []).find((x) => x && x.sculpture);
                 if (!r) throw new Error('bake result carries no sculpture row');
                 row = r.sculpture;
+                row._provenance = r.provenance || null;
                 break;
             }
             await new Promise((r2) => setTimeout(r2, 3000));
@@ -1938,10 +1939,20 @@ async function _splatBakeStartAndFollow(jobId, source, params, btnId, railLabel)
     window._sculptureInventoryLoaded = true;
     _sculptureRenderPane();
     _sculptureSyncFamilyCount();
+    const prov = row._provenance;
+    delete row._provenance;
     window.__lastSplatBake = { id: row.id, count: row.splat_count, bytes: row.bytes,
-                               title: row.title, share_url: row.share_url };
+                               title: row.title, share_url: row.share_url,
+                               provenance: prov || null };
+    // the anti-"fishy" line: say WHERE the data came from — a cache hit
+    // costs seconds, a first-time lattice materialization costs the minute
+    const provLabel = prov && typeof prov.generate_cache_hit === 'boolean'
+        ? (prov.generate_cache_hit
+            ? ` \u00b7 generate CACHE HIT ${((prov.generate_ms || 0) / 1000).toFixed(1)}s`
+            : ` \u00b7 lattice materialized ${((prov.generate_ms || 0) / 1000).toFixed(1)}s (first time for this artifact+size; cached now)`)
+        : '';
     log(`SplatBake hosted: ${Number(row.splat_count || 0).toLocaleString()} splats \u00b7 `
-        + `${((Number(row.bytes) || 0) / (1024 * 1024)).toFixed(1)}MB \u00b7 ${doneSecs}s \u2014 ${row.share_url}`,
+        + `${((Number(row.bytes) || 0) / (1024 * 1024)).toFixed(1)}MB \u00b7 ${doneSecs}s${provLabel} \u2014 ${row.share_url}`,
         'ok', 'render-log');
     return row;
 }

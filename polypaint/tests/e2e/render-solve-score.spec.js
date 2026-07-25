@@ -1937,7 +1937,9 @@ test.describe('Solve Score UI', () => {
         if (path === '/list-sculptures') return { sculptures: [], count: 0 };
         if (path === '/start-splat-bake') return { task_id: 'splat_bake_777' };
         if (path === '/check-status') {
-          return { done: 1, errors: 0, error_details: [], results: [{ sculpture: {
+          return { done: 1, errors: 0, error_details: [], results: [{
+            provenance: { generate_cache_hit: true, generate_ms: 1200 },
+            sculpture: {
             version: 1, kind: 'splatbake', id: 'scu_bake1', title: 'param bake',
             job_id: 'test_job', splat_count: 157675, bytes: 3600000,
             source_artifact_id: 'color_1',
@@ -1990,6 +1992,7 @@ test.describe('Solve Score UI', () => {
     });
     expect(st.rail).toEqual([{ id: 'splatbake:splat_bake_777', state: 'complete' }]);
     expect(st.bake.id).toBe('scu_bake1');
+    expect(st.bake.provenance).toEqual({ generate_cache_hit: true, generate_ms: 1200 });
     await expect(page.locator('#sculpture-list')).toContainText('param bake');
     await expect(page.locator('#sculpture-list')).toContainText('baked \u00b7 157,675 splats \u00b7 3.4MB');
     await expect(page.locator('[data-render-family="sculpture"] .subtab-count')).toHaveText('(1)');

@@ -1549,6 +1549,7 @@ def _run_splat_bake(params, job_id, spec, t_start):
     kind = str(source.get("kind") or "")
     source_ids = {}
     title_default = "PolyPaint splats"
+    provenance = {}          # what actually happened — the anti-"fishy" record
 
     if kind == "saved":
         sid = str(source.get("saved_id") or "").strip()
@@ -1589,6 +1590,7 @@ def _run_splat_bake(params, job_id, spec, t_start):
             raise RuntimeError("splat_bake artifact source requires integer n")
         # run the generate core (cache-aware: a warm cache returns in
         # seconds); its response body is its contract — compose, don't fork
+        t_gen = time.time()
         gen = _run_artifact_sculpture(
             {"preview_source_size": n, "sculpture_format": "u16"},
             job_id, {"artifact_id": artifact_id}, time.time())
@@ -1598,10 +1600,28 @@ def _run_splat_bake(params, job_id, spec, t_start):
         degree = int(sc["degree"])
         fmt = "u16" if sc.get("format") == "u16" else "f32"
         viewport = {k: float(sc["viewport"][k]) for k in ("min_re", "max_re", "min_im", "max_im")}
-        # the generate just refreshed the fixed ephemeral keys — read those
-        # (immune to cache-write failures)
-        _download_to_file(f"renders/{job_id}/sculpture_roots.bin", TMP_SPLAT_ROOTS)
-        palette_png = _splat_bake_get_bytes(f"renders/{job_id}/sculpture_palette.png")
+        provenance = {
+            "generate_cache_hit": bool((body.get("cache") or {}).get("hit")),
+            "generate_ms": int((time.time() - t_gen) * 1000),
+        }
+        # the generate just refreshed the fixed keys — and on a MISS its
+        # local /tmp outputs are still on disk: reuse them instead of a
+        # 36MB S3 round trip (user-caught "why so long": one avoidable
+        # re-download; the solve-score is never recomputed either way)
+        expected_dump = int(sc.get("roots_bytes") or 0)
+        if (os.path.exists(TMP_XFORMED_ROOTS)
+                and expected_dump > 0
+                and os.path.getsize(TMP_XFORMED_ROOTS) == expected_dump):
+            os.replace(TMP_XFORMED_ROOTS, TMP_SPLAT_ROOTS)
+            provenance["roots_reused_locally"] = True
+        else:
+            _download_to_file(f"renders/{job_id}/sculpture_roots.bin", TMP_SPLAT_ROOTS)
+            provenance["roots_reused_locally"] = False
+        if os.path.exists(TMP_PALETTE_IMAGE) and os.path.getsize(TMP_PALETTE_IMAGE) > 0:
+            with open(TMP_PALETTE_IMAGE, "rb") as fh:
+                palette_png = fh.read()
+        else:
+            palette_png = _splat_bake_get_bytes(f"renders/{job_id}/sculpture_palette.png")
         source_ids = {"source_artifact_id": artifact_id}
         title_default = f"{artifact_id} · {grid_n}²"
     else:
@@ -1713,17 +1733,21 @@ def _run_splat_bake(params, job_id, spec, t_start):
     total_ms = int((time.time() - t_start) * 1000)
     logs = [
         f"Splat bake: source={kind} grid={grid_n}² degree={degree} res={p['res']} "
-        f"splats={tool['count']} points={tool['points_used']} clipped={tool['points_clipped']}",
+        f"splats={tool['count']} points={tool['points_used']} clipped={tool['points_clipped']}"
+        + (f" · generate {'CACHE HIT' if provenance.get('generate_cache_hit') else 'materialized'}"
+           f" {provenance.get('generate_ms', 0) / 1000.0:.1f}s" if kind == "artifact" else ""),
         f"Splat bake timings: colors={colors_ms / 1000.0:.2f}s tool={tool_ms / 1000.0:.2f}s "
         f"total={total_ms / 1000.0:.2f}s html={len(html_bytes) / (1024 * 1024):.1f}MB",
     ]
     if task_id:
         report_status(job_id, task_id, "done", result_data={
             "sculpture": out_row,
+            "provenance": provenance,
             "total_ms": total_ms,
         })
     return ok_response({
         "sculpture": out_row,
+        "provenance": provenance,
         "tool": tool,
         "logs": logs,
         "timings_ms": {"colors": colors_ms, "tool": tool_ms, "total": total_ms},

@@ -1923,16 +1923,38 @@ test.describe('Solve Score UI', () => {
     expect(await page.locator('#btn-sculpture-generate').isDisabled()).toBe(true);
   });
 
-  test('Sculpture tab: SplatBake bakes the open viewer into one HTML download', async ({ page }) => {
+  test('Sculpture tab: SplatBake uploads a hosted baked viewer and lists it', async ({ page }) => {
     await page.click('.tab-btn:text(\"Render\")');
     await seedRenderPopupState(page);
     await page.evaluate(() => {
-      window._lambdaCalls = [];
+      document.getElementById('render-results-dir').value = 'test_job';
+      window._storageCalls = [];
+      window._putCalls = [];
       window.lambdaPost = async function (name, body, path) {
-        window._lambdaCalls.push([name, path]);
+        window._storageCalls.push([path, JSON.parse(JSON.stringify(body))]);
         if (path === '/list-sculptures') return { sculptures: [], count: 0 };
+        if (path === '/presign-splat-bake') {
+          return { id: 'scu_bake1', key: 'sculptures/scu_bake1/viewer.html',
+                   put_url: 'https://bkt.s3.r.amazonaws.com/sculptures/scu_bake1/viewer.html?sig=x' };
+        }
+        if (path === '/finalize-splat-bake') {
+          return { sculpture: {
+            version: 1, kind: 'splatbake', id: 'scu_bake1', title: body.title,
+            job_id: body.job_id, splat_count: body.splat_count, bytes: 4200000,
+            source_artifact_id: body.source_artifact_id,
+            created_at: '2026-07-25T12:00:00Z', prefix: 'sculptures/scu_bake1/',
+            share_url: 'https://bkt.s3.r.amazonaws.com/sculptures/scu_bake1/viewer.html',
+          } };
+        }
         return {};
       };
+      window.fetch = async function (url, opts) {
+        window._putCalls.push({ url: String(url), method: opts && opts.method,
+                                type: opts && opts.headers && opts.headers['Content-Type'],
+                                size: opts && opts.body && opts.body.size });
+        return { ok: true, status: 200 };
+      };
+      window._lastSculptureData = { job_id: 'test_job', source_artifact_id: 'color_run_abc' };
       const attr = (arr) => ({ array: Float32Array.from(arr) });
       const ctls = { 'ctl-tour-mode': { value: 'wave' }, 'ctl-tour-speed': { value: '2' } };
       window._lastSculptureWin = {
@@ -1966,24 +1988,39 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#btn-sculpture-splatbake')).toHaveText('\u2713 Baked');
     const st = await page.evaluate(() => ({
       bake: window.__lastSplatBake,
-      lambdas: window._lambdaCalls.filter((c) => c[1] !== '/list-sculptures'),
+      calls: window._storageCalls.filter((c) => c[0] !== '/list-sculptures'),
+      puts: window._putCalls,
     }));
-    // one self-contained artifact: real bytes, the viewer's splat count and
-    // title — and ZERO backend calls (fully client-side)
-    expect(st.bake.count).toBe(2);
-    expect(st.bake.title).toBe('baked piece');
-    expect(st.bake.bytes).toBeGreaterThan(2000);
-    expect(st.lambdas).toEqual([]);
+    // presign -> same-origin PUT of the whole file -> finalize with the
+    // EXACT row identity; the roots never travel
+    expect(st.calls.map((c) => c[0])).toEqual(['/presign-splat-bake', '/finalize-splat-bake']);
+    expect(st.calls[0][1]).toEqual({ job_id: 'test_job' });
+    expect(st.puts).toHaveLength(1);
+    expect(st.puts[0].method).toBe('PUT');
+    expect(st.puts[0].type).toBe('text/html');
+    expect(st.puts[0].size).toBe(st.bake.bytes);
+    expect(st.puts[0].url).toContain('sculptures/scu_bake1/viewer.html');
+    expect(st.calls[1][1]).toEqual({
+      id: 'scu_bake1', job_id: 'test_job', title: 'baked piece',
+      splat_count: 2, source_artifact_id: 'color_run_abc',
+    });
+    expect(st.bake.id).toBe('scu_bake1');
+    expect(st.bake.share_url).toContain('/sculptures/scu_bake1/viewer.html');
+    // the hosted bake appears as a DIFFERENT KIND of row in the list
+    await expect(page.locator('#sculpture-list')).toContainText('baked piece');
+    await expect(page.locator('#sculpture-list')).toContainText('baked \u00b7 2 splats \u00b7 4.0MB');
 
-    // no viewer / splats hidden -> readable errors, no bake artifact
+    // splats hidden -> readable error, nothing uploaded
     await page.evaluate(() => {
       window.__lastSplatBake = null;
+      window._putCalls = [];
       window._lastSculptureWin.__sculptureViewer.splats.visible = false;
     });
     await page.click('#btn-sculpture-splatbake');
     await expect(page.locator('#btn-sculpture-splatbake')).toHaveText('\u2717 SplatBake');
-    const none = await page.evaluate(() => window.__lastSplatBake);
-    expect(none).toBe(null);
+    const none = await page.evaluate(() => ({ bake: window.__lastSplatBake, puts: window._putCalls.length }));
+    expect(none.bake).toBe(null);
+    expect(none.puts).toBe(0);
   });
 
   test('Sculpture tab: job-scoped list, snapshot save, delete', async ({ page }) => {

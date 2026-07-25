@@ -1369,6 +1369,83 @@ class TestStartSculptureFromArtifact(unittest.TestCase):
         mock_boto3.client.return_value.invoke.assert_not_called()
 
 
+class TestSplatBakeHosting(unittest.TestCase):
+    @patch("handler_storage.s3")
+    def test_presign_mints_id_and_put_url(self, mock_s3):
+        import handler_storage
+        mock_s3.generate_presigned_url.return_value = "https://bkt.s3.r.amazonaws.com/signed-put"
+        resp = handler_storage.handler(_event("/presign-splat-bake", {"job_id": "compute_j1"}), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        self.assertTrue(body["id"].startswith("scu_"))
+        self.assertEqual(body["key"], f"sculptures/{body['id']}/viewer.html")
+        self.assertEqual(body["put_url"], "https://bkt.s3.r.amazonaws.com/signed-put")
+        # the presign binds bucket/key/content-type — the client cannot
+        # steer the upload anywhere else
+        call = mock_s3.generate_presigned_url.call_args
+        self.assertEqual(call.args[0], "put_object")
+        self.assertEqual(call.kwargs["Params"]["Key"], body["key"])
+        self.assertEqual(call.kwargs["Params"]["ContentType"], "text/html")
+        resp = handler_storage.handler(_event("/presign-splat-bake", {"job_id": "../evil"}), None)
+        self.assertEqual(resp["statusCode"], 400)
+
+    @patch("handler_storage.s3")
+    def test_finalize_verifies_stamps_and_lists(self, mock_s3):
+        import handler_storage
+        mock_s3.head_object.return_value = {"ContentLength": 5 * 1024 * 1024}
+        resp = handler_storage.handler(_event("/finalize-splat-bake", {
+            "id": "scu_abc123", "job_id": "compute_j1", "title": "Baked Piece",
+            "splat_count": 240000, "source_artifact_id": "color_run_abc",
+        }), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        sc = json.loads(resp["body"])["sculpture"]
+        self.assertEqual(sc["kind"], "splatbake")
+        self.assertEqual(sc["id"], "scu_abc123")
+        self.assertEqual(sc["title"], "Baked Piece")
+        self.assertEqual(sc["job_id"], "compute_j1")
+        self.assertEqual(sc["splat_count"], 240000)
+        self.assertEqual(sc["bytes"], 5 * 1024 * 1024)
+        self.assertEqual(sc["source_artifact_id"], "color_run_abc")
+        self.assertEqual(sc["prefix"], "sculptures/scu_abc123/")
+        self.assertTrue(sc["share_url"].endswith("/sculptures/scu_abc123/viewer.html"))
+        # immutable-cache stamp via self-copy of the ONE object
+        copy = mock_s3.copy_object.call_args.kwargs
+        self.assertEqual(copy["Key"], "sculptures/scu_abc123/viewer.html")
+        self.assertEqual(copy["CopySource"]["Key"], "sculptures/scu_abc123/viewer.html")
+        self.assertEqual(copy["CacheControl"], "public, max-age=31536000, immutable")
+        # meta.json is the list row
+        put = mock_s3.put_object.call_args.kwargs
+        self.assertEqual(put["Key"], "sculptures/scu_abc123/meta.json")
+        meta = json.loads(put["Body"])
+        self.assertEqual(meta["kind"], "splatbake")
+        self.assertEqual(meta["splat_count"], 240000)
+
+    @patch("handler_storage.s3")
+    def test_finalize_rejects_bad_inputs(self, mock_s3):
+        import handler_storage
+        mock_s3.head_object.return_value = {"ContentLength": 5 * 1024 * 1024}
+        for params in (
+            {"id": "not-an-id", "job_id": "compute_j1", "splat_count": 10},
+            {"id": "scu_abc123", "job_id": "../evil", "splat_count": 10},
+            {"id": "scu_abc123", "job_id": "compute_j1"},
+        ):
+            resp = handler_storage.handler(_event("/finalize-splat-bake", params), None)
+            self.assertEqual(resp["statusCode"], 400, resp["body"])
+        # missing upload -> friendly error, nothing written
+        mock_s3.head_object.side_effect = RuntimeError("404")
+        resp = handler_storage.handler(_event("/finalize-splat-bake", {
+            "id": "scu_abc123", "job_id": "compute_j1", "splat_count": 10}), None)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("PUT must complete", json.loads(resp["body"])["error"])
+        # implausible sizes
+        mock_s3.head_object.side_effect = None
+        mock_s3.head_object.return_value = {"ContentLength": 12}
+        resp = handler_storage.handler(_event("/finalize-splat-bake", {
+            "id": "scu_abc123", "job_id": "compute_j1", "splat_count": 10}), None)
+        self.assertEqual(resp["statusCode"], 400)
+        mock_s3.copy_object.assert_not_called()
+
+
 class TestSaveSculpture(unittest.TestCase):
     def _params(self, **over):
         p = {

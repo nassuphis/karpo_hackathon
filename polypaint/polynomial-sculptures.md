@@ -477,8 +477,18 @@ camera pose, and the PLAYING tour ride a JSON header. The embedded
 runtime is a dependency-free WebGL2 instanced-quad renderer (~250
 lines: hand-rolled perspective/lookAt, orbit + pinch + wheel, the four
 tours with pose adoption, per-mode blending, preserveDrawingBuffer so
-recipients can screenshot). Baking is fully client-side — zero backend
-calls. Pinned e2e: a dedicated spec extracts the REAL generator
+recipients can screenshot). Baking generates client-side; HOSTING (user: "in the viewer
+list, a different kind of viewer — share it without killing the
+device") goes through two small storage routes: `/presign-splat-bake`
+mints the id + a presigned PUT for `sculptures/{id}/viewer.html` (the
+file is past API Gateway's ~10MB ceiling; the app is served from the
+same bucket host, so the PUT is same-origin), the tab PUTs the blob,
+and `/finalize-splat-bake` verifies the object (1KB–64MB), stamps
+immutable caching via self-copy, and writes the `kind: "splatbake"`
+meta.json that makes it a LIST ROW — same share URL shape, same Copy
+link/Delete as saved sculptures, but ONE object and no roots download
+for recipients. `bytes` is the Blob size (true UTF-8 bytes, not
+string length — the em-dots bite). Pinned e2e: a dedicated spec extracts the REAL generator
 (marker-delimited in js/11), bakes a fixture, serves the file, and
 asserts boot + red/green pixel readback + tour autoplay + pointerdown
 stop; the tab flow pins bytes/count/title, zero lambda calls, and

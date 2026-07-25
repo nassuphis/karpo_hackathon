@@ -1069,7 +1069,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                 <span style="border-left:1px solid #333; height:18px"></span>
                 <input type="text" id="sculpture-title" placeholder="sculpture title (optional)" style="flex:0 1 300px; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:5px 8px; font-family:monospace; font-size:12px">
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-save" onclick="runSculptureSave()">Save</button>
-                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-splatbake" onclick="runSculptureSplatBake()" title="Bake the open viewer's CURRENT splats into one self-contained HTML file (no data links, works offline) and download it">SplatBake</button>
+                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-splatbake" onclick="runSculptureSplatBake()" title="Bake the open viewer's CURRENT splats into one self-contained hosted viewer — a light shareable row in the list below (no roots download for recipients)">SplatBake</button>
                 <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)">Refresh</button>
                 <span style="font-size:11px; color:#666; flex-basis:100%">Generate builds the sculpture from the SELECTED color artifact — its stored per-solve scores, root transforms, viewport, and palette (no re-evaluation; async on the rail, ~30s). Save snapshots the open viewer.</span>
                 <span id="sculpture-view-hint" style="font-size:11px; color:#8899aa; flex-basis:100%"></span>
@@ -2040,8 +2040,10 @@ function _sculptureRenderPane() {
         <div style="display:flex; align-items:center; gap:10px; padding:6px 10px; border-bottom:1px solid #26263a; font-size:12px">
             <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#e8eef5">${_escapeHtml(m.title || m.id || '')}</span>
             <span style="color:#667a90; font-size:11px; white-space:nowrap; max-width:180px; overflow:hidden; text-overflow:ellipsis">${_escapeHtml(m.source_artifact_id ? 'src ' + m.source_artifact_id : '')}</span>
-            <span style="color:#778599; white-space:nowrap">${Number(m.grid_n) || '?'}×${Number(m.grid_n) || '?'} · d${Number(m.degree) || '?'}</span>
-            <span style="color:#778599">${_escapeHtml(String(m.palette || ''))}</span>
+            <span style="color:#778599; white-space:nowrap">${m.kind === 'splatbake'
+                ? `baked · ${Number(m.splat_count || 0).toLocaleString()} splats · ${((Number(m.bytes) || 0) / (1024 * 1024)).toFixed(1)}MB`
+                : `${Number(m.grid_n) || '?'}×${Number(m.grid_n) || '?'} · d${Number(m.degree) || '?'}`}</span>
+            <span style="color:#778599">${_escapeHtml(String(m.kind === 'splatbake' ? '' : (m.palette || '')))}</span>
             <span style="color:#556; font-size:11px; white-space:nowrap">${_escapeHtml(String(m.created_at || '').slice(0, 16).replace('T', ' '))}</span>
             <button type="button" class="btn-secondary btn-inline" onclick="_sculptureOpen('${_escapeHtml(m.id || '')}')">Open</button>
             <button type="button" class="btn-secondary btn-inline" onclick="_sculptureCopyLink('${_escapeHtml(m.id || '')}', this)">Copy link</button>
@@ -2209,14 +2211,39 @@ async function runSculptureSplatBake() {
             tour: playing ? (wval('ctl-tour-mode') || 'orbit') : 'off',
             tourSpeed: parseFloat(wval('ctl-tour-speed')) || 1,
         });
-        window.__lastSplatBake = { bytes: html.length, count: n, title };
-        const blob = new Blob([html], { type: 'text/html' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = (title.replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'sculpture') + '-splats.html';
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 30000);
-        log(`SplatBake: ${n.toLocaleString()} splats → ${(html.length / (1024 * 1024)).toFixed(1)}MB self-contained HTML`, 'ok', 'render-log');
+        // hosted, not downloaded (user: "in the viewer list, a different
+        // kind of viewer"): presigned PUT straight to S3 — the file is past
+        // API Gateway's ~10MB body ceiling and the app is served from the
+        // same bucket host, so the PUT is same-origin — then finalize
+        // writes the meta.json that makes it a list row.
+        const jobId = document.getElementById('render-results-dir').value.trim();
+        if (!jobId) throw new Error('no job selected');
+        const titleInput = document.getElementById('sculpture-title');
+        const rowTitle = (titleInput && titleInput.value.trim()) || title;
+        if (btn) btn.textContent = 'Uploading…';
+        const pres = await lambdaPost('storage', { job_id: jobId }, '/presign-splat-bake');
+        if (!pres || !pres.put_url || !pres.id) throw new Error('presign-splat-bake returned no URL');
+        const blob = new Blob([html], { type: 'text/html' });   // blob.size = true UTF-8 bytes
+        const put = await fetch(pres.put_url, {
+            method: 'PUT',
+            body: blob,
+            headers: { 'Content-Type': 'text/html' },
+        });
+        if (!put.ok) throw new Error(`baked viewer upload failed: HTTP ${put.status}`);
+        const fin = await lambdaPost('storage', {
+            id: pres.id,
+            job_id: jobId,
+            title: rowTitle,
+            splat_count: n,
+            source_artifact_id: (window._lastSculptureData && window._lastSculptureData.source_artifact_id) || undefined,
+        }, '/finalize-splat-bake');
+        const saved = fin && fin.sculpture;
+        if (!saved || !saved.id) throw new Error('finalize-splat-bake returned no sculpture');
+        window.__lastSplatBake = { bytes: blob.size, count: n, title: rowTitle, id: saved.id, share_url: saved.share_url };
+        window._sculptureInventory = [saved, ...(window._sculptureInventory || [])];
+        window._sculptureInventoryLoaded = true;
+        _sculptureRenderPane();
+        log(`SplatBake hosted: ${n.toLocaleString()} splats → ${(blob.size / (1024 * 1024)).toFixed(1)}MB — ${saved.share_url}`, 'ok', 'render-log');
         ok = true;
     } catch (e) {
         log(`SplatBake failed: ${e.message}`, 'err', 'render-log');

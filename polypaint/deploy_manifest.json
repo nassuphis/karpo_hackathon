@@ -158,6 +158,8 @@
     "/list-sculptures",
     "/save-sculpture",
     "/start-sculpture-artifact",
+    "/presign-splat-bake",
+    "/finalize-splat-bake",
     "/list-sheets",
     "/list-books",
     "/fetch-book",

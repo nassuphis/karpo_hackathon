@@ -18,6 +18,7 @@ import time
 import boto3
 
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
+from png_rgb import decode_png_rgb
 from color_render_contract import normalize_background_color, validate_color_output_contract
 from logical_lores import (
     _logical_row_mapping,
@@ -64,6 +65,7 @@ from program_compile_helpers import (
 s3 = boto3.client("s3")
 
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
+SPLAT_BAKE_BIN = os.path.join(os.path.dirname(__file__), "splat_bake")
 SOLVE_PROXIMITY_STATS = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
 SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
 SWEEP_MT = os.path.join(os.path.dirname(__file__), "sweep_mt")
@@ -87,6 +89,9 @@ TMP_IMAGE = "/tmp/render_lores_preview.png"
 TMP_PALETTE_IMAGE = "/tmp/render_lores_preview_palette.png"
 TMP_XFORMED_ROOTS = "/tmp/render_lores_preview_xformed_roots.bin"
 TMP_STEP_SCORES = "/tmp/render_lores_preview_step_scores.raw"
+TMP_SPLAT_ROOTS = "/tmp/render_lores_preview_splat_roots.bin"
+TMP_SPLAT_COLORS = "/tmp/render_lores_preview_splat_colors.raw"
+TMP_SPLAT_PACK = "/tmp/render_lores_preview_splat_pack.bin"
 
 MAX_PREVIEW_PIX = int(os.environ.get("RENDER_LORES_PREVIEW_MAX_PIX", "1024"))
 MAX_LOGICAL_LORES_N = int(os.environ.get("RENDER_LOGICAL_LORES_MAX_N", "256"))
@@ -120,6 +125,9 @@ def _cleanup_tmp():
         TMP_PALETTE_IMAGE,
         TMP_XFORMED_ROOTS,
         TMP_STEP_SCORES,
+        TMP_SPLAT_ROOTS,
+        TMP_SPLAT_COLORS,
+        TMP_SPLAT_PACK,
         TMP_FRAGMENT_PREFIX + "*",
         TMP_PALETTE_FRAGMENT_PREFIX + "*",
     ):
@@ -1236,6 +1244,7 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
             stamp = int(time.time() * 1000)
             sculpture_export = dict(cached)
             sculpture_export.update({
+                "cache_prefix": cache_prefix,
                 "roots_key": sculpture_roots_key,
                 "roots_url": f"{base_url}/{sculpture_roots_key}?v={stamp}",
                 "palette_key": sculpture_palette_key,
@@ -1368,6 +1377,7 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
     stamp = int(time.time() * 1000)
     sculpture_export = {
         "format": fmt,
+        "cache_prefix": cache_prefix,
         "grid_n": int(view_n),
         "degree": int(degree),
         "step_count": int(step_count),
@@ -1435,6 +1445,291 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
     })
 
 
+_SPLAT_BAKE_RES = (64, 96, 128, 192)
+_SPLAT_BAKE_SAVED_ID = re.compile(r"scu_[a-z0-9]{1,32}")
+_SPLAT_BAKE_CACHE_RE = re.compile(r"renders/[A-Za-z0-9_-]{1,64}/sculpture_cache/[0-9a-f]{16}/")
+
+
+def _splat_bake_template():
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in (os.path.join(here, "splat_bake_template.html"),
+                 os.path.join(here, "..", "splat_bake_template.html")):
+        if os.path.exists(cand):
+            with open(cand, "r", encoding="utf-8") as fh:
+                return fh.read()
+    raise RuntimeError("splat_bake_template.html not packaged with this lambda")
+
+
+def _splat_bake_triple(raw, default):
+    if not isinstance(raw, (list, tuple)) or len(raw) != 3:
+        return list(default)
+    out = []
+    for v in raw:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return list(default)
+        if not math.isfinite(f) or abs(f) > 100:
+            return list(default)
+        out.append(f)
+    return out
+
+
+def _splat_bake_params(raw):
+    """Sanitize the bake's view/settings blob — the whole point of the
+    server-side bake is that THIS is all a client sends."""
+    p = raw if isinstance(raw, dict) else {}
+
+    def clampf(key, lo, hi, dflt):
+        try:
+            v = float(p.get(key))
+        except (TypeError, ValueError):
+            return dflt
+        if not math.isfinite(v):
+            return dflt
+        return min(hi, max(lo, v))
+
+    res = int(p.get("res") or 96)
+    if res not in _SPLAT_BAKE_RES:
+        raise RuntimeError(f"splat res must be one of {_SPLAT_BAKE_RES}, got {res}")
+    try:
+        slices = int(p.get("slices") or 0)
+    except (TypeError, ValueError):
+        slices = 0
+    if not (0 <= slices <= 64):
+        raise RuntimeError(f"slices out of range: {slices}")
+    mode = p.get("mode")
+    mode = int(mode) if mode in (0, 1, 2, 0.0, 1.0, 2.0) else 2
+    tour = p.get("tour") if p.get("tour") in ("off", "orbit", "wave", "grand", "weave") else "off"
+    speed = clampf("tourSpeed", 0.5, 4.0, 1.0)
+    if speed not in (0.5, 1.0, 2.0, 4.0):
+        speed = 1.0
+    title = "".join(ch for ch in str(p.get("title") or "") if ch.isprintable())[:120]
+    return {
+        "res": res,
+        "zaxis": p.get("zaxis") if p.get("zaxis") in ("t1", "t2") else "t2",
+        "slices": slices,
+        "mode": mode,
+        "intensity": clampf("intensity", 0.01, 10.0, 1.0),
+        "yscale": clampf("yscale", 0.0, 1.0, 0.1),
+        "scalemul": clampf("scalemul", 0.05, 10.0, 1.0),
+        "cam": _splat_bake_triple(p.get("cam"), (1.25, 0.85, 1.25)),
+        "target": _splat_bake_triple(p.get("target"), (0.0, 0.0, 0.0)),
+        "tour": tour,
+        "tourSpeed": speed,
+        "title": title,
+    }
+
+
+def _splat_bake_get_json(key):
+    obj = s3.get_object(Bucket=BUCKET, Key=key)
+    body = obj["Body"]
+    raw = body.read() if hasattr(body, "read") else b"".join(body.iter_chunks(chunk_size=1024 * 1024))
+    return json.loads(raw)
+
+
+def _splat_bake_get_bytes(key):
+    obj = s3.get_object(Bucket=BUCKET, Key=key)
+    body = obj["Body"]
+    return body.read() if hasattr(body, "read") else b"".join(body.iter_chunks(chunk_size=1024 * 1024))
+
+
+def _run_splat_bake(params, job_id, spec, t_start):
+    """Server-side SplatBake: the splats are a pure function of (roots dump
+    x per-solve colors x a small settings blob), all server-resident — so a
+    hosted baked viewer is minted from a ~1KB request, never a browser
+    upload. Sources: a generate's content-addressed cache, any saved
+    sculpture prefix, or artifact+size (which runs the generate core first
+    — parameters -> baked share in one job, no tabs)."""
+    task_id = str(params.get("sculpture_task_id") or "").strip()
+    if task_id:
+        report_status(job_id, task_id, "running")
+    source = (spec or {}).get("source") or {}
+    p = _splat_bake_params((spec or {}).get("params"))
+    kind = str(source.get("kind") or "")
+    source_ids = {}
+    title_default = "PolyPaint splats"
+
+    if kind == "saved":
+        sid = str(source.get("saved_id") or "").strip()
+        if not _SPLAT_BAKE_SAVED_ID.fullmatch(sid):
+            raise RuntimeError("splat_bake saved source requires a valid saved_id")
+        meta = _splat_bake_get_json(f"sculptures/{sid}/meta.json")
+        if meta.get("kind") == "splatbake":
+            raise RuntimeError("that row is already a baked viewer")
+        grid_n = int(meta.get("grid_n") or 0)
+        degree = int(meta.get("degree") or 0)
+        fmt = "u16" if meta.get("format") == "u16" else "f32"
+        viewport = {k: float((meta.get("viewport") or {}).get(k)) for k in ("min_re", "max_re", "min_im", "max_im")}
+        _download_to_file(f"sculptures/{sid}/roots.bin", TMP_SPLAT_ROOTS)
+        palette_png = _splat_bake_get_bytes(f"sculptures/{sid}/palette.png")
+        source_ids = {"source_saved_id": sid}
+        if meta.get("source_artifact_id"):
+            source_ids["source_artifact_id"] = meta["source_artifact_id"]
+        title_default = f"{meta.get('title') or sid} · baked"
+    elif kind == "cache":
+        prefix = str(source.get("cache_prefix") or "")
+        if not _SPLAT_BAKE_CACHE_RE.fullmatch(prefix) or f"/{job_id}/" not in f"/{prefix}":
+            raise RuntimeError("splat_bake cache source requires this job's cache prefix")
+        block = _splat_bake_get_json(prefix + "sculpture.json")
+        grid_n = int(block.get("grid_n") or 0)
+        degree = int(block.get("degree") or 0)
+        fmt = "u16" if block.get("format") == "u16" else "f32"
+        viewport = {k: float((block.get("viewport") or {}).get(k)) for k in ("min_re", "max_re", "min_im", "max_im")}
+        _download_to_file(prefix + "roots.bin", TMP_SPLAT_ROOTS)
+        palette_png = _splat_bake_get_bytes(prefix + "palette.png")
+        if block.get("source_artifact_id"):
+            source_ids["source_artifact_id"] = block["source_artifact_id"]
+        title_default = f"{block.get('source_artifact_id') or job_id} · {grid_n}²"
+    elif kind == "artifact":
+        artifact_id = str(source.get("artifact_id") or "").strip()
+        try:
+            n = int(source.get("n"))
+        except (TypeError, ValueError):
+            raise RuntimeError("splat_bake artifact source requires integer n")
+        # run the generate core (cache-aware: a warm cache returns in
+        # seconds); its response body is its contract — compose, don't fork
+        gen = _run_artifact_sculpture(
+            {"preview_source_size": n, "sculpture_format": "u16"},
+            job_id, {"artifact_id": artifact_id}, time.time())
+        body = json.loads(gen["body"])
+        sc = body["sculpture"]
+        grid_n = int(sc["grid_n"])
+        degree = int(sc["degree"])
+        fmt = "u16" if sc.get("format") == "u16" else "f32"
+        viewport = {k: float(sc["viewport"][k]) for k in ("min_re", "max_re", "min_im", "max_im")}
+        # the generate just refreshed the fixed ephemeral keys — read those
+        # (immune to cache-write failures)
+        _download_to_file(f"renders/{job_id}/sculpture_roots.bin", TMP_SPLAT_ROOTS)
+        palette_png = _splat_bake_get_bytes(f"renders/{job_id}/sculpture_palette.png")
+        source_ids = {"source_artifact_id": artifact_id}
+        title_default = f"{artifact_id} · {grid_n}²"
+    else:
+        raise RuntimeError(f"splat_bake source kind must be cache/saved/artifact, got {kind!r}")
+
+    if grid_n < 2 or degree < 1:
+        raise RuntimeError(f"splat_bake source carries no usable geometry (grid {grid_n}, degree {degree})")
+    if not (viewport["max_re"] > viewport["min_re"] and viewport["max_im"] > viewport["min_im"]):
+        raise RuntimeError("splat_bake source viewport is degenerate")
+
+    t_colors = time.time()
+    w, h, rgb = decode_png_rgb(palette_png)
+    if w != grid_n or h != grid_n:
+        raise RuntimeError(f"palette PNG is {w}x{h}, expected {grid_n}x{grid_n}")
+    with open(TMP_SPLAT_COLORS, "wb") as fh:
+        fh.write(rgb)
+    colors_ms = int((time.time() - t_colors) * 1000)
+
+    t_tool = time.time()
+    cmd = [
+        SPLAT_BAKE_BIN,
+        f"--roots={TMP_SPLAT_ROOTS}",
+        f"--colors={TMP_SPLAT_COLORS}",
+        f"--out={TMP_SPLAT_PACK}",
+        f"--roots_format={fmt}",
+        f"--grid_n={grid_n}",
+        f"--degree={degree}",
+        f"--min_re={viewport['min_re']}",
+        f"--max_re={viewport['max_re']}",
+        f"--min_im={viewport['min_im']}",
+        f"--max_im={viewport['max_im']}",
+        f"--res={p['res']}",
+        f"--zaxis={p['zaxis']}",
+        f"--slices={p['slices']}",
+        f"--yscale={p['yscale']}",
+        f"--scalemul={p['scalemul']}",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(f"splat_bake failed: {proc.stderr.strip() or 'unknown error'}")
+    try:
+        tool = json.loads(proc.stdout or "{}")
+    except Exception as exc:
+        raise RuntimeError(f"splat_bake returned invalid JSON: {(proc.stdout or '')[:200]!r}") from exc
+    tool_ms = int((time.time() - t_tool) * 1000)
+
+    title = p["title"] or title_default
+    header = {
+        "v": 1,
+        "count": int(tool["count"]),
+        "cmin": tool["cmin"],
+        "cmax": tool["cmax"],
+        "amax": tool["amax"],
+        "mode": p["mode"],
+        "intensity": p["intensity"],
+        "cam": p["cam"],
+        "target": p["target"],
+        "tour": p["tour"],
+        "tourSpeed": p["tourSpeed"],
+        "title": title,
+    }
+    with open(TMP_SPLAT_PACK, "rb") as fh:
+        pack = fh.read()
+    if len(pack) != 22 * int(tool["count"]):
+        raise RuntimeError(f"splat pack size {len(pack)} != 22*{tool['count']}")
+    title_html = str(title).replace("&", "&amp;").replace("<", "&lt;")
+    html = (_splat_bake_template()
+            .replace("__TITLE_HTML__", title_html)
+            .replace("__HEADER_JSON__", json.dumps(header))
+            .replace("__B64__", base64.b64encode(pack).decode("ascii")))
+    html_bytes = html.encode("utf-8")
+
+    def _b36_bake(v):
+        digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+        out = ""
+        v = int(v)
+        while v:
+            v, rem = divmod(v, 36)
+            out = digits[rem] + out
+        return out or "0"
+
+    sid_new = f"scu_{_b36_bake(int(time.time() * 1000))}"
+    sprefix = f"sculptures/{sid_new}/"
+    s3.put_object(
+        Bucket=BUCKET, Key=sprefix + "viewer.html",
+        Body=html_bytes, ContentType="text/html",
+        CacheControl="public, max-age=31536000, immutable")
+    row = {
+        "version": 1,
+        "kind": "splatbake",
+        "id": sid_new,
+        "title": title,
+        "job_id": job_id,
+        "splat_count": int(tool["count"]),
+        "bytes": len(html_bytes),
+        "bake_params": {k: p[k] for k in ("res", "zaxis", "slices", "mode", "tour")},
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    row.update(source_ids)
+    s3.put_object(
+        Bucket=BUCKET, Key=sprefix + "meta.json",
+        Body=json.dumps(row).encode("utf-8"),
+        ContentType="application/json", CacheControl="no-cache")
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    out_row = dict(row)
+    out_row["prefix"] = sprefix
+    out_row["share_url"] = f"https://{BUCKET}.s3.{region}.amazonaws.com/{sprefix}viewer.html"
+
+    total_ms = int((time.time() - t_start) * 1000)
+    logs = [
+        f"Splat bake: source={kind} grid={grid_n}² degree={degree} res={p['res']} "
+        f"splats={tool['count']} points={tool['points_used']} clipped={tool['points_clipped']}",
+        f"Splat bake timings: colors={colors_ms / 1000.0:.2f}s tool={tool_ms / 1000.0:.2f}s "
+        f"total={total_ms / 1000.0:.2f}s html={len(html_bytes) / (1024 * 1024):.1f}MB",
+    ]
+    if task_id:
+        report_status(job_id, task_id, "done", result_data={
+            "sculpture": out_row,
+            "total_ms": total_ms,
+        })
+    return ok_response({
+        "sculpture": out_row,
+        "tool": tool,
+        "logs": logs,
+        "timings_ms": {"colors": colors_ms, "tool": tool_ms, "total": total_ms},
+    })
+
+
 def handler(event, context):
     params = {}
     t_start = time.time()
@@ -1448,6 +1743,9 @@ def handler(event, context):
         job_id = str(params.get("job_id") or "").strip()
         if not job_id:
             raise RuntimeError("job_id is required")
+        if params.get("splat_bake") is not None:
+            # server-side SplatBake: settings in, hosted baked viewer out
+            return _run_splat_bake(params, job_id, params.get("splat_bake"), t_start)
         if params.get("artifact_sculpture") is not None:
             # artifact-sourced sculpture: a self-contained flow — geometry,
             # colors, and provenance all come from the saved color artifact,

@@ -461,55 +461,72 @@ splats) and back, and the saved-mode boot builds splats from the view.
 TDZ trap: splatMat.clippingPlanes must be assigned AFTER the material
 exists — the shared clip block runs earlier in boot.
 
-## SplatBake (self-contained baked shares)
+## SplatBake (server-side baked shares)
 
-The **SplatBake** button beside Save answers "saved viewers load slow"
-+ "video gets downsampled": it bakes the open viewer's CURRENT splats
-into ONE self-contained HTML file and downloads it — no data links, no
-vendor fetches, no three.js, works from file:// and offline, renders
-live (resolution-independent, unlike a recording). The 5M-point cloud
-never travels: the averaging already happened, so only the few hundred
-thousand splats ship — quantized (u16 centers over per-axis bounds,
-i16 axes over a shared max, u8 colors/weights = 22B/splat) and
-base64-embedded, typically a few MB total. Height and point scaling
-are folded INTO the geometry at bake time; style mode, glow intensity,
-camera pose, and the PLAYING tour ride a JSON header. The embedded
-runtime is a dependency-free WebGL2 instanced-quad renderer (~250
-lines: hand-rolled perspective/lookAt, orbit + pinch + wheel, the four
-tours with pose adoption, per-mode blending, preserveDrawingBuffer so
-recipients can screenshot). Baking generates client-side; HOSTING (user: "in the viewer
-list, a different kind of viewer — share it without killing the
-device") goes through two small storage routes: `/presign-splat-bake`
-mints the id + a presigned PUT for `sculptures/{id}/viewer.html` (the
-file is past API Gateway's ~10MB ceiling; the app is served from the
-same bucket host, so the PUT is same-origin), the tab PUTs the blob,
-and `/finalize-splat-bake` verifies the object (1KB–64MB), stamps
-immutable caching via self-copy, and writes the `kind: "splatbake"`
-meta.json that makes it a LIST ROW — same share URL shape, same Copy
-link/Delete as saved sculptures, but ONE object and no roots download
-for recipients. `bytes` is the Blob size (true UTF-8 bytes, not
-string length — the em-dots bite). REALITY CHECK (user-hit "Failed to
-fetch" ×3): the app runs on the s3-website ORIGIN while the presigned
-PUT targets the s3.{region} REST origin — cross-origin, so the browser
-preflights the PUT and S3 answers preflights only with a bucket CORS
-config. deploy.sh's ensure_bucket_website now puts a CORS policy
-(GET/HEAD/PUT, any origin — CORS grants nothing by itself, the
-presigned signature is the auth; runs on BOTH create and update). The
-tab's fetch wraps the PUT and turns the opaque network error into
-"upload blocked (host from host) — run ./deploy.sh update". SECOND
-user-hit: every multi-chunk bake rendered an EMPTY viewer — the b64
-embedding chunked at 32,768 bytes, which is not a multiple of 3, so
-btoa emitted '=' padding at every chunk boundary and atob (which
-allows '=' only at the very end) threw on the baked page's first
-line. Chunk is now 32,766 (3×10,922); the bake spec bakes 3,000
-splats (3 chunks), pins atob length === 22n, and is mutation-tested
-(32,768 reproduces the user's InvalidCharacterError). RULE: chunked
-btoa MUST use multiple-of-3 chunks; single-chunk fixtures can never
-catch it. Pinned e2e: a dedicated spec extracts the REAL generator
-(marker-delimited in js/11), bakes a fixture, serves the file, and
-asserts boot + red/green pixel readback + tour autoplay + pointerdown
-stop; the tab flow pins bytes/count/title, zero lambda calls, and
-readable errors when no viewer or no visible splats.
+**Fully server-side** (user: "every second spent on mitigation is
+wasted — take the settings and re-create the splats; this is a
+calculation that ought to be fast and well understood"). The splats
+are a pure function of (roots dump × per-solve colors × a small
+settings blob), all server-resident — so the tab POSTs ~1KB and the
+lores lambda mints the hosted baked viewer. The earlier client-side
+bake (browser assembling + PUTting 4.4MB over the uplink, presign/
+finalize routes, bucket-CORS dependency for the upload) is DELETED.
+
+**The compute**: `lambda/splat_bake.c` (musl-static, in the lores
+bundle) — the viewer worker's exact twin: u16/f32 dump decode
+(65534 span + sentinel pairs), serpentine step→(row,col), Y from
+t1/t2 + slices binning, res³ voxel binning with 13-moment
+accumulators (open-addressed hash), cyclic-Jacobi eigen, 2σ axes
+floored at 0.35/res, √count weights, byte-mean colors, the yscale/
+scalemul fold, and the FINAL quantized 22-byte/splat pack (u16
+centers per-axis, i16 axes shared-amax, u8 colors/weights, JS-round
+semantics) + bounds JSON on stdout. Output sorted by voxel id —
+deterministic. ~100ms at 13M points. Per-solve colors come from the
+palette PNG via `png_rgb.py`, a ~90-line stdlib decoder (8-bit
+RGB/RGBA/grey, all five filters — vips uses adaptive filtering);
+anything outside that envelope fails loudly.
+
+**The page**: `splat_bake_template.html` is the single source of
+truth (packaged in the lores bundle; the e2e spec substitutes the
+same file) — slots for title (entity-escaped), header JSON, and the
+base64 pack; slot tokens appear ONLY in the body, never in the
+template's own comment (first-occurrence vs global replacement must
+agree). Python's base64 has no chunk padding to get wrong.
+
+**Sources** (`/start-splat-bake` {job_id, source, params} → the
+common task infra → the lores lambda's `splat_bake` mode):
+- `cache` — the open viewer's data identity: its generate's
+  content-addressed prefix (now carried as `cache_prefix` in the
+  sculpture block → `_lastSculptureData`), job-bound server-side;
+- `saved` — ANY saved sculpture row's own roots + palette + meta;
+  the row's captured view supplies the settings (style→mode,
+  glow→intensity, point→scalemul, height→yscale). A **Bake** button
+  on full-save rows; baked rows can't re-bake;
+- `artifact` — artifact id + size: the bake runs the artifact
+  generate core first (compose-don't-fork: it calls the generate and
+  reads its response contract; warm cache = seconds), then bakes —
+  **parameters → hosted baked share in one job, no tabs**. With no
+  viewer open, the tab's SplatBake uses exactly this.
+
+Per-kind fast-fails run in storage synchronously (missing roots,
+step_scores-less artifacts, foreign-job cache prefixes). The result
+row (kind splatbake, splat_count, bytes, bake_params echo, source
+ids) rides the done payload → rail card (kind splatbake) → list
+insert + tab-count sync.
+
+**Truth by shared oracle**: `tests/test_splat_bake_tool.py` compiles
+the real C and pins the SAME hand-computed drift fixture the JS
+viewer's splat e2e pins (16 x-elongated equal-weight splats, exact
+colors/means, slices=2 → 8 on the plates, t1 collapse to floors,
+u16 sentinel + f32 NaN clipping, yscale/scalemul folds, reject
+matrix); `tests/docker_runtime_regression.py` runs the SHIPPED ARM64
+static binary against the condensed oracle. Handler tests pin all
+three source flows (including the artifact chain uploading through a
+captured put/get S3 mock), param sanitization, and the baked-row
+refusal; the tab e2e pins the EXACT ~1KB payloads (zero fetches,
+zero uploads), the no-viewer artifact path, and the saved-row Bake
+mapping; `splat-bake.spec.js` renders a template-substituted page
+headless (pixel readback, tour autoplay, pointerdown stop).
 
 ## Motion LOD (viewer)
 

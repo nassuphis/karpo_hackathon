@@ -3802,6 +3802,60 @@ def test_libcurl_binaries_use_rpath_not_runpath():
 
 # ── Main ─────────────────────────────────────────────────────────────────
 
+def test_splat_bake_runtime():
+    """splat_bake ARM64 binary: the drift-fixture oracle, condensed — 16
+    x-elongated equal-weight splats from a u16 dump, exact colors, and the
+    slices collapse (the full oracle lives in tests/test_splat_bake_tool.py;
+    this proves the SHIPPED static binary computes it on the lambda arch)."""
+    print("\n=== splat_bake runtime (drift-fixture oracle) ===")
+    grid, degree = 4, 2
+
+    def q16(re):
+        return max(0, min(65534, int((re + 1.0) / 2.0 * 65534 + 0.5)))
+
+    roots = bytearray()
+    for step in range(grid * grid):
+        row = step // grid
+        for re in (-0.5 + 0.02 * row, 0.5 + 0.02 * row):
+            roots += struct.pack("<HH", q16(re), q16(0.0))
+    with open("/tmp/sb_roots.bin", "wb") as fh:
+        fh.write(roots)
+    with open("/tmp/sb_colors.raw", "wb") as fh:
+        fh.write(bytes([10, 20, 30] * (grid * grid)))
+
+    def run(slices):
+        r = subprocess.run([
+            "/src/splat_bake", "--roots=/tmp/sb_roots.bin",
+            "--colors=/tmp/sb_colors.raw", "--out=/tmp/sb_pack.bin",
+            "--roots_format=u16", f"--grid_n={grid}", f"--degree={degree}",
+            "--min_re=-1", "--max_re=1", "--min_im=-1", "--max_im=1",
+            "--res=64", "--zaxis=t2", f"--slices={slices}",
+            "--yscale=1", "--scalemul=1",
+        ], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, r.stderr
+        meta = json.loads(r.stdout)
+        with open("/tmp/sb_pack.bin", "rb") as fh:
+            pack = fh.read()
+        assert len(pack) == 22 * meta["count"], (len(pack), meta["count"])
+        return meta, pack
+
+    meta, pack = run(slices=0)
+    assert meta["count"] == 16, meta
+    assert meta["points_used"] == 32, meta
+    n = meta["count"]
+    weights = pack[-n:]
+    colors = pack[-4 * n:-n]
+    assert set(weights) == {255}, set(weights)
+    assert colors == bytes([10, 20, 30] * n), colors[:9]
+    for i in range(n):
+        ax, ay, az = struct.unpack_from("<3h", pack, 6 * n + i * 6)
+        assert abs(ax) > abs(ay) and abs(ax) > abs(az), (ax, ay, az)
+    meta2, _ = run(slices=2)
+    assert meta2["count"] == 8, meta2
+    cleanup("/tmp/sb_roots.bin", "/tmp/sb_colors.raw", "/tmp/sb_pack.bin")
+    print("  splat_bake oracle OK: 16 x-elongated splats, slices=2 -> 8")
+
+
 if __name__ == "__main__":
     print("--- Binary validation ---")
     for bin_path in [
@@ -3856,5 +3910,6 @@ if __name__ == "__main__":
     test_bilevel_handler_sparse_finalize_runtime()
     test_solve_proximity_stats()
     test_catalog_degrees()
+    test_splat_bake_runtime()
 
     print("\n=== All Docker runtime tests PASSED ===")

@@ -1,76 +1,78 @@
 // @ts-check
-// The SplatBake artifact: one self-contained HTML file with the quantized
-// splats embedded and a dependency-free WebGL2 renderer. This spec extracts
-// the REAL generator from js/11 (marker-delimited), bakes a synthetic splat
-// set, serves the resulting file, and asserts it boots and actually renders
-// — pixels read back from the canvas, tour autoplay + interaction stop.
+// The hosted SplatBake page: substitute the REAL template file (the single
+// source of truth the lores lambda substitutes server-side) with a
+// test-built 22-byte/splat pack, serve it, and assert it boots and renders
+// — pixels read back, tour autoplay, interaction stop. The pack builder
+// here mirrors the documented quantization; the C producer is pinned to
+// the same oracle in tests/test_splat_bake_tool.py.
 const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 
 test.use({ launchOptions: { args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] } });
 
-const SRC = fs.readFileSync(path.join(__dirname, '..', '..', 'js', '11-artifacts.js'), 'utf8');
-const I0 = SRC.indexOf('// SPLATBAKE_TEMPLATE_START');
-const I1 = SRC.indexOf('// SPLATBAKE_TEMPLATE_END');
-const GENERATOR = SRC.slice(I0, I1);
+const TEMPLATE = fs.readFileSync(path.join(__dirname, '..', '..', 'splat_bake_template.html'), 'utf8');
 
-test('baked splat HTML: self-contained boot, solid render, tour stop', async ({ page }) => {
-  expect(I0).toBeGreaterThan(-1);
-  expect(I1).toBeGreaterThan(I0);
-
-  // run the real generator in a blank page: one big red solid splat facing
-  // the camera, one small green companion, and ~3k dust splats so the
-  // payload spans MULTIPLE base64 chunks — the user-hit empty-viewer bug
-  // was btoa padding ('=') at every 32,768-byte chunk boundary (not a
-  // multiple of 3), which makes the concatenation invalid and kills atob
-  // on the baked page's first line. Single-chunk fixtures can never see it.
-  await page.goto('about:blank');
-  const COUNT = 3000;
-  const html = await page.evaluate(({ gen, count }) => {
-    // eslint-disable-next-line no-eval
-    eval(gen);
-    const centers = new Float32Array(count * 3);
-    const axisA = new Float32Array(count * 3);
-    const axisB = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    const weights = new Float32Array(count);
-    // splat 0: the big red one facing the camera
-    axisA.set([0.4, 0, 0], 0); axisB.set([0, 0.4, 0], 0);
-    colors.set([1, 0, 0], 0); weights[0] = 1;
-    // splat 1: the small green companion
-    centers.set([0.8, 0, 0], 3);
-    axisA.set([0.05, 0, 0], 3); axisB.set([0, 0.05, 0], 3);
-    colors.set([0, 1, 0], 3); weights[1] = 1;
-    // 2..n: deterministic blue dust spread behind the camera plane
-    for (let i = 2; i < count; i++) {
-      centers[i * 3] = ((i * 37) % 100) / 100 - 0.5;
-      centers[i * 3 + 1] = ((i * 61) % 100) / 100 - 0.5;
-      centers[i * 3 + 2] = -0.5 - ((i * 13) % 50) / 100;
-      axisA[i * 3] = 0.003; axisB[i * 3 + 1] = 0.003;
-      colors[i * 3 + 2] = 1; weights[i] = 0.5;
+function buildPack(splats) {
+  const n = splats.length;
+  const cmin = [Infinity, Infinity, Infinity];
+  const cmax = [-Infinity, -Infinity, -Infinity];
+  let amax = 1e-6;
+  for (const s of splats) {
+    for (let k = 0; k < 3; k++) {
+      cmin[k] = Math.min(cmin[k], s.center[k]);
+      cmax[k] = Math.max(cmax[k], s.center[k]);
+      amax = Math.max(amax, Math.abs(s.axisA[k]), Math.abs(s.axisB[k]));
     }
-    // eslint-disable-next-line no-undef
-    return _splatBakeHtml({
-      title: 'bake fixture', count,
-      centers, axisA, axisB, colors, weights,
-      mode: 2, intensity: 1,
-      cam: [0, 0, 1.5], target: [0, 0, 0],
-      tour: 'orbit', tourSpeed: 1,
-    });
-  }, { gen: GENERATOR, count: COUNT });
-  expect(html.length).toBeGreaterThan(22 * COUNT);
+  }
+  const buf = Buffer.alloc(n * 22);
+  let o = 0;
+  for (const s of splats) {
+    for (let k = 0; k < 3; k++) {
+      const span = cmax[k] - cmin[k] || 1;
+      buf.writeUInt16LE(Math.round((s.center[k] - cmin[k]) / span * 65535), o); o += 2;
+    }
+  }
+  for (const key of ['axisA', 'axisB']) {
+    for (const s of splats) {
+      for (let k = 0; k < 3; k++) {
+        buf.writeInt16LE(Math.round(s[key][k] / amax * 32767), o); o += 2;
+      }
+    }
+  }
+  for (const s of splats) {
+    for (let k = 0; k < 3; k++) { buf.writeUInt8(Math.round(s.color[k] * 255), o); o += 1; }
+  }
+  for (const s of splats) { buf.writeUInt8(Math.round(s.weight * 255), o); o += 1; }
+  return { b64: buf.toString('base64'), cmin, cmax, amax, count: n };
+}
+
+function bakeHtml(splats, header) {
+  const pack = buildPack(splats);
+  const full = {
+    v: 1, count: pack.count, cmin: pack.cmin, cmax: pack.cmax, amax: pack.amax,
+    ...header,
+  };
+  return TEMPLATE
+    .replace(/__TITLE_HTML__/g, String(header.title).replace(/&/g, '&amp;').replace(/</g, '&lt;'))
+    .replace('__HEADER_JSON__', JSON.stringify(full))
+    .replace('__B64__', pack.b64);
+}
+
+test('baked splat template: self-contained boot, solid render, tour stop', async ({ page }) => {
+  const splats = [
+    { center: [0, 0, 0], axisA: [0.4, 0, 0], axisB: [0, 0.4, 0], color: [1, 0, 0], weight: 1 },
+    { center: [0.8, 0, 0], axisA: [0.05, 0, 0], axisB: [0, 0.05, 0], color: [0, 1, 0], weight: 1 },
+  ];
+  const html = bakeHtml(splats, {
+    mode: 2, intensity: 1, cam: [0, 0, 1.5], target: [0, 0, 0],
+    tour: 'orbit', tourSpeed: 1, title: 'bake fixture',
+  });
   expect(html).toContain('bake fixture');
+  expect(html).not.toContain('__HEADER_JSON__');
+  expect(html).not.toContain('__B64__');
   expect(html).not.toContain('vendor/');          // truly self-contained
   expect(html).not.toContain('three.module');
-  // the embedded payload must decode: exactly 22 bytes/splat, no mid-stream
-  // padding (atob THROWS here under the broken chunking)
-  const decoded = await page.evaluate(({ doc, count }) => {
-    const m = doc.match(/var B64 = "([^"]*)";/);
-    return { chunks: Math.ceil((22 * count) / 32766), bytes: atob(m[1]).length };
-  }, { doc: html, count: COUNT });
-  expect(decoded.chunks).toBeGreaterThan(1);       // multi-chunk for real
-  expect(decoded.bytes).toBe(22 * COUNT);
 
   await page.route('**/baked/fixture.html', (route) => route.fulfill({
     status: 200, contentType: 'text/html', body: html,
@@ -84,12 +86,10 @@ test('baked splat HTML: self-contained boot, solid render, tour stop', async ({ 
   if (noGl) return;   // environment without WebGL2 — nothing to pin
 
   const st = await page.evaluate(() => window.__bakedSplatViewer);
-  expect(st.count).toBe(3000);
+  expect(st.count).toBe(2);
   expect(st.mode).toBe(2);
   expect(st.playing).toBe(true);                  // baked tour autoplays
 
-  // the big solid splat must land red pixels on screen (dequantized
-  // geometry + hand-rolled camera + instanced draw all working)
   const px = await page.evaluate(() => {
     const c = document.getElementById('c');
     const gl = c.getContext('webgl2');
@@ -103,7 +103,7 @@ test('baked splat HTML: self-contained boot, solid render, tour stop', async ({ 
     return { red, green };
   });
   expect(px.red).toBeGreaterThan(50);
-  expect(px.green).toBeGreaterThan(0);            // the small companion too
+  expect(px.green).toBeGreaterThan(0);
 
   // interaction hands the camera back: pointerdown stops the tour
   await page.dispatchEvent('#c', 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });

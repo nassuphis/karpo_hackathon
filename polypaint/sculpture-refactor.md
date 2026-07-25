@@ -170,10 +170,17 @@ sculpture keeps its pass-0 convention.
    binned anisotropic gaussian splats as a fourth show primitive —
    the user's own construction (per-voxel mean/covariance), which is
    both the new look AND far cheaper to orbit than the line soup.
-6. SplatBake (2026-07-25, user: "baked viewer, totally self
-   contained, in the html?"): one-file HTML share — quantized splats
-   embedded, dependency-free WebGL2 runtime, tours, fully client-side
-   bake. The heavy-share problem solved at the representation level.
+6. SplatBake (2026-07-25): one-file HTML share — quantized splats
+   embedded, dependency-free WebGL2 runtime, tours. v1 was client-
+   side (browser bake + presigned PUT); the user called it correctly
+   ("take the settings and re-create the splats — the calculation
+   ought to be fast and well understood") and v2 moved the WHOLE bake
+   server-side: splat_bake.c (musl static, oracle- and Docker-ARM64-
+   pinned) + png_rgb.py + splat_bake_template.html in the lores
+   lambda, /start-splat-bake on the common task infra, sources =
+   cache/saved/artifact (parameters → hosted baked share in one job,
+   no tabs; saved rows get a Bake button). ~1KB request, no browser
+   upload, no CORS dependency.
 7. Remaining backlog (stripe fan-out, progressive tiles, lambda knobs,
    WebGPU) stays gated on demonstrated need: they exist to fix a
    slowness Wave B was built to remove — the first deployed artifact

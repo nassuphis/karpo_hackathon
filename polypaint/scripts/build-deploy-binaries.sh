@@ -20,6 +20,7 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_debug lambda/solve_pa
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_chunk lambda/solve_palette_chunk.c -lm
 aarch64-linux-musl-gcc -O3 -static -o lambda/palette_bins_render lambda/palette_bins_render.c -lm
 aarch64-linux-musl-gcc -O3 -static -o lambda/step_scores_to_palette_raw lambda/step_scores_to_palette_raw.c -lm
+aarch64-linux-musl-gcc -O3 -static -o lambda/splat_bake lambda/splat_bake.c -lm
 echo "musl set done"
 
 echo "== local test binary =="

@@ -38,6 +38,7 @@ DEPLOY_BINARIES = {
     "solve_palette_chunk": ["solve_palette_chunk.c"],
     "palette_bins_render": ["palette_bins_render.c"],
     "step_scores_to_palette_raw": ["step_scores_to_palette_raw.c"],
+    "splat_bake": ["splat_bake.c"],
     "roots2pix_mt": ["roots2pix_mt.c", "multispan_reader.c"],
     "solve_proximity_hist_sectioned": ["solve_proximity_hist_sectioned.c", "multispan_reader.c"],
     "solve_palette_chunk_mt": ["solve_palette_chunk_mt.c", "multispan_reader.c"],

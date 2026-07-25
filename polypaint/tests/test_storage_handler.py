@@ -1369,81 +1369,89 @@ class TestStartSculptureFromArtifact(unittest.TestCase):
         mock_boto3.client.return_value.invoke.assert_not_called()
 
 
-class TestSplatBakeHosting(unittest.TestCase):
+class TestStartSplatBake(unittest.TestCase):
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
     @patch("handler_storage.s3")
-    def test_presign_mints_id_and_put_url(self, mock_s3):
+    def test_saved_source_registers_and_invokes(self, mock_s3, mock_boto3, mock_report):
         import handler_storage
-        mock_s3.generate_presigned_url.return_value = "https://bkt.s3.r.amazonaws.com/signed-put"
-        resp = handler_storage.handler(_event("/presign-splat-bake", {"job_id": "compute_j1"}), None)
-        self.assertEqual(resp["statusCode"], 200, resp["body"])
-        body = json.loads(resp["body"])
-        self.assertTrue(body["id"].startswith("scu_"))
-        self.assertEqual(body["key"], f"sculptures/{body['id']}/viewer.html")
-        self.assertEqual(body["put_url"], "https://bkt.s3.r.amazonaws.com/signed-put")
-        # the presign binds bucket/key/content-type — the client cannot
-        # steer the upload anywhere else
-        call = mock_s3.generate_presigned_url.call_args
-        self.assertEqual(call.args[0], "put_object")
-        self.assertEqual(call.kwargs["Params"]["Key"], body["key"])
-        self.assertEqual(call.kwargs["Params"]["ContentType"], "text/html")
-        resp = handler_storage.handler(_event("/presign-splat-bake", {"job_id": "../evil"}), None)
-        self.assertEqual(resp["statusCode"], 400)
-
-    @patch("handler_storage.s3")
-    def test_finalize_verifies_stamps_and_lists(self, mock_s3):
-        import handler_storage
-        mock_s3.head_object.return_value = {"ContentLength": 5 * 1024 * 1024}
-        resp = handler_storage.handler(_event("/finalize-splat-bake", {
-            "id": "scu_abc123", "job_id": "compute_j1", "title": "Baked Piece",
-            "splat_count": 240000, "source_artifact_id": "color_run_abc",
+        mock_s3.head_object.return_value = {"ContentLength": 4096}
+        resp = handler_storage.handler(_event("/start-splat-bake", {
+            "job_id": "compute_j1",
+            "source": {"kind": "saved", "saved_id": "scu_abc123"},
+            "params": {"res": 96, "mode": 2, "title": "Baked"},
         }), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
-        sc = json.loads(resp["body"])["sculpture"]
-        self.assertEqual(sc["kind"], "splatbake")
-        self.assertEqual(sc["id"], "scu_abc123")
-        self.assertEqual(sc["title"], "Baked Piece")
-        self.assertEqual(sc["job_id"], "compute_j1")
-        self.assertEqual(sc["splat_count"], 240000)
-        self.assertEqual(sc["bytes"], 5 * 1024 * 1024)
-        self.assertEqual(sc["source_artifact_id"], "color_run_abc")
-        self.assertEqual(sc["prefix"], "sculptures/scu_abc123/")
-        self.assertTrue(sc["share_url"].endswith("/sculptures/scu_abc123/viewer.html"))
-        # immutable-cache stamp via self-copy of the ONE object
-        copy = mock_s3.copy_object.call_args.kwargs
-        self.assertEqual(copy["Key"], "sculptures/scu_abc123/viewer.html")
-        self.assertEqual(copy["CopySource"]["Key"], "sculptures/scu_abc123/viewer.html")
-        self.assertEqual(copy["CacheControl"], "public, max-age=31536000, immutable")
-        # meta.json is the list row
-        put = mock_s3.put_object.call_args.kwargs
-        self.assertEqual(put["Key"], "sculptures/scu_abc123/meta.json")
-        meta = json.loads(put["Body"])
-        self.assertEqual(meta["kind"], "splatbake")
-        self.assertEqual(meta["splat_count"], 240000)
+        body = json.loads(resp["body"])
+        task_id = body["task_id"]
+        self.assertTrue(task_id.startswith("splat_bake_"))
+        self.assertEqual(mock_report.call_args.args, ("compute_j1", task_id, "running"))
+        invoke = mock_boto3.client.return_value.invoke.call_args.kwargs
+        self.assertEqual(invoke["InvocationType"], "Event")
+        self.assertEqual(invoke["FunctionName"], "polypaint-render-lores-preview")
+        payload = json.loads(invoke["Payload"])
+        self.assertEqual(payload, {
+            "job_id": "compute_j1",
+            "splat_bake": {
+                "source": {"kind": "saved", "saved_id": "scu_abc123"},
+                "params": {"res": 96, "mode": 2, "title": "Baked"},
+            },
+            "sculpture_task_id": task_id,
+        })
+        # the fast-fail probed the saved prefix's data object
+        self.assertEqual(mock_s3.head_object.call_args.kwargs["Key"], "sculptures/scu_abc123/roots.bin")
+        mock_s3.put_object.assert_not_called()
 
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
     @patch("handler_storage.s3")
-    def test_finalize_rejects_bad_inputs(self, mock_s3):
+    def test_artifact_source_fast_fails_without_step_scores(self, mock_s3, mock_boto3, mock_report):
         import handler_storage
-        mock_s3.head_object.return_value = {"ContentLength": 5 * 1024 * 1024}
+        mock_s3.head_object.return_value = {"Metadata": {"step_scores_key": ""},
+                                            "ContentType": "image/png", "ContentLength": 10}
+        mock_s3.get_object.side_effect = ClientError(
+            {"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
+        resp = handler_storage.handler(_event("/start-splat-bake", {
+            "job_id": "compute_j1",
+            "source": {"kind": "artifact", "artifact_id": "color_run_abc", "n": 384},
+        }), None)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("re-render", json.loads(resp["body"])["error"])
+        mock_boto3.client.return_value.invoke.assert_not_called()
+        mock_report.assert_not_called()
+
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
+    @patch("handler_storage.s3")
+    def test_rejects_bad_sources(self, mock_s3, mock_boto3, mock_report):
+        import handler_storage
+        mock_s3.head_object.return_value = {"ContentLength": 4096}
         for params in (
-            {"id": "not-an-id", "job_id": "compute_j1", "splat_count": 10},
-            {"id": "scu_abc123", "job_id": "../evil", "splat_count": 10},
-            {"id": "scu_abc123", "job_id": "compute_j1"},
+            {"job_id": "../evil", "source": {"kind": "saved", "saved_id": "scu_a"}},
+            {"job_id": "compute_j1"},
+            {"job_id": "compute_j1", "source": {"kind": "nope"}},
+            {"job_id": "compute_j1", "source": {"kind": "saved", "saved_id": "not-an-id"}},
+            {"job_id": "compute_j1", "source": {"kind": "cache", "cache_prefix": "renders/OTHER/sculpture_cache/0123456789abcdef/"}},
+            {"job_id": "compute_j1", "source": {"kind": "artifact", "artifact_id": "color_run_abc", "n": 640}},
         ):
-            resp = handler_storage.handler(_event("/finalize-splat-bake", params), None)
+            resp = handler_storage.handler(_event("/start-splat-bake", params), None)
             self.assertEqual(resp["statusCode"], 400, resp["body"])
-        # missing upload -> friendly error, nothing written
-        mock_s3.head_object.side_effect = RuntimeError("404")
-        resp = handler_storage.handler(_event("/finalize-splat-bake", {
-            "id": "scu_abc123", "job_id": "compute_j1", "splat_count": 10}), None)
-        self.assertEqual(resp["statusCode"], 400)
-        self.assertIn("PUT must complete", json.loads(resp["body"])["error"])
-        # implausible sizes
-        mock_s3.head_object.side_effect = None
-        mock_s3.head_object.return_value = {"ContentLength": 12}
-        resp = handler_storage.handler(_event("/finalize-splat-bake", {
-            "id": "scu_abc123", "job_id": "compute_j1", "splat_count": 10}), None)
-        self.assertEqual(resp["statusCode"], 400)
-        mock_s3.copy_object.assert_not_called()
+        mock_boto3.client.return_value.invoke.assert_not_called()
+
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
+    @patch("handler_storage.s3")
+    def test_cache_source_binds_to_the_job(self, mock_s3, mock_boto3, mock_report):
+        import handler_storage
+        resp = handler_storage.handler(_event("/start-splat-bake", {
+            "job_id": "compute_j1",
+            "source": {"kind": "cache",
+                       "cache_prefix": "renders/compute_j1/sculpture_cache/0123456789abcdef/"},
+        }), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        payload = json.loads(mock_boto3.client.return_value.invoke.call_args.kwargs["Payload"])
+        self.assertEqual(payload["splat_bake"]["source"]["cache_prefix"],
+                         "renders/compute_j1/sculpture_cache/0123456789abcdef/")
 
 
 class TestSaveSculpture(unittest.TestCase):

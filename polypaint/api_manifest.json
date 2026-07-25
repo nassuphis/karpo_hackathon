@@ -56,7 +56,6 @@
       "/fetch-root-program",
       "/fetch-solve-score-program",
       "/fetch-vision-config",
-      "/finalize-splat-bake",
       "/head-keys",
       "/list",
       "/list-books",
@@ -79,7 +78,6 @@
       "/migrate-param-program",
       "/migrate-solve-score-program",
       "/presign",
-      "/presign-splat-bake",
       "/render-count",
       "/render-summary",
       "/save-book",
@@ -95,7 +93,8 @@
       "/share-mosaic",
       "/snapshot-book-cover",
       "/solve-score-chain-to-source",
-      "/start-sculpture-artifact"
+      "/start-sculpture-artifact",
+      "/start-splat-bake"
     ]
   },
   "deploy": {
@@ -137,7 +136,6 @@
       "/fetch-root-program",
       "/fetch-solve-score-program",
       "/fetch-vision-config",
-      "/finalize-splat-bake",
       "/head-keys",
       "/list",
       "/list-books",
@@ -163,7 +161,6 @@
       "/param-debug",
       "/png-export",
       "/presign",
-      "/presign-splat-bake",
       "/preview",
       "/render-count",
       "/render-lores-preview",
@@ -184,6 +181,7 @@
       "/solve-proximity",
       "/solve-score-chain-to-source",
       "/start-sculpture-artifact",
+      "/start-splat-bake",
       "/sweep-cm",
       "/sweep-mt",
       "/tiff-compat",
@@ -280,7 +278,6 @@
       "/fetch-root-program",
       "/fetch-solve-score-program",
       "/fetch-vision-config",
-      "/finalize-splat-bake",
       "/list",
       "/list-books",
       "/list-coeff-programs",
@@ -296,7 +293,6 @@
       "/list-solve-score-programs",
       "/migrate-compute",
       "/presign",
-      "/presign-splat-bake",
       "/render-count",
       "/render-summary",
       "/save-book",
@@ -311,7 +307,8 @@
       "/share-mosaic",
       "/snapshot-book-cover",
       "/solve-score-chain-to-source",
-      "/start-sculpture-artifact"
+      "/start-sculpture-artifact",
+      "/start-splat-bake"
     ]
   },
   "version": 1

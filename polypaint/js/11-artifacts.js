@@ -1719,316 +1719,6 @@ function _sculptureUpdateSourceLine() {
     }
 }
 
-// SPLATBAKE_TEMPLATE_START
-// Pure generator: one totally self-contained HTML file — the baked splats
-// (quantized, base64-embedded), a hand-rolled WebGL2 instanced-quad splat
-// renderer (~no dependencies: no three.js, no vendor fetches, works from
-// file:// and offline), orbit/pinch controls, and the four tours with
-// pose adoption. Everything the share needs, nothing it doesn't: the
-// 5M-point cloud never travels — the averaging already happened.
-function _splatBakeHtml(p) {
-    const n = p.count;
-    const cmin = [Infinity, Infinity, Infinity];
-    const cmax = [-Infinity, -Infinity, -Infinity];
-    for (let i = 0; i < n; i++) {
-        for (let k = 0; k < 3; k++) {
-            const v = p.centers[i * 3 + k];
-            if (v < cmin[k]) cmin[k] = v;
-            if (v > cmax[k]) cmax[k] = v;
-        }
-    }
-    let amax = 1e-6;
-    for (let i = 0; i < n * 3; i++) {
-        const a = Math.abs(p.axisA[i]);
-        const b = Math.abs(p.axisB[i]);
-        if (a > amax) amax = a;
-        if (b > amax) amax = b;
-    }
-    const buf = new ArrayBuffer(n * 22);
-    const dv = new DataView(buf);
-    let o = 0;
-    const q16 = (v, lo, hi) => Math.max(0, Math.min(65535, Math.round((v - lo) / ((hi - lo) || 1) * 65535)));
-    const qi16 = (v) => Math.max(-32767, Math.min(32767, Math.round(v / amax * 32767)));
-    for (let i = 0; i < n; i++) {
-        for (let k = 0; k < 3; k++) { dv.setUint16(o, q16(p.centers[i * 3 + k], cmin[k], cmax[k]), true); o += 2; }
-    }
-    for (let i = 0; i < n * 3; i++) { dv.setInt16(o, qi16(p.axisA[i]), true); o += 2; }
-    for (let i = 0; i < n * 3; i++) { dv.setInt16(o, qi16(p.axisB[i]), true); o += 2; }
-    for (let i = 0; i < n * 3; i++) { dv.setUint8(o, Math.max(0, Math.min(255, Math.round(p.colors[i] * 255)))); o += 1; }
-    for (let i = 0; i < n; i++) { dv.setUint8(o, Math.max(0, Math.min(255, Math.round(p.weights[i] * 255)))); o += 1; }
-    const bytes = new Uint8Array(buf);
-    let b64 = '';
-    // chunk size MUST be a multiple of 3: btoa pads any non-multiple-of-3
-    // input with '=', and a '=' anywhere but the very end makes the
-    // concatenation invalid base64 — atob throws and the baked page dies
-    // on its first line (user-hit: every multi-chunk bake rendered empty;
-    // the tests' 2-splat fixtures were single-chunk and never saw it)
-    const CHUNK = 32766;   // 3 * 10922
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-        b64 += btoa(String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK)));
-    }
-    const header = {
-        v: 1, count: n, cmin, cmax, amax,
-        mode: p.mode, intensity: p.intensity,
-        cam: p.cam, target: p.target,
-        tour: p.tour || 'off', tourSpeed: p.tourSpeed || 1,
-        title: String(p.title || 'PolyPaint splats'),
-    };
-    const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
-        + '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">\n'
-        + '<title>' + esc(header.title) + '</title>\n'
-        + '<style>html,body{margin:0;height:100%;background:#05070c;overflow:hidden;font-family:monospace}'
-        + 'canvas{display:block;width:100%;height:100%;touch-action:none}'
-        + '#t{position:fixed;top:10px;left:14px;color:#e8eef5;font-size:14px;pointer-events:none}'
-        + '#h{position:fixed;bottom:10px;left:14px;color:#5b6b80;font-size:11px;pointer-events:none}'
-        + '#m{position:fixed;inset:0;display:none;align-items:center;justify-content:center;color:#e8eef5}'
-        + '</style>\n</head>\n<body>\n<canvas id="c"></canvas>'
-        + '<div id="t">' + esc(header.title) + '</div>'
-        + '<div id="h">drag: orbit · wheel/pinch: zoom · interaction stops the tour</div>'
-        + '<div id="m">WebGL2 is not available in this browser</div>\n'
-        + '<script>\n'
-        + 'var H = ' + JSON.stringify(header) + ';\n'
-        + 'var B64 = "' + b64 + '";\n'
-        + _splatBakeRuntime()
-        + '\n</' + 'script>\n</body>\n</html>\n';
-}
-
-// the baked page's runtime, as source text (kept separate so the template
-// stays readable; MUST stay dependency-free and template-literal-free)
-function _splatBakeRuntime() {
-    return [
-'(function () {',
-'    var raw = atob(B64);',
-'    var bytes = new Uint8Array(raw.length);',
-'    for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);',
-'    var dv = new DataView(bytes.buffer);',
-'    var n = H.count;',
-'    var centers = new Float32Array(n * 3);',
-'    var axisA = new Float32Array(n * 3);',
-'    var axisB = new Float32Array(n * 3);',
-'    var colors = new Float32Array(n * 3);',
-'    var weights = new Float32Array(n);',
-'    var o = 0, i, k;',
-'    for (i = 0; i < n; i++) {',
-'        for (k = 0; k < 3; k++) {',
-'            centers[i * 3 + k] = H.cmin[k] + dv.getUint16(o, true) / 65535 * (H.cmax[k] - H.cmin[k]);',
-'            o += 2;',
-'        }',
-'    }',
-'    for (i = 0; i < n * 3; i++) { axisA[i] = dv.getInt16(o, true) / 32767 * H.amax; o += 2; }',
-'    for (i = 0; i < n * 3; i++) { axisB[i] = dv.getInt16(o, true) / 32767 * H.amax; o += 2; }',
-'    for (i = 0; i < n * 3; i++) { colors[i] = dv.getUint8(o) / 255; o += 1; }',
-'    for (i = 0; i < n; i++) { weights[i] = dv.getUint8(o) / 255; o += 1; }',
-'    var canvas = document.getElementById("c");',
-'    var gl = canvas.getContext("webgl2", { antialias: true, preserveDrawingBuffer: true });',
-'    if (!gl) { document.getElementById("m").style.display = "flex"; return; }',
-'    var VS = "#version 300 es\\n"',
-'        + "layout(location=0) in vec2 corner;"',
-'        + "layout(location=1) in vec3 iCenter;"',
-'        + "layout(location=2) in vec3 iAxisA;"',
-'        + "layout(location=3) in vec3 iAxisB;"',
-'        + "layout(location=4) in vec3 iColor;"',
-'        + "layout(location=5) in float iWeight;"',
-'        + "uniform mat4 uProj; uniform mat4 uView;"',
-'        + "out vec2 vC; out vec3 vCol; out float vW;"',
-'        + "void main(){ vC = corner; vCol = iColor; vW = iWeight;"',
-'        + "vec3 wp = iCenter + corner.x * iAxisA + corner.y * iAxisB;"',
-'        + "gl_Position = uProj * uView * vec4(wp, 1.0); }";',
-'    var FS = "#version 300 es\\nprecision highp float;"',
-'        + "uniform float uMode; uniform float uIntensity;"',
-'        + "in vec2 vC; in vec3 vCol; in float vW; out vec4 fc;"',
-'        + "void main(){ float r2 = dot(vC, vC); if (r2 > 1.0) discard;"',
-'        + "float a = exp(-3.0 * r2);"',
-'        + "if (uMode > 1.5) { fc = vec4(vCol * (0.75 + 0.25 * a), 1.0); }"',
-'        + "else if (uMode > 0.5) { fc = vec4(vCol, min(1.0, a * vW * 0.7 * uIntensity)); }"',
-'        + "else { fc = vec4(vCol * a * vW * uIntensity, 1.0); } }";',
-'    function shader(type, src) {',
-'        var sh = gl.createShader(type);',
-'        gl.shaderSource(sh, src);',
-'        gl.compileShader(sh);',
-'        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));',
-'        return sh;',
-'    }',
-'    var prog = gl.createProgram();',
-'    gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));',
-'    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));',
-'    gl.linkProgram(prog);',
-'    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));',
-'    gl.useProgram(prog);',
-'    var uProj = gl.getUniformLocation(prog, "uProj");',
-'    var uView = gl.getUniformLocation(prog, "uView");',
-'    gl.uniform1f(gl.getUniformLocation(prog, "uMode"), H.mode);',
-'    gl.uniform1f(gl.getUniformLocation(prog, "uIntensity"), H.intensity);',
-'    var vao = gl.createVertexArray();',
-'    gl.bindVertexArray(vao);',
-'    function attr(loc, data, size, divisor) {',
-'        var b = gl.createBuffer();',
-'        gl.bindBuffer(gl.ARRAY_BUFFER, b);',
-'        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);',
-'        gl.enableVertexAttribArray(loc);',
-'        gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);',
-'        gl.vertexAttribDivisor(loc, divisor);',
-'    }',
-'    attr(0, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), 2, 0);',
-'    attr(1, centers, 3, 1);',
-'    attr(2, axisA, 3, 1);',
-'    attr(3, axisB, 3, 1);',
-'    attr(4, colors, 3, 1);',
-'    attr(5, weights, 1, 1);',
-'    var target = [H.target[0], H.target[1], H.target[2]];',
-'    var dx = H.cam[0] - target[0], dy = H.cam[1] - target[1], dz = H.cam[2] - target[2];',
-'    var radius = Math.max(0.05, Math.sqrt(dx * dx + dy * dy + dz * dz));',
-'    var yaw = Math.atan2(dz, dx);',
-'    var pitch = Math.asin(Math.max(-1, Math.min(1, dy / radius)));',
-'    var proj = new Float32Array(16), view = new Float32Array(16);',
-'    function perspective(out, fovy, aspect, near, far) {',
-'        var f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);',
-'        out.fill(0);',
-'        out[0] = f / aspect; out[5] = f;',
-'        out[10] = (far + near) * nf; out[11] = -1;',
-'        out[14] = 2 * far * near * nf;',
-'    }',
-'    function lookAt(out, ex, ey, ez, cx, cy, cz) {',
-'        var zx = ex - cx, zy = ey - cy, zz = ez - cz;',
-'        var zl = 1 / (Math.hypot(zx, zy, zz) || 1); zx *= zl; zy *= zl; zz *= zl;',
-'        var ux = 0, uy = 1, uz = 0;',
-'        var xx = uy * zz - uz * zy, xy = uz * zx - ux * zz, xz = ux * zy - uy * zx;',
-'        var xl = 1 / (Math.hypot(xx, xy, xz) || 1); xx *= xl; xy *= xl; xz *= xl;',
-'        var yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;',
-'        out[0] = xx; out[1] = yx; out[2] = zx; out[3] = 0;',
-'        out[4] = xy; out[5] = yy; out[6] = zy; out[7] = 0;',
-'        out[8] = xz; out[9] = yz; out[10] = zz; out[11] = 0;',
-'        out[12] = -(xx * ex + xy * ey + xz * ez);',
-'        out[13] = -(yx * ex + yy * ey + yz * ez);',
-'        out[14] = -(zx * ex + zy * ey + zz * ez);',
-'        out[15] = 1;',
-'    }',
-'    var tour = { mode: H.tour, playing: H.tour !== "off", t: 0,',
-'                 r0: radius, y0: H.cam[1], angle0: Math.atan2(H.cam[2], H.cam[0]) };',
-'    function tourPose(t) {',
-'        var m = tour.mode, hh = 0.5;',
-'        if (m === "weave") {',
-'            var ang = tour.angle0 + t * 0.55;',
-'            var rad = 0.5 + 0.4 * Math.sin(t * 0.23);',
-'            var y = Math.sin(t * 0.11) * hh * 1.05;',
-'            return [Math.cos(ang) * rad, y, Math.sin(ang) * rad, 0, y * 0.6, 0];',
-'        }',
-'        if (m === "grand") {',
-'            var ang2 = tour.angle0 + t * 0.35;',
-'            var gTop = Math.max(1.5, Math.abs(tour.y0));',
-'            var gBot = gTop > 1.5 ? -gTop : -0.5;',
-'            var ph = (((t * 0.35) / (2 * Math.PI)) + (tour.y0 < (gTop + gBot) / 2 ? 2 : 0)) % 4;',
-'            var y2;',
-'            if (ph < 1) y2 = gTop;',
-'            else if (ph < 2) { var u = ph - 1, w = u * u * (3 - 2 * u); y2 = gTop + (gBot - gTop) * w; }',
-'            else if (ph < 3) y2 = gBot;',
-'            else { var u2 = ph - 3, w2 = u2 * u2 * (3 - 2 * u2); y2 = gBot + (gTop - gBot) * w2; }',
-'            return [Math.cos(ang2) * tour.r0, y2, Math.sin(ang2) * tour.r0, 0, 0, 0];',
-'        }',
-'        if (m === "wave") {',
-'            var ang3 = tour.angle0 + t * 0.35;',
-'            var amp = Math.max(0.08, hh * 1.05);',
-'            var phase = Math.asin(Math.max(-1, Math.min(1, tour.y0 / amp)));',
-'            var y3 = amp * Math.sin(1.05 * t + phase);',
-'            return [Math.cos(ang3) * tour.r0, y3, Math.sin(ang3) * tour.r0, 0, 0, 0];',
-'        }',
-'        var ang4 = tour.angle0 + t * 0.35;',
-'        return [Math.cos(ang4) * tour.r0, tour.y0, Math.sin(ang4) * tour.r0, 0, 0, 0];',
-'    }',
-'    function stopTour() {',
-'        if (!tour.playing) return;',
-'        tour.playing = false;',
-'        var pz = tourPose(tour.t);',
-'        target = [pz[3], pz[4], pz[5]];',
-'        var ddx = cam[0] - target[0], ddy = cam[1] - target[1], ddz = cam[2] - target[2];',
-'        radius = Math.max(0.05, Math.hypot(ddx, ddy, ddz));',
-'        yaw = Math.atan2(ddz, ddx);',
-'        pitch = Math.asin(Math.max(-1, Math.min(1, ddy / radius)));',
-'    }',
-'    var cam = [H.cam[0], H.cam[1], H.cam[2]];',
-'    var pointers = new Map();',
-'    var pinchD = 0;',
-'    canvas.addEventListener("pointerdown", function (ev) {',
-'        stopTour();',
-'        pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);',
-'        canvas.setPointerCapture(ev.pointerId);',
-'        if (pointers.size === 2) {',
-'            var ps = Array.from(pointers.values());',
-'            pinchD = Math.hypot(ps[0][0] - ps[1][0], ps[0][1] - ps[1][1]);',
-'        }',
-'    });',
-'    canvas.addEventListener("pointermove", function (ev) {',
-'        if (!pointers.has(ev.pointerId)) return;',
-'        var prev = pointers.get(ev.pointerId);',
-'        pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);',
-'        if (pointers.size === 1) {',
-'            yaw += (ev.clientX - prev[0]) * 0.005;',
-'            pitch += (ev.clientY - prev[1]) * 0.005;',
-'            pitch = Math.max(-1.5, Math.min(1.5, pitch));',
-'        } else if (pointers.size === 2) {',
-'            var ps = Array.from(pointers.values());',
-'            var d = Math.hypot(ps[0][0] - ps[1][0], ps[0][1] - ps[1][1]);',
-'            if (pinchD > 0) radius = Math.max(0.05, Math.min(20, radius * pinchD / (d || 1)));',
-'            pinchD = d;',
-'        }',
-'    });',
-'    function drop(ev) { pointers.delete(ev.pointerId); pinchD = 0; }',
-'    canvas.addEventListener("pointerup", drop);',
-'    canvas.addEventListener("pointercancel", drop);',
-'    canvas.addEventListener("wheel", function (ev) {',
-'        stopTour();',
-'        ev.preventDefault();',
-'        radius = Math.max(0.05, Math.min(20, radius * Math.exp(ev.deltaY * 0.001)));',
-'    }, { passive: false });',
-'    var last = performance.now();',
-'    var frames = 0;',
-'    function frame(now) {',
-'        var dt = Math.min(0.1, (now - last) / 1000);',
-'        last = now;',
-'        var w = Math.round(canvas.clientWidth * (window.devicePixelRatio || 1));',
-'        var h = Math.round(canvas.clientHeight * (window.devicePixelRatio || 1));',
-'        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }',
-'        gl.viewport(0, 0, w, h);',
-'        if (tour.playing) {',
-'            tour.t += dt * (H.tourSpeed || 1);',
-'            var pz = tourPose(tour.t);',
-'            cam = [pz[0], pz[1], pz[2]];',
-'            lookAt(view, cam[0], cam[1], cam[2], pz[3], pz[4], pz[5]);',
-'        } else {',
-'            var cp = Math.cos(pitch);',
-'            cam = [target[0] + radius * cp * Math.cos(yaw),',
-'                   target[1] + radius * Math.sin(pitch),',
-'                   target[2] + radius * cp * Math.sin(yaw)];',
-'            lookAt(view, cam[0], cam[1], cam[2], target[0], target[1], target[2]);',
-'        }',
-'        perspective(proj, 50 * Math.PI / 180, w / (h || 1), 0.01, 50);',
-'        gl.uniformMatrix4fv(uProj, false, proj);',
-'        gl.uniformMatrix4fv(uView, false, view);',
-'        gl.clearColor(0.0196, 0.0275, 0.0471, 1);',
-'        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);',
-'        if (H.mode === 2) {',
-'            gl.disable(gl.BLEND);',
-'            gl.enable(gl.DEPTH_TEST);',
-'            gl.depthMask(true);',
-'        } else {',
-'            gl.enable(gl.BLEND);',
-'            gl.disable(gl.DEPTH_TEST);',
-'            gl.depthMask(false);',
-'            if (H.mode === 0) gl.blendFunc(gl.ONE, gl.ONE);',
-'            else gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);',
-'        }',
-'        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n);',
-'        frames++;',
-'        window.__bakedSplatViewer = { count: n, frames: frames, mode: H.mode, tour: tour.mode, playing: tour.playing };',
-'        requestAnimationFrame(frame);',
-'    }',
-'    requestAnimationFrame(frame);',
-'})();',
-    ].join('\n');
-}
-// SPLATBAKE_TEMPLATE_END
-
 function _sculptureShareUrl(meta) {
     const prefix = meta.prefix || `sculptures/${meta.id}/`;
     return _publicStorageUrl(prefix + 'viewer.html');
@@ -2056,6 +1746,7 @@ function _sculptureRenderPane() {
                 : `${Number(m.grid_n) || '?'}×${Number(m.grid_n) || '?'} · d${Number(m.degree) || '?'}`}</span>
             <span style="color:#778599">${_escapeHtml(String(m.kind === 'splatbake' ? '' : (m.palette || '')))}</span>
             <span style="color:#556; font-size:11px; white-space:nowrap">${_escapeHtml(String(m.created_at || '').slice(0, 16).replace('T', ' '))}</span>
+            ${m.kind === 'splatbake' ? '' : `<button type="button" class="btn-secondary btn-inline" onclick="_sculptureBakeSaved('${_escapeHtml(m.id || '')}', this)" title="Bake this saved sculpture into a light self-contained viewer (server-side, from its stored data + captured view)">Bake</button>`}
             <button type="button" class="btn-secondary btn-inline" onclick="_sculptureOpen('${_escapeHtml(m.id || '')}')">Open</button>
             <button type="button" class="btn-secondary btn-inline" onclick="_sculptureCopyLink('${_escapeHtml(m.id || '')}', this)">Copy link</button>
             <button type="button" class="btn-secondary btn-inline" onclick="_sculptureDelete('${_escapeHtml(m.id || '')}', this)">Delete</button>
@@ -2194,112 +1885,179 @@ async function runSculptureSave() {
     }
 }
 
+function _splatBakeParamsFromViewer(win) {
+    // the bake's settings blob — captured from the open viewer when there
+    // is one, defaults otherwise (server-side baking needs no tabs at all)
+    if (win && !win.closed && win.__sculptureViewer && win.document) {
+        try {
+            const v = win.__sculptureViewer;
+            const doc = win.document;
+            const val = (id) => { const el = doc.getElementById(id); return el ? el.value : null; };
+            const playing = !!(v.tour && v.tour.state && v.tour.state.playing);
+            return {
+                res: parseInt(val('ctl-splat-res'), 10) || 96,
+                zaxis: val('ctl-zaxis') === 't1' ? 't1' : 't2',
+                slices: parseInt(val('ctl-slices'), 10) || 0,
+                mode: v.splats.material.uniforms.uMode.value,
+                intensity: v.splats.material.uniforms.uIntensity.value,
+                yscale: v.sculpt.scale.y,
+                scalemul: v.splats.material.uniforms.uScaleMul.value,
+                cam: [v.camera.position.x, v.camera.position.y, v.camera.position.z],
+                target: [v.controls.target.x, v.controls.target.y, v.controls.target.z],
+                tour: playing ? (val('ctl-tour-mode') || 'orbit') : 'off',
+                tourSpeed: parseFloat(val('ctl-tour-speed')) || 1,
+            };
+        } catch (e) { /* dead window — fall through to defaults */ }
+    }
+    return { res: 96, zaxis: 't2', slices: 0, mode: 2, intensity: 1, yscale: 0.1,
+             scalemul: 1, cam: [1.25, 0.85, 1.25], target: [0, 0, 0], tour: 'off', tourSpeed: 1 };
+}
+
+async function _splatBakeStartAndFollow(jobId, source, params, btnId, railLabel) {
+    // the shared bake driver: register the job, follow it on the rail,
+    // insert the hosted row when it lands
+    const startResp = await lambdaPost('storage', { job_id: jobId, source, params }, '/start-splat-bake');
+    const taskId = startResp && startResp.task_id;
+    if (!taskId) throw new Error('start-splat-bake returned no task_id');
+    const railId = 'splatbake:' + taskId;
+    const startedAt = Date.now();
+    _jobsRailUpsert({ id: railId, kind: 'splatbake', label: railLabel,
+                      jobId, tab: 'render', state: 'running', startedAt, detail: 'baking' });
+    let row = null;
+    try {
+        for (;;) {
+            const elapsed = Math.round((Date.now() - startedAt) / 1000);
+            if (elapsed > 360) throw new Error('splat bake timed out after 6 minutes');
+            const liveBtn = btnId ? document.getElementById(btnId) : null;
+            if (liveBtn) liveBtn.textContent = `Baking ${elapsed}s\u2026`;
+            _jobsRailProgress(railId, `${railLabel} \u00b7 ${elapsed}s`);
+            let check = null;
+            try {
+                check = await lambdaPost('storage', {
+                    job_id: jobId, task_prefix: taskId, expected: 1,
+                }, '/check-status');
+            } catch (err) { /* transient — keep polling */ }
+            if (check && check.errors > 0) {
+                const detail = (check.error_details && check.error_details[0]
+                    && check.error_details[0].error_msg) || 'splat bake failed';
+                throw new Error(detail);
+            }
+            if (check && check.done >= 1) {
+                const r = (check.results || []).find((x) => x && x.sculpture);
+                if (!r) throw new Error('bake result carries no sculpture row');
+                row = r.sculpture;
+                break;
+            }
+            await new Promise((r2) => setTimeout(r2, 3000));
+        }
+    } catch (err) {
+        _jobsRailUpsert({ id: railId, kind: 'splatbake', label: railLabel,
+                          jobId, tab: 'render', state: 'failed',
+                          detail: err && err.message ? err.message : String(err) });
+        throw err;
+    }
+    const doneSecs = Math.round((Date.now() - startedAt) / 1000);
+    _jobsRailUpsert({ id: railId, kind: 'splatbake', label: railLabel,
+                      jobId, tab: 'render', state: 'complete', detail: `done in ${doneSecs}s` });
+    window._sculptureInventory = [row, ...(window._sculptureInventory || [])];
+    window._sculptureInventoryLoaded = true;
+    _sculptureRenderPane();
+    _sculptureSyncFamilyCount();
+    window.__lastSplatBake = { id: row.id, count: row.splat_count, bytes: row.bytes,
+                               title: row.title, share_url: row.share_url };
+    log(`SplatBake hosted: ${Number(row.splat_count || 0).toLocaleString()} splats \u00b7 `
+        + `${((Number(row.bytes) || 0) / (1024 * 1024)).toFixed(1)}MB \u00b7 ${doneSecs}s \u2014 ${row.share_url}`,
+        'ok', 'render-log');
+    return row;
+}
+
 async function runSculptureSplatBake() {
-    // bake the open viewer's CURRENT splats into ONE self-contained HTML:
-    // height + point scaling folded into the geometry, style/glow/camera/
-    // playing-tour carried in the header, buffers quantized (u16 centers,
-    // i16 axes, u8 color/weight) and embedded base64. The 5M-point cloud
-    // never travels — the averaging already happened (user construction).
+    // SERVER-SIDE bake: the splats are a pure function of data the server
+    // already holds, so the tab sends ~1KB of settings — never megabytes of
+    // buffers (user: "every second spent on mitigation is wasted"). Source:
+    // the open viewer's data identity (its generate's content-addressed
+    // cache) when a viewer is live, else the selected color artifact —
+    // parameters to hosted baked share in one job, no tabs required.
     const btn = document.getElementById('btn-sculpture-splatbake');
     let ok = false;
     try {
-        const win = window._lastSculptureWin;
-        if (!win || win.closed || !win.__sculptureViewer || !win.document) {
-            throw new Error('open a sculpture viewer first — SplatBake bakes its live splats');
-        }
-        const v = win.__sculptureViewer;
-        if (!v.splats || !v.splatCount || !v.splats.visible) {
-            throw new Error('enable spl in the viewer first — SplatBake bakes exactly the splats being shown');
-        }
-        if (btn) { btn.disabled = true; btn.textContent = 'Baking…'; }
-        const g = v.splats.geometry;
-        const arr = (name) => g.getAttribute(name).array;
-        const n = v.splatCount;
-        const yScale = v.sculpt.scale.y;
-        const scaleMul = v.splats.material.uniforms.uScaleMul.value;
-        const centers = new Float32Array(n * 3);
-        const axisA = new Float32Array(n * 3);
-        const axisB = new Float32Array(n * 3);
-        const c0 = arr('iCenter'), a0 = arr('iAxisA'), b0 = arr('iAxisB');
-        for (let i = 0; i < n; i++) {
-            centers[i * 3] = c0[i * 3];
-            centers[i * 3 + 1] = c0[i * 3 + 1] * yScale;
-            centers[i * 3 + 2] = c0[i * 3 + 2];
-            axisA[i * 3] = a0[i * 3] * scaleMul;
-            axisA[i * 3 + 1] = a0[i * 3 + 1] * scaleMul * yScale;
-            axisA[i * 3 + 2] = a0[i * 3 + 2] * scaleMul;
-            axisB[i * 3] = b0[i * 3] * scaleMul;
-            axisB[i * 3 + 1] = b0[i * 3 + 1] * scaleMul * yScale;
-            axisB[i * 3 + 2] = b0[i * 3 + 2] * scaleMul;
-        }
-        const wdoc = win.document;
-        const wval = (id) => { const el = wdoc.getElementById(id); return el ? el.value : null; };
-        const playing = !!(v.tour && v.tour.state && v.tour.state.playing);
-        const title = (wdoc.getElementById('hud-title') && wdoc.getElementById('hud-title').textContent) || 'PolyPaint splats';
-        const html = _splatBakeHtml({
-            title,
-            count: n,
-            centers, axisA, axisB,
-            colors: arr('iColor'),
-            weights: arr('iWeight'),
-            mode: v.splats.material.uniforms.uMode.value,
-            intensity: v.splats.material.uniforms.uIntensity.value,
-            cam: [v.camera.position.x, v.camera.position.y, v.camera.position.z],
-            target: [v.controls.target.x, v.controls.target.y, v.controls.target.z],
-            tour: playing ? (wval('ctl-tour-mode') || 'orbit') : 'off',
-            tourSpeed: parseFloat(wval('ctl-tour-speed')) || 1,
-        });
-        // hosted, not downloaded (user: "in the viewer list, a different
-        // kind of viewer"): presigned PUT straight to S3 — the file is past
-        // API Gateway's ~10MB body ceiling and the app is served from the
-        // same bucket host, so the PUT is same-origin — then finalize
-        // writes the meta.json that makes it a list row.
         const jobId = document.getElementById('render-results-dir').value.trim();
         if (!jobId) throw new Error('no job selected');
-        const titleInput = document.getElementById('sculpture-title');
-        const rowTitle = (titleInput && titleInput.value.trim()) || title;
-        if (btn) btn.textContent = 'Uploading…';
-        const pres = await lambdaPost('storage', { job_id: jobId }, '/presign-splat-bake');
-        if (!pres || !pres.put_url || !pres.id) throw new Error('presign-splat-bake returned no URL');
-        const blob = new Blob([html], { type: 'text/html' });   // blob.size = true UTF-8 bytes
-        let put = null;
-        try {
-            put = await fetch(pres.put_url, {
-                method: 'PUT',
-                body: blob,
-                headers: { 'Content-Type': 'text/html' },
-            });
-        } catch (netErr) {
-            // "Failed to fetch" here = the browser blocked the cross-origin
-            // PUT preflight (app on the s3-website origin, presign on the
-            // REST origin) — the bucket CORS config ships in deploy.sh
-            throw new Error(`upload blocked (${new URL(pres.put_url).host} from ${location.host}) — `
-                + 'the bucket needs its CORS config: run ./deploy.sh update');
+        const win = window._lastSculptureWin;
+        const viewerLive = !!(win && !win.closed && win.__sculptureViewer);
+        const data = window._lastSculptureData;
+        let source = null;
+        let label = '';
+        if (viewerLive && data && data.job_id === jobId && data.cache_prefix) {
+            source = { kind: 'cache', cache_prefix: data.cache_prefix };
+            label = `${data.source_artifact_id || jobId} \u00b7 ${data.grid_n}\u00b2`;
+        } else {
+            const art = _sculptureSourceColorArtifact();
+            if (!art || !art.artifact_id) {
+                throw new Error('no bake source \u2014 generate a sculpture or select a color artifact');
+            }
+            const nSel = document.getElementById('render-sculpture-n');
+            const n = parseInt(nSel && nSel.value, 10) || 384;
+            source = { kind: 'artifact', artifact_id: String(art.artifact_id), n };
+            label = `${art.artifact_id} \u00b7 ${n}\u00b2`;
         }
-        if (!put.ok) throw new Error(`baked viewer upload failed: HTTP ${put.status}`);
-        const fin = await lambdaPost('storage', {
-            id: pres.id,
-            job_id: jobId,
-            title: rowTitle,
-            splat_count: n,
-            source_artifact_id: (window._lastSculptureData && window._lastSculptureData.source_artifact_id) || undefined,
-        }, '/finalize-splat-bake');
-        const saved = fin && fin.sculpture;
-        if (!saved || !saved.id) throw new Error('finalize-splat-bake returned no sculpture');
-        window.__lastSplatBake = { bytes: blob.size, count: n, title: rowTitle, id: saved.id, share_url: saved.share_url };
-        window._sculptureInventory = [saved, ...(window._sculptureInventory || [])];
-        window._sculptureInventoryLoaded = true;
-        _sculptureRenderPane();
-        _sculptureSyncFamilyCount();
-        log(`SplatBake hosted: ${n.toLocaleString()} splats → ${(blob.size / (1024 * 1024)).toFixed(1)}MB — ${saved.share_url}`, 'ok', 'render-log');
+        const params = _splatBakeParamsFromViewer(viewerLive ? win : null);
+        const titleInput = document.getElementById('sculpture-title');
+        const winTitle = viewerLive && win.document && win.document.getElementById('hud-title')
+            ? win.document.getElementById('hud-title').textContent : '';
+        params.title = (titleInput && titleInput.value.trim()) || winTitle || '';
+        if (btn) { btn.disabled = true; btn.textContent = 'Baking\u2026'; }
+        await _splatBakeStartAndFollow(jobId, source, params, 'btn-sculpture-splatbake',
+                                       `splat bake \u00b7 ${label}`);
         ok = true;
     } catch (e) {
         log(`SplatBake failed: ${e.message}`, 'err', 'render-log');
     } finally {
         if (btn) {
             btn.disabled = false;
-            btn.textContent = ok ? '✓ Baked' : '✗ SplatBake';
-            setTimeout(() => { btn.textContent = 'SplatBake'; }, 2500);
+            btn.textContent = ok ? '\u2713 Baked' : '\u2717 SplatBake';
+            setTimeout(() => {
+                const b = document.getElementById('btn-sculpture-splatbake');
+                if (b && !b.disabled) b.textContent = 'SplatBake';
+            }, 2500);
+        }
+    }
+}
+
+async function _sculptureBakeSaved(id, btn) {
+    // bake straight from a SAVED row: its prefix holds roots + palette +
+    // meta, and its captured view supplies the settings — no viewer, no tab
+    const m = _sculptureById(id);
+    if (!m) return;
+    const orig = btn ? btn.textContent : 'Bake';
+    let ok = false;
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Baking\u2026'; }
+        const view = m.view || {};
+        const styleMode = view.style === 'cloud' ? 0 : (view.style === 'ghost' ? 1 : 2);
+        const params = {
+            res: [64, 96, 128, 192].includes(Number(view.splatRes)) ? Number(view.splatRes) : 96,
+            zaxis: view.zaxis === 't1' ? 't1' : 't2',
+            slices: Number.isFinite(Number(view.slices)) ? Number(view.slices) : 0,
+            mode: styleMode,
+            intensity: (Number(view.glow) || 30) / 30,
+            yscale: Number.isFinite(Number(view.height)) ? Number(view.height) : 0.1,
+            scalemul: (Number(view.point) || 10) / 10,
+            cam: [1.25, 0.85, 1.25], target: [0, 0, 0],
+            tour: ['orbit', 'wave', 'grand', 'weave'].includes(view.tour) ? view.tour : 'off',
+            tourSpeed: [0.5, 1, 2, 4].includes(Number(view.tourSpeed)) ? Number(view.tourSpeed) : 1,
+            title: `${m.title || m.id} \u00b7 baked`,
+        };
+        await _splatBakeStartAndFollow(m.job_id, { kind: 'saved', saved_id: id }, params, null,
+                                       `splat bake \u00b7 ${m.title || m.id}`);
+        ok = true;
+    } catch (e) {
+        log(`Saved-row bake failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = ok ? '\u2713 Baked' : '\u2717 Bake';
+            setTimeout(() => { if (btn && !btn.disabled) btn.textContent = orig; }, 2500);
         }
     }
 }

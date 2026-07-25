@@ -1705,10 +1705,8 @@ def handler(event, context):
         return _handle_storage_route(handle_save_sculpture, event)
     elif path.endswith("/start-sculpture-artifact"):
         return _handle_storage_route(handle_start_sculpture_from_artifact, event)
-    elif path.endswith("/presign-splat-bake"):
-        return _handle_storage_route(handle_presign_splat_bake, event)
-    elif path.endswith("/finalize-splat-bake"):
-        return _handle_storage_route(handle_finalize_splat_bake, event)
+    elif path.endswith("/start-splat-bake"):
+        return _handle_storage_route(handle_start_splat_bake, event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -7300,85 +7298,65 @@ def handle_start_sculpture_from_artifact(event):
 _SPLAT_BAKE_ID = re.compile(r"scu_[a-z0-9]{1,32}")
 
 
-def handle_presign_splat_bake(event):
-    """Step 1 of hosting a baked splat viewer: mint the sculpture id and a
-    presigned PUT for its ONE object. The baked HTML is a few-to-tens of MB
-    — past API Gateway's ~10MB body ceiling — so the tab uploads straight
-    to S3 (the app is served from the same bucket host, so the PUT is
-    same-origin). Nothing is listed until /finalize-splat-bake verifies
-    the object and writes meta.json."""
+def handle_start_splat_bake(event):
+    """Server-side SplatBake as a JOB on the common task infra: a ~1KB
+    settings blob in, a hosted self-contained baked viewer out — no browser
+    upload (the splats are a pure function of server-resident data). The
+    source union mirrors the lores lambda's bake mode: a generate's
+    content-addressed cache, any saved sculpture prefix, or artifact+size
+    (generate core runs first — parameters to baked share in one job).
+    Per-kind fast-fails run HERE, synchronously, so the user sees the
+    problem instead of a dead rail card."""
     params = parse_body(event)
     job_id = str(params.get("job_id") or "").strip()
     if not _SCULPTURE_JOB_ID.fullmatch(job_id):
-        raise RuntimeError("presign-splat-bake requires a valid job_id")
-    sid = f"scu_{_b36(int(time.time() * 1000))}"
-    key = f"sculptures/{sid}/viewer.html"
-    put_url = s3.generate_presigned_url(
-        "put_object",
-        Params={"Bucket": BUCKET, "Key": key, "ContentType": "text/html"},
-        ExpiresIn=600,
+        raise RuntimeError("start-splat-bake requires a valid job_id")
+    source = params.get("source")
+    if not isinstance(source, dict):
+        raise RuntimeError("start-splat-bake requires a source object")
+    kind = str(source.get("kind") or "")
+    if kind == "saved":
+        sid = str(source.get("saved_id") or "").strip()
+        if not _SPLAT_BAKE_ID.fullmatch(sid):
+            raise RuntimeError("start-splat-bake saved source requires a valid saved_id")
+        try:
+            s3.head_object(Bucket=BUCKET, Key=f"sculptures/{sid}/roots.bin")
+        except Exception:
+            raise RuntimeError(f"saved sculpture {sid} carries no roots.bin — baked rows cannot be re-baked")
+    elif kind == "cache":
+        prefix = str(source.get("cache_prefix") or "")
+        if not re.fullmatch(rf"renders/{re.escape(job_id)}/sculpture_cache/[0-9a-f]{{16}}/", prefix):
+            raise RuntimeError("start-splat-bake cache source requires this job's cache prefix")
+    elif kind == "artifact":
+        artifact_id = str(source.get("artifact_id") or "").strip()
+        if not _SCULPTURE_SOURCE_ARTIFACT.fullmatch(artifact_id):
+            raise RuntimeError("start-splat-bake artifact source requires a valid artifact_id")
+        try:
+            n = int(source.get("n"))
+        except (TypeError, ValueError):
+            raise RuntimeError("start-splat-bake artifact source requires integer n")
+        if n not in (128, 192, 384, 512):
+            raise RuntimeError(f"start-splat-bake size must be one of 128/192/384/512, got {n}")
+        head = load_color_artifact_head(s3, BUCKET, job_id, artifact_id)
+        if not str(dict(head.get("metadata") or {}).get("step_scores_key") or "").strip():
+            raise RuntimeError(
+                f"color artifact {artifact_id} has no stored per-solve scores (step_scores) — "
+                "re-render it to sculpture it")
+    else:
+        raise RuntimeError(f"start-splat-bake source kind must be cache/saved/artifact, got {kind!r}")
+    bake_params = params.get("params") if isinstance(params.get("params"), dict) else {}
+    task_id = f"splat_bake_{int(time.time() * 1000)}"
+    report_status(job_id, task_id, "running")
+    boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")).invoke(
+        FunctionName=os.environ.get("RENDER_LORES_PREVIEW_FUNCTION", "polypaint-render-lores-preview"),
+        InvocationType="Event",
+        Payload=json.dumps({
+            "job_id": job_id,
+            "splat_bake": {"source": source, "params": bake_params},
+            "sculpture_task_id": task_id,
+        }).encode("utf-8"),
     )
-    return ok_response({"id": sid, "key": key, "put_url": put_url})
-
-
-def handle_finalize_splat_bake(event):
-    """Step 2: verify the uploaded baked viewer (exists, sane size), stamp
-    immutable caching via a self-copy, and write the meta.json that makes
-    it a LIST ROW — kind "splatbake", one self-contained object, shareable
-    exactly like a saved sculpture (same prefix, same delete)."""
-    params = parse_body(event)
-    sid = str(params.get("id") or "").strip()
-    if not _SPLAT_BAKE_ID.fullmatch(sid):
-        raise RuntimeError("finalize-splat-bake requires a valid id")
-    job_id = str(params.get("job_id") or "").strip()
-    if not _SCULPTURE_JOB_ID.fullmatch(job_id):
-        raise RuntimeError("finalize-splat-bake requires a valid job_id")
-    sprefix = f"sculptures/{sid}/"
-    key = sprefix + "viewer.html"
-    try:
-        head = s3.head_object(Bucket=BUCKET, Key=key)
-    except Exception:
-        raise RuntimeError("baked viewer upload not found — the PUT must complete before finalize")
-    size = int(head.get("ContentLength") or 0)
-    if size < 1024:
-        raise RuntimeError(f"baked viewer is implausibly small ({size} bytes)")
-    if size > 64 * 1024 * 1024:
-        raise RuntimeError(f"baked viewer too large ({size} bytes; cap 64MB)")
-    try:
-        splat_count = int(params.get("splat_count"))
-    except (TypeError, ValueError):
-        raise RuntimeError("finalize-splat-bake requires integer splat_count")
-    if not (1 <= splat_count <= 50_000_000):
-        raise RuntimeError(f"splat_count out of range: {splat_count}")
-    title = "".join(ch for ch in str(params.get("title") or "") if ch.isprintable())[:120] or sid
-    s3.copy_object(
-        Bucket=BUCKET, Key=key,
-        CopySource={"Bucket": BUCKET, "Key": key},
-        MetadataDirective="REPLACE",
-        ContentType="text/html",
-        CacheControl="public, max-age=31536000, immutable")
-    meta = {
-        "version": 1,
-        "kind": "splatbake",
-        "id": sid,
-        "title": title,
-        "job_id": job_id,
-        "splat_count": splat_count,
-        "bytes": size,
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    source_artifact_id = str(params.get("source_artifact_id") or "").strip()
-    if source_artifact_id and _SCULPTURE_SOURCE_ARTIFACT.fullmatch(source_artifact_id):
-        meta["source_artifact_id"] = source_artifact_id
-    s3.put_object(
-        Bucket=BUCKET, Key=sprefix + "meta.json",
-        Body=json.dumps(meta).encode("utf-8"),
-        ContentType="application/json", CacheControl="no-cache")
-    region = os.environ.get("AWS_REGION", "us-east-1")
-    out = dict(meta)
-    out["prefix"] = sprefix
-    out["share_url"] = f"https://{BUCKET}.s3.{region}.amazonaws.com/{sprefix}viewer.html"
-    return ok_response({"sculpture": out})
+    return ok_response({"task_id": task_id})
 
 
 def handle_save_sculpture(event):

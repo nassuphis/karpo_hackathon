@@ -897,6 +897,225 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(resp["statusCode"], 500)
         self.assertIn("exceeds the solve grid", json.loads(resp["body"])["detail"])
 
+    @staticmethod
+    def _bake_saved_get_object(meta=None):
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
+        from png_rgb import encode_png_rgb
+        saved_meta = {
+            "version": 1, "id": "scu_src1", "title": "Saved Piece", "job_id": "j",
+            "grid_n": 4, "degree": 2, "format": "u16",
+            "viewport": {"min_re": -1.0, "max_re": 1.0, "min_im": -1.0, "max_im": 1.0},
+            "source_artifact_id": "color_run_abc",
+        }
+        if meta:
+            saved_meta.update(meta)
+        png = encode_png_rgb(4, 4, bytes([10, 20, 30] * 16))
+        roots = b"\x00" * (4 * 4 * 2 * 2 * 2)
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key == "sculptures/scu_src1/meta.json":
+                return {"Body": _ChunkBody(json.dumps(saved_meta).encode("utf-8"))}
+            if key == "sculptures/scu_src1/roots.bin":
+                return {"Body": _ChunkBody(roots)}
+            if key == "sculptures/scu_src1/palette.png":
+                return {"Body": _ChunkBody(png)}
+            raise AssertionError(f"unexpected key: {key}")
+        return get_object
+
+    @staticmethod
+    def _bake_tool_fake(assertions=None):
+        def subprocess_fake(cmd, **kwargs):
+            self_check = assertions or (lambda c: None)
+            self_check(cmd)
+            out_arg = next(a for a in cmd if a.startswith("--out="))
+            with open(out_arg.split("=", 1)[1], "wb") as fh:
+                fh.write(b"P" * (22 * 2))
+            return MagicMock(returncode=0, stdout=json.dumps({
+                "count": 2, "points_used": 4, "points_clipped": 0,
+                "cmin": [0, 0, 0], "cmax": [1, 1, 1], "amax": 0.01,
+            }), stderr="")
+        return subprocess_fake
+
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_splat_bake_saved_source_mints_a_hosted_viewer(self, mock_s3, mock_run):
+        from handler_render_lores_preview import handler
+
+        mock_s3.get_object.side_effect = self._bake_saved_get_object()
+        seen = {}
+
+        def check(cmd):
+            seen["cmd"] = list(cmd)
+        mock_run.side_effect = self._bake_tool_fake(check)
+
+        with patch("handler_render_lores_preview.report_status") as mock_report:
+            resp = handler(_event(
+                splat_bake={
+                    "source": {"kind": "saved", "saved_id": "scu_src1"},
+                    "params": {"res": 64, "zaxis": "t2", "slices": 2, "mode": 0,
+                               "intensity": 2, "yscale": 0.5, "scalemul": 2,
+                               "cam": [0, 0, 1.5], "tour": "orbit", "tourSpeed": 2,
+                               "title": "My <Bake> & Co"},
+                },
+                sculpture_task_id="splat_bake_7",
+            ), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        row = body["sculpture"]
+        self.assertEqual(row["kind"], "splatbake")
+        self.assertEqual(row["splat_count"], 2)
+        self.assertEqual(row["title"], "My <Bake> & Co")
+        self.assertEqual(row["source_saved_id"], "scu_src1")
+        self.assertEqual(row["source_artifact_id"], "color_run_abc")
+        self.assertTrue(row["share_url"].endswith(f"/sculptures/{row['id']}/viewer.html"))
+        # the C tool ran with the SAVED row's geometry + the sanitized params
+        self.assertIn("--roots_format=u16", seen["cmd"])
+        self.assertIn("--grid_n=4", seen["cmd"])
+        self.assertIn("--res=64", seen["cmd"])
+        self.assertIn("--slices=2", seen["cmd"])
+        self.assertIn("--yscale=0.5", seen["cmd"])
+        self.assertIn("--scalemul=2.0", seen["cmd"])
+        # the hosted page: immutable single object + list-row meta
+        puts = {c.kwargs["Key"]: c.kwargs for c in mock_s3.put_object.call_args_list}
+        viewer_key = f"sculptures/{row['id']}/viewer.html"
+        self.assertIn(viewer_key, puts)
+        self.assertEqual(puts[viewer_key]["CacheControl"], "public, max-age=31536000, immutable")
+        html = puts[viewer_key]["Body"].decode("utf-8")
+        self.assertIn("My &lt;Bake> &amp; Co", html)          # title entity-escaped
+        self.assertIn('"tour": "orbit"'.replace(" ", ""), html.replace(" ", ""))
+        self.assertIn('var B64 = "' + ("UFBQ"[0:2]), html)     # pack embedded
+        self.assertNotIn("__HEADER_JSON__", html)
+        meta = json.loads(puts[f"sculptures/{row['id']}/meta.json"]["Body"])
+        self.assertEqual(meta["kind"], "splatbake")
+        self.assertEqual(meta["bake_params"]["res"], 64)
+        calls = mock_report.call_args_list
+        self.assertEqual(calls[0].args, ("j", "splat_bake_7", "running"))
+        self.assertEqual(calls[-1].args, ("j", "splat_bake_7", "done"))
+        self.assertEqual(calls[-1].kwargs["result_data"]["sculpture"]["kind"], "splatbake")
+
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_splat_bake_cache_source_binds_to_the_job(self, mock_s3, mock_run):
+        from handler_render_lores_preview import handler
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
+        from png_rgb import encode_png_rgb
+
+        prefix = "renders/j/sculpture_cache/0123456789abcdef/"
+        block = {"grid_n": 4, "degree": 2, "format": "u16",
+                 "viewport": {"min_re": -1.0, "max_re": 1.0, "min_im": -1.0, "max_im": 1.0},
+                 "source_artifact_id": "color_run_abc"}
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key == prefix + "sculpture.json":
+                return {"Body": _ChunkBody(json.dumps(block).encode("utf-8"))}
+            if key == prefix + "roots.bin":
+                return {"Body": _ChunkBody(b"\x00" * (4 * 4 * 2 * 2 * 2))}
+            if key == prefix + "palette.png":
+                return {"Body": _ChunkBody(encode_png_rgb(4, 4, bytes([1, 2, 3] * 16)))}
+            raise AssertionError(f"unexpected key: {key}")
+        mock_s3.get_object.side_effect = get_object
+        mock_run.side_effect = self._bake_tool_fake()
+
+        resp = handler(_event(splat_bake={
+            "source": {"kind": "cache", "cache_prefix": prefix}, "params": {},
+        }), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        row = json.loads(resp["body"])["sculpture"]
+        self.assertEqual(row["source_artifact_id"], "color_run_abc")
+
+        # another job's prefix must be refused
+        resp = handler(_event(splat_bake={
+            "source": {"kind": "cache",
+                       "cache_prefix": "renders/OTHER/sculpture_cache/0123456789abcdef/"},
+        }), None)
+        self.assertEqual(resp["statusCode"], 500)
+        self.assertIn("this job's cache prefix", json.loads(resp["body"])["detail"])
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_splat_bake_artifact_source_chains_the_generate_core(self, mock_s3, mock_run, mock_render):
+        # parameters -> baked share in ONE job: the bake runs the artifact
+        # generate first (real code path), then bakes from the fixed keys
+        # the generate just refreshed
+        from handler_render_lores_preview import TMP_XFORMED_ROOTS, handler
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
+        from png_rgb import encode_png_rgb
+
+        calc, roots_key, roots_bytes = self._artifact_calc(4)
+        base_get = self._artifact_get_object(calc, roots_key, roots_bytes, bytes(range(16)))
+        uploaded = {}
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key in uploaded:
+                return {"Body": _ChunkBody(uploaded[key])}
+            if key.startswith("renders/j/sculpture_cache/"):
+                raise AssertionError("miss")
+            return base_get(**kwargs)
+
+        def put_object(**kwargs):
+            body = kwargs.get("Body")
+            uploaded[kwargs["Key"]] = body if isinstance(body, bytes) else bytes(body)
+            return {}
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.put_object.side_effect = put_object
+        mock_s3.head_object.return_value = self._artifact_head()
+
+        def subprocess_fake(cmd, **kwargs):
+            if any(a.startswith("--xformed_roots_output") for a in cmd):
+                with open(TMP_XFORMED_ROOTS, "wb") as fh:
+                    fh.write(b"T" * (16 * 1 * 2 * 2))
+                return MagicMock(returncode=0, stdout=json.dumps(
+                    {"roots_plotted": 16, "roots_clipped": 0}), stderr="")
+            return self._bake_tool_fake()(cmd, **kwargs)
+        mock_run.side_effect = subprocess_fake
+
+        def render_fake(**kwargs):
+            with open(kwargs["out_path"], "wb") as fh:
+                fh.write(encode_png_rgb(4, 4, bytes([10, 20, 30] * 16)))
+            return {"file_size": 100, "preview_file_size": 0}
+        mock_render.side_effect = render_fake
+
+        resp = handler(_event(splat_bake={
+            "source": {"kind": "artifact", "artifact_id": "color_run_abc", "n": 4},
+            "params": {"res": 96},
+        }), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        row = json.loads(resp["body"])["sculpture"]
+        self.assertEqual(row["kind"], "splatbake")
+        self.assertEqual(row["source_artifact_id"], "color_run_abc")
+        # the generate core really ran: its ephemeral keys were uploaded and
+        # the baked viewer landed as a hosted prefix
+        self.assertIn("renders/j/sculpture_roots.bin", uploaded)
+        self.assertIn(f"sculptures/{row['id']}/viewer.html", uploaded)
+
+    @patch("handler_render_lores_preview.s3")
+    def test_splat_bake_sanitizes_params_and_sources(self, mock_s3):
+        from handler_render_lores_preview import handler
+
+        resp = handler(_event(splat_bake={
+            "source": {"kind": "saved", "saved_id": "scu_src1"},
+            "params": {"res": 77},
+        }), None)
+        self.assertEqual(resp["statusCode"], 500)
+        self.assertIn("splat res", json.loads(resp["body"])["detail"])
+
+        mock_s3.get_object.side_effect = self._bake_saved_get_object(meta={"kind": "splatbake"})
+        resp = handler(_event(splat_bake={
+            "source": {"kind": "saved", "saved_id": "scu_src1"}, "params": {},
+        }), None)
+        self.assertEqual(resp["statusCode"], 500)
+        self.assertIn("already a baked viewer", json.loads(resp["body"])["detail"])
+
+        resp = handler(_event(splat_bake={"source": {"kind": "nope"}}), None)
+        self.assertEqual(resp["statusCode"], 500)
+
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
     def test_artifact_sculpture_rejects_grid_mismatch_with_transport(self, mock_s3, mock_run):

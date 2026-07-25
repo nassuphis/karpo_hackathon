@@ -690,6 +690,7 @@ async function runSculptureGenerate() {
             palette: sc.palette, roots_bytes: sc.roots_bytes,
             format: sc.format || 'u16',
             source_artifact_id: sc.source_artifact_id || artifactId,
+            cache_prefix: sc.cache_prefix || '',   // SplatBake's server source
         };
         log(`Sculpture from ${artifactId}: grid ${sc.grid_n}\u00d7${sc.grid_n} \u00b7 degree ${sc.degree} \u00b7 ${doneSecs}s`, 'ok', 'render-log');
         if (statusEl) { statusEl.textContent = 'Sculpture ready'; statusEl.className = 'status success'; }

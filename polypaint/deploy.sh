@@ -963,6 +963,8 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/palette_bins_render lambda/palette_
 
 echo "  step_scores_to_palette_raw (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/step_scores_to_palette_raw lambda/step_scores_to_palette_raw.c -lm
+echo "  splat_bake (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -o lambda/splat_bake lambda/splat_bake.c -lm
 
 # param_gen removed — param debug now uses sweep in param_dump mode
 
@@ -1379,7 +1381,7 @@ rm -rf "$RENDER_LORES_PREVIEW_DIR"
 mkdir -p "$RENDER_LORES_PREVIEW_DIR/lib"
 cp lambda/handler_render_lores_preview.py lambda/shared.py \
    lambda/logical_sections.py lambda/logical_lores.py lambda/calc_chunks.py lambda/param_source.py \
-   lambda/color_artifact_meta.py \
+   lambda/color_artifact_meta.py lambda/png_rgb.py splat_bake_template.html \
    lambda/color_render_contract.py lambda/solve_score_chain.py lambda/raw_score_render.py \
    lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/root_program_source.py \
    lambda/solve_score_program_source.py lambda/program_source_core.py lambda/registry_common.py lambda/program_profiles.py lambda/program_profiles.json \
@@ -1388,10 +1390,10 @@ cp lambda/handler_render_lores_preview.py lambda/shared.py \
    lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
    lambda/root_legacy_registry.json lambda/merged_opcodes.py "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt lambda/solve_proximity_stats lambda/score_raw_render \
-   lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$RENDER_LORES_PREVIEW_DIR/"
+   lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm lambda/splat_bake "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"
 chmod +x "$RENDER_LORES_PREVIEW_DIR"/roots2pix_mt "$RENDER_LORES_PREVIEW_DIR"/solve_proximity_stats "$RENDER_LORES_PREVIEW_DIR"/score_raw_render \
-    "$RENDER_LORES_PREVIEW_DIR"/sweep_coeffgen "$RENDER_LORES_PREVIEW_DIR"/sweep_mt "$RENDER_LORES_PREVIEW_DIR"/sweep_cm
+    "$RENDER_LORES_PREVIEW_DIR"/sweep_coeffgen "$RENDER_LORES_PREVIEW_DIR"/sweep_mt "$RENDER_LORES_PREVIEW_DIR"/sweep_cm "$RENDER_LORES_PREVIEW_DIR"/splat_bake
 cd "$RENDER_LORES_PREVIEW_DIR" && zip -FS -r9 /tmp/polypaint-render-lores-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  LoresPv: $(du -h /tmp/polypaint-render-lores-preview.zip | cut -f1)  (ephemeral lores render preview)"
 

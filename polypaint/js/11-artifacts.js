@@ -1018,6 +1018,11 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         // every other family (the server list is global; filter client-side)
         sculpture: (window._sculptureInventory || []).filter((m) => m.job_id === jobId),
     };
+    // the sculpture list is session-cached and was LAZY — loaded only when
+    // its own tab opened, so the family tab's count sat at a permanent (0)
+    // on every other view (user-caught). Kick the load here; on completion
+    // it patches the count in place. Session-cached: one fetch ever.
+    void _sculptureEnsureInventory();
     if (!_renderArtifacts[_renderActiveFamily]) _renderActiveFamily = 'color';
     for (const family of ['color', 'bilevel', 'coeffs', 'palette', 'pdf']) {
         const inv = _renderArtifacts[family] || [];
@@ -2068,7 +2073,7 @@ async function _sculptureEnsureInventory(force) {
         const data = await lambdaPost('storage', {}, '/list-sculptures');
         window._sculptureInventory = data.sculptures || [];
         window._sculptureInventoryLoaded = true;
-        _renderArtifacts.sculpture = window._sculptureInventory;   // family-tab count
+        _sculptureSyncFamilyCount();
         ok = true;
     } catch (e) {
         if (!window._sculptureInventoryLoaded) window._sculptureInventory = [];
@@ -2086,6 +2091,18 @@ async function _sculptureEnsureInventory(force) {
         }
     }
     _sculptureRenderPane();
+}
+
+function _sculptureSyncFamilyCount() {
+    // job-scoped count, synced into _renderArtifacts AND patched into the
+    // family tab label in place — a full panel re-render here would stomp
+    // the user's active tab/selection state
+    const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
+    const rows = (window._sculptureInventory || []).filter((m) => m.job_id === jobId);
+    if (typeof _renderArtifacts !== 'undefined' && _renderArtifacts) _renderArtifacts.sculpture = rows;
+    for (const el of document.querySelectorAll('[data-render-family="sculpture"] .subtab-count')) {
+        el.textContent = `(${rows.length})`;
+    }
 }
 
 function _sculptureById(id) {
@@ -2123,6 +2140,7 @@ async function _sculptureDelete(id, btn) {
         await lambdaPost('storage', { prefix }, '/delete-prefix');
         window._sculptureInventory = (window._sculptureInventory || []).filter((x) => x.id !== id);
         _sculptureRenderPane();
+        _sculptureSyncFamilyCount();
         log(`Sculpture deleted: ${m.title || m.id}`, 'ok', 'render-log');
     } catch (e) {
         log(`Sculpture delete failed: ${e.message}`, 'err', 'render-log');
@@ -2162,6 +2180,7 @@ async function runSculptureSave() {
         window._sculptureInventory = [saved, ...(window._sculptureInventory || [])];
         window._sculptureInventoryLoaded = true;
         _sculptureRenderPane();
+        _sculptureSyncFamilyCount();
         log(`Sculpture saved: ${saved.title || saved.id} — ${saved.share_url}`, 'ok', 'render-log');
         ok = true;
     } catch (e) {
@@ -2271,6 +2290,7 @@ async function runSculptureSplatBake() {
         window._sculptureInventory = [saved, ...(window._sculptureInventory || [])];
         window._sculptureInventoryLoaded = true;
         _sculptureRenderPane();
+        _sculptureSyncFamilyCount();
         log(`SplatBake hosted: ${n.toLocaleString()} splats → ${(blob.size / (1024 * 1024)).toFixed(1)}MB — ${saved.share_url}`, 'ok', 'render-log');
         ok = true;
     } catch (e) {

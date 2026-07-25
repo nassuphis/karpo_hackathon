@@ -2009,6 +2009,7 @@ test.describe('Solve Score UI', () => {
     // the hosted bake appears as a DIFFERENT KIND of row in the list
     await expect(page.locator('#sculpture-list')).toContainText('baked piece');
     await expect(page.locator('#sculpture-list')).toContainText('baked \u00b7 2 splats \u00b7 4.0MB');
+    await expect(page.locator('[data-render-family="sculpture"] .subtab-count')).toHaveText('(1)');
 
     // splats hidden -> readable error, nothing uploaded
     await page.evaluate(() => {
@@ -2101,6 +2102,12 @@ test.describe('Solve Score UI', () => {
       };
     });
 
+    // the family-tab count must be real WITHOUT ever opening the Sculpture
+    // tab (it sat at a permanent (0) until first visit — user-caught), and
+    // job-scoped: Foreign lives in another job and must not count
+    await page.click('[data-render-family="color"]');
+    await expect(page.locator('[data-render-family="sculpture"] .subtab-count')).toHaveText('(1)');
+
     await page.click('[data-render-family="sculpture"]');
     // job-scoped: only this job's sculpture shows; the foreign one is hidden
     await expect(page.locator('#sculpture-list')).toContainText('Mine', { timeout: 5000 });
@@ -2137,6 +2144,7 @@ test.describe('Solve Score UI', () => {
     });
     expect(st.opens).toBe(0);
     await expect(page.locator('#sculpture-list')).toContainText('Second Piece');
+    await expect(page.locator('[data-render-family="sculpture"] .subtab-count')).toHaveText('(2)');
 
     // delete the new row
     await page.locator('#sculpture-list button', { hasText: 'Delete' }).first().click();
@@ -2144,5 +2152,6 @@ test.describe('Solve Score UI', () => {
     expect(calls.filter(c => c[0] === 'delete')).toEqual([['delete', 'sculptures/scu_new/']]);
     await expect(page.locator('#sculpture-list')).not.toContainText('Second Piece');
     await expect(page.locator('#sculpture-list')).toContainText('Mine');
+    await expect(page.locator('[data-render-family="sculpture"] .subtab-count')).toHaveText('(1)');
   });
 });

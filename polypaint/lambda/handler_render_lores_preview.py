@@ -7,6 +7,7 @@ It does not persist images, save palettes, or write metadata.
 """
 import base64
 import glob
+import hashlib
 import json
 import math
 import os
@@ -1143,6 +1144,19 @@ def _artifact_meta_viewport(meta, artifact_id):
     return viewport
 
 
+def _sculpture_cache_load(cache_prefix):
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=cache_prefix + "sculpture.json")
+        body = obj["Body"]
+        raw = body.read() if hasattr(body, "read") else b"".join(body.iter_chunks(chunk_size=1024 * 1024))
+        block = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(block, dict) or int(block.get("grid_n") or 0) < 1:
+        return None
+    return block
+
+
 def _run_artifact_sculpture(params, job_id, spec, t_start):
     """Artifact-sourced sculpture: the ONLY generation path. Everything comes
     from the selected color artifact's recorded provenance — viewport,
@@ -1181,6 +1195,70 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
     viewport = _artifact_meta_viewport(meta, artifact_id)
     rotation = float(meta.get("rotation") or 0.0)
     root_transforms = parse_root_transforms(meta.get("root_transforms"))
+
+    # content-hash reuse: same artifact + size + format + color/transform
+    # provenance -> the previous run's dump serves instantly (server-side
+    # copies into the fixed ephemeral keys the viewer and Save read). The
+    # signature covers everything that shapes the output, so a repalette
+    # of the SAME artifact_id (new palette metadata) misses and rebuilds.
+    cache_sig = json.dumps({
+        "artifact_id": artifact_id,
+        "view_n": view_n,
+        "format": fmt,
+        "step_scores_key": step_scores_key,
+        "grid_n": full_n,
+        "channels": channels,
+        "interpretation": interpretation,
+        "palette": palette,
+        "background_color": background_color,
+        "rotation": rotation,
+        "viewport": viewport,
+        "root_transforms": root_transforms,
+    }, sort_keys=True, separators=(",", ":"))
+    cache_prefix = f"renders/{job_id}/sculpture_cache/{hashlib.sha1(cache_sig.encode('utf-8')).hexdigest()[:16]}/"
+    sculpture_roots_key = f"renders/{job_id}/sculpture_roots.bin"
+    sculpture_palette_key = f"renders/{job_id}/sculpture_palette.png"
+    cached = _sculpture_cache_load(cache_prefix)
+    if cached is not None:
+        try:
+            s3.copy_object(
+                Bucket=BUCKET, Key=sculpture_roots_key,
+                CopySource={"Bucket": BUCKET, "Key": cache_prefix + "roots.bin"},
+                MetadataDirective="REPLACE",
+                ContentType="application/octet-stream", CacheControl="no-cache")
+            s3.copy_object(
+                Bucket=BUCKET, Key=sculpture_palette_key,
+                CopySource={"Bucket": BUCKET, "Key": cache_prefix + "palette.png"},
+                MetadataDirective="REPLACE",
+                ContentType="image/png", CacheControl="no-cache")
+            region = os.environ.get("AWS_REGION", "us-east-1")
+            base_url = f"https://{BUCKET}.s3.{region}.amazonaws.com"
+            stamp = int(time.time() * 1000)
+            sculpture_export = dict(cached)
+            sculpture_export.update({
+                "roots_key": sculpture_roots_key,
+                "roots_url": f"{base_url}/{sculpture_roots_key}?v={stamp}",
+                "palette_key": sculpture_palette_key,
+                "palette_url": f"{base_url}/{sculpture_palette_key}?v={stamp}",
+            })
+            total_ms = int((time.time() - t_start) * 1000)
+            if task_id:
+                report_status(job_id, task_id, "done", result_data={
+                    "sculpture": sculpture_export,
+                    "n_solves": int(sculpture_export.get("step_count") or 0),
+                    "total_ms": total_ms,
+                    "cache_hit": True,
+                })
+            return ok_response({
+                "sculpture": sculpture_export,
+                "cache": {"hit": True, "prefix": cache_prefix},
+                "n_solves": int(sculpture_export.get("step_count") or 0),
+                "logs": [f"Artifact sculpture cache hit: {cache_prefix}"],
+                "timings_ms": {"total": total_ms},
+            })
+        except Exception:
+            # cached binaries missing/unreadable -> fall through to a full run
+            pass
 
     calc = _load_calc(job_id)
     degree = int(calc.get("degree") or 0)
@@ -1277,12 +1355,10 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
 
     region = os.environ.get("AWS_REGION", "us-east-1")
     base_url = f"https://{BUCKET}.s3.{region}.amazonaws.com"
-    sculpture_roots_key = f"renders/{job_id}/sculpture_roots.bin"
     with open(TMP_XFORMED_ROOTS, "rb") as fh:
         s3.put_object(
             Bucket=BUCKET, Key=sculpture_roots_key, Body=fh.read(),
             ContentType="application/octet-stream", CacheControl="no-cache")
-    sculpture_palette_key = f"renders/{job_id}/sculpture_palette.png"
     with open(TMP_PALETTE_IMAGE, "rb") as fh:
         s3.put_object(
             Bucket=BUCKET, Key=sculpture_palette_key, Body=fh.read(),
@@ -1305,6 +1381,24 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
         "palette_key": sculpture_palette_key,
         "palette_url": f"{base_url}/{sculpture_palette_key}?v={stamp}",
     }
+    try:
+        s3.copy_object(
+            Bucket=BUCKET, Key=cache_prefix + "roots.bin",
+            CopySource={"Bucket": BUCKET, "Key": sculpture_roots_key},
+            MetadataDirective="REPLACE", ContentType="application/octet-stream")
+        s3.copy_object(
+            Bucket=BUCKET, Key=cache_prefix + "palette.png",
+            CopySource={"Bucket": BUCKET, "Key": sculpture_palette_key},
+            MetadataDirective="REPLACE", ContentType="image/png")
+        cache_block = {k: v for k, v in sculpture_export.items() if k not in ("roots_url", "palette_url")}
+        s3.put_object(
+            Bucket=BUCKET, Key=cache_prefix + "sculpture.json",
+            Body=json.dumps(cache_block).encode("utf-8"),
+            ContentType="application/json")
+        cache_state = {"hit": False, "prefix": cache_prefix}
+    except Exception as exc:
+        # the cache is an optimization — a failed write must not fail the run
+        cache_state = {"hit": False, "prefix": cache_prefix, "write_error": str(exc)}
     total_ms = int((time.time() - t_start) * 1000)
     logs = [
         "Artifact sculpture: "
@@ -1326,6 +1420,7 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
         })
     return ok_response({
         "sculpture": sculpture_export,
+        "cache": cache_state,
         "source": source_meta,
         "raster": raster_meta,
         "palette_render": palette_render_meta,

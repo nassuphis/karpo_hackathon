@@ -57,6 +57,7 @@
                   border-radius: 4px; font: inherit; padding: 1px 8px;
                   cursor: pointer; margin-left: 6px; }
   #panel button:hover { border-color: #e94560; }
+  #btn-tour-rec { color: #e94560; min-width: 5ch; }
   #panel .val { width: 4ch; text-align: right; color: #cfd8e3; }
   .dual { position: relative; width: 130px; height: 16px; display: inline-block; }
   .dual::before { content: ''; position: absolute; left: 0; right: 0; top: 7px;
@@ -146,7 +147,7 @@
     <option value="1" selected>1x</option>
     <option value="2">2x</option>
     <option value="4">4x</option>
-  </select><button type="button" id="btn-tour-play" title="Play / stop the automated camera tour">&#9654;</button></label>
+  </select><button type="button" id="btn-tour-play" title="Play / stop the automated camera tour">&#9654;</button><button type="button" id="btn-tour-rec" title="Record the view to a video file (click again to stop &amp; download)">&#9679;</button></label>
 </div>
 <div id="message-box"><div><h1 id="message-title"></h1><div class="detail" id="message-detail"></div></div></div>
 <script type="module">
@@ -1175,6 +1176,69 @@ onmessage = function (ev) {
     fly.addEventListener('lock', () => { if (tour.playing) tourSetPlaying(false); });
     setHint();
 
+    // view recording: the canvas stream straight into a downloadable video,
+    // fully client-side (MediaRecorder — no backend, no upload). Start a
+    // tour, press ●, press ■ when done; the file downloads itself. The hud
+    // and menu are DOM overlays OUTSIDE the canvas, so recordings come out
+    // clean automatically. Codec preference: mp4 where the browser encodes
+    // it (Safari), else webm vp9/vp8 (Chrome/Firefox).
+    const recBtn = document.getElementById('btn-tour-rec');
+    const rec = { recorder: null, chunks: [], startedAt: 0, timer: null };
+    const recMime = () => {
+        const cands = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+        for (const c of cands) {
+            try { if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c; } catch (e) { /* next */ }
+        }
+        return '';
+    };
+    const recStop = () => {
+        if (rec.recorder && rec.recorder.state !== 'inactive') rec.recorder.stop();
+    };
+    const recStart = () => {
+        const mime = recMime();
+        if (!mime || !renderer.domElement.captureStream) {
+            recBtn.textContent = '\u2717';
+            setTimeout(() => { recBtn.textContent = '\u25cf'; }, 2000);
+            return;
+        }
+        const stream = renderer.domElement.captureStream(30);
+        const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12000000 });
+        rec.recorder = recorder;
+        rec.chunks = [];
+        rec.startedAt = performance.now();
+        recorder.ondataavailable = (ev) => { if (ev.data && ev.data.size) rec.chunks.push(ev.data); };
+        recorder.onstop = () => {
+            clearInterval(rec.timer);
+            for (const track of stream.getTracks()) track.stop();
+            const blob = new Blob(rec.chunks, { type: mime.split(';')[0] });
+            rec.recorder = null;
+            rec.chunks = [];
+            window.__lastSculptureRecording = { bytes: blob.size, mime: blob.type };
+            if (blob.size) {
+                const a = document.createElement('a');
+                const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+                const base = (document.getElementById('hud-title').textContent || 'sculpture')
+                    .replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'sculpture';
+                a.href = URL.createObjectURL(blob);
+                a.download = base + '.' + ext;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+                recBtn.textContent = '\u2713';
+            } else {
+                recBtn.textContent = '\u2717';
+            }
+            setTimeout(() => { if (!rec.recorder) recBtn.textContent = '\u25cf'; }, 2500);
+        };
+        recorder.start(1000);   // gather timesliced chunks while recording
+        recBtn.textContent = '\u25a0 0s';
+        rec.timer = setInterval(() => {
+            if (rec.recorder) {
+                recBtn.textContent = '\u25a0 ' + Math.round((performance.now() - rec.startedAt) / 1000) + 's';
+            }
+        }, 1000);
+    };
+    recBtn.addEventListener('click', () => { if (rec.recorder) recStop(); else recStart(); });
+
     const updateStats = () => {
         document.getElementById('hud-stats').textContent =
             `${count.toLocaleString()} roots · grid ${gridN}×${gridN} · degree ${degree}` +
@@ -1436,6 +1500,7 @@ onmessage = function (ev) {
         cloudMat, tonemapMat,
         count, clipped, gridN, degree,
         get pendingBuilds() { return pendingBuilds; },
+        recording: rec,
     };
 }
 

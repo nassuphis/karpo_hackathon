@@ -143,16 +143,24 @@ sculpture keeps its pass-0 convention.
 - **Progressive stride-lattice tiles**: emit the dump coarse→fine so
   the viewer opens on ~15% coverage while the rest streams. Perceived
   latency, pairs with fan-out.
-- **Content-hash result reuse**: same artifact + size + format → serve
-  the previous dump instantly.
+- **Content-hash result reuse**: **SHIPPED** (2026-07-25) — the
+  artifact job hashes its full output-shaping signature into
+  `renders/{job}/sculpture_cache/{sha1[:16]}/`; repeat Generates serve
+  in seconds via server-side copies into the fixed keys. Repalettes
+  hash differently (pinned); cache writes are best-effort.
+- **Tour recording** (roadmap #5): **SHIPPED** (2026-07-25) — ● in the
+  viewer's tour row records the canvas via MediaRecorder to a
+  downloading mp4/webm, fully client-side; e2e-pinned headless.
 - **WebGPU**: still only justified for compute-driven splatting/OIT at
   15 M+ points AFTER cloud style + hi-res data are routine, and only
   if WebGL wheezes.
 
 ## Sequencing
 
-1. Wave A (viewer worker + algorithms) — viewer-only, unblocks current
-   hi-res data.
-2. Wave B (artifact-only source) — backend + tab header + tests;
-   removes more concept than it adds.
-3. Backlog items only on demonstrated need.
+1. Wave A (viewer worker + algorithms) — DONE.
+2. Wave B (artifact-only source) — DONE.
+3. Wave C (content-hash reuse + tour recording) — DONE.
+4. Remaining backlog (stripe fan-out, progressive tiles, lambda knobs,
+   WebGPU) stays gated on demonstrated need: they exist to fix a
+   slowness Wave B was built to remove — the first deployed artifact
+   run's timing decides.

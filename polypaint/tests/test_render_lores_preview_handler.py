@@ -701,10 +701,22 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(seen["render"]["interpretation"], "scalar_lut")
         self.assertFalse(seen["render"]["zero_background"])
         by_key = {call.kwargs["Key"]: call.kwargs for call in mock_s3.put_object.call_args_list}
-        self.assertEqual(set(by_key), {"renders/j/sculpture_roots.bin", "renders/j/sculpture_palette.png"})
+        cache_json_keys = [k for k in by_key if k.startswith("renders/j/sculpture_cache/") and k.endswith("sculpture.json")]
+        self.assertEqual(len(cache_json_keys), 1)   # the reuse index rode along
+        cached_block = json.loads(by_key[cache_json_keys[0]]["Body"])
+        self.assertEqual(cached_block["source_artifact_id"], "color_run_abc")
+        self.assertNotIn("roots_url", cached_block)   # stamps rebuilt per hit
+        self.assertEqual(
+            set(by_key) - set(cache_json_keys),
+            {"renders/j/sculpture_roots.bin", "renders/j/sculpture_palette.png"})
         self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["Body"], xformed)
         self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["CacheControl"], "no-cache")
         self.assertEqual(by_key["renders/j/sculpture_palette.png"]["ContentType"], "image/png")
+        # the binaries were server-side copied INTO the cache prefix
+        cache_copies = {c.kwargs["Key"] for c in mock_s3.copy_object.call_args_list}
+        cache_prefix = cache_json_keys[0].rsplit("/", 1)[0] + "/"
+        self.assertEqual(cache_copies, {cache_prefix + "roots.bin", cache_prefix + "palette.png"})
+        self.assertEqual(body["cache"], {"hit": False, "prefix": cache_prefix})
         calls = mock_report.call_args_list
         self.assertEqual(calls[0].args, ("j", "sculpture_artifact_9", "running"))
         self.assertEqual(calls[-1].args, ("j", "sculpture_artifact_9", "done"))
@@ -751,6 +763,105 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(body["sculpture"]["grid_n"], 2)
         self.assertEqual(body["sculpture"]["step_count"], 4)
         self.assertEqual(list(seen["palette_raw"]), [0, 2, 8, 10])
+
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_artifact_sculpture_cache_hit_serves_without_solving(self, mock_s3, mock_run):
+        # a prior run's sculpture.json under the content-hash prefix means:
+        # no calc read, no materialization, no raster — just server-side
+        # copies into the fixed keys and freshly stamped URLs
+        from handler_render_lores_preview import handler
+
+        cached_block = {
+            "format": "u16", "grid_n": 4, "degree": 1, "step_count": 16,
+            "pass_count": 1, "roots_bytes": 64,
+            "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -2.0, "max_im": 2.0},
+            "palette": "viridis", "source_artifact_id": "color_run_abc",
+        }
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key.startswith("renders/j/sculpture_cache/") and key.endswith("sculpture.json"):
+                return {"Body": _ChunkBody(json.dumps(cached_block).encode("utf-8"))}
+            if key == "renders/j/color/color_run_abc/meta.json":
+                return {"Body": _ChunkBody(b"{}")}
+            raise AssertionError(f"unexpected key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.head_object.return_value = self._artifact_head()
+
+        with patch("handler_render_lores_preview.report_status") as mock_report:
+            resp = handler(_event(
+                artifact_sculpture={"artifact_id": "color_run_abc"},
+                preview_source_size=4,
+                sculpture_task_id="sculpture_artifact_9",
+            ), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        self.assertTrue(body["cache"]["hit"])
+        sc = body["sculpture"]
+        self.assertEqual(sc["source_artifact_id"], "color_run_abc")
+        self.assertEqual(sc["roots_key"], "renders/j/sculpture_roots.bin")
+        self.assertIn("/renders/j/sculpture_roots.bin?v=", sc["roots_url"])
+        mock_run.assert_not_called()               # no raster
+        mock_s3.put_object.assert_not_called()     # no uploads — copies only
+        copies = {c.kwargs["Key"]: c.kwargs["CopySource"]["Key"] for c in mock_s3.copy_object.call_args_list}
+        self.assertEqual(set(copies), {"renders/j/sculpture_roots.bin", "renders/j/sculpture_palette.png"})
+        self.assertTrue(copies["renders/j/sculpture_roots.bin"].endswith("/roots.bin"))
+        done = mock_report.call_args_list[-1]
+        self.assertEqual(done.args, ("j", "sculpture_artifact_9", "done"))
+        self.assertTrue(done.kwargs["result_data"]["cache_hit"])
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_artifact_sculpture_cache_key_tracks_the_palette(self, mock_s3, mock_run, mock_render):
+        # the signature covers the palette: a repalette of the SAME
+        # artifact_id must hash to a DIFFERENT cache prefix (so it rebuilds
+        # instead of serving the old colors) — run once per palette and pin
+        # that the probed prefixes differ
+        from handler_render_lores_preview import TMP_XFORMED_ROOTS, handler
+
+        calc, roots_key, roots_bytes = self._artifact_calc(4)
+        base_get = self._artifact_get_object(calc, roots_key, roots_bytes, bytes(range(16)))
+        probes = []
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key.startswith("renders/j/sculpture_cache/"):
+                probes.append(key)
+                raise AssertionError("miss")   # nothing cached under any hash
+            return base_get(**kwargs)
+
+        mock_s3.get_object.side_effect = get_object
+
+        def subprocess_fake(cmd, **kwargs):
+            with open(TMP_XFORMED_ROOTS, "wb") as fh:
+                fh.write(b"T" * (16 * 1 * 2 * 2))
+            return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 16, "roots_clipped": 0}), stderr="")
+
+        def render_fake(**kwargs):
+            with open(kwargs["out_path"], "wb") as fh:
+                fh.write(PNG_1X1)
+            return {"file_size": len(PNG_1X1), "preview_file_size": 0}
+
+        mock_run.side_effect = subprocess_fake
+        mock_render.side_effect = render_fake
+
+        prefixes = []
+        for palette in ("viridis", "magma"):
+            probes.clear()
+            mock_s3.head_object.return_value = self._artifact_head(palette=palette)
+            resp = handler(_event(
+                artifact_sculpture={"artifact_id": "color_run_abc"},
+                preview_source_size=4,
+            ), None)
+            self.assertEqual(resp["statusCode"], 200, resp["body"])
+            body = json.loads(resp["body"])
+            self.assertFalse(body["cache"]["hit"])
+            self.assertEqual(len(probes), 1)
+            prefixes.append(body["cache"]["prefix"])
+        self.assertNotEqual(prefixes[0], prefixes[1])   # palette is IN the key
 
     @patch("handler_render_lores_preview.report_status")
     @patch("handler_render_lores_preview.s3")

@@ -356,6 +356,20 @@ Grid-integrity guards: the artifact's `step_scores_grid_n` must equal
 the transport grid (else scores and roots would describe different
 solves), and the requested size must not exceed it.
 
+**Content-hash reuse**: the job hashes everything that shapes the
+output (artifact id, size, format, step_scores key/grid/channels,
+interpretation, palette, background, rotation, viewport, transform
+chain) into `renders/{job}/sculpture_cache/{sha1[:16]}/` holding
+roots.bin + palette.png + sculpture.json. A repeat Generate with the
+same signature serves in seconds: server-side copies into the fixed
+ephemeral keys (viewer + Save contracts untouched) plus freshly
+stamped URLs; `cache_hit` rides the done row. A repalette of the SAME
+artifact_id changes the palette field → different hash → full rebuild
+(pinned: the two palettes' probed prefixes differ). Cache writes are
+best-effort — a failed write never fails the run; missing cached
+binaries fall through to a full run. The prefix lives under
+`renders/{job}/`, so job cleanup collects it.
+
 ## Sizes
 
 lores/logical/recompute previews run ≤256²; 256² × degree 30 ≈ 2M points

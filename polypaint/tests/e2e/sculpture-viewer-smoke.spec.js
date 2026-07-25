@@ -1345,3 +1345,60 @@ test('u16 format: dequantizes over the viewport, sentinel pairs clip', async ({ 
   expect(st.x0).toBeCloseTo(0.25, 4);
   expect(st.z0).toBeCloseTo(0.125, 4);
 });
+
+test('recording: canvas stream to a downloadable video blob', async ({ page }) => {
+  await page.goto(VIEWER);
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 4;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgb(10,20,30)';
+    g.fillRect(0, 0, 4, 4);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  await page.route('**/fx/recroots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: rootsBuffer(4),
+  }));
+  await page.route('**/fx/recpal.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  const frag = new URLSearchParams({
+    v: '1', r: '/fx/recroots.bin', p: '/fx/recpal.png', n: '4', d: '3', s: '16',
+    x0: '-1', x1: '1', y0: '-1', y1: '1', t: 'rec fixture',
+  });
+  await page.goto('about:blank');
+  await page.goto(VIEWER + '#' + frag.toString());
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const built = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!built) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+  const supported = await page.evaluate(() =>
+    !!window.MediaRecorder && !!HTMLCanvasElement.prototype.captureStream);
+  if (!supported) return;   // environment without capture — nothing to pin
+
+  // record ~1.5s of live frames (the loop renders continuously), then stop
+  await page.click('#btn-tour-rec');
+  await expect(page.locator('#btn-tour-rec')).toHaveText(/\u25a0/);
+  const active = await page.evaluate(() => {
+    const r = window.__sculptureViewer.recording;
+    return !!(r.recorder && r.recorder.state === 'recording');
+  });
+  expect(active).toBe(true);
+  await page.waitForTimeout(1500);
+  await page.click('#btn-tour-rec');
+  await page.waitForFunction(() => !!window.__lastSculptureRecording, { timeout: 10000 });
+  const recd = await page.evaluate(() => window.__lastSculptureRecording);
+  // a real encoded video came out of the canvas stream
+  expect(recd.bytes).toBeGreaterThan(1000);
+  expect(recd.mime).toMatch(/video\/(webm|mp4)/);
+  // the button settles back to the idle dot after its lingering result
+  await expect(page.locator('#btn-tour-rec')).toHaveText('\u25cf', { timeout: 5000 });
+  // recorder fully released — a second recording can start
+  const released = await page.evaluate(() => !window.__sculptureViewer.recording.recorder);
+  expect(released).toBe(true);
+});

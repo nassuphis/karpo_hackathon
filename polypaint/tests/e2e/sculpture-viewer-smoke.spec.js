@@ -12,6 +12,14 @@ test.use({ launchOptions: { args: ['--enable-unsafe-swiftshader', '--use-gl=angl
 
 const VIEWER = 'http://localhost:8765/sculpture.html';
 
+// line-primitive topology (ribbons/threads/clu) is built in a Web Worker —
+// after any control change that triggers a build, wait for the refresh
+// chain (worker job + buffer emit) to drain before reading geometry
+const waitBuildsIdle = (page) => page.waitForFunction(() => {
+  const v = window.__sculptureViewer;
+  return !!v && v.pendingBuilds === 0;
+}, { timeout: 20000 });
+
 // grid 4x4, degree 3: every step carries roots A=(0.4,0), B=(-0.4,0),
 // C=(0,0.4) — all inside the [-1,1]^2 viewport, and the triangle's angular
 // tour (C, A, B about the centroid) differs from file order (A, B, C), so
@@ -118,36 +126,58 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   expect(st.x4).toBeCloseTo(0.2, 5);    // root A: re=0.4 in a side-2 viewport
   expect(st.c4).toEqual([60, 180, 17]);
 
-  // defaults: show=points (ribbons built but hidden), connect=nearest,
-  // height=0.1. Nearest = greedy chain from the farthest-from-centroid
-  // root: starts at A (tie with B broken by file position), hops to C
-  // (0.08 away vs B at 0.16) then B — an OPEN path A->C->B that neither
-  // file order (A->B->C) nor the angle tour (C->A->B closed) produces.
+  // defaults: show=points only — line topology is LAZY (worker-built on
+  // first enable; at 384^2 the old eager nearest build froze boot), so the
+  // ribbons geometry stays empty until rib is checked.
+  const lazy = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    const pos = v.ribbons.geometry.getAttribute('position');
+    return {
+      verts: pos ? pos.count : 0,
+      pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible,
+      scaleY: v.sculpt.scale.y,
+    };
+  });
+  expect(lazy.verts).toBe(0);           // nothing built before rib is shown
+  expect(lazy.pointsVis).toBe(true);    // default show=points
+  expect(lazy.ribbonsVis).toBe(false);
+  expect(lazy.scaleY).toBeCloseTo(0.1, 5);   // default height=0.1
+  // enable ribbons: connect=nearest. Nearest = greedy chain from the
+  // farthest-from-centroid root: starts at A (tie with B broken by file
+  // position), hops to C (0.08 away vs B at 0.16) then B — an OPEN path
+  // A->C->B that neither file order (A->B->C) nor the angle tour
+  // (C->A->B closed) produces.
+  await page.evaluate(() => {
+    const ctl = document.getElementById('ctl-show-ribbons');
+    ctl.checked = true;
+    ctl.dispatchEvent(new Event('change'));
+  });
+  await waitBuildsIdle(page);
   const rb = await page.evaluate(() => {
     const v = window.__sculptureViewer;
     const pos = v.ribbons.geometry.getAttribute('position');
     return {
       verts: pos.count,
       v0: [pos.array[0], pos.array[2]], v1: [pos.array[3], pos.array[5]],
-      pointsVis: v.points.visible, ribbonsVis: v.ribbons.visible,
-      scaleY: v.sculpt.scale.y,
+      ribbonsVis: v.ribbons.visible,
       hud: document.getElementById('hud-stats').textContent || '',
     };
   });
   expect(rb.verts).toBe(64);            // 16 solves x 2 open segments x 2 verts
-  expect(rb.pointsVis).toBe(true);      // default show=points
-  expect(rb.ribbonsVis).toBe(false);
-  expect(rb.scaleY).toBeCloseTo(0.1, 5);   // default height=0.1
+  expect(rb.ribbonsVis).toBe(true);
   expect(rb.hud).toContain('32 ribbon segments');
   expect(rb.v0[0]).toBeCloseTo(0.2, 5);    // A leads (farthest, tie-broken)
   expect(rb.v1[0]).toBeCloseTo(0.0, 5);    // nearest hop: C, not B
   expect(rb.v1[1]).toBeCloseTo(-0.2, 5);
   // angle mode tours the triangle around its centroid CLOSED (3 segments),
   // starting at C (lowest angle: z=-0.2) — the file order A,B,C reorders
-  const ao = await page.evaluate(() => {
+  await page.evaluate(() => {
     const ctl = document.getElementById('ctl-order');
     ctl.value = 'angle';
     ctl.dispatchEvent(new Event('change'));
+  });
+  await waitBuildsIdle(page);
+  const ao = await page.evaluate(() => {
     const v = window.__sculptureViewer;
     const pos = v.ribbons.geometry.getAttribute('position');
     return {
@@ -163,10 +193,13 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   expect(ao.v1[0]).toBeCloseTo(0.2, 5);
   expect(ao.v1[1]).toBeCloseTo(0.0, 5);
   // file order draws the solver's own row order OPEN (A->B, B->C)
-  const fl = await page.evaluate(() => {
+  await page.evaluate(() => {
     const ctl = document.getElementById('ctl-order');
     ctl.value = 'file';
     ctl.dispatchEvent(new Event('change'));
+  });
+  await waitBuildsIdle(page);
+  const fl = await page.evaluate(() => {
     const pos = window.__sculptureViewer.ribbons.geometry.getAttribute('position');
     return { verts: pos.count, x0: pos.array[0], x1: pos.array[3], z1: pos.array[5] };
   });
@@ -197,6 +230,7 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
     return out;
   });
   expect(vis).toEqual([[false, true], [true, false], [true, true]]);
+  await waitBuildsIdle(page);   // re-checking rib re-emits from cached topology
 
   // len% quantile: segments emit length-sorted, so the slider is a pure
   // drawRange. Order is FILE here: 32 segs = 16 short (B->C 0.283) + 16
@@ -231,9 +265,15 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
   // 3 slices -> levels floor(t2*3) = {0,0,1,2} -> Y in {-0.5, 0, +0.5}; whole
   // ribbons land on their plate (ribbon Y matches its step's plate). Off
   // restores the continuous Y.
-  const sl = await page.evaluate(() => {
+  const sl = await page.evaluate(async () => {
     const v = window.__sculptureViewer;
     const ctl = document.getElementById('ctl-slices');
+    // points move synchronously; ribbons re-emit off the cached topology in
+    // a microtask — drain the refresh chain before reading their Y
+    const idle = () => new Promise((res) => {
+      const chk = () => (v.pendingBuilds === 0 ? res() : setTimeout(chk, 10));
+      chk();
+    });
     const distinctY = (attr) => {
       const ys = new Set();
       for (let i = 0; i < attr.count; i++) ys.add(Math.round(attr.array[i * 3 + 1] * 1e5) / 1e5);
@@ -241,6 +281,7 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
     };
     ctl.value = '3';
     ctl.dispatchEvent(new Event('change'));
+    await idle();
     const at3 = {
       points: distinctY(v.points.geometry.getAttribute('position')),
       ribbons: distinctY(v.ribbons.geometry.getAttribute('position')),
@@ -249,6 +290,7 @@ test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow
     };
     ctl.value = '0';
     ctl.dispatchEvent(new Event('change'));
+    await idle();
     const off = {
       y4: v.points.geometry.getAttribute('position').array[4 * v.degree * 3 + 1],
       hud: document.getElementById('hud-stats').textContent || '',
@@ -480,11 +522,16 @@ test('threads: mutual-nearest matching beats file order; slices split connectivi
     return;
   }
 
-  const st = await page.evaluate(() => {
+  const st = await page.evaluate(async () => {
     const v = window.__sculptureViewer;
+    const idle = () => new Promise((res) => {
+      const chk = () => (v.pendingBuilds === 0 ? res() : setTimeout(chk, 10));
+      chk();
+    });
     const thr = document.getElementById('ctl-show-threads');
     thr.checked = true;
     thr.dispatchEvent(new Event('change'));
+    await idle();                       // worker matching + emit
     const read = () => {
       const pos = v.threads.geometry.getAttribute('position');
       const segs = [];
@@ -500,9 +547,11 @@ test('threads: mutual-nearest matching beats file order; slices split connectivi
     const slicesCtl = document.getElementById('ctl-slices');
     slicesCtl.value = '2';
     slicesCtl.dispatchEvent(new Event('change'));
+    await idle();                       // slice gate re-emits from cache
     const sliced = read();
     slicesCtl.value = '0';
     slicesCtl.dispatchEvent(new Event('change'));
+    await idle();
     return { continuous, sliced, visible: v.threads.visible };
   });
   expect(st.visible).toBe(true);
@@ -527,11 +576,17 @@ test('threads: mutual-nearest matching beats file order; slices split connectivi
   // z = t1 transposes the thread adjacency: matching runs along t1 within a
   // t2 column. This fixture's roots depend only on col, so t1-threads
   // connect IDENTICAL xz positions — pure vertical segments, dy = 0.25
-  const zt = await page.evaluate(() => {
+  const zt = await page.evaluate(async () => {
+    const v = window.__sculptureViewer;
+    const idle = () => new Promise((res) => {
+      const chk = () => (v.pendingBuilds === 0 ? res() : setTimeout(chk, 10));
+      chk();
+    });
     const ctl = document.getElementById('ctl-zaxis');
     ctl.value = 't1';
     ctl.dispatchEvent(new Event('change'));
-    const pos = window.__sculptureViewer.threads.geometry.getAttribute('position');
+    await idle();                       // t1 topology is a fresh worker build
+    const pos = v.threads.geometry.getAttribute('position');
     const segs = [];
     for (let i = 0; i < pos.count; i += 2) {
       segs.push([
@@ -542,6 +597,7 @@ test('threads: mutual-nearest matching beats file order; slices split connectivi
     }
     ctl.value = 't2';
     ctl.dispatchEvent(new Event('change'));
+    await idle();
     return segs;
   });
   expect(zt).toHaveLength(24);   // 4 cols x 3 row-pairs x 2 roots
@@ -598,6 +654,12 @@ test('nearest ribbons never bridge clusters: long chain chords are cut', async (
     expect(msg).toMatch(/WebGL/i);
     return;
   }
+  await page.evaluate(() => {
+    const ctl = document.getElementById('ctl-show-ribbons');
+    ctl.checked = true;
+    ctl.dispatchEvent(new Event('change'));
+  });
+  await waitBuildsIdle(page);
   const st = await page.evaluate(() => {
     const v = window.__sculptureViewer;
     const pos = v.ribbons.geometry.getAttribute('position');
@@ -749,9 +811,16 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
   await page.waitForFunction(() =>
     !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
   { timeout: 8000 });
+  const booted = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!booted) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+  // the saved view shows ribbons + clu — their worker builds run at boot
+  await waitBuildsIdle(page);
   const st = await page.evaluate(() => {
     const v = window.__sculptureViewer;
-    if (!v) return { built: false, msg: document.getElementById('message-title').textContent || '' };
     const val = (id) => document.getElementById(id).value;
     const distinctY = () => {
       const a = v.points.geometry.getAttribute('position');
@@ -760,7 +829,7 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
       return ys.size;
     };
     return {
-      built: true, count: v.count,
+      count: v.count,
       title: document.getElementById('hud-title').textContent,
       point: val('ctl-size'), height: val('ctl-height'), slices: val('ctl-slices'),
       style: val('ctl-style'), order: val('ctl-order'), tourMode: val('ctl-tour-mode'),
@@ -777,10 +846,6 @@ test('saved-sculpture mode: no hash params, boots from sibling meta.json', async
       tourPlaying: v.tour.state.playing,
     };
   });
-  if (!st.built) {
-    expect(st.msg).toMatch(/WebGL/i);
-    return;
-  }
   expect(st.count).toBe(48);
   expect(st.title).toBe('saved fixture');
   // shares open CLEAN: menu OFF by default (phone screens); tap to open
@@ -1026,11 +1091,12 @@ test('tours: orbit and weave follow their parametric paths; interaction stops th
   expect(gr.low.first).toBeCloseTo(-1.8, 9);      // starts circling at your level
 });
 
-test('clu ribbons: per-column k-means arcs, chained from the far end, never bridged', async ({ page }) => {
+test('clu ribbons: per-column k-means arcs, chained along the principal axis, never bridged', async ({ page }) => {
   // per column, each solve carries one root near x=-0.5 and one near
   // x=+0.5, drifting slightly with t1 — two clean trajectory arcs. k-means
   // (k = degree = 2) must separate them; each cluster chains its 4 points
-  // end-to-end (3 tiny segments), and no segment may bridge the arcs.
+  // end-to-end along its principal axis (3 tiny segments), and no segment
+  // may bridge the arcs.
   await page.goto('http://localhost:8765/sculpture.html');
   const palB64 = await page.evaluate(() => {
     const c = document.createElement('canvas');
@@ -1071,11 +1137,17 @@ test('clu ribbons: per-column k-means arcs, chained from the far end, never brid
     expect(msg).toMatch(/WebGL/i);
     return;
   }
+  await page.evaluate(() => {
+    // rib on too: the untouched-ribbons pin needs nearest ribbons built
+    for (const id of ['ctl-show-ribbons', 'ctl-show-clu']) {
+      const ctl = document.getElementById(id);
+      ctl.checked = true;
+      ctl.dispatchEvent(new Event('change'));
+    }
+  });
+  await waitBuildsIdle(page);
   const st = await page.evaluate(() => {
     const v = window.__sculptureViewer;
-    const ctl = document.getElementById('ctl-show-clu');
-    ctl.checked = true;
-    ctl.dispatchEvent(new Event('change'));
     const pos = v.clu.geometry.getAttribute('position');
     let maxLen = 0, bridge = 0, notFlat = 0;
     for (let i = 0; i < pos.count; i += 2) {
@@ -1097,6 +1169,40 @@ test('clu ribbons: per-column k-means arcs, chained from the far end, never brid
   expect(st.bridge).toBe(0);                 // arcs never cross-stitched
   expect(st.maxLen).toBeLessThan(0.015);     // 0.01 steps only — no chords
   expect(st.notFlat).toBe(0);                // slice curves are flat per column
+
+  // cancel: request a FRESH topology (z=t1 is uncached) and uncheck clu in
+  // the same synchronous block — the worker round trip cannot complete
+  // within one tick, so the cancel always lands first. The refresh chain
+  // must drain without emitting: the geometry keeps its t2 build.
+  const cancelled = await page.evaluate(async () => {
+    const v = window.__sculptureViewer;
+    const idle = () => new Promise((res) => {
+      const chk = () => (v.pendingBuilds === 0 ? res() : setTimeout(chk, 10));
+      chk();
+    });
+    const zaxis = document.getElementById('ctl-zaxis');
+    const clu = document.getElementById('ctl-show-clu');
+    zaxis.value = 't1';
+    zaxis.dispatchEvent(new Event('change'));   // kicks the t1 clu build
+    clu.checked = false;
+    clu.dispatchEvent(new Event('change'));     // cancels it, same tick
+    await idle();
+    const afterCancel = {
+      verts: v.clu.geometry.getAttribute('position').count,
+      visible: v.clu.visible,
+      build: document.getElementById('hud-build').textContent || '',
+    };
+    clu.checked = true;
+    clu.dispatchEvent(new Event('change'));     // fresh t1 build, for real
+    await idle();
+    return { afterCancel, rebuiltVerts: v.clu.geometry.getAttribute('position').count };
+  });
+  expect(cancelled.afterCancel.verts).toBe(48);   // t2 emission untouched
+  expect(cancelled.afterCancel.visible).toBe(false);
+  expect(cancelled.afterCancel.build).toBe('');   // no dangling progress line
+  // t1 on this fixture: per-row coincident quadruples — still 2 clusters x
+  // 3 chain segments x 4 columns after the real rebuild
+  expect(cancelled.rebuiltVerts).toBe(48);
 });
 
 test('cloud style: additive splats through the tone-mapped pipeline', async ({ page }) => {

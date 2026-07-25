@@ -28,6 +28,20 @@ scale (~300 M ops each), just milder.
 
 ## Wave A — viewer: off-thread builds + linear-ish algorithms
 
+**SHIPPED** (2026-07-25). As planned below, with these outcomes: all
+three line primitives are now lazy worker-built topologies (xz-only,
+cached per key — ribbons per connect order, threads/clu per z axis)
+and the main thread only re-emits Y-aware buffers; boot is instant at
+any size because nothing builds until its checkbox is on. The len%
+sort became a 2048-bucket O(n) length sort (the comparator argsort was
+itself seconds at 6.5M segments). clu got the sampled-fit k-means and
+principal-axis chains. Progress lands in a `#hud-build` line; uncheck
+cancels deterministically. Deviations from the plan: no worker path
+for the thread matcher's repair phase specifically (the whole matcher
+moved as-is), and the progress-text pin was dropped as inherently
+flaky on fast machines — the cancel pin covers the protocol instead.
+Details in polynomial-sculptures.md "Off-thread topology".
+
 Viewer-only (`sculpture.html`); unblocks already-generated hi-res data.
 
 1. **Inline Web Worker** (Blob URL, no new files): clu, thread

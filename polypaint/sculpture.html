@@ -37,6 +37,7 @@
   #hud-title { font-size: 14px; color: #e8eef5; }
   #hud-stats { font-size: 11px; color: #778599; margin-top: 4px; }
   #hud-hint { font-size: 11px; color: #5b6b80; margin-top: 2px; }
+  #hud-build { font-size: 11px; color: #e94560; margin-top: 2px; }
   #btn-menu { position: fixed; top: 10px; right: 12px; z-index: 6;
               background: rgba(10,14,22,0.82); border: 1px solid #232b3a;
               border-radius: 6px; color: #cfd8e3; font: inherit; font-size: 16px;
@@ -87,6 +88,7 @@
   <div id="hud-title">PolyPaint sculpture</div>
   <div id="hud-stats">loading…</div>
   <div id="hud-hint"></div>
+  <div id="hud-build"></div>
 </div>
 <button type="button" id="btn-menu" title="Show / hide controls">&#9776;</button>
 <div id="panel">
@@ -363,19 +365,61 @@ async function boot() {
     const ribbons = new THREE.LineSegments(
         new THREE.BufferGeometry(),
         new THREE.LineBasicMaterial({ vertexColors: true }));
-    let ribbonSegments = 0;
+    let ribbonSegments = 0, threadSegments = 0, cluSegCount = 0;
     let applyLenqHook = null;   // assigned in the controls block; re-applied after rebuilds
-    // segments are emitted SORTED ascending by length, so the len% quantile
-    // slider is a plain setDrawRange — O(1) scrubbing, no geometry rebuild.
-    const fillSortedSegments = (geom, segPairs) => {
-        const n = segPairs.length / 3;
-        const orderIdx = Array.from({ length: n }, (_, i) => i);
-        orderIdx.sort((a, b) => segPairs[a * 3 + 2] - segPairs[b * 3 + 2]);
+    // threads: root trajectories along the z axis — adjacent solves matched
+    // mutual-nearest on complex-plane (xz) distance. clu: per z-column
+    // k-means, each cluster chained along its principal axis. Both are
+    // TOPOLOGY (xz only) and are computed in the worker below.
+    const threads = new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ vertexColors: true }));
+    const cluRibbons = new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ vertexColors: true }));
+    const segLen2 = (i0, i1) => {
+        const dx = positions[i0 * 3] - positions[i1 * 3];
+        const dy = positions[i0 * 3 + 1] - positions[i1 * 3 + 1];
+        const dz = positions[i0 * 3 + 2] - positions[i1 * 3 + 2];
+        return dx * dx + dy * dy + dz * dz;
+    };
+    // segments are emitted ASCENDING by length, so the len% quantile slider
+    // is a plain setDrawRange — O(1) scrubbing, no geometry rebuild. The
+    // exact comparator argsort took seconds at 6.5M segments; a 2048-bucket
+    // length sort is O(n) and quantile-identical at slider resolution.
+    // Y is read live (post-slices) and the threads slice gate (threads never
+    // bridge plates) applies here, so re-emitting from cached topology after
+    // a slices/z-axis change is linear — no clustering or matching rerun.
+    const emitSortedSegments = (obj, pairs, segTa, segTb) => {
+        const S = Math.max(0, parseInt(document.getElementById('ctl-slices').value, 10) || 0);
+        const gated = !!segTa && S > 0;
+        const levelOf = t => Math.min(S - 1, Math.floor(t * S));
+        const total = pairs.length / 2;
+        const keep = new Int32Array(total);
+        const lens = new Float32Array(total);
+        let n = 0, maxLen = 0;
+        for (let s = 0; s < total; s++) {
+            if (gated && levelOf(segTa[s]) !== levelOf(segTb[s])) continue;
+            const l = Math.sqrt(segLen2(pairs[2 * s], pairs[2 * s + 1]));
+            keep[n] = s;
+            lens[n] = l;
+            if (l > maxLen) maxLen = l;
+            n++;
+        }
+        const B = 2048;
+        const bof = l => maxLen > 0 ? Math.min(B - 1, Math.floor((l / maxLen) * B)) : 0;
+        const cnt = new Int32Array(B);
+        for (let i = 0; i < n; i++) cnt[bof(lens[i])]++;
+        const slot = new Int32Array(B);
+        for (let b = 1; b < B; b++) slot[b] = slot[b - 1] + cnt[b - 1];
+        const order = new Int32Array(n);
+        for (let i = 0; i < n; i++) order[slot[bof(lens[i])]++] = keep[i];
         const lp = new Float32Array(n * 2 * 3);
         const lc = new Uint8Array(n * 2 * 3);
         let lv = 0;
-        for (const t of orderIdx) {
-            for (const i of [segPairs[t * 3], segPairs[t * 3 + 1]]) {
+        for (let t = 0; t < n; t++) {
+            const s = order[t];
+            for (const i of [pairs[2 * s], pairs[2 * s + 1]]) {
                 lp[lv * 3] = positions[i * 3];
                 lp[lv * 3 + 1] = positions[i * 3 + 1];
                 lp[lv * 3 + 2] = positions[i * 3 + 2];
@@ -385,332 +429,480 @@ async function boot() {
                 lv++;
             }
         }
+        const geom = new THREE.BufferGeometry();
         geom.setAttribute('position', new THREE.BufferAttribute(lp, 3));
         geom.setAttribute('color', new THREE.BufferAttribute(lc, 3, true));
+        const old = obj.geometry;
+        obj.geometry = geom;
+        if (old) old.dispose();
         return n;
     };
-    const segLen2 = (i0, i1) => {
-        const dx = positions[i0 * 3] - positions[i1 * 3];
-        const dy = positions[i0 * 3 + 1] - positions[i1 * 3 + 1];
-        const dz = positions[i0 * 3 + 2] - positions[i1 * 3 + 2];
-        return dx * dx + dy * dy + dz * dz;
+
+    // ---- topology worker ------------------------------------------------
+    // All the O(n^2)-flavored geometry topology (per-solve ribbon chains,
+    // adjacent-solve thread matching, per-column clu clustering) runs OFF
+    // the main thread: at 384^2 x degree ~45 the synchronous clu build was
+    // 7-8 BILLION ops — tens of seconds of frozen UI in which even a busy
+    // hint could not paint, because the compute lane IS the paint lane.
+    // Topology depends only on the xz (complex-plane) layout, never on Y,
+    // so the worker holds one immutable copy of the positions and results
+    // cache per key (ribbons: connect order, threads/clu: z axis). Jobs run
+    // in ~40ms slices with progress posts in between: the page keeps
+    // rendering, and unchecking a primitive cancels its build mid-flight.
+    const WORKER_SRC = `
+var P = null, SO = null, gridN = 0, degree = 0, passSteps = 0;
+var job = null, queue = [], pumpScheduled = false;
+function stepAt(r, c) { return r * gridN + ((r & 1) ? (gridN - 1 - c) : c); }
+function I32Buf() {
+    var a = new Int32Array(1 << 16), n = 0;
+    return {
+        push2: function (x, y) {
+            if (n + 2 > a.length) { var b = new Int32Array(a.length * 2); b.set(a); a = b; }
+            a[n++] = x; a[n++] = y;
+        },
+        trim: function () { return a.slice(0, n); },
     };
-    // clu: per z-column, k-means the WHOLE slice (every root across the
-    // varying parameter) and chain each cluster from its FARTHEST point —
-    // mid-curve starts guarantee a backtrack chord (measured on real jobs).
-    // The clusters approximate the root-trajectory arcs, so clu ribbons are
-    // the slice curves themselves. Deterministic: strided init + 8 Lloyd
-    // iterations, no randomness (e2e must reproduce exactly).
-    function emitClusterChain(members, mx, mz, segPairs) {
-        const m = members.length;
-        if (m < 2) return;
-        let start = 0, bd = -1;
-        for (let a = 0; a < m; a++) {
-            const dx = positions[members[a] * 3] - mx;
-            const dz = positions[members[a] * 3 + 2] - mz;
-            const d = dx * dx + dz * dz;
-            if (d > bd) { bd = d; start = a; }
+}
+function F32Buf() {
+    var a = new Float32Array(1 << 16), n = 0;
+    return {
+        push: function (x) {
+            if (n + 1 > a.length) { var b = new Float32Array(a.length * 2); b.set(a); a = b; }
+            a[n++] = x;
+        },
+        trim: function () { return a.slice(0, n); },
+    };
+}
+// per-solve ribbon chain — exactly the former main-thread logic: angle tours
+// the constellation about its centroid (closed for 3+ roots), nearest greedy-
+// chains from the root farthest from the centroid and cuts segments longer
+// than 2.5x the solve's median nearest-neighbor distance (those bridges are
+// cluster topology, not chain error — 2-opt measured useless), file draws
+// the solver's own order (a fossil of the warm-start chain).
+function ribbonStep(order, step, out) {
+    var a = SO[step], b = SO[step + 1];
+    var k = b - a;
+    if (k < 2) return;
+    var idx = new Array(k);
+    for (var i = 0; i < k; i++) idx[i] = a + i;
+    var mx = 0, mz = 0, t = 0, dx = 0, dz = 0, d = 0;
+    if (order === 'angle') {
+        for (i = 0; i < k; i++) { mx += P[idx[i] * 3]; mz += P[idx[i] * 3 + 2]; }
+        mx /= k; mz /= k;
+        idx.sort(function (p, q) {
+            return Math.atan2(P[p * 3 + 2] - mz, P[p * 3] - mx)
+                 - Math.atan2(P[q * 3 + 2] - mz, P[q * 3] - mx);
+        });
+    } else if (order === 'nearest') {
+        for (i = 0; i < k; i++) { mx += P[idx[i] * 3]; mz += P[idx[i] * 3 + 2]; }
+        mx /= k; mz /= k;
+        var start = 0, bestD = -1;
+        for (t = 0; t < k; t++) {
+            dx = P[idx[t] * 3] - mx; dz = P[idx[t] * 3 + 2] - mz;
+            d = dx * dx + dz * dz;
+            if (d > bestD) { bestD = d; start = t; }
         }
-        const used = new Uint8Array(m);
-        const seq = [members[start]];
+        var used = new Uint8Array(k);
+        var seq = [idx[start]];
         used[start] = 1;
-        while (seq.length < m) {
-            const cur = seq[seq.length - 1];
-            const cxx = positions[cur * 3], czz = positions[cur * 3 + 2];
-            let best = -1, dmin = Infinity;
-            for (let a = 0; a < m; a++) {
-                if (used[a]) continue;
-                const dx = positions[members[a] * 3] - cxx;
-                const dz = positions[members[a] * 3 + 2] - czz;
-                const d = dx * dx + dz * dz;
-                if (d < dmin) { dmin = d; best = a; }
+        while (seq.length < k) {
+            var cur = seq[seq.length - 1];
+            var cx0 = P[cur * 3], cz0 = P[cur * 3 + 2];
+            var best = -1, bd = Infinity;
+            for (t = 0; t < k; t++) {
+                if (used[t]) continue;
+                dx = P[idx[t] * 3] - cx0; dz = P[idx[t] * 3 + 2] - cz0;
+                d = dx * dx + dz * dz;
+                if (d < bd) { bd = d; best = t; }
             }
             used[best] = 1;
-            seq.push(members[best]);
+            seq.push(idx[best]);
         }
-        let cutSq = Infinity;
-        if (m > 2) {
-            const mins = new Float64Array(m);
-            for (let a = 0; a < m; a++) {
-                const ax = positions[members[a] * 3], az = positions[members[a] * 3 + 2];
-                let dmin = Infinity;
-                for (let b = 0; b < m; b++) {
-                    if (b === a) continue;
-                    const dx = ax - positions[members[b] * 3];
-                    const dz = az - positions[members[b] * 3 + 2];
-                    const d = dx * dx + dz * dz;
-                    if (d < dmin) dmin = d;
-                }
-                mins[a] = dmin;
+        idx = seq;
+    }
+    var close = order === 'angle' && k >= 3;
+    var segs = close ? k : k - 1;
+    var cutSq = Infinity;
+    if (order === 'nearest' && k > 2) {
+        var mins = new Float64Array(k);
+        for (var a2 = 0; a2 < k; a2++) {
+            var ax = P[idx[a2] * 3], az = P[idx[a2] * 3 + 2];
+            var bdm = Infinity;
+            for (var b2 = 0; b2 < k; b2++) {
+                if (b2 === a2) continue;
+                dx = ax - P[idx[b2] * 3]; dz = az - P[idx[b2] * 3 + 2];
+                d = dx * dx + dz * dz;
+                if (d < bdm) bdm = d;
             }
-            const sorted = Array.from(mins).sort((x, y) => x - y);
-            cutSq = 6.25 * sorted[m >> 1];
+            mins[a2] = bdm;
         }
-        for (let t = 0; t + 1 < seq.length; t++) {
-            const i0 = seq[t], i1 = seq[t + 1];
-            const dx = positions[i0 * 3] - positions[i1 * 3];
-            const dz = positions[i0 * 3 + 2] - positions[i1 * 3 + 2];
+        var sorted = Array.prototype.slice.call(mins).sort(function (x, y) { return x - y; });
+        cutSq = 6.25 * sorted[k >> 1];   // (2.5 x median NN)^2
+    }
+    for (t = 0; t < segs; t++) {
+        var i0 = idx[t], i1 = idx[(t + 1) % k];
+        if (cutSq !== Infinity) {
+            dx = P[i0 * 3] - P[i1 * 3]; dz = P[i0 * 3 + 2] - P[i1 * 3 + 2];
             if (dx * dx + dz * dz > cutSq) continue;
-            segPairs.push(i0, i1, segLen2(i0, i1));
+        }
+        out.push2(i0, i1);
+    }
+}
+// mutual-nearest matching between two solves, greedy repair for leftovers
+// (root collisions are genuinely ambiguous; warm-started solves are
+// near-identity anyway) — verbatim port of the former main-thread matcher.
+function matchPair(a0, ka, b0, kb) {
+    var D = new Float32Array(ka * kb);
+    for (var i = 0; i < ka; i++) {
+        var ax = P[(a0 + i) * 3], az = P[(a0 + i) * 3 + 2];
+        for (var j = 0; j < kb; j++) {
+            var dx = ax - P[(b0 + j) * 3];
+            var dz = az - P[(b0 + j) * 3 + 2];
+            D[i * kb + j] = dx * dx + dz * dz;
         }
     }
-    function cluSegments(segPairs) {
-        const axis = document.getElementById('ctl-zaxis').value === 't1' ? 't1' : 't2';
-        const pts = [];
-        for (let zi = 0; zi < gridN; zi++) {
-            pts.length = 0;
-            for (let vi = 0; vi < gridN; vi++) {
-                const st = axis === 't1' ? stepAt(zi, vi) : stepAt(vi, zi);
-                for (let i = stepOffsets[st]; i < stepOffsets[st + 1]; i++) pts.push(i);
+    var rowMin = new Int32Array(ka), colMin = new Int32Array(kb);
+    for (i = 0; i < ka; i++) {
+        var best = 0;
+        for (j = 1; j < kb; j++) if (D[i * kb + j] < D[i * kb + best]) best = j;
+        rowMin[i] = best;
+    }
+    for (j = 0; j < kb; j++) {
+        best = 0;
+        for (i = 1; i < ka; i++) if (D[i * kb + j] < D[best * kb + j]) best = i;
+        colMin[j] = best;
+    }
+    var usedA = new Uint8Array(ka), usedB = new Uint8Array(kb);
+    var out = [];
+    for (i = 0; i < ka; i++) {
+        j = rowMin[i];
+        if (colMin[j] === i) { out.push(a0 + i, b0 + j); usedA[i] = 1; usedB[j] = 1; }
+    }
+    var ua = [], ub = [];
+    for (i = 0; i < ka; i++) if (!usedA[i]) ua.push(i);
+    for (j = 0; j < kb; j++) if (!usedB[j]) ub.push(j);
+    if (ua.length && ub.length) {
+        var cand = [];
+        for (var u = 0; u < ua.length; u++) {
+            for (var v = 0; v < ub.length; v++) {
+                cand.push([D[ua[u] * kb + ub[v]], ua[u], ub[v]]);
             }
-            const n = pts.length;
-            if (n < 2) continue;
-            const k = Math.max(1, Math.min(degree, n));
-            const cx = new Float64Array(k), cz = new Float64Array(k);
-            for (let j = 0; j < k; j++) {
-                const p = pts[Math.floor(j * n / k)];
-                cx[j] = positions[p * 3];
-                cz[j] = positions[p * 3 + 2];
+        }
+        cand.sort(function (p, q) { return p[0] - q[0]; });
+        for (var c = 0; c < cand.length; c++) {
+            i = cand[c][1]; j = cand[c][2];
+            if (usedA[i] || usedB[j]) continue;
+            usedA[i] = 1; usedB[j] = 1;
+            out.push(a0 + i, b0 + j);
+        }
+    }
+    return out;
+}
+// clu chain: order the cluster's points along its PRINCIPAL AXIS (closed-
+// form 2x2 eigenvector), connect consecutive, cut gaps beyond 2.5x the
+// median consecutive gap. Trajectory arcs are near-1D, so this is
+// O(m log m) where the greedy chain was O(m^2) — and it cannot produce
+// greedy's mid-cluster backtrack chords.
+function chainCluster(mem, out) {
+    var m = mem.length;
+    if (m < 2) return;
+    var mx = 0, mz = 0;
+    for (var a = 0; a < m; a++) { mx += P[mem[a] * 3]; mz += P[mem[a] * 3 + 2]; }
+    mx /= m; mz /= m;
+    var sxx = 0, sxz = 0, szz = 0, dx = 0, dz = 0;
+    for (a = 0; a < m; a++) {
+        dx = P[mem[a] * 3] - mx; dz = P[mem[a] * 3 + 2] - mz;
+        sxx += dx * dx; sxz += dx * dz; szz += dz * dz;
+    }
+    var th = 0.5 * Math.atan2(2 * sxz, sxx - szz);
+    var axv = Math.cos(th), azv = Math.sin(th);
+    var proj = new Float64Array(m);
+    var ord = new Array(m);
+    for (a = 0; a < m; a++) {
+        proj[a] = (P[mem[a] * 3] - mx) * axv + (P[mem[a] * 3 + 2] - mz) * azv;
+        ord[a] = a;
+    }
+    ord.sort(function (p, q) { return proj[p] - proj[q]; });
+    var g2 = new Float64Array(m - 1);
+    for (a = 0; a + 1 < m; a++) {
+        var i0 = mem[ord[a]], i1 = mem[ord[a + 1]];
+        dx = P[i0 * 3] - P[i1 * 3]; dz = P[i0 * 3 + 2] - P[i1 * 3 + 2];
+        g2[a] = dx * dx + dz * dz;
+    }
+    var med = Array.prototype.slice.call(g2).sort(function (x, y) { return x - y; })[(m - 1) >> 1];
+    var cut = 6.25 * med;   // (2.5 x median gap)^2
+    for (a = 0; a + 1 < m; a++) {
+        if (g2[a] > cut) continue;
+        out.push2(mem[ord[a]], mem[ord[a + 1]]);
+    }
+}
+// one z-column: k-means with centers FITTED on a strided sample (<= 2048),
+// then a single assignment pass over all points — same clusters, ~8x
+// cheaper than full-lattice Lloyd. Deterministic: strided init, 8 fixed
+// iterations, no randomness (e2e must reproduce exactly).
+function cluColumn(axis, zi, out) {
+    var pts = [];
+    for (var vi = 0; vi < gridN; vi++) {
+        var st = axis === 't1' ? stepAt(zi, vi) : stepAt(vi, zi);
+        for (var i = SO[st]; i < SO[st + 1]; i++) pts.push(i);
+    }
+    var n = pts.length;
+    if (n < 2) return;
+    var k = Math.max(1, Math.min(degree, n));
+    var sn = Math.min(n, 2048);
+    var samp = new Int32Array(sn);
+    for (var a = 0; a < sn; a++) samp[a] = pts[Math.floor(a * n / sn)];
+    var cx = new Float64Array(k), cz = new Float64Array(k);
+    for (var j = 0; j < k; j++) {
+        var p = samp[Math.floor(j * sn / k)];
+        cx[j] = P[p * 3]; cz[j] = P[p * 3 + 2];
+    }
+    var sAssign = new Int32Array(sn);
+    for (var iter = 0; iter < 8; iter++) {
+        for (a = 0; a < sn; a++) {
+            var px = P[samp[a] * 3], pz = P[samp[a] * 3 + 2];
+            var best = 0, bd = Infinity;
+            for (j = 0; j < k; j++) {
+                var dx = px - cx[j], dz = pz - cz[j];
+                var d = dx * dx + dz * dz;
+                if (d < bd) { bd = d; best = j; }
             }
-            const assign = new Int32Array(n);
-            for (let iter = 0; iter < 8; iter++) {
-                for (let a = 0; a < n; a++) {
-                    const px = positions[pts[a] * 3], pz = positions[pts[a] * 3 + 2];
-                    let best = 0, bdst = Infinity;
-                    for (let j = 0; j < k; j++) {
-                        const dx = px - cx[j], dz = pz - cz[j];
-                        const d = dx * dx + dz * dz;
-                        if (d < bdst) { bdst = d; best = j; }
-                    }
-                    assign[a] = best;
-                }
-                const sx = new Float64Array(k), sz = new Float64Array(k), cnt = new Int32Array(k);
-                for (let a = 0; a < n; a++) {
-                    const j = assign[a];
-                    sx[j] += positions[pts[a] * 3];
-                    sz[j] += positions[pts[a] * 3 + 2];
-                    cnt[j]++;
-                }
-                for (let j = 0; j < k; j++) {
-                    if (cnt[j]) { cx[j] = sx[j] / cnt[j]; cz[j] = sz[j] / cnt[j]; }
-                }
+            sAssign[a] = best;
+        }
+        var sx = new Float64Array(k), sz = new Float64Array(k), cnt = new Int32Array(k);
+        for (a = 0; a < sn; a++) {
+            j = sAssign[a];
+            sx[j] += P[samp[a] * 3]; sz[j] += P[samp[a] * 3 + 2]; cnt[j]++;
+        }
+        for (j = 0; j < k; j++) if (cnt[j]) { cx[j] = sx[j] / cnt[j]; cz[j] = sz[j] / cnt[j]; }
+    }
+    var buckets = new Array(k);
+    for (j = 0; j < k; j++) buckets[j] = [];
+    for (a = 0; a < n; a++) {
+        var qx = P[pts[a] * 3], qz = P[pts[a] * 3 + 2];
+        var bj = 0, bdd = Infinity;
+        for (j = 0; j < k; j++) {
+            var ddx = qx - cx[j], ddz = qz - cz[j];
+            var dd = ddx * ddx + ddz * ddz;
+            if (dd < bdd) { bdd = dd; bj = j; }
+        }
+        buckets[bj].push(pts[a]);
+    }
+    for (j = 0; j < k; j++) chainCluster(buckets[j], out);
+}
+function startJob(m) {
+    if (m.kind === 'ribbons') {
+        var rOut = I32Buf();
+        return { id: m.id, unit: 'solves', total: passSteps, cursor: 0,
+            work: function () { ribbonStep(m.key, this.cursor++, rOut); },
+            finish: function () {
+                var pr = rOut.trim();
+                return { msg: { type: 'done', id: m.id, pairs: pr }, transfer: [pr.buffer] };
+            } };
+    }
+    if (m.kind === 'clu') {
+        var cOut = I32Buf();
+        return { id: m.id, unit: 'columns', total: gridN, cursor: 0,
+            work: function () { cluColumn(m.key, this.cursor++, cOut); },
+            finish: function () {
+                var pc = cOut.trim();
+                return { msg: { type: 'done', id: m.id, pairs: pc }, transfer: [pc.buffer] };
+            } };
+    }
+    var list = [];
+    if (m.key === 't1') {
+        for (var c = 0; c < gridN; c++) {
+            for (var r = 0; r < gridN - 1; r++) {
+                list.push(stepAt(r, c), stepAt(r + 1, c), r / gridN, (r + 1) / gridN);
             }
-            for (let j = 0; j < k; j++) {
-                const members = [];
-                for (let a = 0; a < n; a++) if (assign[a] === j) members.push(pts[a]);
-                emitClusterChain(members, cx[j], cz[j], segPairs);
+        }
+    } else {
+        for (r = 0; r < gridN; r++) {
+            for (c = 0; c < gridN - 1; c++) {
+                list.push(stepAt(r, c), stepAt(r, c + 1), c / gridN, (c + 1) / gridN);
             }
         }
     }
-    const cluRibbons = new THREE.LineSegments(
-        new THREE.BufferGeometry(),
-        new THREE.LineBasicMaterial({ vertexColors: true }));
-    let cluSegCount = 0;
-    function buildClu() {
-        const segPairs = [];
-        cluSegments(segPairs);
-        const geom = new THREE.BufferGeometry();
-        const n = fillSortedSegments(geom, segPairs);
-        const old = cluRibbons.geometry;
-        cluRibbons.geometry = geom;
-        if (old) old.dispose();
-        cluSegCount = n;
-        if (applyLenqHook) applyLenqHook();
+    var pOut = I32Buf(), taOut = F32Buf(), tbOut = F32Buf();
+    return { id: m.id, unit: 'pairs', total: list.length / 4, cursor: 0,
+        work: function () {
+            var o = this.cursor++ * 4;
+            var sa = list[o], sb = list[o + 1], ta = list[o + 2], tb = list[o + 3];
+            var a0 = SO[sa], ka = SO[sa + 1] - a0;
+            var b0 = SO[sb], kb = SO[sb + 1] - b0;
+            if (ka <= 0 || kb <= 0) return;
+            var mm = matchPair(a0, ka, b0, kb);
+            for (var t = 0; t < mm.length; t += 2) {
+                pOut.push2(mm[t], mm[t + 1]);
+                taOut.push(ta);
+                tbOut.push(tb);
+            }
+        },
+        finish: function () {
+            var pr = pOut.trim(), tra = taOut.trim(), trb = tbOut.trim();
+            return { msg: { type: 'done', id: m.id, pairs: pr, ta: tra, tb: trb },
+                     transfer: [pr.buffer, tra.buffer, trb.buffer] };
+        } };
+}
+function schedule() {
+    if (!pumpScheduled) { pumpScheduled = true; setTimeout(pump, 0); }
+}
+function pump() {
+    pumpScheduled = false;
+    if (!job && queue.length) job = startJob(queue.shift());
+    if (!job) return;
+    var t0 = Date.now();
+    while (job.cursor < job.total && Date.now() - t0 < 40) job.work();
+    if (job.cursor >= job.total) {
+        var r = job.finish();
+        postMessage(r.msg, r.transfer);
+        job = null;
+        if (queue.length) schedule();
+        return;
     }
-    function buildRibbons(order) {
-        const segPairs = [];   // [i0, i1, len2] triples, flat
-        const idx = [];
-        for (let step = 0; step < passSteps; step++) {
-            const a = stepOffsets[step], b = stepOffsets[step + 1];
-            const k = b - a;
-            if (k < 2) continue;
-            idx.length = 0;
-            for (let i = a; i < b; i++) idx.push(i);
-            if (order === 'angle') {
-                let mx = 0, mz = 0;
-                for (const i of idx) { mx += positions[i * 3]; mz += positions[i * 3 + 2]; }
-                mx /= k; mz /= k;
-                const ang = i => Math.atan2(positions[i * 3 + 2] - mz, positions[i * 3] - mx);
-                idx.sort((p, q) => ang(p) - ang(q));
-            } else if (order === 'nearest') {
-                // greedy nearest-neighbor chain (k^2): start at the root
-                // farthest from the centroid — a natural chain end, stable
-                // across neighboring solves — and hop to nearest unvisited
-                let mx = 0, mz = 0;
-                for (const i of idx) { mx += positions[i * 3]; mz += positions[i * 3 + 2]; }
-                mx /= k; mz /= k;
-                let start = 0, bestD = -1;
-                for (let t = 0; t < k; t++) {
-                    const dx = positions[idx[t] * 3] - mx, dz = positions[idx[t] * 3 + 2] - mz;
-                    const d = dx * dx + dz * dz;
-                    if (d > bestD) { bestD = d; start = t; }
-                }
-                const used = new Uint8Array(k);
-                const seq = [idx[start]];
-                used[start] = 1;
-                while (seq.length < k) {
-                    const cur = seq[seq.length - 1];
-                    const cx0 = positions[cur * 3], cz0 = positions[cur * 3 + 2];
-                    let best = -1, bd = Infinity;
-                    for (let t = 0; t < k; t++) {
-                        if (used[t]) continue;
-                        const dx = positions[idx[t] * 3] - cx0, dz = positions[idx[t] * 3 + 2] - cz0;
-                        const d = dx * dx + dz * dz;
-                        if (d < bd) { bd = d; best = t; }
-                    }
-                    used[best] = 1;
-                    seq.push(idx[best]);
-                }
-                idx.length = 0;
-                for (const i of seq) idx.push(i);
-            }
-            const close = order === 'angle' && k >= 3;
-            const segs = close ? k : k - 1;
-            // nearest mode: never bridge clusters. These constellations are
-            // typically 2-4 separated groups (conjugate bands + outliers) and
-            // ANY full path is forced to cross between them — those forced
-            // chords were the visible "ribbon jumping" (2-opt measured
-            // useless: the chords are topology, not greedy error). Segments
-            // longer than 2.5x the solve's median nearest-neighbor distance
-            // are cut, leaving one short strand per cluster.
-            let cutSq = Infinity;
-            if (order === 'nearest' && k > 2) {
-                const mins = new Float64Array(k);
-                for (let a = 0; a < k; a++) {
-                    const ax = positions[idx[a] * 3], az = positions[idx[a] * 3 + 2];
-                    let bd = Infinity;
-                    for (let b = 0; b < k; b++) {
-                        if (b === a) continue;
-                        const dx = ax - positions[idx[b] * 3];
-                        const dz = az - positions[idx[b] * 3 + 2];
-                        const dd = dx * dx + dz * dz;
-                        if (dd < bd) bd = dd;
-                    }
-                    mins[a] = bd;
-                }
-                const sorted = Array.from(mins).sort((x, y) => x - y);
-                cutSq = 6.25 * sorted[k >> 1];   // (2.5 x median NN)^2
-            }
-            for (let t = 0; t < segs; t++) {
-                const i0 = idx[t], i1 = idx[(t + 1) % k];
-                if (cutSq !== Infinity) {
-                    const dx = positions[i0 * 3] - positions[i1 * 3];
-                    const dz = positions[i0 * 3 + 2] - positions[i1 * 3 + 2];
-                    if (dx * dx + dz * dz > cutSq) continue;
-                }
-                segPairs.push(i0, i1, segLen2(i0, i1));
-            }
-        }
-        const geom = new THREE.BufferGeometry();
-        const n = fillSortedSegments(geom, segPairs);
-        const old = ribbons.geometry;
-        ribbons.geometry = geom;
-        if (old) old.dispose();
-        ribbonSegments = n;
-        if (applyLenqHook) applyLenqHook();
+    postMessage({ type: 'progress', id: job.id, done: job.cursor, total: job.total, unit: job.unit });
+    schedule();
+}
+onmessage = function (ev) {
+    var m = ev.data;
+    if (m.type === 'init') {
+        P = m.positions; SO = m.stepOffsets;
+        gridN = m.gridN; degree = m.degree; passSteps = m.passSteps;
+        return;
     }
-
-    // threads: root trajectories along t2 — each solve matched to the NEXT
-    // t2 column in its t1 row by mutual-nearest on complex-plane (xz)
-    // distance, greedy repair for the leftovers (root collisions are
-    // genuinely ambiguous; warm-started solves are near-identity anyway).
-    // Matching ignores Y entirely, so slices/height never invalidate it.
-    const threads = new THREE.LineSegments(
-        new THREE.BufferGeometry(),
-        new THREE.LineBasicMaterial({ vertexColors: true }));
-    let threadMatches = { t2: null, t1: null };   // per-axis pair entries, lazy
-    let threadSegments = 0;
-    function matchPair(a0, ka, b0, kb) {
-        const D = new Float32Array(ka * kb);
-        for (let i = 0; i < ka; i++) {
-            const ax = positions[(a0 + i) * 3], az = positions[(a0 + i) * 3 + 2];
-            for (let j = 0; j < kb; j++) {
-                const dx = ax - positions[(b0 + j) * 3];
-                const dz = az - positions[(b0 + j) * 3 + 2];
-                D[i * kb + j] = dx * dx + dz * dz;
-            }
-        }
-        const rowMin = new Int32Array(ka), colMin = new Int32Array(kb);
-        for (let i = 0; i < ka; i++) {
-            let best = 0;
-            for (let j = 1; j < kb; j++) if (D[i * kb + j] < D[i * kb + best]) best = j;
-            rowMin[i] = best;
-        }
-        for (let j = 0; j < kb; j++) {
-            let best = 0;
-            for (let i = 1; i < ka; i++) if (D[i * kb + j] < D[best * kb + j]) best = i;
-            colMin[j] = best;
-        }
-        const usedA = new Uint8Array(ka), usedB = new Uint8Array(kb);
-        const out = [];
-        for (let i = 0; i < ka; i++) {
-            const j = rowMin[i];
-            if (colMin[j] === i) { out.push(a0 + i, b0 + j); usedA[i] = 1; usedB[j] = 1; }
-        }
-        const ua = [], ub = [];
-        for (let i = 0; i < ka; i++) if (!usedA[i]) ua.push(i);
-        for (let j = 0; j < kb; j++) if (!usedB[j]) ub.push(j);
-        if (ua.length && ub.length) {
-            const cand = [];
-            for (const i of ua) for (const j of ub) cand.push([D[i * kb + j], i, j]);
-            cand.sort((p, q) => p[0] - q[0]);
-            for (const [, i, j] of cand) {
-                if (usedA[i] || usedB[j]) continue;
-                usedA[i] = 1; usedB[j] = 1;
-                out.push(a0 + i, b0 + j);
-            }
-        }
-        return Int32Array.from(out);
+    if (m.type === 'cancel') {
+        if (job && job.id === m.id) job = null;
+        queue = queue.filter(function (q) { return q.id !== m.id; });
+        schedule();
+        return;
     }
-    const stepAt = (r, c) => r * gridN + ((r & 1) ? (gridN - 1 - c) : c);
-    function computeThreadMatches(axis) {
-        // threads climb the CURRENT z axis: t2 mode matches adjacent columns
-        // within a t1 row; t1 mode matches adjacent rows within a t2 column.
-        // Each entry keeps the two solves' z-parameters for the slice gate.
-        const entries = [];
-        const addPair = (sa, sb, ta, tb) => {
-            const a0 = stepOffsets[sa], ka = stepOffsets[sa + 1] - a0;
-            const b0 = stepOffsets[sb], kb = stepOffsets[sb + 1] - b0;
-            if (ka > 0 && kb > 0) entries.push({ m: matchPair(a0, ka, b0, kb), ta, tb });
+    if (m.type === 'job') { queue.push(m); schedule(); }
+};
+`;
+    const buildHudEl = document.getElementById('hud-build');
+    const buildProgress = new Map();          // short kind label -> progress text
+    const updateBuildHud = () => {
+        buildHudEl.textContent = buildProgress.size
+            ? 'building ' + Array.from(buildProgress.values()).join(' · ') : '';
+    };
+    let topoWorker = null;
+    let jobSeq = 0;
+    const jobCbs = new Map();                 // job id -> { kind, resolve }
+    try {
+        topoWorker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: 'application/javascript' })));
+        const wPos = positions.slice(0, count * 3);
+        const wOff = stepOffsets.slice();
+        topoWorker.postMessage(
+            { type: 'init', positions: wPos, stepOffsets: wOff, gridN, degree, passSteps },
+            [wPos.buffer, wOff.buffer]);
+        topoWorker.onmessage = (ev) => {
+            const m = ev.data;
+            const cb = jobCbs.get(m.id);
+            if (!cb) return;                  // cancelled — stale worker chatter
+            if (m.type === 'progress') {
+                buildProgress.set(cb.kind, cb.kind + ' ' + m.done.toLocaleString() + '/' + m.total.toLocaleString() + ' ' + m.unit);
+                updateBuildHud();
+                return;
+            }
+            if (m.type === 'done') {
+                jobCbs.delete(m.id);
+                buildProgress.delete(cb.kind);
+                updateBuildHud();
+                cb.resolve(m);
+            }
         };
-        if (axis === 't1') {
-            for (let c = 0; c < gridN; c++) {
-                for (let r = 0; r < gridN - 1; r++) {
-                    addPair(stepAt(r, c), stepAt(r + 1, c), r / gridN, (r + 1) / gridN);
-                }
-            }
-        } else {
-            for (let r = 0; r < gridN; r++) {
-                for (let c = 0; c < gridN - 1; c++) {
-                    addPair(stepAt(r, c), stepAt(r, c + 1), c / gridN, (c + 1) / gridN);
-                }
-            }
-        }
-        return entries;
+        topoWorker.onerror = (e) => {
+            for (const cb of jobCbs.values()) cb.resolve(null);
+            jobCbs.clear();
+            buildProgress.clear();
+            buildHudEl.textContent = 'topology worker error: ' + (e && e.message ? e.message : 'unknown');
+        };
+    } catch (e) {
+        topoWorker = null;
+        buildHudEl.textContent = 'topology worker unavailable: ' + (e && e.message ? e.message : String(e));
     }
-    function buildThreads() {
-        // per slice: threads NEVER bridge plates — an adjacent pair is drawn
-        // only when both solves land on the same plate (slices off: all)
+    const topo = { ribbons: {}, threads: {}, clu: {} };   // key -> cached result
+    const inflight = new Map();               // "kind:key" -> { id, promise }
+    const KIND_LABEL = { ribbons: 'rib', threads: 'thr', clu: 'clu' };
+    const ensureTopo = (kind, key) => {
+        if (topo[kind][key]) return Promise.resolve(topo[kind][key]);
+        const ck = kind + ':' + key;
+        if (inflight.has(ck)) return inflight.get(ck).promise;
+        if (!topoWorker) return Promise.resolve(null);
+        const id = ++jobSeq;
+        const entry = { id, promise: null };
+        entry.promise = new Promise((resolve) => {
+            jobCbs.set(id, { kind: KIND_LABEL[kind], resolve });
+        }).then((msg) => {
+            if (inflight.get(ck) === entry) inflight.delete(ck);
+            if (!msg) return null;            // cancelled or worker error
+            const data = kind === 'threads'
+                ? { pairs: msg.pairs, ta: msg.ta, tb: msg.tb }
+                : { pairs: msg.pairs };
+            topo[kind][key] = data;
+            return data;
+        });
+        inflight.set(ck, entry);
+        topoWorker.postMessage({ type: 'job', id, kind, key });
+        return entry.promise;
+    };
+    const cancelBuild = (kind) => {
+        for (const [ck, entry] of Array.from(inflight)) {
+            if (!ck.startsWith(kind + ':')) continue;
+            inflight.delete(ck);
+            const cb = jobCbs.get(entry.id);
+            if (cb) {
+                jobCbs.delete(entry.id);
+                buildProgress.delete(cb.kind);
+                updateBuildHud();
+                cb.resolve(null);
+            }
+            if (topoWorker) topoWorker.postMessage({ type: 'cancel', id: entry.id });
+        }
+    };
+    // refreshers: ensure the topology for the CURRENT key, then emit GPU
+    // buffers with live Y. pendingBuilds counts outstanding refresh chains
+    // (worker builds AND their emits) — the e2e suite waits for 0.
+    let pendingBuilds = 0;
+    const refreshRibbons = () => {
+        if (!document.getElementById('ctl-show-ribbons').checked) return;
+        const order = document.getElementById('ctl-order').value;
+        pendingBuilds++;
+        ensureTopo('ribbons', order).then((data) => {
+            if (data && document.getElementById('ctl-order').value === order
+                && document.getElementById('ctl-show-ribbons').checked) {
+                ribbonSegments = emitSortedSegments(ribbons, data.pairs, null, null);
+                if (applyLenqHook) applyLenqHook();
+            }
+            pendingBuilds--;
+        });
+    };
+    const refreshThreads = () => {
+        if (!document.getElementById('ctl-show-threads').checked) return;
         const axis = document.getElementById('ctl-zaxis').value === 't1' ? 't1' : 't2';
-        if (!threadMatches[axis]) threadMatches[axis] = computeThreadMatches(axis);
-        const S = Math.max(0, parseInt(document.getElementById('ctl-slices').value, 10) || 0);
-        const levelOf = t => Math.min(S - 1, Math.floor(t * S));
-        const segPairs = [];
-        for (const entry of threadMatches[axis]) {
-            if (S > 0 && levelOf(entry.ta) !== levelOf(entry.tb)) continue;
-            const m = entry.m;
-            for (let t = 0; t < m.length; t += 2) {
-                segPairs.push(m[t], m[t + 1], segLen2(m[t], m[t + 1]));
+        pendingBuilds++;
+        ensureTopo('threads', axis).then((data) => {
+            if (data && (document.getElementById('ctl-zaxis').value === 't1' ? 't1' : 't2') === axis
+                && document.getElementById('ctl-show-threads').checked) {
+                threadSegments = emitSortedSegments(threads, data.pairs, data.ta, data.tb);
+                if (applyLenqHook) applyLenqHook();
             }
-        }
-        const geom = new THREE.BufferGeometry();
-        const n = fillSortedSegments(geom, segPairs);
-        const oldGeom = threads.geometry;
-        threads.geometry = geom;
-        if (oldGeom) oldGeom.dispose();
-        threadSegments = n;
-        if (applyLenqHook) applyLenqHook();
-    }
+            pendingBuilds--;
+        });
+    };
+    const refreshClu = () => {
+        if (!document.getElementById('ctl-show-clu').checked) return;
+        const axis = document.getElementById('ctl-zaxis').value === 't1' ? 't1' : 't2';
+        pendingBuilds++;
+        ensureTopo('clu', axis).then((data) => {
+            if (data && (document.getElementById('ctl-zaxis').value === 't1' ? 't1' : 't2') === axis
+                && document.getElementById('ctl-show-clu').checked) {
+                cluSegCount = emitSortedSegments(cluRibbons, data.pairs, null, null);
+                if (applyLenqHook) applyLenqHook();
+            }
+            pendingBuilds--;
+        });
+    };
 
     // z-window: two world-space clipping planes slab the visible height
     // range — fragment-level, no rebuild, segments cut exactly at the plane.
@@ -1042,22 +1234,23 @@ async function boot() {
             positions[i * 3 + 1] = z - 0.5;
         }
         geometry.getAttribute('position').needsUpdate = true;
-        buildRibbons(orderCtl.value);
-        if (showThreadsCtl.checked) buildThreads();
-        if (showCluCtl.checked) buildClu();
+        refreshRibbons();
+        refreshThreads();
+        refreshClu();
         updateStats();
     };
     const applyShow = () => {
         points.visible = showPointsCtl.checked;
         ribbons.visible = showRibbonsCtl.checked;
-        if (showThreadsCtl.checked) buildThreads();   // lazy per-axis matching, cached
         threads.visible = showThreadsCtl.checked;
-        if (showCluCtl.checked) buildClu();           // lazy per-slice clustering
         cluRibbons.visible = showCluCtl.checked;
+        if (showRibbonsCtl.checked) refreshRibbons(); else cancelBuild('ribbons');
+        if (showThreadsCtl.checked) refreshThreads(); else cancelBuild('threads');
+        if (showCluCtl.checked) refreshClu(); else cancelBuild('clu');
         updateStats();
     };
     const applyOrder = () => {
-        buildRibbons(orderCtl.value);
+        if (showRibbonsCtl.checked) refreshRibbons();
         updateStats();
     };
     showPointsCtl.addEventListener('change', applyShow);
@@ -1242,6 +1435,7 @@ async function boot() {
         flight, tour: { state: tour, tick: tourTick, pose: tourPose, setPlaying: tourSetPlaying },
         cloudMat, tonemapMat,
         count, clipped, gridN, degree,
+        get pendingBuilds() { return pendingBuilds; },
     };
 }
 

@@ -347,6 +347,38 @@ lores/logical/recompute previews run ≤256²; 256² × degree 30 ≈ 2M points
 transport artifact (500²+) stays out of scope for the browser until it's
 subsampled (which "logical" already does server-side).
 
+## Off-thread topology (Wave A of sculpture-refactor.md)
+
+At 384² × degree ~45, the synchronous line-primitive builds froze the
+tab (clu ≈ 7–8 billion ops; the compute lane IS the paint lane, so not
+even a busy hint could render). The viewer now computes ALL topology in
+an inline Web Worker (Blob URL, no extra file):
+
+- **Worker owns**: per-solve ribbon chains (nearest/angle/file —
+  semantics unchanged, verbatim ports), adjacent-solve thread matching
+  (mutual-nearest + greedy repair, per z axis), and clu clustering.
+  Topology depends only on the xz layout, never on Y, so the worker
+  holds one immutable copy of the positions (transferred at boot) and
+  results cache per key (ribbons: order; threads/clu: z axis) — slices,
+  height, z-window, and z-axis changes never re-run it.
+- **Main thread owns**: buffer emission. `emitSortedSegments` reads
+  live Y, applies the threads slice gate, and orders segments with a
+  2048-bucket length sort — O(n), replacing the comparator argsort that
+  itself took seconds at 6.5M segments; the len% drawRange semantics
+  are unchanged at slider resolution.
+- **clu algorithm upgrade**: centers fit on a ≤2048-point strided
+  sample then one assignment pass over all points (~8× cheaper, same
+  clusters), and chains order each cluster along its PRINCIPAL AXIS
+  (closed-form 2×2 eigenvector, O(m log m)) with gaps cut at 2.5× the
+  median consecutive gap — no more greedy O(m²), and no greedy
+  backtrack chords.
+- **Laziness**: nothing builds until its show checkbox is on (boot at
+  any size is instant); jobs run in ~40 ms slices with progress posted
+  to a `#hud-build` line ("building clu 120/384 columns"); unchecking
+  cancels mid-build (main side resolves null synchronously, the worker
+  drops the job between slices). `__sculptureViewer.pendingBuilds`
+  exposes the outstanding refresh count — the e2e suite waits on it.
+
 ## Tests
 
 - `tests/test_render_lores_preview_handler.py`: sculpture uploads the
@@ -368,7 +400,13 @@ subsampled (which "logical" already does server-side).
   the two roots file-order-swapped, so slot-identity matching is
   provably wrong at every even→odd boundary (mutation-tested); slices=2
   drops the plate-1→2 bridge (24 → 16 segments, all flat on their
-  plate).
+  plate). Worker-era additions: line topology is LAZY (ribbons geometry
+  is EMPTY until rib is checked — pinned), every build-triggering
+  control change awaits `pendingBuilds === 0` before reading geometry,
+  and the cancel pin unchecks clu in the same tick as an uncached t1
+  build request (the worker round trip can't complete synchronously, so
+  cancel deterministically wins; the old emission must survive and the
+  re-check must rebuild).
 - `tests/e2e/render-solve-score.spec.js`: Sculpture button posts
   `sculpture: true`, opens exactly one window, fragment carries all data
   params; the plain Preview payload stays sculpture-free.

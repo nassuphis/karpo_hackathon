@@ -355,6 +355,22 @@ and the `preview` option in the size select. The u16 dump contract is
 unchanged: 0..65534 spans the viewport per axis, (65535,65535) is the
 sentinel, and the viewer dequantizes as before.
 
+**Parallel lattice materialization** (user: "the fetch can be
+multi-threaded, right?"): the materializer's sequential per-row loop
+was latency-bound — 512 ranged round-trips WAS the user-felt minute
+at 512². Rows now fan out across a ThreadPoolExecutor (default 16
+workers; the handler's boto3 client pool is raised to 32 — botocore's
+default 10 would serialize the threads) and assemble in memory at
+fixed offsets, byte-identically to the sequential order. Jobs of ≤8
+row-tasks stay sequential (deterministic tiny fixtures; MagicMocks
+are not thread-callable). Pinned: `test_logical_lores_parallel.py`
+runs a genuinely thread-safe fake S3 and asserts byte-identity,
+identical stats/fetch plans, REAL observed overlap (the fake holds
+each request 20ms — instant responses never overlap), and lattice
+semantics. First-time 512² drops from round-trip-bound (~a minute)
+to bandwidth-bound (~10-15s); this speeds up Generate and SaveSplat
+alike (same materializer).
+
 Grid-integrity guards: the artifact's `step_scores_grid_n` must equal
 the transport grid (else scores and roots would describe different
 solves), and the requested size must not exceed it.

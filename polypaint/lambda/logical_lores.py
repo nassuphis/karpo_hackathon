@@ -5,6 +5,7 @@ Logical lores samples a compact low-resolution view from hires solve artifacts.
 The output files are contiguous and ordered like a normal low-res solve stream:
 pass-major, row-major, serpentine columns.
 """
+import concurrent.futures
 import os
 import time
 
@@ -142,6 +143,7 @@ def _materialize_family(
     times,
     row_bytes,
     out_path,
+    fetch_workers=16,
 ):
     t0 = time.time()
     output_rows = int(view_n) * int(view_n) * int(times)
@@ -150,28 +152,58 @@ def _materialize_family(
     range_gets = 0
     source_rows = 0
 
-    with open(out_path, "wb") as out:
-        for pass_idx in range(int(times)):
-            pass_base = pass_idx * int(full_n) * int(full_n)
-            for logical_row in range(int(view_n)):
-                physical_i1, physical_js = _logical_row_mapping(int(full_n), int(view_n), logical_row)
-                solve_start = pass_base + physical_i1 * int(full_n)
-                row, row_bytes_read, row_range_gets = _fetch_source_row(
-                    s3_client,
-                    bucket,
-                    solve_manifest,
-                    family,
-                    solve_start,
-                    int(full_n),
-                    int(row_bytes),
-                )
+    # PARALLEL row fan-out: the sequential loop was latency-bound (one
+    # ranged fetch per logical row, back to back — 512 round trips WAS the
+    # user-felt minute at 512²). Every logical row compacts into an
+    # independent fixed-size block at a known offset, so rows fetch
+    # concurrently and assemble in memory byte-identically to the
+    # sequential order. Tiny jobs (and tiny test fixtures) stay sequential
+    # and deterministic below the threshold.
+    tasks = []
+    for pass_idx in range(int(times)):
+        pass_base = pass_idx * int(full_n) * int(full_n)
+        for logical_row in range(int(view_n)):
+            tasks.append((pass_base, logical_row))
+    row_out_bytes = int(view_n) * int(row_bytes)
+    buf = bytearray(len(tasks) * row_out_bytes)
+
+    def fetch_one(task_idx):
+        pass_base, logical_row = tasks[task_idx]
+        physical_i1, physical_js = _logical_row_mapping(int(full_n), int(view_n), logical_row)
+        solve_start = pass_base + physical_i1 * int(full_n)
+        row, row_bytes_read, row_range_gets = _fetch_source_row(
+            s3_client,
+            bucket,
+            solve_manifest,
+            family,
+            solve_start,
+            int(full_n),
+            int(row_bytes),
+        )
+        chunk = bytearray(row_out_bytes)
+        for j, physical_j in enumerate(physical_js):
+            rec_start = int(physical_j) * int(row_bytes)
+            chunk[j * int(row_bytes):(j + 1) * int(row_bytes)] = row[rec_start:rec_start + int(row_bytes)]
+        return task_idx, bytes(chunk), row_bytes_read, row_range_gets
+
+    workers = min(int(fetch_workers or 1), len(tasks))
+    if workers > 1 and len(tasks) > 8:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            results = pool.map(fetch_one, range(len(tasks)))
+            for task_idx, chunk, row_bytes_read, row_range_gets in results:
+                buf[task_idx * row_out_bytes:(task_idx + 1) * row_out_bytes] = chunk
                 bytes_read += row_bytes_read
                 range_gets += row_range_gets
                 source_rows += 1
-                for physical_j in physical_js:
-                    rec_start = int(physical_j) * int(row_bytes)
-                    rec_end = rec_start + int(row_bytes)
-                    out.write(row[rec_start:rec_end])
+    else:
+        for task_idx in range(len(tasks)):
+            _, chunk, row_bytes_read, row_range_gets = fetch_one(task_idx)
+            buf[task_idx * row_out_bytes:(task_idx + 1) * row_out_bytes] = chunk
+            bytes_read += row_bytes_read
+            range_gets += row_range_gets
+            source_rows += 1
+    with open(out_path, "wb") as out:
+        out.write(buf)
 
     actual_size = os.path.getsize(out_path)
     if actual_size != output_bytes:
@@ -202,6 +234,7 @@ def materialize_logical_lores(
     out_paths,
     include_coeff=False,
     include_param=False,
+    fetch_workers=16,
 ):
     t0 = time.time()
     full_n, times = calc_square_grid(calc)
@@ -251,6 +284,7 @@ def materialize_logical_lores(
             times=times,
             row_bytes=_family_row_bytes(family, degree, n_coeffs),
             out_path=out_path,
+            fetch_workers=fetch_workers,
         )
 
     total_bytes_read = sum(row["bytes_read"] for row in family_stats.values())
@@ -270,6 +304,7 @@ def materialize_logical_lores(
         "range_gets": int(total_range_gets),
         "elapsed_ms": int((time.time() - t0) * 1000),
         "mapping": "pass-major logical grid, floor(i*full_N/view_N), serpentine compact order",
+        "fetch_workers": int(fetch_workers or 1),
     }
 
 

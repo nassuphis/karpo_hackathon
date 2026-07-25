@@ -16,6 +16,7 @@ import subprocess
 import time
 
 import boto3
+from botocore.config import Config as BotoConfig
 
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
 from png_rgb import decode_png_rgb
@@ -62,7 +63,9 @@ from program_compile_helpers import (
 )
 
 
-s3 = boto3.client("s3")
+# 32-connection pool: the parallel lattice materializer fans row fetches
+# across threads, and botocore's default pool of 10 would serialize them
+s3 = boto3.client("s3", config=BotoConfig(max_pool_connections=32))
 
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
 SPLAT_BAKE_BIN = os.path.join(os.path.dirname(__file__), "splat_bake")

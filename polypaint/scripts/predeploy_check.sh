@@ -175,6 +175,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
 	    tests/test_storage_handler.py \
     tests/test_splat_bake_tool.py \
     tests/test_png_rgb.py \
+    tests/test_logical_lores_parallel.py \
 	    tests/test_favorites_storage.py \
     tests/test_results_catalog.py \
 	    tests/test_gallery_backend.py \

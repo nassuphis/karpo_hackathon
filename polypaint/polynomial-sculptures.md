@@ -409,6 +409,46 @@ an inline Web Worker (Blob URL, no extra file):
   drops the job between slices). `__sculptureViewer.pendingBuilds`
   exposes the outstanding refresh count — the e2e suite waits on it.
 
+## Recording (viewer)
+
+The ● button in the tour row records the canvas straight to a video
+file — fully client-side (`canvas.captureStream(30)` + MediaRecorder,
+12 Mbps; mp4 where the browser encodes it, else webm vp9/vp8), no
+backend, no upload. Press ●, run a tour (or fly), press ■ — the file
+downloads itself, named from the sculpture title. The HUD and menu are
+DOM overlays OUTSIDE the canvas, so recordings come out clean without
+touching the ☰ state. Busy shows `■ <elapsed>s`; the result lingers
+✓/✗ then returns to ●. Unsupported browsers get ✗ and stay usable.
+Recording is transient — it does not ride saved views. Pinned e2e:
+headless capture produces a real encoded blob (>1KB, video/webm|mp4),
+the button cycles ●→■→✓→●, and the recorder releases for a second
+take.
+
+## Motion LOD (viewer)
+
+At 384² × degree ~34, threads alone are ~5M segments = 10M vertices
+per frame (clu similar) — vertex+raster bound, so orbiting wheezed at
+one draw call with the CPU idle. WebGPU is NOT the lever here (same
+GPU, same raster units, no driver overhead to shed); drawing less
+while it matters least is. While the camera moves (orbit + damping,
+tours, fly, zoom — detected universally by per-frame camera pose
+deltas, armed after 2 consecutive moved frames, disarmed after 250ms
+of stillness), each line primitive draws through a stride-decimated
+Uint32 index: every k-th segment of the length-sorted buffer, k =
+ceil(segs/1.5M) × an adaptive boost that doubles (to ×16) while the
+measured frame-time EMA stays over 40ms. Uniform stride = even
+thinning (the shape reads the same, lighter); order preservation keeps
+len% meaningful over the thin set (drawRange counts indices when
+indexed). At rest the index drops and frames are pixel-identical to
+pre-LOD. Small scenes get k=1 and are never indexed. Indices cache on
+the geometry (`userData.lodIdx`) so fresh emits invalidate naturally;
+the hud-build line shows `motion LOD ×k` while thinned. Pinned e2e:
+the live motion detector arms/disarms, small scenes stay unindexed,
+boost ×8 strides [0,1,16,17] with hud text, len% over thin (50% of 4)
+and full (50% of 32) sets — the boosted phase runs in ONE synchronous
+evaluate because a still camera legitimately disarms manual arming on
+the next frame.
+
 ## Tests
 
 - `tests/test_render_lores_preview_handler.py`: artifact mode pins —

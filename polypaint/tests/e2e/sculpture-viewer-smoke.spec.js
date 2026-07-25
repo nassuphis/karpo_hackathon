@@ -1402,3 +1402,110 @@ test('recording: canvas stream to a downloadable video blob', async ({ page }) =
   const released = await page.evaluate(() => !window.__sculptureViewer.recording.recorder);
   expect(released).toBe(true);
 });
+
+test('motion LOD: thin index while the camera moves, full geometry at rest', async ({ page }) => {
+  await page.goto(VIEWER);
+  const palB64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 4;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgb(10,20,30)';
+    g.fillRect(0, 0, 4, 4);
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  await page.route('**/fx/lodroots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: rootsBuffer(4),
+  }));
+  await page.route('**/fx/lodpal.png', (route) => route.fulfill({
+    status: 200, contentType: 'image/png', body: Buffer.from(palB64, 'base64'),
+  }));
+  const frag = new URLSearchParams({
+    v: '1', r: '/fx/lodroots.bin', p: '/fx/lodpal.png', n: '4', d: '3', s: '16',
+    x0: '-1', x1: '1', y0: '-1', y1: '1', t: 'lod fixture',
+  });
+  await page.goto('about:blank');
+  await page.goto(VIEWER + '#' + frag.toString());
+  await page.waitForFunction(() =>
+    !!window.__sculptureViewer || document.getElementById('message-box').classList.contains('show'),
+  { timeout: 8000 });
+  const built = await page.evaluate(() => !!window.__sculptureViewer);
+  if (!built) {
+    const msg = await page.evaluate(() => document.getElementById('message-title').textContent || '');
+    expect(msg).toMatch(/WebGL/i);
+    return;
+  }
+  await page.evaluate(() => {
+    const ctl = document.getElementById('ctl-show-ribbons');
+    ctl.checked = true;
+    ctl.dispatchEvent(new Event('change'));
+  });
+  await waitBuildsIdle(page);
+
+  // the real motion detector: nudge the camera across a few frames
+  await page.evaluate(() => new Promise((res) => {
+    const v = window.__sculptureViewer;
+    let n = 0;
+    const step = () => {
+      v.camera.position.x += 0.002;
+      if (++n < 6) requestAnimationFrame(step); else res();
+    };
+    requestAnimationFrame(step);
+  }));
+  await page.waitForFunction(() => window.__sculptureViewer.lod.state.active, { timeout: 5000 });
+  // SMALL scene: k stays 1 — LOD active but NEVER indexed (a no-op below
+  // the target, so tiny fixtures render identically during motion)
+  const small = await page.evaluate(() => ({
+    indexed: !!window.__sculptureViewer.ribbons.geometry.index,
+    draw: window.__sculptureViewer.ribbons.geometry.drawRange.count,
+  }));
+  expect(small.indexed).toBe(false);
+  expect(small.draw).toBe(64);   // full 32 segments, unchanged mid-motion
+  // stillness for >250ms hands the full buffer back (already unindexed)
+  await page.waitForFunction(() => !window.__sculptureViewer.lod.state.active, { timeout: 5000 });
+
+  // boosted stride: force k = 1 * boost(8) — 32 segments thin to 4, the
+  // index strides every 8th segment of the length-sorted buffer, the hud
+  // announces the factor, and len% applies to the thin set. ONE synchronous
+  // evaluate: with the camera still, the rest rule would legitimately
+  // disarm a manually-armed LOD on the next animation frame.
+  const thin = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    v.lod.state.boost = 8;
+    v.lod.set(true);
+    const idx = v.ribbons.geometry.index;
+    const armed = {
+      indexed: !!idx,
+      idxCount: idx ? idx.count : 0,
+      first4: idx ? [idx.array[0], idx.array[1], idx.array[2], idx.array[3]] : [],
+      draw: v.ribbons.geometry.drawRange.count,
+      hud: document.getElementById('hud-build').textContent || '',
+    };
+    const ctl = document.getElementById('ctl-lenq');
+    ctl.value = '50';
+    ctl.dispatchEvent(new Event('input'));
+    armed.drawAt50 = v.ribbons.geometry.drawRange.count;
+    return armed;
+  });
+  expect(thin.indexed).toBe(true);
+  expect(thin.idxCount).toBe(8);              // ceil(32/8)=4 segments x 2
+  expect(thin.first4).toEqual([0, 1, 16, 17]); // segment 0, then segment 8
+  expect(thin.draw).toBe(8);                   // lenq 100% of the thin set
+  expect(thin.hud).toContain('motion LOD \u00d78');
+  expect(thin.drawAt50).toBe(4);               // 50% of 4 thin segments
+
+  // rest: index drops, len% recomputes over the FULL set, hud clears
+  // (the still-camera rest rule may have disarmed it already — set(false)
+  // is idempotent and the pins must hold either way)
+  const rest = await page.evaluate(() => {
+    const v = window.__sculptureViewer;
+    v.lod.set(false);
+    return {
+      indexed: !!v.ribbons.geometry.index,
+      draw: v.ribbons.geometry.drawRange.count,
+      hud: document.getElementById('hud-build').textContent || '',
+    };
+  });
+  expect(rest.indexed).toBe(false);
+  expect(rest.draw).toBe(32);                  // 50% of the full 32 segments
+  expect(rest.hud).not.toContain('LOD');
+});

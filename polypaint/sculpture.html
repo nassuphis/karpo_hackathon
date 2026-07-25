@@ -368,6 +368,7 @@ async function boot() {
         new THREE.LineBasicMaterial({ vertexColors: true }));
     let ribbonSegments = 0, threadSegments = 0, cluSegCount = 0;
     let applyLenqHook = null;   // assigned in the controls block; re-applied after rebuilds
+    let lodEmitHook = null;     // assigned in the motion-LOD block; re-applies index + lenq
     // threads: root trajectories along the z axis — adjacent solves matched
     // mutual-nearest on complex-plane (xz) distance. clu: per z-column
     // k-means, each cluster chained along its principal axis. Both are
@@ -873,7 +874,7 @@ onmessage = function (ev) {
             if (data && document.getElementById('ctl-order').value === order
                 && document.getElementById('ctl-show-ribbons').checked) {
                 ribbonSegments = emitSortedSegments(ribbons, data.pairs, null, null);
-                if (applyLenqHook) applyLenqHook();
+                if (lodEmitHook) lodEmitHook(); else if (applyLenqHook) applyLenqHook();
             }
             pendingBuilds--;
         });
@@ -886,7 +887,7 @@ onmessage = function (ev) {
             if (data && (document.getElementById('ctl-zaxis').value === 't1' ? 't1' : 't2') === axis
                 && document.getElementById('ctl-show-threads').checked) {
                 threadSegments = emitSortedSegments(threads, data.pairs, data.ta, data.tb);
-                if (applyLenqHook) applyLenqHook();
+                if (lodEmitHook) lodEmitHook(); else if (applyLenqHook) applyLenqHook();
             }
             pendingBuilds--;
         });
@@ -899,7 +900,7 @@ onmessage = function (ev) {
             if (data && (document.getElementById('ctl-zaxis').value === 't1' ? 't1' : 't2') === axis
                 && document.getElementById('ctl-show-clu').checked) {
                 cluSegCount = emitSortedSegments(cluRibbons, data.pairs, null, null);
-                if (applyLenqHook) applyLenqHook();
+                if (lodEmitHook) lodEmitHook(); else if (applyLenqHook) applyLenqHook();
             }
             pendingBuilds--;
         });
@@ -1333,9 +1334,17 @@ onmessage = function (ev) {
     const applyLenq = () => {
         const q = Math.max(0, Math.min(100, parseInt(lenqCtl.value, 10) || 0));
         lenqVal.textContent = String(q);
-        ribbons.geometry.setDrawRange(0, 2 * Math.round((q / 100) * ribbonSegments));
-        threads.geometry.setDrawRange(0, 2 * Math.round((q / 100) * threadSegments));
-        cluRibbons.geometry.setDrawRange(0, 2 * Math.round((q / 100) * cluSegCount));
+        // drawRange counts INDICES when a motion-LOD index is installed,
+        // vertices otherwise — the len% fraction applies to whichever set
+        // is drawn (the thin index preserves ascending length order)
+        const apply = (obj, segs) => {
+            const geom = obj.geometry;
+            const thin = geom.index && geom.userData.lodIdx ? geom.userData.lodIdx.segs : 0;
+            geom.setDrawRange(0, 2 * Math.round((q / 100) * (thin || segs)));
+        };
+        apply(ribbons, ribbonSegments);
+        apply(threads, threadSegments);
+        apply(cluRibbons, cluSegCount);
         updateStats();
     };
     applyLenqHook = applyLenq;
@@ -1404,6 +1413,98 @@ onmessage = function (ev) {
     sizeCtl.addEventListener('input', applySize);
     heightCtl.addEventListener('input', applyHeight);
     heightCtl.addEventListener('input', applyZRange);   // world constants track the scale
+    // ---- motion LOD -----------------------------------------------------
+    // While the camera MOVES (orbit + damping, tours, fly, zoom), the line
+    // primitives draw through a stride-decimated index — every k-th segment
+    // of the length-sorted buffer, so the thinning is uniform and the order
+    // still supports len%. At rest the full geometry returns, pixel-
+    // identical. At 384^2 x degree ~34 threads alone are ~5M segments =
+    // 10M vertices per frame — beyond a smooth orbit on most GPUs; the
+    // frame cost is vertex+raster bound, so drawing fewer segments while
+    // moving is the lever that actually works (WebGPU would not: same GPU,
+    // same raster, and the CPU is already idle at one draw call). k targets
+    // ~1.5M drawn segments per primitive and doubles (to x16) while the
+    // measured frame time stays slow; small scenes get k=1 and are never
+    // indexed at all.
+    const LOD_TARGET_SEGS = 1500000;
+    const lod = {
+        active: false, boost: 1, movedFrames: 0, stillSince: 0,
+        emaDt: 16, lastBoostAt: 0,
+        lastPos: new THREE.Vector3(), lastQuat: new THREE.Quaternion(),
+    };
+    const lodPrims = [
+        { obj: ribbons, segs: () => ribbonSegments },
+        { obj: threads, segs: () => threadSegments },
+        { obj: cluRibbons, segs: () => cluSegCount },
+    ];
+    const lodIndexFor = (geom, segs, k) => {
+        // cached on the geometry: a fresh emit makes a fresh geometry, so
+        // stale indices can never outlive their buffers
+        const ud = geom.userData;
+        if (ud.lodIdx && ud.lodIdx.k === k) return ud.lodIdx.attr;
+        const thinSegs = Math.max(1, Math.ceil(segs / k));
+        const arr = new Uint32Array(thinSegs * 2);
+        let w = 0;
+        for (let s2 = 0; s2 < segs && w < arr.length; s2 += k) {
+            arr[w++] = 2 * s2;
+            arr[w++] = 2 * s2 + 1;
+        }
+        const attr = new THREE.BufferAttribute(arr, 1);
+        ud.lodIdx = { k, attr, segs: thinSegs };
+        return attr;
+    };
+    const lodApplyAll = () => {
+        let maxK = 1;
+        for (const p of lodPrims) {
+            const geom = p.obj.geometry;
+            const segs = p.segs();
+            if (!geom || !geom.getAttribute('position') || !segs) continue;
+            const k = Math.min(64, Math.max(1, Math.ceil(segs / LOD_TARGET_SEGS)) * lod.boost);
+            if (lod.active && k > 1) {
+                geom.setIndex(lodIndexFor(geom, segs, k));
+                if (k > maxK) maxK = k;
+            } else if (geom.index) {
+                geom.setIndex(null);
+            }
+        }
+        if (lod.active && maxK > 1) buildProgress.set('lod', 'motion LOD \u00d7' + maxK);
+        else buildProgress.delete('lod');
+        updateBuildHud();
+        if (applyLenqHook) applyLenqHook();
+    };
+    lodEmitHook = lodApplyAll;
+    const lodSet = (on) => {
+        if (lod.active === on) return;
+        lod.active = on;
+        if (on) lod.emaDt = 16;
+        lodApplyAll();
+    };
+    const lodTick = (now, dt) => {
+        const moved = camera.position.distanceToSquared(lod.lastPos) > 1e-12
+            || (1 - Math.abs(camera.quaternion.dot(lod.lastQuat))) > 1e-10;
+        lod.lastPos.copy(camera.position);
+        lod.lastQuat.copy(camera.quaternion);
+        if (moved) {
+            lod.movedFrames++;
+            lod.stillSince = now;
+            // two consecutive moved frames arm the LOD — a lone wheel tick
+            // should not flicker the thinning in and out
+            if (!lod.active && lod.movedFrames >= 2) lodSet(true);
+        } else {
+            lod.movedFrames = 0;
+            if (lod.active && now - lod.stillSince > 250) lodSet(false);
+        }
+        if (lod.active) {
+            lod.emaDt = lod.emaDt * 0.9 + dt * 1000 * 0.1;
+            if (lod.emaDt > 40 && lod.boost < 16 && now - lod.lastBoostAt > 600) {
+                lod.boost *= 2;
+                lod.lastBoostAt = now;
+                lod.emaDt = 16;   // re-measure at the new stride
+                lodApplyAll();
+            }
+        }
+    };
+
     // saved view settings: the creator tuned the ephemeral viewer and Create
     // snapshotted it — apply controls, then re-run the apply chain, then
     // autoplay the captured tour so shares open as prepared flythroughs
@@ -1490,6 +1591,7 @@ onmessage = function (ev) {
         tourTick(dt);
         flyTick(dt);
         if (controls.enabled) controls.update();
+        lodTick(now, dt);
         if (styleCtl.value === 'cloud') renderCloud();
         else renderer.render(scene, camera);
     });
@@ -1501,6 +1603,7 @@ onmessage = function (ev) {
         count, clipped, gridN, degree,
         get pendingBuilds() { return pendingBuilds; },
         recording: rec,
+        lod: { state: lod, set: lodSet, apply: lodApplyAll },
     };
 }
 

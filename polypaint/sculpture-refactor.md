@@ -160,7 +160,12 @@ sculpture keeps its pass-0 convention.
 1. Wave A (viewer worker + algorithms) — DONE.
 2. Wave B (artifact-only source) — DONE.
 3. Wave C (content-hash reuse + tour recording) — DONE.
-4. Remaining backlog (stripe fan-out, progressive tiles, lambda knobs,
+4. Motion LOD (2026-07-25, user-hit "3d paths kind of slow" at 5M
+   segments) — DONE: stride-decimated index while the camera moves,
+   k=ceil(segs/1.5M)x adaptive boost, full geometry at rest. The
+   WebGPU question was answered with arithmetic: the frame is
+   vertex+raster bound on the same silicon — draw less, not port.
+5. Remaining backlog (stripe fan-out, progressive tiles, lambda knobs,
    WebGPU) stays gated on demonstrated need: they exist to fix a
    slowness Wave B was built to remove — the first deployed artifact
    run's timing decides.

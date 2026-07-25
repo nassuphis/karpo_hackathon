@@ -193,6 +193,27 @@ ensure_bucket_website() {
   ]
 }"
     echo "  bucket policy: public read on ${BUCKET}/*"
+
+    # CORS: the app runs on the s3-website endpoint while presigned PUTs
+    # (SplatBake hosting) target the s3.{region} REST endpoint — a different
+    # origin, so browsers preflight the PUT and S3 must answer with CORS
+    # headers or the upload dies as "Failed to fetch". CORS grants no access
+    # by itself (the presigned signature is the auth); "*" origins simply
+    # lets any browser page use a URL it already holds — same trust model
+    # as the public-read bucket above. GET/HEAD ride along for future
+    # cross-origin viewers (CloudFront).
+    aws s3api put-bucket-cors --bucket "$BUCKET" --region "$REGION" \
+        --cors-configuration '{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["*"],
+      "AllowedMethods": ["GET", "HEAD", "PUT"],
+      "AllowedHeaders": ["*"],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}'
+    echo "  bucket CORS: GET/HEAD/PUT from any origin (presigned PUTs need preflight answers)"
 }
 
 build_deploy_metadata() {

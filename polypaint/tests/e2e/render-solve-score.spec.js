@@ -2021,6 +2021,23 @@ test.describe('Solve Score UI', () => {
     const none = await page.evaluate(() => ({ bake: window.__lastSplatBake, puts: window._putCalls.length }));
     expect(none.bake).toBe(null);
     expect(none.puts).toBe(0);
+
+    // upload blocked (missing bucket CORS) -> actionable error naming the
+    // fix, and finalize is never reached
+    await page.evaluate(() => {
+      window._lastSculptureWin.__sculptureViewer.splats.visible = true;
+      window._storageCalls = [];
+      window.fetch = async () => { throw new TypeError('Failed to fetch'); };
+    });
+    await page.click('#btn-sculpture-splatbake');
+    await expect(page.locator('#btn-sculpture-splatbake')).toHaveText('\u2717 SplatBake');
+    const blocked = await page.evaluate(() => ({
+      finalizes: window._storageCalls.filter((c) => c[0] === '/finalize-splat-bake').length,
+      logText: (document.getElementById('render-log') || {}).textContent || '',
+    }));
+    expect(blocked.finalizes).toBe(0);
+    expect(blocked.logText).toContain('CORS');
+    expect(blocked.logText).toContain('deploy.sh');
   });
 
   test('Sculpture tab: job-scoped list, snapshot save, delete', async ({ page }) => {
@@ -2088,6 +2105,10 @@ test.describe('Solve Score UI', () => {
     // job-scoped: only this job's sculpture shows; the foreign one is hidden
     await expect(page.locator('#sculpture-list')).toContainText('Mine', { timeout: 5000 });
     await expect(page.locator('#sculpture-list')).not.toContainText('Foreign');
+
+    // the Refresh button carries its own busy + lingering feedback
+    await page.click('#btn-sculpture-refresh');
+    await expect(page.locator('#btn-sculpture-refresh')).toHaveText('\u2713 Refreshed');
 
     await page.fill('#sculpture-title', 'Second Piece');
     await page.click('#btn-sculpture-save');

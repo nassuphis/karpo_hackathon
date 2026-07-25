@@ -2054,17 +2054,30 @@ function _sculptureRenderPane() {
 async function _sculptureEnsureInventory(force) {
     if (window._sculptureInventoryLoaded && !force) return;
     const btn = document.getElementById('btn-sculpture-refresh');
-    if (btn) btn.disabled = true;
+    let ok = false;
+    // busy + lingering result on the button itself for the explicit press
+    // (the silent session-boot load keeps the button label untouched)
+    if (btn) { btn.disabled = true; if (force) btn.textContent = 'Refreshing…'; }
     try {
         const data = await lambdaPost('storage', {}, '/list-sculptures');
         window._sculptureInventory = data.sculptures || [];
         window._sculptureInventoryLoaded = true;
         _renderArtifacts.sculpture = window._sculptureInventory;   // family-tab count
+        ok = true;
     } catch (e) {
         if (!window._sculptureInventoryLoaded) window._sculptureInventory = [];
         log(`Sculpture list failed: ${e.message}`, 'err', 'render-log');
     } finally {
-        if (btn) btn.disabled = false;
+        if (btn) {
+            btn.disabled = false;
+            if (force) {
+                btn.textContent = ok ? '✓ Refreshed' : '✗ Refresh';
+                setTimeout(() => {
+                    const b = document.getElementById('btn-sculpture-refresh');
+                    if (b && !b.disabled) b.textContent = 'Refresh';
+                }, 2500);
+            }
+        }
     }
     _sculptureRenderPane();
 }
@@ -2224,11 +2237,20 @@ async function runSculptureSplatBake() {
         const pres = await lambdaPost('storage', { job_id: jobId }, '/presign-splat-bake');
         if (!pres || !pres.put_url || !pres.id) throw new Error('presign-splat-bake returned no URL');
         const blob = new Blob([html], { type: 'text/html' });   // blob.size = true UTF-8 bytes
-        const put = await fetch(pres.put_url, {
-            method: 'PUT',
-            body: blob,
-            headers: { 'Content-Type': 'text/html' },
-        });
+        let put = null;
+        try {
+            put = await fetch(pres.put_url, {
+                method: 'PUT',
+                body: blob,
+                headers: { 'Content-Type': 'text/html' },
+            });
+        } catch (netErr) {
+            // "Failed to fetch" here = the browser blocked the cross-origin
+            // PUT preflight (app on the s3-website origin, presign on the
+            // REST origin) — the bucket CORS config ships in deploy.sh
+            throw new Error(`upload blocked (${new URL(pres.put_url).host} from ${location.host}) — `
+                + 'the bucket needs its CORS config: run ./deploy.sh update');
+        }
         if (!put.ok) throw new Error(`baked viewer upload failed: HTTP ${put.status}`);
         const fin = await lambdaPost('storage', {
             id: pres.id,

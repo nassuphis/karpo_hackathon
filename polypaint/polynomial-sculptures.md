@@ -488,7 +488,15 @@ immutable caching via self-copy, and writes the `kind: "splatbake"`
 meta.json that makes it a LIST ROW — same share URL shape, same Copy
 link/Delete as saved sculptures, but ONE object and no roots download
 for recipients. `bytes` is the Blob size (true UTF-8 bytes, not
-string length — the em-dots bite). Pinned e2e: a dedicated spec extracts the REAL generator
+string length — the em-dots bite). REALITY CHECK (user-hit "Failed to
+fetch" ×3): the app runs on the s3-website ORIGIN while the presigned
+PUT targets the s3.{region} REST origin — cross-origin, so the browser
+preflights the PUT and S3 answers preflights only with a bucket CORS
+config. deploy.sh's ensure_bucket_website now puts a CORS policy
+(GET/HEAD/PUT, any origin — CORS grants nothing by itself, the
+presigned signature is the auth; runs on BOTH create and update). The
+tab's fetch wraps the PUT and turns the opaque network error into
+"upload blocked (host from host) — run ./deploy.sh update". Pinned e2e: a dedicated spec extracts the REAL generator
 (marker-delimited in js/11), bakes a fixture, serves the file, and
 asserts boot + red/green pixel readback + tour autoplay + pointerdown
 stop; the tab flow pins bytes/count/title, zero lambda calls, and

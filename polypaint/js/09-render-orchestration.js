@@ -1361,6 +1361,10 @@ const RENDER_NO_ROW_STALE_MS = 120000;
 const RENDER_WARN_STALE_MS = 300000;
 const RENDER_HARD_STALE_MS = 900000;
 
+function _renderRunDisplayMode(run) {
+    return run && run.display_mode ? run.display_mode : ((run && run.mode) || 'render');
+}
+
 function _generateRunId() {
     const ms = Date.now();
     const rand = Math.random().toString(36).slice(2, 8);
@@ -1377,7 +1381,7 @@ function _saveActiveRun(record) {
     _jobsRailUpsert({
         id: 'render:' + record.run_id,
         kind: 'render',
-        label: (record.mode || 'render') + ' · ' + record.job_id,
+        label: _renderRunDisplayMode(record) + ' · ' + record.job_id,
         jobId: record.job_id,
         tab: 'render',
         state: 'running',
@@ -1394,7 +1398,7 @@ function _clearActiveRun(outcome = 'done', detail = '') {
         _jobsRailUpsert({
             id: 'render:' + _activeRenderRun.run_id,
             kind: 'render',
-            label: (_activeRenderRun.mode || 'render') + ' · ' + _activeRenderRun.job_id,
+            label: _renderRunDisplayMode(_activeRenderRun) + ' · ' + _activeRenderRun.job_id,
             jobId: _activeRenderRun.job_id,
             tab: 'render',
             state: outcome === 'failed' ? 'failed' : 'done',
@@ -1421,9 +1425,9 @@ function _clearRenderState() {
 function _invalidateRenderInventory(jobId = null) {
     _renderLoadedJobId = '';
     _renderNeedsRefresh = !!(jobId || (document.getElementById('render-results-dir')?.value.trim() || ''));
-    _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] };
-    _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };
-    _renderSelectedArtifactKey = { color: '', bilevel: '', coeffs: '', palette: '', pdf: '' };
+    _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [], views: [] };
+    _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1, views: -1 };
+    _renderSelectedArtifactKey = { color: '', bilevel: '', coeffs: '', palette: '', pdf: '', views: '' };
     window._lastRenderSummary = { families: _renderArtifacts, calc: {} };
     const preview = document.getElementById('render-preview');
     const info = document.getElementById('render-info');
@@ -1482,6 +1486,10 @@ async function _dispatchRenderOrchestrator(mode, orchPayload) {
         started_at_ms: Date.now(),
         raster_engine: orchPayload.params.raster_engine || 'single',
         raster_mt_threads: orchPayload.params.raster_mt_threads || 1,
+        display_mode: orchPayload.params.view_projection
+            && orchPayload.params.view_projection !== 'plan'
+            ? 'view'
+            : mode,
     };
     _saveActiveRun(record);
 

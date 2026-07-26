@@ -246,6 +246,54 @@ class TestFinalizeMTHandler(unittest.TestCase):
             rd = call.kwargs.get("result_data") or {}
             self.assertNotIn("encode_ms", rd)
 
+        # ViewRender uses the same full MT finalize, but commits its metadata
+        # to the Views prefix instead of writing a Color overlay.
+        mock_overlay.reset_mock()
+        uploads.clear()
+        view_prefix = f"renders/{TEST_JOB_ID}/views/view_run_123/"
+        view_meta_key = view_prefix + "meta.json"
+        view_metadata = dict(
+            _event()["metadata"],
+            artifact_id="view_run_123",
+            family="views",
+            version="2",
+            view_id="view_run_123",
+            job_id=TEST_JOB_ID,
+            source_artifact_id=TEST_ARTIFACT_ID,
+            projection="radial",
+            vertical="t1",
+            lattice_n="2000",
+            pix="2000",
+            prefix=view_prefix,
+        )
+        result = mod.handler(_event(
+            pix=2000,
+            image_key=view_prefix + "image.jpeg",
+            preview_key=view_prefix + "preview.png",
+            meta_key=view_meta_key,
+            raw_key=view_prefix + "greyscale.raw",
+            raw_meta_key=view_prefix + "greyscale.meta.json",
+            metadata=view_metadata,
+        ), None)
+        view_result = json.loads(result["body"])
+        self.assertEqual(view_result["family"], "views")
+        self.assertEqual(view_result["artifact_id"], "view_run_123")
+        saved_view = json.loads(uploads[view_meta_key]["data"].decode("utf-8"))
+        self.assertEqual(saved_view["view_id"], "view_run_123")
+        self.assertEqual(saved_view["source_artifact_id"], TEST_ARTIFACT_ID)
+        self.assertEqual(saved_view["projection"], "radial")
+        self.assertEqual(saved_view["vertical"], "t1")
+        self.assertEqual(saved_view["pix"], "2000")
+        self.assertEqual(saved_view["width"], "2000")
+        self.assertEqual(saved_view["height"], "2000")
+        self.assertEqual(saved_view["content_type"], "image/jpeg")
+        self.assertEqual(saved_view["file_size"], "8")
+        self.assertEqual(saved_view["image_key"], view_prefix + "image.jpeg")
+        self.assertEqual(uploads[view_meta_key]["cache_control"], "no-cache")
+        raw_meta = json.loads(uploads[view_prefix + "greyscale.meta.json"]["data"].decode("utf-8"))
+        self.assertEqual(raw_meta["artifact_family"], "views")
+        mock_overlay.assert_not_called()
+
     @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
     @patch("handler_finalize_mt.report_status")
     @patch("raw_score_render.subprocess.run")

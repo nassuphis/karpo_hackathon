@@ -405,6 +405,13 @@ function _renderArtifactSummary(art) {
             derived,
         ].filter(Boolean).join(' · ');
     }
+    if (art.family === 'views') {
+        return [
+            art.projection || art.view_projection || '',
+            art.vertical || art.view_vertical || '',
+            art.source_artifact_id ? `color:${art.source_artifact_id}` : '',
+        ].filter(Boolean).join(' · ');
+    }
     if (art.family === 'pdf') {
         const kind = art.pdf_kind === 'color_spread' ? 'ColorSpread' : (art.pdf_kind || 'pdf');
         return [kind, art.source_display_name || art.source_artifact_id].filter(Boolean).join(' · ');
@@ -654,6 +661,7 @@ function _updateRenderActionButtons() {
     const goResultBtn = document.getElementById('btn-render-go-result');
     const goPaletteBtn = document.getElementById('btn-render-go-palette');
     const goColorBtn = document.getElementById('btn-render-go-color');
+    const viewRenderBtn = document.getElementById('btn-view-render');
     const repalBtn = document.getElementById('btn-render-repalette');
     const colorRepalBtn = document.getElementById('btn-render-color-repalette');
     const extractPalBtn = document.getElementById('btn-render-extract-palette');
@@ -661,7 +669,10 @@ function _updateRenderActionButtons() {
     const tiffCompatBtn = document.getElementById('btn-tiff-compat');
     const pngExportBtn = document.getElementById('btn-png-export');
     const linkedPaletteId = _linkedPaletteIdForColorArtifact(art);
-    const linkedColorId = _linkedColorIdForPaletteArtifact(art);
+    const linkedColorId = _renderActiveFamily === 'views'
+        ? String((art && art.source_artifact_id) || '')
+        : _linkedColorIdForPaletteArtifact(art);
+    const viewSource = _sculptureSourceColorArtifact();
     const isTiffArtifact = !!(art && art.image_key && /\.tiff?$/i.test(String(art.image_key)));
     const canConvertBilevel = _renderActiveFamily === 'bilevel' && hasSelection && inventoryMatchesJob && isTiffArtifact;
     if (dlBtn) dlBtn.disabled = !(hasSelection && inventoryMatchesJob);
@@ -699,7 +710,21 @@ function _updateRenderActionButtons() {
     if (pngExportBtn) pngExportBtn.disabled = !canConvertBilevel || !!_activeRenderRun;
     if (goResultBtn) goResultBtn.disabled = !(_renderActiveFamily === 'color' && jobId) || !!_activeRenderRun;
     if (goPaletteBtn) goPaletteBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && linkedPaletteId) || !!_activeRenderRun;
-    if (goColorBtn) goColorBtn.disabled = !(_renderActiveFamily === 'palette' && hasSelection && inventoryMatchesJob && linkedColorId) || !!_activeRenderRun;
+    if (goColorBtn) {
+        const canGoColor = (_renderActiveFamily === 'palette' || _renderActiveFamily === 'views')
+            && hasSelection
+            && inventoryMatchesJob
+            && linkedColorId;
+        goColorBtn.disabled = !canGoColor || !!_activeRenderRun;
+    }
+    if (viewRenderBtn) {
+        viewRenderBtn.disabled = !(
+            _renderActiveFamily === 'views'
+            && inventoryMatchesJob
+            && viewSource
+            && viewSource.artifact_id
+        ) || !!_activeRenderRun;
+    }
     if (favBtn) {
         const isFav = _renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _isFavorite(jobId, art.artifact_id);
         favBtn.textContent = isFav ? 'Favorited' : 'Favorite';
@@ -934,22 +959,27 @@ async function deleteSelectedRenderArtifact() {
     const art = _renderSelectedArtifactEntry();
     const jobId = document.getElementById('render-results-dir').value.trim();
     if (!jobId || !art) return;
-    if (!confirm(`Delete ${_renderFamilyLabel(_renderActiveFamily)} artifact ${art.artifact_id || ''}?`)) return;
+    const family = _renderActiveFamily;
+    if (!confirm(`Delete ${_renderFamilyLabel(family)} artifact ${art.artifact_id || ''}?`)) return;
     const btn = document.getElementById('btn-render-delete');
     const orig = btn ? btn.textContent : 'Delete';
     if (btn) { btn.disabled = true; btn.textContent = 'Deleting...'; }
     try {
         await lambdaPost('storage', {
             job_id: jobId,
-            family: _renderActiveFamily,
+            family,
             artifact_id: art.artifact_id,
         }, '/delete-render-artifact');
-        log(`${_renderFamilyLabel(_renderActiveFamily)} deleted: ${art.artifact_id}`, 'ok', 'render-log');
-        _renderSelectedArtifact[_renderActiveFamily] = -1;
-        _renderSelectedArtifactKey[_renderActiveFamily] = '';
-        await refreshRenderArtifacts(jobId);
+        log(`${_renderFamilyLabel(family)} deleted: ${art.artifact_id}`, 'ok', 'render-log');
+        _renderSelectedArtifact[family] = -1;
+        _renderSelectedArtifactKey[family] = '';
+        if (family === 'views') {
+            await _viewsEnsureInventory(true);
+        } else {
+            await refreshRenderArtifacts(jobId);
+        }
     } catch (e) {
-        log(`${_renderFamilyLabel(_renderActiveFamily)} delete failed: ${e.message}`, 'err', 'render-log');
+        log(`${_renderFamilyLabel(family)} delete failed: ${e.message}`, 'err', 'render-log');
     } finally {
         if (btn) btn.textContent = orig;
     }
@@ -963,6 +993,7 @@ async function deepZoomSelectedRenderArtifact() {
     await runDeepZoomExport(jobId, art.image_key, btn, {
         rawKey: art.raw_key || '',
         rawMetaKey: art.raw_meta_key || '',
+        skipRenderRefresh: _renderActiveFamily === 'views',
     });
 }
 
@@ -1020,7 +1051,9 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         // Views: ASSOCIATED artifacts of existing color renders (like the
         // palette) — server-listed per job under renders/{job}/views/, never
         // mixed into the Color family
-        views: (window._viewsInventoryJob === jobId ? (window._viewsInventory || []) : []),
+        views: window._viewsInventoryJob === jobId
+            ? (window._viewsInventory || []).map(_viewAsRenderArtifact)
+            : [],
     };
     // the sculpture list is session-cached and was LAZY — loaded only when
     // its own tab opened, so the family tab's count sat at a permanent (0)
@@ -1029,7 +1062,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     void _sculptureEnsureInventory();
     void _viewsEnsureInventory();
     if (!_renderArtifacts[_renderActiveFamily]) _renderActiveFamily = 'color';
-    for (const family of ['color', 'bilevel', 'coeffs', 'palette', 'pdf']) {
+    for (const family of ['color', 'bilevel', 'coeffs', 'palette', 'pdf', 'views']) {
         const inv = _renderArtifacts[family] || [];
         const keyIdx = _renderSelectedArtifactKey[family]
             ? inv.findIndex((art) => _renderArtifactStableKey(art) === _renderSelectedArtifactKey[family])
@@ -1052,48 +1085,15 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     const activeIdx = _renderSelectedArtifact[_renderActiveFamily];
     const activeArt = activeIdx >= 0 ? activeFamilyInv[activeIdx] : null;
     const linkedPaletteId = _linkedPaletteIdForColorArtifact(activeArt);
-    const linkedColorId = _linkedColorIdForPaletteArtifact(activeArt);
+    const linkedColorId = _renderActiveFamily === 'views'
+        ? String((activeArt && activeArt.source_artifact_id) || '')
+        : _linkedColorIdForPaletteArtifact(activeArt);
     const favoriteSelected = _renderActiveFamily === 'color' && activeArt && _isFavorite(jobId, activeArt.artifact_id);
     const familyTabs = ['color', 'bilevel', 'coeffs', 'palette', 'pdf', 'views', 'sculpture'].map((family) => {
         const active = family === _renderActiveFamily;
         const count = (_renderArtifacts[family] || []).length;
         return `<button type="button" role="tab" class="subtab-btn${active ? ' active' : ''}" data-render-family="${family}" onclick="_renderSelectFamily('${family}')" aria-selected="${active ? 'true' : 'false'}">${_renderFamilyLabel(family)} <span class="subtab-count">(${count})</span></button>`;
     }).join('');
-
-    if (_renderActiveFamily === 'views') {
-        // Views pane: associated artifacts of existing color renders (like
-        // the palette). A view re-plots the SELECTED color artifact's own
-        // stored data with the horizontal axis = Re (front/rear), Im
-        // (left/right) or r = |root| (radial) and the vertical axis = t —
-        // nothing re-renders, and the Color family stays untouched.
-        const viewSrc = _sculptureSourceColorArtifact();
-        const viewRows = _renderArtifacts.views || [];
-        const viewRowsHtml = viewRows.length ? viewRows.map((m) => `
-            <div style="display:flex; align-items:center; gap:10px; padding:6px 10px; border-bottom:1px solid #26263a; font-size:12px">
-                <span style="color:#e8eef5; white-space:nowrap">${_escapeHtml(m.projection || '')} · ${_escapeHtml(m.vertical || '')}</span>
-                <span style="color:#778599; white-space:nowrap">${Number(m.lattice_n || 0)}² · ${Number(m.pix || 0)}px</span>
-                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#778599" title="source color artifact">src ${_escapeHtml(m.source_artifact_id || '')}</span>
-                <span style="color:#556; font-size:11px; white-space:nowrap">${_escapeHtml(String(m.created_at || '').slice(0, 16).replace('T', ' '))}</span>
-                <button type="button" class="btn-secondary btn-inline" onclick="_viewGoColor('${_escapeHtml(m.view_id)}')" title="Select the source color artifact in the Color tab">GoColor</button>
-                <button type="button" class="btn-secondary btn-inline" onclick="_viewDownload('${_escapeHtml(m.view_id)}', this)">Download</button>
-                <button type="button" class="btn-secondary btn-inline" onclick="_viewDeepZoom('${_escapeHtml(m.view_id)}', this)" title="Export this view as a shareable DeepZoom">DeepZoom</button>
-                <button type="button" class="btn-secondary btn-inline" onclick="_viewDelete('${_escapeHtml(m.view_id)}', this)">Delete</button>
-            </div>`).join('')
-            : `<div style="padding:10px; color:#666">${window._viewsInventoryJob === jobId ? 'No views for this job yet — press ViewRender.' : 'Loading…'}</div>`;
-        preview.innerHTML = `
-        <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
-            <div class="subtab-bar render-artifact-family-tabs" role="tablist" aria-label="Render artifact family tabs">${familyTabs}</div>
-            <div style="font-size:12px; color:#8899aa; margin-bottom:8px; font-family:monospace">source: ${viewSrc && viewSrc.artifact_id ? _escapeHtml(viewSrc.artifact_id) : '— select a color artifact (Color tab)'}</div>
-            <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap">
-                <button type="button" class="btn-secondary btn-inline" id="btn-view-render" onclick="_viewRenderOpenModal()" title="Render a view of the selected color artifact — a popup sets projection, vertical, lattice and size">ViewRender</button>
-                <button type="button" class="btn-secondary btn-inline" id="btn-views-refresh" onclick="_viewsEnsureInventory(true)">Refresh</button>
-                <span style="font-size:11px; color:#666">a view is an associated artifact of a color render — front/rear plot Re, left/right plot Im, radial plots r = |root|; t climbs the image</span>
-            </div>
-            <div id="views-list" style="max-height:520px; overflow-y:auto; border:1px solid #333; border-radius:4px">${viewRowsHtml}</div>
-        </div>`;
-        info.textContent = 'Job: ' + jobId;
-        return;
-    }
 
     if (_renderActiveFamily === 'sculpture') {
         // saved-sculpture pane: DeepZoom-style — a create block bound to the
@@ -1142,6 +1142,13 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate opens the BiLevel popup and runs the logical-section path: sectioned solve reads, sparse occupancy fragments, then one assemble+encode finalize. Color2Bilevel is the faster derived path from a fused Color artifact and appears on the Color tab.</span>';
     } else if (_renderActiveFamily === 'pdf') {
         controlsExtra = '<span style="font-size:11px; color:#666">PDF artifacts are generated from the selected Color artifact using the PDF button on the Color tab. This tab lists and previews completed PDFs.</span>';
+    } else if (_renderActiveFamily === 'views') {
+        const source = _sculptureSourceColorArtifact();
+        const sourceId = source && source.artifact_id ? String(source.artifact_id) : '';
+        const n = source ? _viewRenderGridN(source) : null;
+        controlsExtra = sourceId
+            ? `<span style="font-size:11px; color:#666">ViewRender source: <span style="color:#cfd8e3; font-family:monospace">${_escapeHtml(sourceId)}</span>. Each view is ${n ? `${n}×${n}` : 'N×N'}: t1/t2 supplies one N-pixel axis and the selected root projection supplies the other. Select a row to preview it.</span>`
+            : '<span style="font-size:11px; color:#666">Select a Color artifact first. Views are associated N×N images: t1/t2 supplies one axis and front/rear/left/right/radial supplies the other.</span>';
     }
 
     let catalogHtml = '';
@@ -1175,9 +1182,11 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     }
 
     const actionButtons = [];
-    if (_renderActiveFamily !== 'color' && _renderActiveFamily !== 'pdf') {
+    if (_renderActiveFamily !== 'color' && _renderActiveFamily !== 'pdf' && _renderActiveFamily !== 'views') {
         actionButtons.push('<button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>');
     }
+    if (_renderActiveFamily === 'views') actionButtons.push('<button class="btn-primary" id="btn-view-render" onclick="_viewRenderOpenModal()" style="padding:4px 12px; font-size:11px" title="Render an N×N view from the selected Color artifact">ViewRender</button>');
+    if (_renderActiveFamily === 'views') actionButtons.push('<button class="btn-secondary" id="btn-views-refresh" onclick="_viewsEnsureInventory(true)" style="padding:4px 12px; font-size:11px">Refresh</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-primary" id="btn-render-generate-mt" onclick="generateSelectedRenderArtifactMT()" style="padding:4px 12px; font-size:11px">ColorRender-MT</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-pdf-colorspread" onclick="runPdfColorSpreadSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>PDF</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-extract-palette" onclick="openExtractPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>ExtractPalette</button>');
@@ -1194,6 +1203,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     if (_renderActiveFamily === 'color') actionButtons.push(`<button class="btn-secondary" id="btn-render-favorite" onclick="favoriteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" ${favoriteSelected ? 'disabled' : ''}>${favoriteSelected ? 'Favorited' : 'Favorite'}</button>`);
     if (_renderActiveFamily === 'color') actionButtons.push(`<button class="btn-secondary" id="btn-render-add-book" onclick="addSelectedRenderArtifactToBook()" style="padding:4px 12px; font-size:11px">Add to Book</button>`);
     if (_renderActiveFamily === 'palette') actionButtons.push(`<button class="btn-secondary" id="btn-render-go-color" onclick="goColorFromPalette()" style="padding:4px 12px; font-size:11px" disabled>GoColor${linkedColorId ? ': ' + linkedColorId : ''}</button>`);
+    if (_renderActiveFamily === 'views') actionButtons.push(`<button class="btn-secondary" id="btn-render-go-color" onclick="goColorFromView()" style="padding:4px 12px; font-size:11px" disabled>GoColor${linkedColorId ? ': ' + linkedColorId : ''}</button>`);
     actionButtons.push(`<div style="display:inline-block; position:relative">
         <button class="btn-secondary" id="btn-render-download" onclick="_toggleDownloadMenu()" style="padding:4px 12px; font-size:11px" disabled>Download \u25bc</button>
         <div id="download-menu" style="display:none; position:absolute; bottom:100%; left:0; background:#2a2a3e; border:1px solid #555; border-radius:4px; z-index:100; min-width:120px; margin-bottom:2px">
@@ -2002,19 +2012,70 @@ async function _splatBakeStartAndFollow(jobId, source, params, btnId, railLabel)
     return row;
 }
 
-async function _viewsEnsureInventory(force) {
+function _viewAsRenderArtifact(meta) {
+    const row = meta && typeof meta === 'object' ? meta : {};
+    const viewId = String(row.view_id || row.artifact_id || '').trim();
+    const imageKey = String(row.image_key || '').trim();
+    const previewKey = String(row.preview_key || '').trim();
+    const viewerKey = previewKey || imageKey;
+    const dimension = Math.round(Number(row.width || row.pix || row.lattice_n));
+    const width = Math.round(Number(row.width || dimension));
+    const height = Math.round(Number(row.height || dimension));
+    const extMatch = imageKey.match(/\.([A-Za-z0-9]+)$/);
+    const ext = extMatch ? extMatch[1].toLowerCase() : '';
+    const format = String(row.format || (ext === 'jpg' ? 'jpeg' : ext) || 'jpeg').toLowerCase();
+    const contentType = String(row.content_type || (
+        format === 'png' ? 'image/png' : 'image/jpeg'
+    ));
+    return {
+        ...row,
+        family: 'views',
+        artifact_id: viewId,
+        view_id: viewId,
+        width: Number.isFinite(width) && width > 0 ? width : '',
+        height: Number.isFinite(height) && height > 0 ? height : '',
+        pix: Number.isFinite(dimension) && dimension > 0 ? dimension : row.pix,
+        format,
+        content_type: contentType,
+        image_key: imageKey,
+        image_url: imageKey ? _publicStorageUrl(imageKey) : String(row.image_url || ''),
+        preview_key: previewKey,
+        preview_url: previewKey ? _publicStorageUrl(previewKey) : String(row.preview_url || ''),
+        viewer_url: viewerKey ? _publicStorageUrl(viewerKey) : String(row.viewer_url || row.image_url || ''),
+    };
+}
+
+function _viewsSelectInventoryArtifact(viewId) {
+    const targetId = String(viewId || '').trim();
+    if (!targetId) return false;
+    const rows = window._viewsInventory || [];
+    const target = rows.find((row) => String(row.artifact_id || row.view_id || '') === targetId);
+    if (!target) return false;
+    _renderSelectedArtifactKey.views = _renderArtifactStableKey(target);
+    return true;
+}
+
+async function _viewsEnsureInventory(force, options = {}) {
     // job-scoped (unlike the global sculpture list): renders/{job}/views/
     const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
     if (!jobId) return false;
-    if (window._viewsInventoryJob === jobId && !force) return true;
+    if (window._viewsInventoryJob === jobId && !force) {
+        if (options.selectViewId && _viewsSelectInventoryArtifact(options.selectViewId)) {
+            _viewsRenderPane({ ensureSelected: true });
+        }
+        return true;
+    }
     const btn = document.getElementById('btn-views-refresh');
     let ok = false;
     if (btn) { btn.disabled = true; if (force) btn.textContent = 'Refreshing…'; }
     try {
         const data = await lambdaPost('storage', { job_id: jobId }, '/list-views');
-        window._viewsInventory = data.views || [];
+        const currentJobId = document.getElementById('render-results-dir')?.value.trim() || '';
+        if (currentJobId !== jobId) return false;
+        window._viewsInventory = (data.views || []).map(_viewAsRenderArtifact);
         window._viewsInventoryJob = jobId;
         _viewsSyncFamilyCount();
+        if (options.selectViewId) _viewsSelectInventoryArtifact(options.selectViewId);
         ok = true;
     } catch (e) {
         log(`View list failed: ${e.message}`, 'err', 'render-log');
@@ -2030,7 +2091,7 @@ async function _viewsEnsureInventory(force) {
             }
         }
     }
-    if (ok) _viewsRenderPane();
+    if (ok) _viewsRenderPane({ ensureSelected: !!options.selectViewId });
     return ok;
 }
 
@@ -2038,26 +2099,30 @@ function _viewsSyncFamilyCount() {
     // count patched in place — a full panel re-render here would stomp the
     // user's active tab/selection state (the sculpture-count lesson)
     const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
-    const rows = window._viewsInventoryJob === jobId ? (window._viewsInventory || []) : [];
+    const rows = window._viewsInventoryJob === jobId
+        ? (window._viewsInventory || []).map(_viewAsRenderArtifact)
+        : [];
+    if (window._viewsInventoryJob === jobId) window._viewsInventory = rows;
     if (typeof _renderArtifacts !== 'undefined' && _renderArtifacts) _renderArtifacts.views = rows;
     for (const el of document.querySelectorAll('[data-render-family="views"] .subtab-count')) {
         el.textContent = `(${rows.length})`;
     }
 }
 
-function _viewsRenderPane() {
+function _viewsRenderPane(options = {}) {
     if (typeof _renderActiveFamily !== 'undefined' && _renderActiveFamily === 'views') {
         const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
-        renderArtifactPanel(jobId, window._lastRenderSummary || { families: _renderArtifacts, calc: {} }, { preserveScroll: true });
+        renderArtifactPanel(
+            jobId,
+            window._lastRenderSummary || { families: _renderArtifacts, calc: {} },
+            { preserveScroll: true, ensureSelected: !!options.ensureSelected }
+        );
     }
 }
 
-function _viewById(id) {
-    return (window._viewsInventory || []).find((m) => m.view_id === id) || null;
-}
-
-function _viewGoColor(id) {
-    const m = _viewById(id);
+function goColorFromView() {
+    if (_renderActiveFamily !== 'views') return;
+    const m = _renderSelectedArtifactEntry();
     if (!m || !m.source_artifact_id) return;
     const inv = (_renderArtifacts && _renderArtifacts.color) || [];
     const target = inv.find((art) => String(art.artifact_id || '') === String(m.source_artifact_id));
@@ -2067,64 +2132,6 @@ function _viewGoColor(id) {
     }
     _renderSelectedArtifactKey.color = _renderArtifactStableKey(target);
     _renderSelectFamily('color');
-}
-
-async function _viewDownload(id, btn) {
-    const m = _viewById(id);
-    if (!m || !m.image_key) return;
-    const orig = btn ? btn.textContent : 'Download';
-    try {
-        if (btn) { btn.disabled = true; btn.textContent = 'Signing…'; }
-        const presign = await lambdaPost('storage', {
-            key: m.image_key, filename: `${m.view_id}.png`,
-        }, '/presign');
-        if (!presign || !presign.url) throw new Error('presign returned no url');
-        window.open(presign.url, '_blank');
-        if (btn) btn.textContent = '✓ Download';
-    } catch (e) {
-        log(`View download failed: ${e.message}`, 'err', 'render-log');
-        if (btn) btn.textContent = '✗ Download';
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            setTimeout(() => { if (btn.isConnected && !btn.disabled) btn.textContent = orig; }, 2500);
-        }
-    }
-}
-
-async function _viewDeepZoom(id, btn) {
-    const m = _viewById(id);
-    if (!m || !m.image_key) return;
-    const jobId = document.getElementById('render-results-dir').value.trim();
-    const orig = btn ? btn.textContent : 'DeepZoom';
-    let ok = false;
-    try {
-        ok = !!(await runDeepZoomExport(jobId, m.image_key, btn, { skipRenderRefresh: true }));
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = ok ? '✓ DeepZoom' : orig;
-            setTimeout(() => { if (btn.isConnected && !btn.disabled) btn.textContent = orig; }, 2500);
-        }
-    }
-}
-
-async function _viewDelete(id, btn) {
-    const m = _viewById(id);
-    if (!m) return;
-    if (!confirm(`Delete view ${m.projection} · ${m.vertical} (${m.view_id})?`)) return;
-    const orig = btn ? btn.textContent : 'Delete';
-    try {
-        if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
-        await lambdaPost('storage', { prefix: m.prefix || `renders/${m.job_id}/views/${m.view_id}/` }, '/delete-prefix');
-        window._viewsInventory = (window._viewsInventory || []).filter((x) => x.view_id !== id);
-        _viewsSyncFamilyCount();
-        _viewsRenderPane();
-        log(`View deleted: ${m.view_id}`, 'ok', 'render-log');
-    } catch (e) {
-        log(`View delete failed: ${e.message}`, 'err', 'render-log');
-        if (btn) { btn.disabled = false; btn.textContent = orig; }
-    }
 }
 
 function _viewRenderEnsureModal() {
@@ -2153,21 +2160,8 @@ function _viewRenderEnsureModal() {
                     <option value="t2" selected>t2 up</option>
                     <option value="t1">t1 up</option>
                 </select>
-                <span>lattice</span>
-                <select id="view-render-lattice" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">
-                    <option value="128">128²</option>
-                    <option value="192">192²</option>
-                    <option value="384" selected>384²</option>
-                    <option value="512">512²</option>
-                </select>
-                <span>size</span>
-                <select id="view-render-pix" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">
-                    <option value="512">512px</option>
-                    <option value="1024" selected>1024px</option>
-                    <option value="2048">2048px</option>
-                </select>
             </div>
-            <div style="font-size:11px; color:#666; margin-top:10px">plots the artifact's own stored roots + scores — no re-render, its palette, all angles collapse in radial</div>
+            <div style="font-size:11px; color:#666; margin-top:10px">full ColorRender-MT render · output is N×N: the selected t1/t2 parameter supplies one N-pixel axis and the selected root projection supplies the other · viewport, score program, transforms, palette, and format come from the selected Color artifact</div>
             <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
                 <button type="button" class="btn-secondary btn-inline" onclick="_viewRenderClose()">Cancel</button>
                 <button type="button" class="btn-secondary btn-inline" id="view-render-go" onclick="runViewRenderStart()">Render</button>
@@ -2185,7 +2179,10 @@ function _viewRenderOpenModal() {
         return;
     }
     _viewRenderEnsureModal();
-    document.getElementById('view-render-source').textContent = `source: ${art.artifact_id}`;
+    const grid = _viewRenderGridN(art);
+    const resolution = grid ? `N=${grid} · output ${grid}×${grid}` : 'N unavailable';
+    document.getElementById('view-render-source').textContent =
+        `source: ${art.artifact_id} · ${resolution}`;
     const overlay = document.getElementById('view-render-modal-overlay');
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
@@ -2211,13 +2208,20 @@ async function runViewRenderStart() {
         const val = (id) => document.getElementById(id).value;
         const projection = val('view-render-projection');
         const vertical = val('view-render-vertical') === 't1' ? 't1' : 't2';
-        const n = parseInt(val('view-render-lattice'), 10) || 384;
-        const pix = parseInt(val('view-render-pix'), 10) || 1024;
+        const params = _viewRenderParamsFromArtifact(art, projection, vertical);
         _viewRenderClose();
-        if (btn) { btn.disabled = true; btn.textContent = 'Rendering…'; }
-        await _viewRenderStartAndFollow(jobId, {
-            artifact_id: String(art.artifact_id), projection, vertical, n, pix,
-        }, `view · ${projection}/${vertical} · ${art.artifact_id}`);
+        if (btn) { btn.disabled = true; btn.textContent = 'Dispatching…'; }
+        log(
+            `ViewRender: ${projection}/${vertical} from ${art.artifact_id} `
+            + `at ${params.pix}x${params.pix} — dispatching full ColorRender-MT…`,
+            'ok',
+            'render-log'
+        );
+        await _dispatchRenderOrchestrator('color', {
+            job_id: jobId,
+            mode: 'color',
+            params,
+        });
         ok = true;
     } catch (e) {
         log(`ViewRender failed: ${e.message}`, 'err', 'render-log');
@@ -2236,71 +2240,88 @@ async function runViewRenderStart() {
     }
 }
 
-async function _viewRenderStartAndFollow(jobId, payload, railLabel) {
-    // the shared view driver: register the job, follow it on the rail,
-    // insert the associated-artifact row when it lands
-    const startResp = await lambdaPost('storage', { job_id: jobId, ...payload }, '/start-view-render');
-    const taskId = startResp && startResp.task_id;
-    if (!taskId) throw new Error('start-view-render returned no task_id');
-    const railId = 'viewrender:' + taskId;
-    const startedAt = Date.now();
-    _jobsRailUpsert({ id: railId, kind: 'viewrender', label: railLabel,
-                      jobId, tab: 'render', state: 'running', startedAt, detail: 'rendering' });
-    let row = null;
-    try {
-        for (;;) {
-            const elapsed = Math.round((Date.now() - startedAt) / 1000);
-            if (elapsed > 360) throw new Error('view render timed out after 6 minutes');
-            const liveBtn = document.getElementById('btn-view-render');
-            if (liveBtn && liveBtn.disabled) liveBtn.textContent = `Rendering ${elapsed}s…`;
-            _jobsRailProgress(railId, `${railLabel} · ${elapsed}s`);
-            let check = null;
-            try {
-                check = await lambdaPost('storage', {
-                    job_id: jobId, task_prefix: taskId, expected: 1,
-                }, '/check-status');
-            } catch (err) { /* transient — keep polling */ }
-            if (check && check.errors > 0) {
-                const detail = (check.error_details && check.error_details[0]
-                    && check.error_details[0].error_msg) || 'view render failed';
-                throw new Error(detail);
-            }
-            if (check && check.done >= 1) {
-                const r = (check.results || []).find((x) => x && x.view);
-                if (!r) throw new Error('view result carries no view row');
-                row = r.view;
-                row._provenance = r.provenance || null;
-                break;
-            }
-            await new Promise((r2) => setTimeout(r2, 3000));
-        }
-    } catch (err) {
-        _jobsRailUpsert({ id: railId, kind: 'viewrender', label: railLabel,
-                          jobId, tab: 'render', state: 'failed',
-                          detail: err && err.message ? err.message : String(err) });
-        throw err;
+function _viewRenderGridN(art) {
+    const calc = (window._lastRenderSummary && window._lastRenderSummary.calc) || {};
+    const candidates = [
+        calc.N,
+        calc.n1,
+        art && art.step_scores_grid_n,
+    ];
+    for (const candidate of candidates) {
+        const n = Math.round(Number(candidate));
+        if (Number.isFinite(n) && n >= 2) return n;
     }
-    const doneSecs = Math.round((Date.now() - startedAt) / 1000);
-    _jobsRailUpsert({ id: railId, kind: 'viewrender', label: railLabel,
-                      jobId, tab: 'render', state: 'complete', detail: `done in ${doneSecs}s` });
-    if (window._viewsInventoryJob === jobId) {
-        window._viewsInventory = [row, ...(window._viewsInventory || [])];
-    } else {
-        window._viewsInventory = [row];
-        window._viewsInventoryJob = jobId;
+    return null;
+}
+
+function _viewRenderParamsFromArtifact(art, projection, vertical) {
+    const pix = _viewRenderGridN(art);
+    if (!pix) {
+        throw new Error('selected calculation has no valid N for an N×N View render');
     }
-    _viewsSyncFamilyCount();
-    _viewsRenderPane();
-    const prov = row._provenance;
-    delete row._provenance;
-    const provLabel = prov && typeof prov.generate_cache_hit === 'boolean'
-        ? (prov.generate_cache_hit
-            ? ` · generate CACHE HIT ${((prov.generate_ms || 0) / 1000).toFixed(1)}s`
-            : ` · lattice materialized ${((prov.generate_ms || 0) / 1000).toFixed(1)}s (first time for this artifact+size; cached now)`)
-        : '';
-    log(`View rendered: ${row.projection}/${row.vertical} · ${Number(row.lattice_n || 0)}² · `
-        + `${Number(row.pix || 0)}px · ${doneSecs}s${provLabel}`, 'ok', 'render-log');
-    return row;
+    if (pix > RENDER_MAX_PIX) {
+        throw new Error(`selected calculation N=${pix} exceeds the renderer limit ${RENDER_MAX_PIX}`);
+    }
+    const bounds = {
+        min_re: Number(art.min_re),
+        max_re: Number(art.max_re),
+        min_im: Number(art.min_im),
+        max_im: Number(art.max_im),
+    };
+    if (!Object.values(bounds).every(Number.isFinite)
+            || !(bounds.max_re > bounds.min_re)
+            || !(bounds.max_im > bounds.min_im)) {
+        throw new Error('selected color artifact has no valid saved viewport');
+    }
+    const solveSource = _artifactSolveScoreSourceText(art);
+    if (!solveSource.trim()) {
+        throw new Error('selected color artifact has no saved solve-score source text');
+    }
+    const fmtRaw = String(art.format || '').trim().toLowerCase();
+    const fmt = fmtRaw === 'png' ? 'png' : 'jpeg';
+    const qualityRaw = Math.round(Number(art.quality));
+    const quality = Number.isFinite(qualityRaw) && qualityRaw >= 1 && qualityRaw <= 100
+        ? qualityRaw
+        : 90;
+    const rootSource = String(art.root_program_source_text || '');
+    const params = {
+        pix,
+        fmt,
+        quality,
+        view_mode: 'explicit',
+        ...bounds,
+        quantile: Number.isFinite(Number(art.quantile)) ? Number(art.quantile) : 0,
+        shim: Number.isFinite(Number(art.shim)) ? Number(art.shim) : 0.05,
+        square_extent: Number.isFinite(Number(art.square_extent)) ? Number(art.square_extent) : 2,
+        rotation: Number.isFinite(Number(art.rotation)) ? Number(art.rotation) : 0,
+        color_mode: 'solve_score',
+        color_interpretation: _artifactColorInterpretation(art),
+        background_color: String(art.background_color || '000000'),
+        solve_score_program_source_text: solveSource,
+        solve_score_normalize: art.solve_score_normalize != null
+            ? _boolish(art.solve_score_normalize, false)
+            : _boolish(art.score_output_normalize, false),
+        palette: String(art.palette || 'inferno'),
+        palette_display_name: String(art.palette_display_name || ''),
+        raster_engine: 'mt',
+        raster_mt_threads: 4,
+        solve_score_threads: 4,
+        raster_workers: 10,
+        raster_sectioned_retries: 2,
+        raster_section_mode: 'logical_sections_auto',
+        raster_section_count: '',
+        finalize_workers: 16,
+        save_associated_palette: false,
+        view_projection: projection,
+        view_vertical: vertical,
+        source_color_artifact_id: String(art.artifact_id),
+    };
+    if (rootSource.trim()) {
+        params.root_program_source_text = rootSource;
+    } else if (Array.isArray(art.root_transforms) && art.root_transforms.length) {
+        params.root_transforms = art.root_transforms;
+    }
+    return params;
 }
 
 function _saveSplatEnsureModal() {

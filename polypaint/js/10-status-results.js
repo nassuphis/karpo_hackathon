@@ -1521,6 +1521,7 @@ async function _logRenderRasterPerf(run) {
 
 function _renderRunCompleteLabel(run) {
     if (!run) return 'Render complete';
+    if (_renderRunDisplayMode(run) === 'view') return 'ViewRender complete';
     if (run.mode === 'repalette') return 'RePalette complete';
     if (run.mode === 'color_repalette') return 'Color RePalette complete';
     if (run.mode === 'color_to_bilevel') return 'Color2Bilevel complete';
@@ -1532,6 +1533,7 @@ function _renderRunCompleteLabel(run) {
 
 function _renderRunErrorLabel(run) {
     if (!run) return 'Render';
+    if (_renderRunDisplayMode(run) === 'view') return 'ViewRender';
     if (run.mode === 'repalette') return 'RePalette';
     if (run.mode === 'color_repalette') return 'Color RePalette';
     if (run.mode === 'color_to_bilevel') return 'Color2Bilevel';
@@ -1577,6 +1579,7 @@ function _renderRunCompleteLog(run, rd) {
         : null;
     const shownElapsedMs = elapsedMs != null ? elapsedMs : fallbackElapsedMs;
     const elapsed = shownElapsedMs != null ? ` (${_fmtMs(shownElapsedMs)})` : '';
+    if (run && _renderRunDisplayMode(run) === 'view') return 'ViewRender complete: ' + target + elapsed;
     if (run && run.mode === 'repalette') return 'RePalette complete: ' + target + elapsed;
     if (run && run.mode === 'color_repalette') return 'Color RePalette complete: ' + target + elapsed;
     if (run && run.mode === 'color_to_bilevel') return 'Color2Bilevel complete: ' + target + elapsed;
@@ -1620,10 +1623,17 @@ async function _handleRenderRunCompletion(run, rd) {
         await loadPaletteInventory({ selectPaletteId: rd.palette_id || rd.artifact_id || null });
     }
 
-    await refreshRenderArtifacts(run.job_id, {
-        selectFamily: family,
-        selectArtifactId: artifactId,
-    });
+    if (family === 'views') {
+        await refreshRenderArtifacts(run.job_id, { selectFamily: 'views' });
+        if (typeof _viewsEnsureInventory === 'function') {
+            await _viewsEnsureInventory(true, { selectViewId: artifactId });
+        }
+    } else {
+        await refreshRenderArtifacts(run.job_id, {
+            selectFamily: family,
+            selectArtifactId: artifactId,
+        });
+    }
 }
 
 function _showPdfHardStaleAbandon(statusEl, run, phase) {
@@ -1796,7 +1806,7 @@ async function _pollActiveRenderRun() {
         _jobsRailUpsert({
             id: 'render:' + run.run_id,
             kind: 'render',
-            label: (run.mode || 'render') + ' · ' + run.job_id,
+            label: _renderRunDisplayMode(run) + ' · ' + run.job_id,
             jobId: run.job_id,
             tab: 'render',
             state: 'running',

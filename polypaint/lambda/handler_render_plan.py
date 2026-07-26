@@ -11,6 +11,7 @@ import json
 import math
 import os
 import hashlib
+import re
 from datetime import datetime, timezone
 
 import boto3
@@ -53,6 +54,7 @@ RASTER_MT_FUNCTION = os.environ.get("RASTER_MT_FUNCTION", "polypaint-raster-mt")
 MAX_PLAN_BYTES = 200 * 1024  # 200 KB — fail fast before hitting 256 KB SFN limit
 MAX_PIX = 32768
 DEFAULT_BACKGROUND_THRESHOLD = 4
+COLOR_ARTIFACT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 
 def _plan_params_digest(*, viewport, pix, root_transforms=None, root_program_fingerprint="", solve_score_normalize=False, color_interpretation="scalar_lut", background_color=None):
@@ -403,18 +405,30 @@ def _build_fused_color_plan(
         "save_associated_palette": False,
         "view_projection": "plan",
         "view_vertical": "t2",
+        "source_color_artifact_id": "",
     }
     for key, default in defaults.items():
         fused_params[key] = rp.get(key, default)
     # Views: elevations re-map only the plot pixel; validate here so a bad
     # request dies at plan time, not inside a raster section
     fused_params["view_projection"] = str(fused_params.get("view_projection") or "plan").strip().lower()
-    if fused_params["view_projection"] not in ("plan", "front", "rear", "left", "right"):
+    if fused_params["view_projection"] not in ("plan", "front", "rear", "left", "right", "radial"):
         raise RuntimeError(
-            f"view_projection must be plan/front/rear/left/right, got {fused_params['view_projection']!r}")
+            f"view_projection must be plan/front/rear/left/right/radial, got {fused_params['view_projection']!r}")
     fused_params["view_vertical"] = str(fused_params.get("view_vertical") or "t2").strip().lower()
     if fused_params["view_vertical"] not in ("t1", "t2"):
         raise RuntimeError(f"view_vertical must be t1 or t2, got {fused_params['view_vertical']!r}")
+    is_view = fused_params["view_projection"] != "plan"
+    source_color_artifact_id = str(fused_params.get("source_color_artifact_id") or "").strip()
+    if is_view:
+        if not source_color_artifact_id:
+            raise RuntimeError("ViewRender requires source_color_artifact_id")
+        if not COLOR_ARTIFACT_ID_RE.fullmatch(source_color_artifact_id):
+            raise RuntimeError(
+                f"invalid source_color_artifact_id: {source_color_artifact_id!r}")
+    elif source_color_artifact_id:
+        raise RuntimeError("source_color_artifact_id is only valid for ViewRender")
+    fused_params["source_color_artifact_id"] = source_color_artifact_id
     root_program_payload = _apply_root_program_to_params(fused_params)
 
     fused_params["color_mode"] = str(fused_params.get("color_mode") or "solve_score").strip().lower()
@@ -493,6 +507,17 @@ def _build_fused_color_plan(
             "fused color requires calc N/n1 so step_scores.raw can be written "
             "for ExtractPalette and associated-palette parity"
         )
+    if is_view:
+        if full_n < 2:
+            raise RuntimeError(f"ViewRender requires calc N >= 2, got {full_n}")
+        if full_n > MAX_PIX:
+            raise RuntimeError(
+                f"ViewRender calc N={full_n} exceeds the renderer limit {MAX_PIX}"
+            )
+        # A View is a projection of the N x N parameter square. t1/t2 is one
+        # axis and the selected root projection is the other, so the saved
+        # Color image's independent pixel size is irrelevant.
+        fused_params["pix"] = full_n
     if not chunk_summary["chunk_step_metadata_complete"]:
         raise RuntimeError(
             "fused color requires chunk step metadata on every chunk so logical sections "
@@ -621,8 +646,9 @@ def _build_fused_color_plan(
         "reason": "fused_solve_score",
     }
 
-    artifact_id = f"color_{run_id}"
-    artifact_prefix = f"renders/{job_id}/color/{artifact_id}/"
+    artifact_family = "views" if is_view else "color"
+    artifact_id = f"view_{run_id}" if is_view else f"color_{run_id}"
+    artifact_prefix = f"renders/{job_id}/{artifact_family}/{artifact_id}/"
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     ext = "png" if fused_params.get("fmt", "jpeg") == "png" else "jpeg"
     associated_palette = {
@@ -702,7 +728,7 @@ def _build_fused_color_plan(
 
     artifact_meta = {
         "artifact_id": artifact_id,
-        "family": "color",
+        "family": artifact_family,
         "created_at": created_at,
         "degree": str(degree),
         "pix": str(pix),
@@ -746,6 +772,19 @@ def _build_fused_color_plan(
         "raw_meta_key": artifact_prefix + "greyscale.meta.json",
         "fragment_prefix": artifact_prefix + "fragments/section_",
     }
+    if is_view:
+        artifact_meta.update({
+            "version": "2",
+            "view_id": artifact_id,
+            "job_id": job_id,
+            "source_artifact_id": source_color_artifact_id,
+            "projection": fused_params["view_projection"],
+            "vertical": fused_params["view_vertical"],
+            "lattice_n": str(full_n),
+            "image_key": artifact_prefix + f"image.{ext}",
+            "preview_key": artifact_prefix + "preview.png",
+            "prefix": artifact_prefix,
+        })
     artifact_meta.update(_root_program_metadata(root_program_payload))
     artifact_meta.update(
         emit_solve_score_metadata(
@@ -795,7 +834,7 @@ def _build_fused_color_plan(
         background_color=background_color,
     )
     outputs = {
-        "family": "color",
+        "family": artifact_family,
         "artifact_id": artifact_id,
         "artifact_prefix": artifact_prefix,
         "created_at": created_at,

@@ -625,6 +625,16 @@ assertIncludes("id=\"btn-sculpture-generate\" onclick=\"runSculptureGenerate()\"
 assertIncludes("id=\"sculpture-source-line\"", 'sculpture tab first line should show the source color artifact id');
 assertIncludes("function _sculptureSourceColorArtifact() {", 'sculpture source should resolve from the color family selection');
 assertNotIncludes("<option value=\"preview\"", 'sculpture size select must not offer a preview mode — artifact-only sourcing');
+assertIncludes("function _viewRenderParamsFromArtifact(art, projection, vertical) {", 'ViewRender should derive its full render request from the selected Color artifact');
+assertIncludes("function _viewRenderGridN(art) {", 'ViewRender should derive image geometry from calculation N');
+assertIncludes("const pix = _viewRenderGridN(art);", 'ViewRender must use N for both image dimensions');
+assertIncludes("source_color_artifact_id: String(art.artifact_id),", 'ViewRender should preserve the selected Color artifact identity');
+assertNotIncludes("id=\"view-render-lattice\"", 'ViewRender must not expose the interactive sculpture lattice cap');
+assertNotIncludes("id=\"view-render-pix\"", 'ViewRender must derive N x N geometry instead of exposing a size selector');
+assertNotIncludes("'/start-view-render'", 'ViewRender must not dispatch through the capped low-resolution storage route');
+assertIncludes("function _viewAsRenderArtifact(meta) {", 'Views must normalize onto the shared render-artifact contract');
+assertIncludes("function goColorFromView() {", 'Views should expose GoColor as a selected-artifact action');
+assertNotIncludes("id=\"views-list\"", 'Views must use the shared artifact catalog and preview, not a custom row-action list');
 assertIncludes("id=\"render-lores-preview-stage\"", 'render output preview should expose a marquee stage wrapper');
 assertIncludes("id=\"render-lores-preview-marquee\"", 'render output preview should expose a marquee overlay');
 assertIncludes(".render-lores-preview-tabs {\n    width: 100%;", 'render output preview tabs should fill the Output box width');

@@ -620,13 +620,13 @@ class TestRasterMT(unittest.TestCase):
         mock_run.side_effect = fake_run
 
         result = mod.handler(_fused_event(
-            view_projection="front",
+            view_projection="radial",
             view_vertical="t1",
             view_grid_n=100,
             step_start=2,
         ), None)
         self.assertEqual(result["statusCode"], 200, result)
-        self.assertIn("--view_projection=front", seen["cmd"])
+        self.assertIn("--view_projection=radial", seen["cmd"])
         self.assertIn("--view_vertical=t1", seen["cmd"])
         self.assertIn("--view_grid_n=100", seen["cmd"])
         self.assertIn("--view_step_start=2", seen["cmd"])

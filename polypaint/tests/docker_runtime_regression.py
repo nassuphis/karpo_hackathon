@@ -3901,8 +3901,41 @@ def test_roots2pix_view_projection_runtime():
         pixels.add((idx % 8, idx // 8))
     expected = {(r2, py) for r2 in range(4) for py in (7, 6, 4, 2)}
     assert pixels == expected, (sorted(pixels), sorted(expected))
-    cleanup("/tmp/vp_roots.bin", "/tmp/vp_manifest.json", "/tmp/vp_fragment.frag")
-    print("  front/t2 elevation pixels exact: OK")
+
+    radial = subprocess.run([
+        "/src/roots2pix_mt", "/tmp/vp_radial_pix", "--pix=8",
+        "--min_re=-1.1", "--max_re=1.1", "--min_im=-1.1", "--max_im=1.1",
+        "--degree=1", "--rotation=0", "--threads=2",
+        "--input_manifest=/tmp/vp_manifest.json", "--step_count=16",
+        "--score_metrics=centroid_re", "--score_clip_los=-2", "--score_clip_his=2",
+        "--score_program=m0",
+        "--fragment_prefix=/tmp/vp_radial_fragment",
+        "--view_projection=radial", "--view_vertical=t2", "--view_grid_n=4",
+        "--retries=1",
+    ], capture_output=True, text=True, timeout=30)
+    assert radial.returncode == 0, radial.stderr
+    radial_frag = open("/tmp/vp_radial_fragment.frag", "rb").read()
+    radial_pixels = set()
+    for o in range(0, len(radial_frag), 5):
+        idx = struct.unpack_from("<I", radial_frag, o)[0]
+        radial_pixels.add((idx % 8, idx // 8))
+    radial_expected = set()
+    for row in range(grid):
+        for col in range(grid):
+            re = -0.875 + 0.25 * row
+            im = -0.875 + 0.25 * col
+            px = math.floor(math.hypot(re, im) * 8 / math.hypot(1.1, 1.1))
+            py = 7 if col == 0 else math.floor((1 - col / 4) * 8)
+            radial_expected.add((px, py))
+    assert radial_pixels == radial_expected, (
+        sorted(radial_pixels), sorted(radial_expected))
+    cleanup(
+        "/tmp/vp_roots.bin",
+        "/tmp/vp_manifest.json",
+        "/tmp/vp_fragment.frag",
+        "/tmp/vp_radial_fragment.frag",
+    )
+    print("  front/t2 + radial/t2 elevation pixels exact: OK")
 
 
 def test_view_raster_runtime():

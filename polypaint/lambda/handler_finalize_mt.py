@@ -18,7 +18,11 @@ import time
 import boto3
 from botocore.config import Config
 
-from color_artifact_meta import split_color_artifact_metadata, write_color_artifact_meta_overlay
+from color_artifact_meta import (
+    split_color_artifact_metadata,
+    stringify_color_metadata,
+    write_color_artifact_meta_overlay,
+)
 from color_render_contract import normalize_color_interpretation, validate_color_output_contract
 from raw_score_render import render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar
@@ -886,6 +890,9 @@ def handler(event, context):
     final_metadata["render_execution"] = render_execution
     final_metadata["raw_key"] = raw_key
     final_metadata["raw_meta_key"] = raw_meta_key
+    final_metadata["image_key"] = image_key
+    final_metadata["preview_key"] = preview_key
+    final_metadata["meta_key"] = meta_key
     final_metadata["step_scores_key"] = step_scores_key
     final_metadata["step_count"] = step_scores_count if step_scores_key else ""
     final_metadata["step_scores_grid_n"] = step_scores_grid_n if step_scores_key else ""
@@ -904,6 +911,7 @@ def handler(event, context):
     if render_warnings:
         final_metadata["render_warnings"] = json.dumps(render_warnings, separators=(",", ":"))
     final_metadata["raw_channels"] = str(channels)
+    final_metadata["channels"] = str(channels)
     final_metadata["raw_layout"] = "u8_scalar_row_major" if channels == 1 else "u8_packed_channels_row_major"
     final_metadata["repalette_capable"] = True
     if channels == 3:
@@ -926,6 +934,12 @@ def handler(event, context):
         final_metadata["associated_palette_raw_key"] = associated_palette_result["raw_key"]
         final_metadata["associated_palette_raw_meta_key"] = associated_palette_result["raw_meta_key"]
         final_metadata["associated_palette_meta_key"] = associated_palette_result["meta_key"]
+    if str(final_metadata.get("family") or "") == "views":
+        final_metadata["pix"] = pix
+        final_metadata["width"] = width
+        final_metadata["height"] = height
+        final_metadata["file_size"] = int(encode_meta["file_size"])
+        final_metadata["content_type"] = "image/png" if ext == "png" else "image/jpeg"
     image_meta, overlay_meta = split_color_artifact_metadata(final_metadata)
     final_headers = {"pix": str(pix), "width": str(width), "height": str(height), **image_meta}
     metadata_size = _metadata_size_bytes(final_headers)
@@ -957,8 +971,25 @@ def handler(event, context):
     progress["preview_upload_ms"] = int((time.time() - t_component) * 1000)
     t_component = time.time()
     artifact_id = str(final_metadata.get("artifact_id") or "").strip()
-    if artifact_id:
+    artifact_family = str(final_metadata.get("family") or "color").strip()
+    if artifact_id and artifact_family == "color":
         write_color_artifact_meta_overlay(finalize_s3, BUCKET, job_id, artifact_id, overlay_meta)
+    elif artifact_id and artifact_family == "views":
+        if not meta_key:
+            raise RuntimeError("ViewRender finalize requires meta_key")
+        view_meta = stringify_color_metadata(final_metadata)
+        finalize_s3.put_object(
+            Bucket=BUCKET,
+            Key=meta_key,
+            Body=json.dumps(view_meta, separators=(",", ":")).encode("utf-8"),
+            ContentType="application/json",
+            CacheControl="no-cache",
+        )
+    else:
+        raise RuntimeError(
+            f"FinalizeMT requires color/views artifact metadata, got "
+            f"family={artifact_family!r} artifact_id={artifact_id!r}"
+        )
     progress["meta_overlay_ms"] = int((time.time() - t_component) * 1000)
 
     progress["upload_ms"] = int((time.time() - t_upload) * 1000)
@@ -971,6 +1002,8 @@ def handler(event, context):
     report_status(job_id, task_id, "done", result_data=progress)
 
     result = {
+        "family": artifact_family,
+        "artifact_id": artifact_id,
         "image_key": image_key,
         "raw_key": raw_key,
         "raw_meta_key": raw_meta_key,

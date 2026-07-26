@@ -241,8 +241,10 @@ def _build_cmd(params):
     # step offset exactly like the palette path does
     view_projection = str(params.get("view_projection") or "plan")
     if view_projection != "plan":
-        if view_projection not in ("front", "rear", "left", "right"):
-            raise RuntimeError(f"view_projection must be plan/front/rear/left/right, got {view_projection!r}")
+        if view_projection not in ("front", "rear", "left", "right", "radial"):
+            raise RuntimeError(
+                f"view_projection must be plan/front/rear/left/right/radial, got {view_projection!r}"
+            )
         view_grid_n = int(params.get("view_grid_n") or 0)
         if view_grid_n < 2:
             raise RuntimeError("elevation renders require view_grid_n >= 2")

@@ -60,11 +60,12 @@ typedef struct {
     int emitPaletteBins;
     long long paletteStepStart;
     int paletteGridN;
-    int viewProjection;       /* 0 plan | 1 front | 2 rear | 3 left | 4 right */
+    int viewProjection;       /* 0 plan | 1 front | 2 rear | 3 left | 4 right | 5 radial */
     int viewVertical;         /* 0 t2 | 1 t1 (elevation vertical axis) */
     int viewGridN;            /* parameter grid for the step -> t mapping */
     long long viewStepStart;  /* section's global step offset */
     double imHScale;          /* W / im span — left/right horizontal scale */
+    double radialScale;       /* W / farthest viewport-corner radius */
     int scoreCoeffDegree;
     int scoreCoeffStride;
     int scoreParamDegree;
@@ -567,6 +568,12 @@ static void *worker_main(void *arg_) {
              * solve's t vertical (t = 1 at the top), the architecture
              * views of the shape whose plan this pipeline always drew. */
             double pxf, pyf;
+            if (arg->viewProjection != 0
+                    && (rotRe < arg->minRe || rotRe > arg->maxRe
+                        || rotIm < arg->minIm || rotIm > arg->maxIm)) {
+                arg->rootsClipped++;
+                continue;
+            }
             switch (arg->viewProjection) {
             case 1:   /* front: Re rightward */
                 pxf = (rotRe - arg->minRe) * arg->xScale;
@@ -582,6 +589,10 @@ static void *worker_main(void *arg_) {
                 break;
             case 4:   /* right: Im rightward */
                 pxf = (rotIm - arg->minIm) * arg->imHScale;
+                pyf = (1.0 - viewT) * (double)arg->H;
+                break;
+            case 5:   /* radial: distance from origin rightward */
+                pxf = hypot(rotRe, rotIm) * arg->radialScale;
                 pyf = (1.0 - viewT) * (double)arg->H;
                 break;
             default:  /* plan */
@@ -653,7 +664,7 @@ int main(int argc, char **argv) {
                 "[--step_scores_output=/tmp/step_scores.bin] "
                 "[--xformed_roots_output=/tmp/xformed_roots.bin] "
                 "[--xformed_roots_format=f32|u16] "
-                "[--view_projection=plan|front|rear|left|right] [--view_vertical=t2|t1] "
+                "[--view_projection=plan|front|rear|left|right|radial] [--view_vertical=t2|t1] "
                 "[--view_grid_n=N] [--view_step_start=STEP] "
                 "[--root_xforms=file.json]\n");
         return 1;
@@ -714,8 +725,9 @@ int main(int argc, char **argv) {
     else if (strcmp(viewProjectionArg, "rear") == 0) viewProjection = 2;
     else if (strcmp(viewProjectionArg, "left") == 0) viewProjection = 3;
     else if (strcmp(viewProjectionArg, "right") == 0) viewProjection = 4;
+    else if (strcmp(viewProjectionArg, "radial") == 0) viewProjection = 5;
     else {
-        fprintf(stderr, "Invalid --view_projection: %s (plan|front|rear|left|right)\n", viewProjectionArg);
+        fprintf(stderr, "Invalid --view_projection: %s (plan|front|rear|left|right|radial)\n", viewProjectionArg);
         return 1;
     }
     int viewVertical = 0;
@@ -772,6 +784,16 @@ int main(int argc, char **argv) {
     double centerIm = (minIm + maxIm) / 2.0;
     double xScale = (double)W / (maxRe - minRe);
     double yScale = (double)H / (maxIm - minIm);
+    double radialMax = 0.0;
+    for (int cx = 0; cx < 2; cx++) {
+        for (int cy = 0; cy < 2; cy++) {
+            double cornerRe = cx ? maxRe : minRe;
+            double cornerIm = cy ? maxIm : minIm;
+            double radius = hypot(cornerRe, cornerIm);
+            if (radius > radialMax) radialMax = radius;
+        }
+    }
+    double radialScale = (double)W / (radialMax > 0.0 ? radialMax : 1.0);
     if (retries < 0 || retries > 10) {
         fprintf(stderr, "Invalid retries: %d\n", retries);
         return 1;
@@ -1133,6 +1155,7 @@ int main(int argc, char **argv) {
         args[i].viewGridN = viewGridN;
         args[i].viewStepStart = viewStepStart;
         args[i].imHScale = (double)W / (maxIm - minIm);
+        args[i].radialScale = radialScale;
         args[i].cosA = cosA;
         args[i].sinA = sinA;
         args[i].solveScoreProgram = solveScoreProgram;

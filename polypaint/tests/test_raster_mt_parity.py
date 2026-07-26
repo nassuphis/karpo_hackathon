@@ -1,5 +1,6 @@
 import http.server
 import json
+import math
 import pathlib
 import shutil
 import socketserver
@@ -338,6 +339,18 @@ class TestRasterMtParity(unittest.TestCase):
             # left/t1: px = 7 - col, py from t1 = row -> full 4x4 grid again
             got = self._run_projection(root, roots, label="lt1", view_args=view("left", "t1"))
             self.assertEqual(got, {(7 - c, py) for c in range(4) for py in (7, 6, 4, 2)})
+            # radial/t2: radius from the origin fills [0, farthest viewport
+            # corner], while t2 remains vertical.
+            got = self._run_projection(root, roots, label="rad2", view_args=view("radial", "t2"))
+            expected = set()
+            for row in range(4):
+                for col in range(4):
+                    re = -0.875 + 0.25 * row
+                    im = -0.875 + 0.25 * col
+                    px = math.floor(math.hypot(re, im) * 8 / math.sqrt(2))
+                    py = 7 if col == 0 else math.floor((1 - col / 4) * 8)
+                    expected.add((px, py))
+            self.assertEqual(got, expected)
 
     def test_view_step_start_offsets_the_section_lattice(self):
         """MT sections pass their global step offset — the SAME contract as

@@ -142,6 +142,66 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(plan["calc"]["n_chunks"], 4)
 
     @patch("handler_render_plan._storage_call")
+    def test_view_plan_inherits_full_grid_and_uses_views_namespace(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc(N=2000))
+        from handler_render_plan import handler
+
+        result = handler(_make_event(
+            pix=8192,
+            view_mode="explicit",
+            min_re=-3.0,
+            max_re=2.0,
+            min_im=-1.5,
+            max_im=4.0,
+            view_projection="radial",
+            view_vertical="t1",
+            source_color_artifact_id="color_source_7",
+        ), None)
+        plan = json.loads(result["body"])
+
+        # View dimensions come from the parameter square, not the unrelated
+        # pixel size of the source Color artifact/request.
+        self.assertEqual(plan["grid"]["pix"], 2000)
+        self.assertEqual(plan["calc"]["N"], 2000)
+        self.assertEqual(plan["params"]["pix"], 2000)
+        self.assertEqual(plan["params"]["view_projection"], "radial")
+        self.assertEqual(plan["params"]["view_vertical"], "t1")
+        self.assertEqual(plan["params"]["source_color_artifact_id"], "color_source_7")
+        self.assertEqual(plan["outputs"]["family"], "views")
+        self.assertEqual(plan["outputs"]["artifact_id"], "view_run_t")
+        self.assertEqual(plan["outputs"]["artifact_prefix"], "renders/j/views/view_run_t/")
+        self.assertEqual(plan["outputs"]["image_key"], "renders/j/views/view_run_t/image.jpeg")
+        meta = plan["outputs"]["metadata"]
+        self.assertEqual(meta["family"], "views")
+        self.assertEqual(meta["view_id"], "view_run_t")
+        self.assertEqual(meta["source_artifact_id"], "color_source_7")
+        self.assertEqual(meta["projection"], "radial")
+        self.assertEqual(meta["vertical"], "t1")
+        self.assertEqual(meta["lattice_n"], "2000")
+        self.assertEqual(meta["pix"], "2000")
+
+    @patch("handler_render_plan._storage_call")
+    def test_view_plan_requires_source_color_artifact(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, "source_color_artifact_id"):
+            handler(_make_event(view_projection="front"), None)
+
+    @patch("handler_render_plan._storage_call")
+    def test_view_plan_accepts_established_128_char_artifact_ids(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        source_id = "color_" + ("a" * 122)
+        result = handler(_make_event(
+            view_projection="front",
+            source_color_artifact_id=source_id,
+        ), None)
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["params"]["source_color_artifact_id"], source_id)
+
+    @patch("handler_render_plan._storage_call")
     def test_render_plan_rejects_oversized_pix(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
         import handler_render_plan as mod

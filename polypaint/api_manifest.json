@@ -95,8 +95,7 @@
       "/snapshot-book-cover",
       "/solve-score-chain-to-source",
       "/start-sculpture-artifact",
-      "/start-splat-bake",
-      "/start-view-render"
+      "/start-splat-bake"
     ]
   },
   "deploy": {
@@ -185,7 +184,6 @@
       "/solve-score-chain-to-source",
       "/start-sculpture-artifact",
       "/start-splat-bake",
-      "/start-view-render",
       "/sweep-cm",
       "/sweep-mt",
       "/tiff-compat",
@@ -313,8 +311,7 @@
       "/snapshot-book-cover",
       "/solve-score-chain-to-source",
       "/start-sculpture-artifact",
-      "/start-splat-bake",
-      "/start-view-render"
+      "/start-splat-bake"
     ]
   },
   "version": 1

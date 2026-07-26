@@ -1923,51 +1923,94 @@ test.describe('Solve Score UI', () => {
     expect(await page.locator('#btn-sculpture-generate').isDisabled()).toBe(true);
   });
 
-  test('Views tab: associated view artifacts — modal render, list actions, color purity', async ({ page }) => {
+  test('Views tab: Palette-style catalog, N x N render, selected actions, color purity', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page);
     await page.evaluate(() => {
       document.getElementById('render-results-dir').value = 'test_job';
       window._storageCalls = [];
+      window._viewDispatched = false;
+      window._viewDeleted = false;
       window.confirm = () => true;
+      const colorRows = [
+        {
+          artifact_id: 'color_1', palette: 'reef', palette_display_name: 'Reef',
+          created_at: '2026-07-26T08:00:00Z', pix: '8192', width: 8192, height: 8192,
+          format: 'jpeg', quality: 87, min_re: -3, max_re: 2, min_im: -1, max_im: 4,
+          quantile: 0.02, shim: 0.04, square_extent: 3, rotation: 0.25,
+          background_color: '101820', color_interpretation: 'scalar_lut',
+          solve_score_program_source_text: 'score = metric(proximity, slv, q=0.1%)',
+          solve_score_normalize: true, root_program_source_text: 'rotate(0.125)',
+          step_scores_grid_n: 2000,
+        },
+        {
+          artifact_id: 'color_2', palette: 'lava', created_at: '2026-07-26T07:00:00Z',
+          pix: '4096', width: 4096, height: 4096,
+        },
+      ];
       const mkRow = (id, projection, vertical, created) => ({
         view_id: id, job_id: 'test_job', source_artifact_id: 'color_1',
-        projection, vertical, lattice_n: 384, pix: 1024, palette: 'reef',
-        image_key: `renders/test_job/views/${id}/image.png`,
-        image_url: `https://bucket.example/renders/test_job/views/${id}/image.png`,
+        projection, vertical, lattice_n: 2000, pix: 2000, width: 2000, height: 2000,
+        palette: 'reef', format: 'jpeg', content_type: 'image/jpeg',
+        image_key: `renders/test_job/views/${id}/image.jpeg`,
+        preview_key: `renders/test_job/views/${id}/preview.png`,
+        image_url: `https://bucket.example/renders/test_job/views/${id}/image.jpeg`,
         prefix: `renders/test_job/views/${id}/`, created_at: created,
       });
       window.lambdaPost = async function (name, body, path) {
-        window._storageCalls.push([path, JSON.parse(JSON.stringify(body || {}))]);
+        window._storageCalls.push([path, JSON.parse(JSON.stringify(body || {})), name]);
         if (path === '/list-sculptures') return { sculptures: [], count: 0 };
-        if (path === '/list-views') return { views: [mkRow('view_old_front_t2', 'front', 't2', '2026-07-26T09:00:00Z')], count: 1 };
-        if (path === '/start-view-render') return { task_id: 'view_render_777' };
-        if (path === '/check-status') {
-          const row = mkRow('view_new_radial_t1', 'radial', 't1', '2026-07-26T10:00:00Z');
-          return { done: 1, errors: 0, results: [{ view: row,
-            provenance: { generate_cache_hit: true, generate_ms: 1200 } }] };
+        if (path === '/list-views') {
+          const views = [mkRow('view_old_front_t2', 'front', 't2', '2026-07-26T09:00:00Z')];
+          if (window._viewDispatched && !window._viewDeleted) {
+            views.unshift(mkRow('view_new_radial_t1', 'radial', 't1', '2026-07-26T10:00:00Z'));
+          }
+          return { views, count: views.length };
         }
-        if (path === '/presign') return { url: 'https://signed.example/dl.png' };
-        if (path === '/delete-prefix') return { prefix: body.prefix, deleted: 2 };
+        if (path === '/render-summary') return { families: { color: colorRows }, calc: { N: 2000 } };
+        if (name === 'dispatch') {
+          window._viewDispatched = true;
+          return { fired: 1 };
+        }
+        if (path === '/check-status') {
+          return { complete: true, done: 1, errors: 0, results: [{
+            phase: 'done', family: 'views', artifact_id: 'view_new_radial_t1',
+            image_key: 'renders/test_job/views/view_new_radial_t1/image.jpeg',
+          }] };
+        }
+        if (path === '/delete-render-artifact') {
+          window._viewDeleted = true;
+          return { family: body.family, artifact_id: body.artifact_id, deleted: 5 };
+        }
         return {};
       };
-      window._openCalls = [];
-      window.open = (u) => { window._openCalls.push(String(u)); return {}; };
+      window._downloadCalls = [];
+      window._downloadStorageObject = async (opts) => {
+        window._downloadCalls.push(JSON.parse(JSON.stringify(opts)));
+        return { url: 'https://signed.example/download' };
+      };
       window._dzCalls = [];
-      window.runDeepZoomExport = async (jobId, sourceKey) => { window._dzCalls.push([jobId, sourceKey]); return true; };
-      renderArtifactPanel('test_job', { families: { color: [
-        { artifact_id: 'color_1', palette: 'reef', created_at: '2026-07-26T08:00:00Z' },
-        { artifact_id: 'color_2', palette: 'lava', created_at: '2026-07-26T07:00:00Z' },
-      ] } });
+      window.runDeepZoomExport = async (jobId, sourceKey, btn, options) => {
+        window._dzCalls.push([jobId, sourceKey, options]);
+        return true;
+      };
+      renderArtifactPanel('test_job', { families: { color: colorRows }, calc: { N: 2000 } });
     });
 
-    // the family lists the JOB'S VIEW ARTIFACTS (served by /list-views),
-    // sourced from the selected color artifact — never rows of the Color family
+    // Views uses the same selected-row catalog + preview composition as
+    // Palette. There are no action buttons duplicated into every row.
     await page.click('[data-render-family="views"]');
-    await expect(page.locator('#views-list')).toContainText('front · t2');
-    await expect(page.locator('#views-list')).toContainText('src color_1');
+    const catalog = page.locator('#render-artifact-catalog');
+    await expect(catalog).toContainText('front · t2 · color:color_1');
+    await expect(catalog).toContainText('2000x2000');
+    await expect(catalog.locator('button')).toHaveCount(0);
+    await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
+      'src', /renders\/test_job\/views\/view_old_front_t2\/preview\.png/
+    );
     await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(1)');
-    await expect(page.locator('#tab-render')).toContainText('source: color_1');
+    await expect(page.locator('#tab-render')).toContainText('ViewRender source:');
+    await expect(page.locator('#tab-render')).toContainText('color_1');
+    await expect(page.locator('#tab-render')).toContainText('2000×2000');
     const listCall = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/list-views')[1]);
     expect(listCall).toEqual({ job_id: 'test_job' });
 
@@ -1975,24 +2018,61 @@ test.describe('Solve Score UI', () => {
     // source artifact + how to view it, nothing of the live render state
     await page.click('#btn-view-render');
     await expect(page.locator('#view-render-modal-overlay')).toBeVisible();
-    await expect(page.locator('#view-render-source')).toHaveText('source: color_1');
+    await expect(page.locator('#view-render-source')).toHaveText('source: color_1 · N=2000 · output 2000×2000');
+    await expect(page.locator('#view-render-lattice')).toHaveCount(0);
+    await expect(page.locator('#view-render-pix')).toHaveCount(0);
     await page.selectOption('#view-render-projection', 'radial');
     await page.selectOption('#view-render-vertical', 't1');
     await page.click('#view-render-go');
-    await expect(page.locator('#btn-view-render')).toHaveText('✓ ViewRender');
-    const start = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/start-view-render')[1]);
-    expect(start).toEqual({ job_id: 'test_job', artifact_id: 'color_1',
-                            projection: 'radial', vertical: 't1', n: 384, pix: 1024 });
-    // the finished row lands on top and the count follows
-    await expect(page.locator('#views-list')).toContainText('radial · t1');
+    const dispatch = await page.evaluate(() => window._storageCalls.find((c) => c[2] === 'dispatch')[1]);
+    expect(dispatch.target).toBe('render_orchestrator');
+    expect(dispatch.jobs).toHaveLength(1);
+    const viewJob = dispatch.jobs[0];
+    expect(viewJob.job_id).toBe('test_job');
+    expect(viewJob.mode).toBe('color');
+    expect(viewJob.params).toMatchObject({
+      pix: 2000,
+      fmt: 'jpeg',
+      quality: 87,
+      view_mode: 'explicit',
+      min_re: -3,
+      max_re: 2,
+      min_im: -1,
+      max_im: 4,
+      rotation: 0.25,
+      palette: 'reef',
+      palette_display_name: 'Reef',
+      background_color: '101820',
+      solve_score_program_source_text: 'score = metric(proximity, slv, q=0.1%)',
+      solve_score_normalize: true,
+      root_program_source_text: 'rotate(0.125)',
+      view_projection: 'radial',
+      view_vertical: 't1',
+      source_color_artifact_id: 'color_1',
+    });
+    expect(viewJob.params).not.toHaveProperty('n');
+    // The finished View lands on top, becomes the selected preview, and the
+    // shared Arrow-key navigator moves between View rows.
+    await expect(catalog).toContainText('radial · t1 · color:color_1');
     await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(2)');
+    await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
+      'src', /renders\/test_job\/views\/view_new_radial_t1\/preview\.png/
+    );
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
+      'src', /renders\/test_job\/views\/view_old_front_t2\/preview\.png/
+    );
+    await page.keyboard.press('ArrowUp');
+    await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
+      'src', /renders\/test_job\/views\/view_new_radial_t1\/preview\.png/
+    );
     const rail = await page.evaluate(() => (typeof _jobsRailJobs !== 'undefined' ? _jobsRailJobs : [])
-      .filter((j) => j.kind === 'viewrender').map((j) => j.state));
-    expect(rail).toEqual(['complete']);
+      .filter((j) => j.kind === 'render' && j.label.startsWith('view ·')).map((j) => j.state));
+    expect(rail).toEqual(['done']);
 
-    // row actions: GoColor selects the SOURCE artifact in the Color family
-    const row = page.locator('#views-list > div', { hasText: 'radial · t1' });
-    await row.locator('button', { hasText: 'GoColor' }).click();
+    // GoColor is a selected-item toolbar action, not an action cloned into
+    // every row.
+    await page.click('#btn-render-go-color');
     const sel = await page.evaluate(() => ({
       family: _renderActiveFamily,
       key: _renderSelectedArtifactKey.color,
@@ -2000,34 +2080,39 @@ test.describe('Solve Score UI', () => {
     expect(sel.family).toBe('color');
     expect(sel.key).toContain('color_1');
 
-    // back to Views: Download presigns the image key; DeepZoom hands the
-    // image key to the export machinery
+    // Back to Views: the shared Download and DeepZoom actions operate on the
+    // selected View image key.
     await page.click('[data-render-family="views"]');
-    const row2 = page.locator('#views-list > div', { hasText: 'radial · t1' });
-    await row2.locator('button', { hasText: 'Download' }).click();
+    await page.click('#btn-render-download');
+    await page.click('#dl-menu-file');
     await expect
-      .poll(async () => page.evaluate(() => window._openCalls.length))
+      .poll(async () => page.evaluate(() => window._downloadCalls.length))
       .toBe(1);
-    const presign = await page.evaluate(() => ({
-      call: window._storageCalls.find((c) => c[0] === '/presign')[1],
-      opened: window._openCalls[0],
-    }));
-    expect(presign.call).toEqual({ key: 'renders/test_job/views/view_new_radial_t1/image.png',
-                                   filename: 'view_new_radial_t1.png' });
-    expect(presign.opened).toBe('https://signed.example/dl.png');
-    await row2.locator('button', { hasText: 'DeepZoom' }).click();
+    expect(await page.evaluate(() => window._downloadCalls[0])).toMatchObject({
+      key: 'renders/test_job/views/view_new_radial_t1/image.jpeg',
+      filename: 'test_job_view_new_radial_t1.jpeg',
+    });
+    await page.click('#btn-render-deepzoom');
     await expect
       .poll(async () => page.evaluate(() => window._dzCalls.length))
       .toBe(1);
-    expect(await page.evaluate(() => window._dzCalls[0]))
-      .toEqual(['test_job', 'renders/test_job/views/view_new_radial_t1/image.png']);
+    expect(await page.evaluate(() => window._dzCalls[0])).toEqual([
+      'test_job',
+      'renders/test_job/views/view_new_radial_t1/image.jpeg',
+      { rawKey: '', rawMetaKey: '', skipRenderRefresh: true },
+    ]);
 
-    // Delete prunes exactly one view prefix
-    await row2.locator('button', { hasText: 'Delete' }).click();
-    await expect(page.locator('#views-list')).not.toContainText('radial · t1');
+    // Delete uses the generic selected-artifact route and then refreshes the
+    // job-scoped Views inventory.
+    await page.click('#btn-render-delete');
+    await expect(catalog).not.toContainText('radial · t1');
     await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(1)');
-    const del = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/delete-prefix')[1]);
-    expect(del).toEqual({ prefix: 'renders/test_job/views/view_new_radial_t1/' });
+    const del = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/delete-render-artifact')[1]);
+    expect(del).toEqual({
+      job_id: 'test_job',
+      family: 'views',
+      artifact_id: 'view_new_radial_t1',
+    });
 
     // the hard-won clarity of the Color tab: views NEVER appear there
     await page.click('[data-render-family="color"]');

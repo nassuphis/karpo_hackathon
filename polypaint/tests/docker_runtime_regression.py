@@ -3856,6 +3856,55 @@ def test_splat_bake_runtime():
     print("  splat_bake oracle OK: 16 x-elongated splats, slices=2 -> 8")
 
 
+def test_roots2pix_view_projection_runtime():
+    """Views: the SHIPPED ARM64 raster maps elevations exactly — front/t2
+    puts the root's Re horizontal and the solve's t2 vertical (condensed
+    from the hand-computed oracle in tests/test_raster_mt_parity.py)."""
+    print("\n=== roots2pix_mt view projection runtime ===")
+    grid = 4
+    roots = bytearray()
+    for step in range(grid * grid):
+        row = step // grid
+        j = step % grid
+        col = (grid - 1 - j) if (row & 1) else j
+        roots += struct.pack("<ff", -0.875 + 0.25 * row, -0.875 + 0.25 * col)
+    with open("/tmp/vp_roots.bin", "wb") as fh:
+        fh.write(roots)
+    manifest = {
+        "source_family": "slv",
+        "logical_size": len(roots),
+        "row_bytes": 8,
+        "solve_start": 0,
+        "solve_count": grid * grid,
+        "sources": [{"id": 0, "url": "file:///tmp/vp_roots.bin", "key": "vp_roots.bin"}],
+        "spans": [{"source_id": 0, "logical_byte_start": 0,
+                   "byte_start": 0, "byte_length": len(roots)}],
+    }
+    with open("/tmp/vp_manifest.json", "w") as fh:
+        json.dump(manifest, fh)
+    r = subprocess.run([
+        "/src/roots2pix_mt", "/tmp/vp_pix", "--pix=8",
+        "--min_re=-1", "--max_re=1", "--min_im=-1", "--max_im=1",
+        "--degree=1", "--rotation=0", "--threads=2",
+        "--input_manifest=/tmp/vp_manifest.json", "--step_count=16",
+        "--score_metrics=centroid_re", "--score_clip_los=-2", "--score_clip_his=2",
+        "--score_program=m0",
+        "--fragment_prefix=/tmp/vp_fragment",
+        "--view_projection=front", "--view_vertical=t2", "--view_grid_n=4",
+        "--retries=1",
+    ], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    frag = open("/tmp/vp_fragment.frag", "rb").read()
+    pixels = set()
+    for o in range(0, len(frag), 5):
+        idx = struct.unpack_from("<I", frag, o)[0]
+        pixels.add((idx % 8, idx // 8))
+    expected = {(r2, py) for r2 in range(4) for py in (7, 6, 4, 2)}
+    assert pixels == expected, (sorted(pixels), sorted(expected))
+    cleanup("/tmp/vp_roots.bin", "/tmp/vp_manifest.json", "/tmp/vp_fragment.frag")
+    print("  front/t2 elevation pixels exact: OK")
+
+
 if __name__ == "__main__":
     print("--- Binary validation ---")
     for bin_path in [
@@ -3911,5 +3960,6 @@ if __name__ == "__main__":
     test_solve_proximity_stats()
     test_catalog_degrees()
     test_splat_bake_runtime()
+    test_roots2pix_view_projection_runtime()
 
     print("\n=== All Docker runtime tests PASSED ===")

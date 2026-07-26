@@ -401,9 +401,20 @@ def _build_fused_color_plan(
         "solve_score_program": None,
         "solve_score_normalize": False,
         "save_associated_palette": False,
+        "view_projection": "plan",
+        "view_vertical": "t2",
     }
     for key, default in defaults.items():
         fused_params[key] = rp.get(key, default)
+    # Views: elevations re-map only the plot pixel; validate here so a bad
+    # request dies at plan time, not inside a raster section
+    fused_params["view_projection"] = str(fused_params.get("view_projection") or "plan").strip().lower()
+    if fused_params["view_projection"] not in ("plan", "front", "rear", "left", "right"):
+        raise RuntimeError(
+            f"view_projection must be plan/front/rear/left/right, got {fused_params['view_projection']!r}")
+    fused_params["view_vertical"] = str(fused_params.get("view_vertical") or "t2").strip().lower()
+    if fused_params["view_vertical"] not in ("t1", "t2"):
+        raise RuntimeError(f"view_vertical must be t1 or t2, got {fused_params['view_vertical']!r}")
     root_program_payload = _apply_root_program_to_params(fused_params)
 
     fused_params["color_mode"] = str(fused_params.get("color_mode") or "solve_score").strip().lower()
@@ -706,6 +717,11 @@ def _build_fused_color_plan(
         "rotation": str(fused_params.get("rotation", 0.0)),
         "render_execution": json.dumps(render_execution, separators=(",", ":")),
         "format": "jpeg" if fused_params.get("fmt", "jpeg") != "png" else "png",
+        # Views provenance: which projection this artifact IS (plan is the
+        # classic top-down; elevations put a root coordinate horizontal and
+        # the solve's t vertical — the architecture views of the sculpture)
+        "view_projection": str(fused_params.get("view_projection") or "plan"),
+        "view_vertical": str(fused_params.get("view_vertical") or "t2"),
         "quality": str(fused_params.get("quality", 90)),
         "color_mode": "solve_score",
         "solve_score_normalize": "true" if solve_score_normalize else "false",

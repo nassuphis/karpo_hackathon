@@ -576,5 +576,75 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000.frag"], _encode_fragment_pairs([(3, 88)]))
 
 
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_view_projection_flags_ride_the_section_cmd(self, mock_s3, mock_run, mock_report):
+        # Views: elevations pass projection + vertical + the calc grid +
+        # the SECTION's step offset — the same contract as the palette path
+        import handler_raster_mt as mod
+        uploads = {}
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key.endswith("_clip.json"):
+                payload = _clip_artifact(
+                    chain=[["crowding", "1"], ["omega_cosine", "4"]],
+                    metric="crowding",
+                    quantile=0.01,
+                    omega=4.0,
+                    omega_enabled=True,
+                    clip_lo=-1.0,
+                    clip_hi=2.0,
+                )
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.generate_presigned_url.side_effect = (
+            lambda _op, Params=None, ExpiresIn=None: f"https://example.com/{Params['Key']}?sig=1")
+        mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key: uploads.__setitem__(key, fileobj.read())
+        mock_s3.put_object.side_effect = lambda **kwargs: uploads.__setitem__(kwargs["Key"], kwargs["Body"])
+
+        seen = {}
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            seen["cmd"] = list(cmd)
+            with open("/tmp/fused_fragment.frag", "wb") as fh:
+                fh.write(_encode_fragment_pairs([(0, 33)]))
+            with open("/tmp/step_scores.bin", "wb") as fh:
+                fh.write(bytes([5, 7, 11, 13]))
+            return MagicMock(returncode=0,
+                             stdout=json.dumps({"threads": 2, "roots_plotted": 4, "roots_clipped": 0}),
+                             stderr="")
+        mock_run.side_effect = fake_run
+
+        result = mod.handler(_fused_event(
+            view_projection="front",
+            view_vertical="t1",
+            view_grid_n=100,
+            step_start=2,
+        ), None)
+        self.assertEqual(result["statusCode"], 200, result)
+        self.assertIn("--view_projection=front", seen["cmd"])
+        self.assertIn("--view_vertical=t1", seen["cmd"])
+        self.assertIn("--view_grid_n=100", seen["cmd"])
+        self.assertIn("--view_step_start=2", seen["cmd"])
+
+        # plan (the default) must add NO view flags — byte-identical cmds
+        seen.clear()
+        result = mod.handler(_fused_event(step_start=0), None)
+        self.assertEqual(result["statusCode"], 200, result)
+        self.assertFalse([a for a in seen["cmd"] if a.startswith("--view_")])
+
+        # a bad projection dies loudly before any raster runs
+        with self.assertRaises(RuntimeError):
+            mod.handler(_fused_event(view_projection="top", view_grid_n=100), None)
+
+        # an elevation without the grid dies loudly too
+        with self.assertRaises(RuntimeError):
+            mod.handler(_fused_event(view_projection="front"), None)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -256,6 +256,108 @@ class TestRasterMtParity(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def _projection_fixture_roots(self, grid_n=4):
+        """One degree-1 root per solve at (-0.875 + 0.25*row, -0.875 +
+        0.25*col): in the [-1,1]^2 viewport at pix=8 the plan pixels are
+        (px=row, py=7-col)-shaped and every projection has an exact
+        hand-computed pixel set."""
+        roots = []
+        for step in range(grid_n * grid_n):
+            row = step // grid_n
+            j = step % grid_n
+            col = (grid_n - 1 - j) if (row & 1) else j
+            roots.extend([-0.875 + 0.25 * row, -0.875 + 0.25 * col])
+        return roots
+
+    def _run_projection(self, root, roots, *, label, view_args, step_count=16, degree=1):
+        roots_path = self._write_float_file(root / f"{label}_roots.bin", roots)
+        server, thread = self._serve_dir(root)
+        try:
+            manifest_path = self._write_single_span_manifest(
+                root / f"{label}_manifest.json",
+                file_name=roots_path.name,
+                port=server.server_address[1],
+                row_bytes=degree * 2 * 4,
+                solve_count=step_count,
+            )
+            cmd = [
+                str(self._binary),
+                str(root / f"{label}_pix"),
+                "--pix=8",
+                *self._bounds_args(8, 8, 0.0, 0.0, 4.0),
+                f"--degree={degree}",
+                "--rotation=0",
+                "--threads=2",
+                f"--input_manifest={manifest_path}",
+                f"--step_count={step_count}",
+                *self._single_metric_program_args("centroid_re", -2, 2),
+                f"--fragment_prefix={root / label}_fragment",
+                "--retries=1",
+                *view_args,
+            ]
+            result = self._run_binary(cmd)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+        pairs = self._read_u32le_u8_pairs(pathlib.Path(f"{root / label}_fragment.frag"))
+        return {(idx % 8, idx // 8) for idx, _ in pairs}
+
+    def test_view_projections_land_on_the_hand_computed_pixels(self):
+        """Elevations are the plan pipeline with ONE changed mapping: the
+        root coordinate goes horizontal and the solve's t goes vertical
+        (t=1 at the top; t=0 lands ON the bottom row, not off the edge).
+        Every projection is pinned against exact pixel sets, including the
+        degenerate ones where dedup collapses coincident columns."""
+        grid_n = 4
+        roots = self._projection_fixture_roots(grid_n)
+        view = lambda proj, vert: [f"--view_projection={proj}",
+                                   f"--view_vertical={vert}",
+                                   f"--view_grid_n={grid_n}"]
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            # plan (default flags): px = row, py = 7 - col — all 16 pixels
+            got = self._run_projection(root, roots, label="plan", view_args=[])
+            self.assertEqual(got, {(r, 7 - c) for r in range(4) for c in range(4)})
+            # front/t2: px = row (from re), py from t2=col/4 in {7,6,4,2}
+            got = self._run_projection(root, roots, label="ft2", view_args=view("front", "t2"))
+            self.assertEqual(got, {(r, py) for r in range(4) for py in (7, 6, 4, 2)})
+            # front/t1: row drives BOTH axes -> 4 deduped pixels on a diagonal
+            got = self._run_projection(root, roots, label="ft1", view_args=view("front", "t1"))
+            self.assertEqual(got, {(0, 7), (1, 6), (2, 4), (3, 2)})
+            # rear/t2: horizontal mirrored -> px = 7 - row
+            got = self._run_projection(root, roots, label="rt2", view_args=view("rear", "t2"))
+            self.assertEqual(got, {(7 - r, py) for r in range(4) for py in (7, 6, 4, 2)})
+            # right/t2: px from im (= col), py from t2 (= col) -> diagonal
+            got = self._run_projection(root, roots, label="rit2", view_args=view("right", "t2"))
+            self.assertEqual(got, {(0, 7), (1, 6), (2, 4), (3, 2)})
+            # left/t2: px = 7 - col, py from col
+            got = self._run_projection(root, roots, label="lt2", view_args=view("left", "t2"))
+            self.assertEqual(got, {(7, 7), (6, 6), (5, 4), (4, 2)})
+            # left/t1: px = 7 - col, py from t1 = row -> full 4x4 grid again
+            got = self._run_projection(root, roots, label="lt1", view_args=view("left", "t1"))
+            self.assertEqual(got, {(7 - c, py) for c in range(4) for py in (7, 6, 4, 2)})
+
+    def test_view_step_start_offsets_the_section_lattice(self):
+        """MT sections pass their global step offset — the SAME contract as
+        palette_step_start. A section holding steps 8..15 with
+        --view_step_start=8 must produce exactly the t rows of grid rows
+        2 and 3, not rows 0 and 1."""
+        grid_n = 4
+        all_roots = self._projection_fixture_roots(grid_n)
+        section = all_roots[8 * 2:]              # steps 8..15, degree 1
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            got = self._run_projection(
+                root, section, label="sec", step_count=8,
+                view_args=[
+                    "--view_projection=front", "--view_vertical=t1",
+                    f"--view_grid_n={grid_n}", "--view_step_start=8",
+                ])
+            # rows 2,3: t1 in {0.5, 0.75} -> py {4, 2}; px = row in {2, 3}
+            self.assertEqual(got, {(2, 4), (3, 2)})
+
     def test_xformed_roots_output_matches_plot_transforms(self):
         """--xformed_roots_output must capture EXACTLY what the raster plots:
         the root-xform chain (prepare_step) followed by the viewport-center

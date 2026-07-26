@@ -1955,6 +1955,7 @@ function _renderFamilyLabel(family) {
     if (family === 'palette') return 'Palette';
     if (family === 'pdf') return 'PDF';
     if (family === 'sculpture') return 'Sculpture';
+    if (family === 'views') return 'Views';
     return 'Color';
 }
 

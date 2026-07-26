@@ -236,6 +236,24 @@ def _build_cmd(params):
         cmd.append(f"--palette_grid_n={int(params['associated_palette_grid_n'])}")
         cmd.append(f"--palette_step_start={int(params['step_start'])}")
 
+    # Views: elevations re-map ONLY the plot pixel (root coordinate
+    # horizontal, the solve's t vertical) — every section passes its global
+    # step offset exactly like the palette path does
+    view_projection = str(params.get("view_projection") or "plan")
+    if view_projection != "plan":
+        if view_projection not in ("front", "rear", "left", "right"):
+            raise RuntimeError(f"view_projection must be plan/front/rear/left/right, got {view_projection!r}")
+        view_grid_n = int(params.get("view_grid_n") or 0)
+        if view_grid_n < 2:
+            raise RuntimeError("elevation renders require view_grid_n >= 2")
+        view_vertical = str(params.get("view_vertical") or "t2")
+        if view_vertical not in ("t1", "t2"):
+            raise RuntimeError(f"view_vertical must be t1 or t2, got {view_vertical!r}")
+        cmd.append(f"--view_projection={view_projection}")
+        cmd.append(f"--view_vertical={view_vertical}")
+        cmd.append(f"--view_grid_n={view_grid_n}")
+        cmd.append(f"--view_step_start={int(params['step_start'])}")
+
     score_artifact = dict(params.get("solve_score_bins_data") or {})
     if score_artifact.get("family") != "solve_score":
         raise RuntimeError(f"solve-score clip artifact missing or wrong family: {score_artifact.get('family')}")

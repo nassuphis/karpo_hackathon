@@ -57,6 +57,9 @@ RENDER_COLOR_RASTER_ITEM_SELECTOR = {
     "associated_palette_mode.$": "$.plan.associated_palette.mode",
     "associated_palette_fragment_prefix.$": "$.plan.associated_palette.fragment_prefix",
     "associated_palette_grid_n.$": "$.plan.calc.N",
+    "view_projection.$": "$.plan.params.view_projection",
+    "view_vertical.$": "$.plan.params.view_vertical",
+    "view_grid_n.$": "$.plan.calc.N",
     "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
 }
 

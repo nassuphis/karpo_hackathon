@@ -1017,6 +1017,11 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         // saved sculptures for THIS job only — the panel is job-scoped like
         // every other family (the server list is global; filter client-side)
         sculpture: (window._sculptureInventory || []).filter((m) => m.job_id === jobId),
+        // Views: elevation renders ARE color artifacts (full first-class
+        // pipeline products) tagged with their projection — this family is
+        // a filtered lens over color, plus the ViewRender create block
+        views: withFamily('color', families.color).filter(
+            (m) => m.view_projection && m.view_projection !== 'plan'),
     };
     // the sculpture list is session-cached and was LAZY — loaded only when
     // its own tab opened, so the family tab's count sat at a permanent (0)
@@ -1049,11 +1054,52 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     const linkedPaletteId = _linkedPaletteIdForColorArtifact(activeArt);
     const linkedColorId = _linkedColorIdForPaletteArtifact(activeArt);
     const favoriteSelected = _renderActiveFamily === 'color' && activeArt && _isFavorite(jobId, activeArt.artifact_id);
-    const familyTabs = ['color', 'bilevel', 'coeffs', 'palette', 'pdf', 'sculpture'].map((family) => {
+    const familyTabs = ['color', 'bilevel', 'coeffs', 'palette', 'pdf', 'views', 'sculpture'].map((family) => {
         const active = family === _renderActiveFamily;
         const count = (_renderArtifacts[family] || []).length;
         return `<button type="button" role="tab" class="subtab-btn${active ? ' active' : ''}" data-render-family="${family}" onclick="_renderSelectFamily('${family}')" aria-selected="${active ? 'true' : 'false'}">${_renderFamilyLabel(family)} <span class="subtab-count">(${count})</span></button>`;
     }).join('');
+
+    if (_renderActiveFamily === 'views') {
+        // Views pane: the architecture drawings of the polynomial. The
+        // classic render is the PLAN (roots top-down, t1/t2 marginalized);
+        // ViewRender produces the ELEVATIONS — a root coordinate horizontal,
+        // t1 or t2 vertical — through the full ColorRender-MT pipeline, so
+        // the output is a first-class color artifact (DeepZoom it, book it,
+        // sculpture it) tagged with its projection.
+        const viewRows = _renderArtifacts.views || [];
+        const viewRowsHtml = viewRows.length ? viewRows.map((m) => `
+            <div style="display:flex; align-items:center; gap:10px; padding:6px 10px; border-bottom:1px solid #26263a; font-size:12px">
+                <span style="color:#e8eef5; white-space:nowrap">${_escapeHtml(m.view_projection || '')} · ${_escapeHtml(m.view_vertical || '')}</span>
+                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#778599">${_escapeHtml(m.artifact_id || '')}</span>
+                <span style="color:#778599">${_escapeHtml(String(m.palette || ''))}</span>
+                <span style="color:#556; font-size:11px; white-space:nowrap">${_escapeHtml(String(m.created_at || '').slice(0, 16).replace('T', ' '))}</span>
+                <button type="button" class="btn-secondary btn-inline" onclick="_renderSelectFamily('color')">Open in Color</button>
+            </div>`).join('')
+            : '<div style="padding:10px; color:#666">No elevation renders for this job yet — pick a view and press ViewRender.</div>';
+        preview.innerHTML = `
+        <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
+            <div class="subtab-bar render-artifact-family-tabs" role="tablist" aria-label="Render artifact family tabs">${familyTabs}</div>
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap">
+                <span style="font-size:12px; color:#cfd8e3; flex-basis:100%; font-family:monospace">plan = the classic top-down render · elevations view the sculpture from the side</span>
+                <button type="button" class="btn-secondary btn-inline" id="btn-view-render" onclick="runViewRender()" title="Render an elevation through the full ColorRender-MT pipeline — a first-class color artifact tagged with its view">ViewRender</button>
+                <select id="view-render-projection" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
+                    <option value="front" selected>front elevation</option>
+                    <option value="rear">rear elevation</option>
+                    <option value="left">left elevation</option>
+                    <option value="right">right elevation</option>
+                </select>
+                <select id="view-render-vertical" title="Vertical axis: which parameter climbs the image" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
+                    <option value="t2" selected>t2 up</option>
+                    <option value="t1">t1 up</option>
+                </select>
+                <span style="font-size:11px; color:#666; flex-basis:100%">Uses the CURRENT render settings (solve score, palette, size) — front/rear put Re horizontal, left/right put Im horizontal; the chosen parameter runs bottom to top. Results land in the Color family tagged with the view.</span>
+            </div>
+            <div id="view-render-list" style="max-height:520px; overflow-y:auto; border:1px solid #333; border-radius:4px">${viewRowsHtml}</div>
+        </div>`;
+        info.textContent = 'Job: ' + jobId;
+        return;
+    }
 
     if (_renderActiveFamily === 'sculpture') {
         // saved-sculpture pane: DeepZoom-style — a create block bound to the

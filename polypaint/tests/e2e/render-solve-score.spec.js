@@ -1923,6 +1923,49 @@ test.describe('Solve Score UI', () => {
     expect(await page.locator('#btn-sculpture-generate').isDisabled()).toBe(true);
   });
 
+  test('Views tab: elevations dispatch the full MT pipeline with the view fields', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await seedRenderPopupState(page);
+    await page.evaluate(() => {
+      setColorMode('solve_score');
+      document.getElementById('render-results-dir').value = 'test_job';
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-sculptures') return { sculptures: [], count: 0 };
+        return {};
+      };
+      // re-render the panel with an AUGMENTED summary (the family-tab click
+      // rebuilds from this cache — direct _renderArtifacts injection gets
+      // clobbered, the recorded trap): one elevation + one plan artifact,
+      // the Views list must show ONLY the elevation
+      renderArtifactPanel('test_job', {
+        families: {
+          color: [
+            { artifact_id: 'color_plan', view_projection: 'plan', palette: 'reef', created_at: '2026-07-26T09:00:00Z' },
+            { artifact_id: 'color_elev', view_projection: 'front', view_vertical: 't2', palette: 'reef', created_at: '2026-07-26T10:00:00Z' },
+          ],
+        },
+      });
+    });
+    await page.click('[data-render-family="views"]');
+    await expect(page.locator('#btn-view-render')).toBeVisible();
+    await expect(page.locator('#view-render-list')).toContainText('front · t2');
+    await expect(page.locator('#view-render-list')).toContainText('color_elev');
+    await expect(page.locator('#view-render-list')).not.toContainText('color_plan');
+
+    await page.selectOption('#view-render-projection', 'rear');
+    await page.selectOption('#view-render-vertical', 't1');
+    await page.click('#btn-view-render');
+    await expect(page.locator('#btn-view-render')).toHaveText('\u2713 ViewRender');
+    // the seed stubs the fused launcher into _renderLaunches — the spec's
+    // convention: pin the exact patch the button hands the MT pipeline
+    const st = await page.evaluate(() => window._renderLaunches);
+    expect(st).toHaveLength(1);
+    expect(st[0].mode).toBe('color');
+    // the two view fields and NOTHING else — the grid comes from the
+    // plan's calc server-side, never from the client
+    expect(st[0].paramsPatch).toEqual({ view_projection: 'rear', view_vertical: 't1' });
+  });
+
   test('Sculpture tab: SaveSplat modal — explicit settings, hardwired rest', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page);

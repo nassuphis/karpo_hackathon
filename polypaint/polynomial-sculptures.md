@@ -555,6 +555,43 @@ zero uploads), the no-viewer artifact path, and the saved-row Bake
 mapping; `splat-bake.spec.js` renders a template-substituted page
 headless (pixel readback, tour autoplay, pointerdown stop).
 
+## Views: the architecture drawings (plan + elevations)
+
+User insight: the classic render IS the "plan view" — every root at
+(Re, Im), t1/t2 marginalized. The Views family tab adds the
+ELEVATIONS: **ViewRender** runs the full ColorRender-MT pipeline with
+one changed pixel mapping — front/rear put Re horizontal (rear
+mirrored), left/right put Im, and the chosen parameter (t2 or t1)
+runs bottom-to-top. Everything else — solve-score program, per-pixel
+accumulation, palette, equalization, sections, finalize — is
+projection-agnostic (fragments are sparse full-frame (pixel, score)
+entries with a global dedup bitmap, so sections may plot anywhere).
+The output is a FIRST-CLASS color artifact tagged `view_projection` +
+`view_vertical` in its metadata (plan artifacts tag "plan"), so
+DeepZoom/books/favorites/sculpture-sourcing all work on elevations
+unchanged; the Views pane lists the job's elevations via the lean-row
+fields and the create block dispatches with the current render
+settings.
+
+**Implementation**: `roots2pix_mt.c` gains `--view_projection`,
+`--view_vertical`, `--view_grid_n`, `--view_step_start` (the section's
+global step offset — the SAME contract as palette_step_start); the
+per-step t hoists out of the root loop (serpentine step → (row,col),
+t2=col/N, t1=row/N; passes fold onto pass 0 like the plan's overplot);
+t=1 maps to the top row and t=0 lands ON the bottom row (edge clamp).
+The plan defaults add NO flags — byte-identical legacy behavior. The
+render plan ALWAYS emits the view params (the ASL section contract
+selects them with `.$` paths, which hard-fail on absent fields) and
+validates at plan time; the raster section maps grid from
+`$.plan.calc.N`. Pinned: hand-computed pixel-set oracles for every
+projection (including the degenerate diagonals where dedup collapses
+coincident columns and the section-offset lattice), the raster cmd
+flags + plan-mode flag-absence + reject matrix, the plan params, the
+Views tab dispatch patch ({view_projection, view_vertical} and
+NOTHING else — the grid never comes from the client), and a Docker
+ARM64 runtime elevation smoke on the shipped binary. Rotation and the
+root-transform chain still apply to (re, im) before projection.
+
 ## The Splats tab (global browser)
 
 A top-level app tab (peer of DeepZoom), because the server list was

@@ -60,6 +60,11 @@ typedef struct {
     int emitPaletteBins;
     long long paletteStepStart;
     int paletteGridN;
+    int viewProjection;       /* 0 plan | 1 front | 2 rear | 3 left | 4 right */
+    int viewVertical;         /* 0 t2 | 1 t1 (elevation vertical axis) */
+    int viewGridN;            /* parameter grid for the step -> t mapping */
+    long long viewStepStart;  /* section's global step offset */
+    double imHScale;          /* W / im span — left/right horizontal scale */
     int scoreCoeffDegree;
     int scoreCoeffStride;
     int scoreParamDegree;
@@ -524,6 +529,21 @@ static void *worker_main(void *arg_) {
             }
         }
 
+        /* elevations: this step's parameter height, computed once per
+         * solve (serpentine step -> (row, col), t2 = col/N, t1 = row/N;
+         * pass > 0 folds onto pass 0 like the plan view's overplot) */
+        double viewT = 0.0;
+        if (arg->viewProjection != 0) {
+            long long pass0 = (long long)arg->viewGridN * (long long)arg->viewGridN;
+            long long gstep = (arg->viewStepStart + p) % pass0;
+            if (gstep < 0) gstep += pass0;
+            int vrow = (int)(gstep / arg->viewGridN);
+            int vj = (int)(gstep % arg->viewGridN);
+            int vcol = (vrow & 1) ? (arg->viewGridN - 1 - vj) : vj;
+            viewT = (arg->viewVertical == 1)
+                ? (double)vrow / (double)arg->viewGridN
+                : (double)vcol / (double)arg->viewGridN;
+        }
         for (int r = 0; r < arg->degree; r++) {
             double re = step[r * 2];
             double im = step[r * 2 + 1];
@@ -541,14 +561,43 @@ static void *worker_main(void *arg_) {
                 arg->xformedRoots[xbase] = (float)rotRe;
                 arg->xformedRoots[xbase + 1] = (float)rotIm;
             }
-            double pxf = (rotRe - arg->minRe) * arg->xScale;
-            double pyf = (arg->maxIm - rotIm) * arg->yScale;
+            /* the ONE projection-dependent line pair: which pixel does
+             * this root land on. plan = the classic (Re, Im) top-down;
+             * elevations put the root coordinate horizontal and the
+             * solve's t vertical (t = 1 at the top), the architecture
+             * views of the shape whose plan this pipeline always drew. */
+            double pxf, pyf;
+            switch (arg->viewProjection) {
+            case 1:   /* front: Re rightward */
+                pxf = (rotRe - arg->minRe) * arg->xScale;
+                pyf = (1.0 - viewT) * (double)arg->H;
+                break;
+            case 2:   /* rear: Re mirrored */
+                pxf = (arg->maxRe - rotRe) * arg->xScale;
+                pyf = (1.0 - viewT) * (double)arg->H;
+                break;
+            case 3:   /* left: Im mirrored */
+                pxf = (arg->maxIm - rotIm) * arg->imHScale;
+                pyf = (1.0 - viewT) * (double)arg->H;
+                break;
+            case 4:   /* right: Im rightward */
+                pxf = (rotIm - arg->minIm) * arg->imHScale;
+                pyf = (1.0 - viewT) * (double)arg->H;
+                break;
+            default:  /* plan */
+                pxf = (rotRe - arg->minRe) * arg->xScale;
+                pyf = (arg->maxIm - rotIm) * arg->yScale;
+                break;
+            }
             if (!isfinite(pxf) || !isfinite(pyf)) {
                 arg->rootsClipped++;
                 continue;
             }
             int px = (int)floor(pxf);
             int py = (int)floor(pyf);
+            /* t = 0 (the first parameter column/row) must land ON the
+             * bottom row, not clip off the exclusive edge */
+            if (arg->viewProjection != 0 && py == arg->H && viewT <= 0.0) py = arg->H - 1;
             if (px < 0 || px >= arg->W || py < 0 || py >= arg->H) {
                 arg->rootsClipped++;
                 continue;
@@ -604,6 +653,8 @@ int main(int argc, char **argv) {
                 "[--step_scores_output=/tmp/step_scores.bin] "
                 "[--xformed_roots_output=/tmp/xformed_roots.bin] "
                 "[--xformed_roots_format=f32|u16] "
+                "[--view_projection=plan|front|rear|left|right] [--view_vertical=t2|t1] "
+                "[--view_grid_n=N] [--view_step_start=STEP] "
                 "[--root_xforms=file.json]\n");
         return 1;
     }
@@ -615,6 +666,7 @@ int main(int argc, char **argv) {
         "--fragment_prefix", "--associated_palette_fragment_prefix", "--step_scores_output",
         "--xformed_roots_output", "--xformed_roots_format",
         "--palette_grid_n", "--palette_step_start", "--root_xforms",
+        "--view_projection", "--view_vertical", "--view_grid_n", "--view_step_start",
         "--score_metrics", "--score_sources",
         "--score_clip_los", "--score_clip_his", "--score_program",
         "--score_output_normalize", "--score_output_clip_lo", "--score_output_clip_hi",
@@ -652,6 +704,31 @@ int main(int argc, char **argv) {
     const char *xformedRootsFormat = getArgStr(argc, argv, "--xformed_roots_format", "f32");
     int paletteGridN = getArgInt(argc, argv, "--palette_grid_n", 0);
     long long paletteStepStart = getArgLongLong(argc, argv, "--palette_step_start", 0);
+    const char *viewProjectionArg = getArgStr(argc, argv, "--view_projection", "plan");
+    const char *viewVerticalArg = getArgStr(argc, argv, "--view_vertical", "t2");
+    int viewGridN = getArgInt(argc, argv, "--view_grid_n", 0);
+    long long viewStepStart = getArgLongLong(argc, argv, "--view_step_start", 0);
+    int viewProjection = 0;
+    if (strcmp(viewProjectionArg, "plan") == 0) viewProjection = 0;
+    else if (strcmp(viewProjectionArg, "front") == 0) viewProjection = 1;
+    else if (strcmp(viewProjectionArg, "rear") == 0) viewProjection = 2;
+    else if (strcmp(viewProjectionArg, "left") == 0) viewProjection = 3;
+    else if (strcmp(viewProjectionArg, "right") == 0) viewProjection = 4;
+    else {
+        fprintf(stderr, "Invalid --view_projection: %s (plan|front|rear|left|right)\n", viewProjectionArg);
+        return 1;
+    }
+    int viewVertical = 0;
+    if (strcmp(viewVerticalArg, "t2") == 0) viewVertical = 0;
+    else if (strcmp(viewVerticalArg, "t1") == 0) viewVertical = 1;
+    else {
+        fprintf(stderr, "Invalid --view_vertical: %s (t2|t1)\n", viewVerticalArg);
+        return 1;
+    }
+    if (viewProjection != 0 && viewGridN < 2) {
+        fprintf(stderr, "Elevation projections require --view_grid_n >= 2\n");
+        return 1;
+    }
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
     if (degree < 1 || degree > MAXDEG) {
         fprintf(stderr, "Invalid degree: %d\n", degree);
@@ -1051,6 +1128,11 @@ int main(int argc, char **argv) {
         args[i].centerIm = centerIm;
         args[i].xScale = xScale;
         args[i].yScale = yScale;
+        args[i].viewProjection = viewProjection;
+        args[i].viewVertical = viewVertical;
+        args[i].viewGridN = viewGridN;
+        args[i].viewStepStart = viewStepStart;
+        args[i].imHScale = (double)W / (maxIm - minIm);
         args[i].cosA = cosA;
         args[i].sinA = sinA;
         args[i].solveScoreProgram = solveScoreProgram;

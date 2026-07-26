@@ -1684,6 +1684,39 @@ async function runFusedRasterPipelineMT(threadConfig = null) {
     }
 }
 
+async function runViewRender() {
+    // an ELEVATION render: the plan pipeline with one changed pixel mapping
+    // (root coordinate horizontal, the chosen parameter vertical) — full
+    // ColorRender-MT, first-class color artifact tagged with its view
+    const btn = document.getElementById('btn-view-render');
+    let ok = false;
+    try {
+        if (renderColorMode !== 'solve_score') throw new Error('select Solve score mode first');
+        const projection = document.getElementById('view-render-projection')?.value || 'front';
+        const vertical = document.getElementById('view-render-vertical')?.value || 't2';
+        if (btn) { btn.disabled = true; btn.textContent = 'ViewRender\u2026'; }
+        log(`ViewRender: ${projection} elevation, ${vertical} up \u2014 dispatching ColorRender-MT\u2026`, 'ok', 'render-log');
+        await _launchFusedRenderOrchestrator({
+            view_projection: projection,
+            view_vertical: vertical,
+        });
+        ok = true;
+    } catch (e) {
+        const statusEl = document.getElementById('render-status');
+        if (statusEl) { statusEl.textContent = 'ViewRender error: ' + e.message; statusEl.className = 'status error'; }
+        log('ViewRender failed: ' + e.message, 'err', 'render-log');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = ok ? '\u2713 ViewRender' : '\u2717 ViewRender';
+            setTimeout(() => {
+                const b = document.getElementById('btn-view-render');
+                if (b && !b.disabled) b.textContent = 'ViewRender';
+            }, 2500);
+        }
+    }
+}
+
 async function runRasterPipelineMT(threadConfig = null) {
     return runFusedRasterPipelineMT(threadConfig);
 }

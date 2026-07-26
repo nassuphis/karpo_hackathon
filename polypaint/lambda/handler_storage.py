@@ -3930,6 +3930,11 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
     if family == "color":
         repalette_capable = str(meta.get("repalette_capable", "")).strip().lower() == "true"
         entry["color_mode"] = meta.get("color_mode", "")
+        # Views provenance: which projection this artifact IS ("plan" or
+        # absent = the classic top-down; elevations tag front/rear/left/
+        # right + the vertical parameter axis) — the Views pane filters on it
+        entry["view_projection"] = meta.get("view_projection", "")
+        entry["view_vertical"] = meta.get("view_vertical", "")
         entry["match_mode"] = meta.get("match_mode", "")
         entry["palette"] = meta.get("palette", "")
         entry["palette_display_name"] = meta.get("palette_display_name", "")

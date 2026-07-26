@@ -1923,47 +1923,117 @@ test.describe('Solve Score UI', () => {
     expect(await page.locator('#btn-sculpture-generate').isDisabled()).toBe(true);
   });
 
-  test('Views tab: elevations dispatch the full MT pipeline with the view fields', async ({ page }) => {
+  test('Views tab: associated view artifacts — modal render, list actions, color purity', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page);
     await page.evaluate(() => {
-      setColorMode('solve_score');
       document.getElementById('render-results-dir').value = 'test_job';
+      window._storageCalls = [];
+      window.confirm = () => true;
+      const mkRow = (id, projection, vertical, created) => ({
+        view_id: id, job_id: 'test_job', source_artifact_id: 'color_1',
+        projection, vertical, lattice_n: 384, pix: 1024, palette: 'reef',
+        image_key: `renders/test_job/views/${id}/image.png`,
+        image_url: `https://bucket.example/renders/test_job/views/${id}/image.png`,
+        prefix: `renders/test_job/views/${id}/`, created_at: created,
+      });
       window.lambdaPost = async function (name, body, path) {
+        window._storageCalls.push([path, JSON.parse(JSON.stringify(body || {}))]);
         if (path === '/list-sculptures') return { sculptures: [], count: 0 };
+        if (path === '/list-views') return { views: [mkRow('view_old_front_t2', 'front', 't2', '2026-07-26T09:00:00Z')], count: 1 };
+        if (path === '/start-view-render') return { task_id: 'view_render_777' };
+        if (path === '/check-status') {
+          const row = mkRow('view_new_radial_t1', 'radial', 't1', '2026-07-26T10:00:00Z');
+          return { done: 1, errors: 0, results: [{ view: row,
+            provenance: { generate_cache_hit: true, generate_ms: 1200 } }] };
+        }
+        if (path === '/presign') return { url: 'https://signed.example/dl.png' };
+        if (path === '/delete-prefix') return { prefix: body.prefix, deleted: 2 };
         return {};
       };
-      // re-render the panel with an AUGMENTED summary (the family-tab click
-      // rebuilds from this cache — direct _renderArtifacts injection gets
-      // clobbered, the recorded trap): one elevation + one plan artifact,
-      // the Views list must show ONLY the elevation
-      renderArtifactPanel('test_job', {
-        families: {
-          color: [
-            { artifact_id: 'color_plan', view_projection: 'plan', palette: 'reef', created_at: '2026-07-26T09:00:00Z' },
-            { artifact_id: 'color_elev', view_projection: 'front', view_vertical: 't2', palette: 'reef', created_at: '2026-07-26T10:00:00Z' },
-          ],
-        },
-      });
+      window._openCalls = [];
+      window.open = (u) => { window._openCalls.push(String(u)); return {}; };
+      window._dzCalls = [];
+      window.runDeepZoomExport = async (jobId, sourceKey) => { window._dzCalls.push([jobId, sourceKey]); return true; };
+      renderArtifactPanel('test_job', { families: { color: [
+        { artifact_id: 'color_1', palette: 'reef', created_at: '2026-07-26T08:00:00Z' },
+        { artifact_id: 'color_2', palette: 'lava', created_at: '2026-07-26T07:00:00Z' },
+      ] } });
     });
-    await page.click('[data-render-family="views"]');
-    await expect(page.locator('#btn-view-render')).toBeVisible();
-    await expect(page.locator('#view-render-list')).toContainText('front · t2');
-    await expect(page.locator('#view-render-list')).toContainText('color_elev');
-    await expect(page.locator('#view-render-list')).not.toContainText('color_plan');
 
-    await page.selectOption('#view-render-projection', 'rear');
-    await page.selectOption('#view-render-vertical', 't1');
+    // the family lists the JOB'S VIEW ARTIFACTS (served by /list-views),
+    // sourced from the selected color artifact — never rows of the Color family
+    await page.click('[data-render-family="views"]');
+    await expect(page.locator('#views-list')).toContainText('front · t2');
+    await expect(page.locator('#views-list')).toContainText('src color_1');
+    await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(1)');
+    await expect(page.locator('#tab-render')).toContainText('source: color_1');
+    const listCall = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/list-views')[1]);
+    expect(listCall).toEqual({ job_id: 'test_job' });
+
+    // ViewRender opens the MODAL; the render dispatches the EXACT payload —
+    // source artifact + how to view it, nothing of the live render state
     await page.click('#btn-view-render');
-    await expect(page.locator('#btn-view-render')).toHaveText('\u2713 ViewRender');
-    // the seed stubs the fused launcher into _renderLaunches — the spec's
-    // convention: pin the exact patch the button hands the MT pipeline
-    const st = await page.evaluate(() => window._renderLaunches);
-    expect(st).toHaveLength(1);
-    expect(st[0].mode).toBe('color');
-    // the two view fields and NOTHING else — the grid comes from the
-    // plan's calc server-side, never from the client
-    expect(st[0].paramsPatch).toEqual({ view_projection: 'rear', view_vertical: 't1' });
+    await expect(page.locator('#view-render-modal-overlay')).toBeVisible();
+    await expect(page.locator('#view-render-source')).toHaveText('source: color_1');
+    await page.selectOption('#view-render-projection', 'radial');
+    await page.selectOption('#view-render-vertical', 't1');
+    await page.click('#view-render-go');
+    await expect(page.locator('#btn-view-render')).toHaveText('✓ ViewRender');
+    const start = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/start-view-render')[1]);
+    expect(start).toEqual({ job_id: 'test_job', artifact_id: 'color_1',
+                            projection: 'radial', vertical: 't1', n: 384, pix: 1024 });
+    // the finished row lands on top and the count follows
+    await expect(page.locator('#views-list')).toContainText('radial · t1');
+    await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(2)');
+    const rail = await page.evaluate(() => (typeof _jobsRailJobs !== 'undefined' ? _jobsRailJobs : [])
+      .filter((j) => j.kind === 'viewrender').map((j) => j.state));
+    expect(rail).toEqual(['complete']);
+
+    // row actions: GoColor selects the SOURCE artifact in the Color family
+    const row = page.locator('#views-list > div', { hasText: 'radial · t1' });
+    await row.locator('button', { hasText: 'GoColor' }).click();
+    const sel = await page.evaluate(() => ({
+      family: _renderActiveFamily,
+      key: _renderSelectedArtifactKey.color,
+    }));
+    expect(sel.family).toBe('color');
+    expect(sel.key).toContain('color_1');
+
+    // back to Views: Download presigns the image key; DeepZoom hands the
+    // image key to the export machinery
+    await page.click('[data-render-family="views"]');
+    const row2 = page.locator('#views-list > div', { hasText: 'radial · t1' });
+    await row2.locator('button', { hasText: 'Download' }).click();
+    await expect
+      .poll(async () => page.evaluate(() => window._openCalls.length))
+      .toBe(1);
+    const presign = await page.evaluate(() => ({
+      call: window._storageCalls.find((c) => c[0] === '/presign')[1],
+      opened: window._openCalls[0],
+    }));
+    expect(presign.call).toEqual({ key: 'renders/test_job/views/view_new_radial_t1/image.png',
+                                   filename: 'view_new_radial_t1.png' });
+    expect(presign.opened).toBe('https://signed.example/dl.png');
+    await row2.locator('button', { hasText: 'DeepZoom' }).click();
+    await expect
+      .poll(async () => page.evaluate(() => window._dzCalls.length))
+      .toBe(1);
+    expect(await page.evaluate(() => window._dzCalls[0]))
+      .toEqual(['test_job', 'renders/test_job/views/view_new_radial_t1/image.png']);
+
+    // Delete prunes exactly one view prefix
+    await row2.locator('button', { hasText: 'Delete' }).click();
+    await expect(page.locator('#views-list')).not.toContainText('radial · t1');
+    await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(1)');
+    const del = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/delete-prefix')[1]);
+    expect(del).toEqual({ prefix: 'renders/test_job/views/view_new_radial_t1/' });
+
+    // the hard-won clarity of the Color tab: views NEVER appear there
+    await page.click('[data-render-family="color"]');
+    await expect(page.locator('#tab-render')).not.toContainText('radial · t1');
+    const colorCount = await page.locator('.render-artifact-family-tabs [data-render-family="color"] .subtab-count').first().textContent();
+    expect(colorCount).toBe('(2)');
   });
 
   test('Sculpture tab: SaveSplat modal — explicit settings, hardwired rest', async ({ page }) => {

@@ -181,7 +181,24 @@ sculpture keeps its pass-0 convention.
    cache/saved/artifact (parameters → hosted baked share in one job,
    no tabs; saved rows get a Bake button). ~1KB request, no browser
    upload, no CORS dependency.
-7. Remaining backlog (stripe fan-out, progressive tiles, lambda knobs,
+7. Views (2026-07-26): ASSOCIATED artifacts of existing color renders
+   — like the palette, but indexed (horizontal, t) instead of (t1,t2):
+   front/rear plot Re, left/right plot Im, radial plots r = |root|
+   with all angles collapsing. First build wired them INTO the color
+   pipeline as a render mode (view flags in roots2pix_mt + plan/ASL —
+   kept as inert, tested foundation); the user rejected that shape
+   ("views are views of existing color items — do not pollute the
+   hard-won clarity of the color tab"), and the shipped design is:
+   view_raster.c (musl static, oracle-pinned incl. pixel ownership) +
+   a lores-lambda view_render mode that composes the artifact
+   generate core (cached dump) with the stored step_scores, rendered
+   with the artifact's own palette into renders/{job}/views/{id}/;
+   /start-view-render + /list-views + delete-prefix widening; the
+   Views family tab lists the job's views with a ViewRender modal
+   (projection/vertical/lattice/pix) and GoColor / Download /
+   DeepZoom / Delete row actions. No re-render, no score
+   re-evaluation, Color family untouched.
+8. Remaining backlog (stripe fan-out, progressive tiles, lambda knobs,
    WebGPU) stays gated on demonstrated need: they exist to fix a
    slowness Wave B was built to remove — the first deployed artifact
    run's timing decides.

@@ -3905,6 +3905,52 @@ def test_roots2pix_view_projection_runtime():
     print("  front/t2 elevation pixels exact: OK")
 
 
+def test_view_raster_runtime():
+    """view_raster ARM64 binary: the front/t2 pixel+OWNERSHIP oracle from
+    tests/test_view_raster_tool.py, condensed — 4x4 drift grid, degree 1,
+    pix 8; every solve claims its own pixel and carries its own score byte."""
+    print("\n=== view_raster runtime (front/t2 ownership oracle) ===")
+    grid, pix = 4, 8
+
+    def q16(v):
+        return max(0, min(65534, int((v + 1.0) / 2.0 * 65534 + 0.5)))
+
+    roots = bytearray()
+    for step in range(grid * grid):
+        row = step // grid
+        j = step % grid
+        col = (grid - 1 - j) if (row & 1) else j
+        roots += struct.pack("<HH", q16(-0.875 + 0.25 * row), q16(-0.875 + 0.25 * col))
+    with open("/tmp/vr_roots.bin", "wb") as fh:
+        fh.write(roots)
+    scores = bytearray(grid * grid)
+    for row in range(grid):
+        for col in range(grid):
+            scores[row * grid + col] = 16 * row + col + 1
+    with open("/tmp/vr_scores.raw", "wb") as fh:
+        fh.write(scores)
+    r = subprocess.run([
+        "/src/view_raster", "--roots=/tmp/vr_roots.bin",
+        "--scores=/tmp/vr_scores.raw", "--out=/tmp/vr_view.raw",
+        "--roots_format=u16", "--projection=front", "--vertical=t2",
+        f"--grid_n={grid}", "--degree=1", f"--pix={pix}",
+        "--min_re=-1", "--max_re=1", "--min_im=-1", "--max_im=1",
+    ], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    meta = json.loads(r.stdout)
+    assert meta["plotted"] == 16 and meta["deduped"] == 0, meta
+    with open("/tmp/vr_view.raw", "rb") as fh:
+        img = fh.read()
+    assert len(img) == pix * pix, len(img)
+    cells = {(i % pix, i // pix): b for i, b in enumerate(img) if b}
+    py_of = {0: 7, 1: 6, 2: 4, 3: 2}
+    expected = {(row, py_of[col]): 16 * row + col + 1
+                for row in range(4) for col in range(4)}
+    assert cells == expected, (sorted(cells.items()), sorted(expected.items()))
+    cleanup("/tmp/vr_roots.bin", "/tmp/vr_scores.raw", "/tmp/vr_view.raw")
+    print("  front/t2 pixels + score-byte ownership exact: OK")
+
+
 if __name__ == "__main__":
     print("--- Binary validation ---")
     for bin_path in [
@@ -3961,5 +4007,6 @@ if __name__ == "__main__":
     test_catalog_degrees()
     test_splat_bake_runtime()
     test_roots2pix_view_projection_runtime()
+    test_view_raster_runtime()
 
     print("\n=== All Docker runtime tests PASSED ===")

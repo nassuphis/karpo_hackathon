@@ -1245,7 +1245,9 @@ class TestDeletePrefixNarrowing(unittest.TestCase):
         for bad in ("deepzoom/", "deepzoom/job1/", "deepzoom/job1/exp/extra/",
                     "renders/job1/", "deepzoom/job1", "deepzoom/a b/exp/",
                     "sculptures/", "sculptures/a/extra/", "sculptures/a b/",
-                    "sculptures/scu_x"):
+                    "sculptures/scu_x",
+                    "renders/job1/views/", "renders/job1/views/v1/extra/",
+                    "renders/a b/views/v1/"):
             resp = handler_storage.handler(_event("/delete-prefix", {"prefix": bad}), None)
             self.assertEqual(resp["statusCode"], 400, bad)
         mock_s3.delete_objects.assert_not_called()
@@ -1266,6 +1268,15 @@ class TestDeletePrefixNarrowing(unittest.TestCase):
         paginator.paginate.return_value = [{"Contents": []}]
         resp = handler_storage.handler(
             _event("/delete-prefix", {"prefix": "sculptures/scu_mryxyz12/"}), None)
+        self.assertEqual(resp["statusCode"], 200)
+
+    @patch("handler_storage.s3")
+    def test_accepts_exact_view_prefix(self, mock_s3):
+        import handler_storage
+        paginator = mock_s3.get_paginator.return_value
+        paginator.paginate.return_value = [{"Contents": []}]
+        resp = handler_storage.handler(
+            _event("/delete-prefix", {"prefix": "renders/compute_j1/views/view_abc_front_t2/"}), None)
         self.assertEqual(resp["statusCode"], 200)
 
 
@@ -1553,6 +1564,138 @@ class TestSaveSculpture(unittest.TestCase):
             _event("/save-sculpture", self._params(job_id="../evil")), None)
         self.assertEqual(resp["statusCode"], 400)
         mock_s3.head_object.assert_not_called()
+
+
+class TestStartViewRender(unittest.TestCase):
+    """A VIEW is an associated artifact of an existing color render (like
+    the palette): the route validates everything synchronously, fast-fails
+    artifacts without stored step_scores, and dispatches the lores lambda's
+    view_render mode on the common task infra."""
+
+    def _head_ok(self, mock_s3, grid="2000"):
+        mock_s3.head_object.return_value = {
+            "Metadata": {"step_scores_key": "renders/compute_j1/step_scores.raw",
+                         "step_scores_grid_n": grid},
+            "ContentType": "image/png", "ContentLength": 10}
+        mock_s3.get_object.side_effect = ClientError(
+            {"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
+
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
+    @patch("handler_storage.s3")
+    def test_dispatches_view_render_payload(self, mock_s3, mock_boto3, mock_report):
+        import handler_storage
+        self._head_ok(mock_s3)
+        resp = handler_storage.handler(_event("/start-view-render", {
+            "job_id": "compute_j1", "artifact_id": "color_run_abc",
+            "projection": "radial", "vertical": "t1", "n": 384, "pix": 1024,
+        }), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        task_id = body["task_id"]
+        self.assertTrue(task_id.startswith("view_render_"))
+        self.assertEqual(body["source_artifact_id"], "color_run_abc")
+        self.assertEqual(mock_report.call_args.args, ("compute_j1", task_id, "running"))
+        invoke = mock_boto3.client.return_value.invoke.call_args.kwargs
+        self.assertEqual(invoke["InvocationType"], "Event")
+        self.assertEqual(invoke["FunctionName"], "polypaint-render-lores-preview")
+        self.assertEqual(json.loads(invoke["Payload"]), {
+            "job_id": "compute_j1",
+            "view_render": {
+                "source": {"artifact_id": "color_run_abc", "n": 384},
+                "params": {"projection": "radial", "vertical": "t1", "pix": 1024},
+            },
+            "sculpture_task_id": task_id,
+        })
+
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
+    @patch("handler_storage.s3")
+    def test_fast_fails_without_step_scores(self, mock_s3, mock_boto3, mock_report):
+        import handler_storage
+        mock_s3.head_object.return_value = {"Metadata": {"step_scores_key": ""},
+                                            "ContentType": "image/png", "ContentLength": 10}
+        mock_s3.get_object.side_effect = ClientError(
+            {"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
+        resp = handler_storage.handler(_event("/start-view-render", {
+            "job_id": "compute_j1", "artifact_id": "color_run_abc",
+            "projection": "front", "vertical": "t2", "n": 384, "pix": 1024,
+        }), None)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("re-render", json.loads(resp["body"])["error"])
+        mock_boto3.client.return_value.invoke.assert_not_called()
+        mock_report.assert_not_called()
+
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
+    @patch("handler_storage.s3")
+    def test_rejects_bad_inputs(self, mock_s3, mock_boto3, mock_report):
+        import handler_storage
+        self._head_ok(mock_s3, grid="256")
+        good = {"job_id": "compute_j1", "artifact_id": "color_run_abc",
+                "projection": "front", "vertical": "t2", "n": 128, "pix": 512}
+        for patch_kv in (
+            {"job_id": "../evil"},
+            {"artifact_id": "no spaces"},
+            {"projection": "top"},                 # the plan is NOT a view
+            {"vertical": "t3"},
+            {"n": 640},
+            {"pix": 4096},
+            {"n": 384},                            # exceeds the 256 solve grid
+        ):
+            params = dict(good)
+            params.update(patch_kv)
+            resp = handler_storage.handler(_event("/start-view-render", params), None)
+            self.assertEqual(resp["statusCode"], 400, (patch_kv, resp["body"]))
+        mock_boto3.client.return_value.invoke.assert_not_called()
+
+
+class TestListViews(unittest.TestCase):
+    @patch("handler_storage.s3")
+    def test_lists_job_views_newest_first(self, mock_s3):
+        import handler_storage
+        paginator = mock_s3.get_paginator.return_value
+        paginator.paginate.return_value = [{"CommonPrefixes": [
+            {"Prefix": "renders/compute_j1/views/view_a_front_t2/"},
+            {"Prefix": "renders/compute_j1/views/view_b_radial_t1/"},
+            {"Prefix": "renders/compute_j1/views/view_broken/"},
+        ]}]
+
+        def get_object(Bucket=None, Key=None):
+            metas = {
+                "renders/compute_j1/views/view_a_front_t2/meta.json": {
+                    "view_id": "view_a_front_t2", "projection": "front", "vertical": "t2",
+                    "image_key": "renders/compute_j1/views/view_a_front_t2/image.png",
+                    "created_at": "2026-07-24T10:00:00Z"},
+                "renders/compute_j1/views/view_b_radial_t1/meta.json": {
+                    "view_id": "view_b_radial_t1", "projection": "radial", "vertical": "t1",
+                    "image_key": "renders/compute_j1/views/view_b_radial_t1/image.png",
+                    "created_at": "2026-07-25T10:00:00Z"},
+            }
+            if Key in metas:
+                body = MagicMock()
+                body.read.return_value = json.dumps(metas[Key]).encode("utf-8")
+                return {"Body": body}
+            raise RuntimeError("missing meta")
+
+        mock_s3.get_object.side_effect = get_object
+        resp = handler_storage.handler(_event("/list-views", {"job_id": "compute_j1"}), None)
+        self.assertEqual(resp["statusCode"], 200)
+        body = json.loads(resp["body"])
+        self.assertEqual(body["count"], 2)              # broken meta skipped
+        self.assertEqual([r["view_id"] for r in body["views"]],
+                         ["view_b_radial_t1", "view_a_front_t2"])
+        first = body["views"][0]
+        self.assertEqual(first["prefix"], "renders/compute_j1/views/view_b_radial_t1/")
+        self.assertIn("/renders/compute_j1/views/view_b_radial_t1/image.png", first["image_url"])
+        # the scan was scoped to THIS job
+        self.assertEqual(paginator.paginate.call_args.kwargs["Prefix"], "renders/compute_j1/views/")
+
+    @patch("handler_storage.s3")
+    def test_rejects_bad_job(self, mock_s3):
+        import handler_storage
+        resp = handler_storage.handler(_event("/list-views", {"job_id": "../evil"}), None)
+        self.assertEqual(resp["statusCode"], 400)
 
 
 class TestListSculptures(unittest.TestCase):

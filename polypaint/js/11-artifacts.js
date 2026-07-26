@@ -1017,17 +1017,17 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         // saved sculptures for THIS job only — the panel is job-scoped like
         // every other family (the server list is global; filter client-side)
         sculpture: (window._sculptureInventory || []).filter((m) => m.job_id === jobId),
-        // Views: elevation renders ARE color artifacts (full first-class
-        // pipeline products) tagged with their projection — this family is
-        // a filtered lens over color, plus the ViewRender create block
-        views: withFamily('color', families.color).filter(
-            (m) => m.view_projection && m.view_projection !== 'plan'),
+        // Views: ASSOCIATED artifacts of existing color renders (like the
+        // palette) — server-listed per job under renders/{job}/views/, never
+        // mixed into the Color family
+        views: (window._viewsInventoryJob === jobId ? (window._viewsInventory || []) : []),
     };
     // the sculpture list is session-cached and was LAZY — loaded only when
     // its own tab opened, so the family tab's count sat at a permanent (0)
     // on every other view (user-caught). Kick the load here; on completion
     // it patches the count in place. Session-cached: one fetch ever.
     void _sculptureEnsureInventory();
+    void _viewsEnsureInventory();
     if (!_renderArtifacts[_renderActiveFamily]) _renderActiveFamily = 'color';
     for (const family of ['color', 'bilevel', 'coeffs', 'palette', 'pdf']) {
         const inv = _renderArtifacts[family] || [];
@@ -1061,41 +1061,35 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     }).join('');
 
     if (_renderActiveFamily === 'views') {
-        // Views pane: the architecture drawings of the polynomial. The
-        // classic render is the PLAN (roots top-down, t1/t2 marginalized);
-        // ViewRender produces the ELEVATIONS — a root coordinate horizontal,
-        // t1 or t2 vertical — through the full ColorRender-MT pipeline, so
-        // the output is a first-class color artifact (DeepZoom it, book it,
-        // sculpture it) tagged with its projection.
+        // Views pane: associated artifacts of existing color renders (like
+        // the palette). A view re-plots the SELECTED color artifact's own
+        // stored data with the horizontal axis = Re (front/rear), Im
+        // (left/right) or r = |root| (radial) and the vertical axis = t —
+        // nothing re-renders, and the Color family stays untouched.
+        const viewSrc = _sculptureSourceColorArtifact();
         const viewRows = _renderArtifacts.views || [];
         const viewRowsHtml = viewRows.length ? viewRows.map((m) => `
             <div style="display:flex; align-items:center; gap:10px; padding:6px 10px; border-bottom:1px solid #26263a; font-size:12px">
-                <span style="color:#e8eef5; white-space:nowrap">${_escapeHtml(m.view_projection || '')} · ${_escapeHtml(m.view_vertical || '')}</span>
-                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#778599">${_escapeHtml(m.artifact_id || '')}</span>
-                <span style="color:#778599">${_escapeHtml(String(m.palette || ''))}</span>
+                <span style="color:#e8eef5; white-space:nowrap">${_escapeHtml(m.projection || '')} · ${_escapeHtml(m.vertical || '')}</span>
+                <span style="color:#778599; white-space:nowrap">${Number(m.lattice_n || 0)}² · ${Number(m.pix || 0)}px</span>
+                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#778599" title="source color artifact">src ${_escapeHtml(m.source_artifact_id || '')}</span>
                 <span style="color:#556; font-size:11px; white-space:nowrap">${_escapeHtml(String(m.created_at || '').slice(0, 16).replace('T', ' '))}</span>
-                <button type="button" class="btn-secondary btn-inline" onclick="_renderSelectFamily('color')">Open in Color</button>
+                <button type="button" class="btn-secondary btn-inline" onclick="_viewGoColor('${_escapeHtml(m.view_id)}')" title="Select the source color artifact in the Color tab">GoColor</button>
+                <button type="button" class="btn-secondary btn-inline" onclick="_viewDownload('${_escapeHtml(m.view_id)}', this)">Download</button>
+                <button type="button" class="btn-secondary btn-inline" onclick="_viewDeepZoom('${_escapeHtml(m.view_id)}', this)" title="Export this view as a shareable DeepZoom">DeepZoom</button>
+                <button type="button" class="btn-secondary btn-inline" onclick="_viewDelete('${_escapeHtml(m.view_id)}', this)">Delete</button>
             </div>`).join('')
-            : '<div style="padding:10px; color:#666">No elevation renders for this job yet — pick a view and press ViewRender.</div>';
+            : `<div style="padding:10px; color:#666">${window._viewsInventoryJob === jobId ? 'No views for this job yet — press ViewRender.' : 'Loading…'}</div>`;
         preview.innerHTML = `
         <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
             <div class="subtab-bar render-artifact-family-tabs" role="tablist" aria-label="Render artifact family tabs">${familyTabs}</div>
+            <div style="font-size:12px; color:#8899aa; margin-bottom:8px; font-family:monospace">source: ${viewSrc && viewSrc.artifact_id ? _escapeHtml(viewSrc.artifact_id) : '— select a color artifact (Color tab)'}</div>
             <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap">
-                <span style="font-size:12px; color:#cfd8e3; flex-basis:100%; font-family:monospace">plan = the classic top-down render · elevations view the sculpture from the side</span>
-                <button type="button" class="btn-secondary btn-inline" id="btn-view-render" onclick="runViewRender()" title="Render an elevation through the full ColorRender-MT pipeline — a first-class color artifact tagged with its view">ViewRender</button>
-                <select id="view-render-projection" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
-                    <option value="front" selected>front elevation</option>
-                    <option value="rear">rear elevation</option>
-                    <option value="left">left elevation</option>
-                    <option value="right">right elevation</option>
-                </select>
-                <select id="view-render-vertical" title="Vertical axis: which parameter climbs the image" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
-                    <option value="t2" selected>t2 up</option>
-                    <option value="t1">t1 up</option>
-                </select>
-                <span style="font-size:11px; color:#666; flex-basis:100%">Uses the CURRENT render settings (solve score, palette, size) — front/rear put Re horizontal, left/right put Im horizontal; the chosen parameter runs bottom to top. Results land in the Color family tagged with the view.</span>
+                <button type="button" class="btn-secondary btn-inline" id="btn-view-render" onclick="_viewRenderOpenModal()" title="Render a view of the selected color artifact — a popup sets projection, vertical, lattice and size">ViewRender</button>
+                <button type="button" class="btn-secondary btn-inline" id="btn-views-refresh" onclick="_viewsEnsureInventory(true)">Refresh</button>
+                <span style="font-size:11px; color:#666">a view is an associated artifact of a color render — front/rear plot Re, left/right plot Im, radial plots r = |root|; t climbs the image</span>
             </div>
-            <div id="view-render-list" style="max-height:520px; overflow-y:auto; border:1px solid #333; border-radius:4px">${viewRowsHtml}</div>
+            <div id="views-list" style="max-height:520px; overflow-y:auto; border:1px solid #333; border-radius:4px">${viewRowsHtml}</div>
         </div>`;
         info.textContent = 'Job: ' + jobId;
         return;
@@ -2005,6 +1999,307 @@ async function _splatBakeStartAndFollow(jobId, source, params, btnId, railLabel)
     log(`SplatBake hosted: ${Number(row.splat_count || 0).toLocaleString()} splats \u00b7 `
         + `${((Number(row.bytes) || 0) / (1024 * 1024)).toFixed(1)}MB \u00b7 ${doneSecs}s${provLabel} \u2014 ${row.share_url}`,
         'ok', 'render-log');
+    return row;
+}
+
+async function _viewsEnsureInventory(force) {
+    // job-scoped (unlike the global sculpture list): renders/{job}/views/
+    const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
+    if (!jobId) return false;
+    if (window._viewsInventoryJob === jobId && !force) return true;
+    const btn = document.getElementById('btn-views-refresh');
+    let ok = false;
+    if (btn) { btn.disabled = true; if (force) btn.textContent = 'Refreshing…'; }
+    try {
+        const data = await lambdaPost('storage', { job_id: jobId }, '/list-views');
+        window._viewsInventory = data.views || [];
+        window._viewsInventoryJob = jobId;
+        _viewsSyncFamilyCount();
+        ok = true;
+    } catch (e) {
+        log(`View list failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            if (force) {
+                btn.textContent = ok ? '✓ Refreshed' : '✗ Refresh';
+                setTimeout(() => {
+                    const b = document.getElementById('btn-views-refresh');
+                    if (b && !b.disabled) b.textContent = 'Refresh';
+                }, 2500);
+            }
+        }
+    }
+    if (ok) _viewsRenderPane();
+    return ok;
+}
+
+function _viewsSyncFamilyCount() {
+    // count patched in place — a full panel re-render here would stomp the
+    // user's active tab/selection state (the sculpture-count lesson)
+    const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
+    const rows = window._viewsInventoryJob === jobId ? (window._viewsInventory || []) : [];
+    if (typeof _renderArtifacts !== 'undefined' && _renderArtifacts) _renderArtifacts.views = rows;
+    for (const el of document.querySelectorAll('[data-render-family="views"] .subtab-count')) {
+        el.textContent = `(${rows.length})`;
+    }
+}
+
+function _viewsRenderPane() {
+    if (typeof _renderActiveFamily !== 'undefined' && _renderActiveFamily === 'views') {
+        const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
+        renderArtifactPanel(jobId, window._lastRenderSummary || { families: _renderArtifacts, calc: {} }, { preserveScroll: true });
+    }
+}
+
+function _viewById(id) {
+    return (window._viewsInventory || []).find((m) => m.view_id === id) || null;
+}
+
+function _viewGoColor(id) {
+    const m = _viewById(id);
+    if (!m || !m.source_artifact_id) return;
+    const inv = (_renderArtifacts && _renderArtifacts.color) || [];
+    const target = inv.find((art) => String(art.artifact_id || '') === String(m.source_artifact_id));
+    if (!target) {
+        log(`View source ${m.source_artifact_id} is not in this job's Color list`, 'err', 'render-log');
+        return;
+    }
+    _renderSelectedArtifactKey.color = _renderArtifactStableKey(target);
+    _renderSelectFamily('color');
+}
+
+async function _viewDownload(id, btn) {
+    const m = _viewById(id);
+    if (!m || !m.image_key) return;
+    const orig = btn ? btn.textContent : 'Download';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Signing…'; }
+        const presign = await lambdaPost('storage', {
+            key: m.image_key, filename: `${m.view_id}.png`,
+        }, '/presign');
+        if (!presign || !presign.url) throw new Error('presign returned no url');
+        window.open(presign.url, '_blank');
+        if (btn) btn.textContent = '✓ Download';
+    } catch (e) {
+        log(`View download failed: ${e.message}`, 'err', 'render-log');
+        if (btn) btn.textContent = '✗ Download';
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            setTimeout(() => { if (btn.isConnected && !btn.disabled) btn.textContent = orig; }, 2500);
+        }
+    }
+}
+
+async function _viewDeepZoom(id, btn) {
+    const m = _viewById(id);
+    if (!m || !m.image_key) return;
+    const jobId = document.getElementById('render-results-dir').value.trim();
+    const orig = btn ? btn.textContent : 'DeepZoom';
+    let ok = false;
+    try {
+        ok = !!(await runDeepZoomExport(jobId, m.image_key, btn, { skipRenderRefresh: true }));
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = ok ? '✓ DeepZoom' : orig;
+            setTimeout(() => { if (btn.isConnected && !btn.disabled) btn.textContent = orig; }, 2500);
+        }
+    }
+}
+
+async function _viewDelete(id, btn) {
+    const m = _viewById(id);
+    if (!m) return;
+    if (!confirm(`Delete view ${m.projection} · ${m.vertical} (${m.view_id})?`)) return;
+    const orig = btn ? btn.textContent : 'Delete';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+        await lambdaPost('storage', { prefix: m.prefix || `renders/${m.job_id}/views/${m.view_id}/` }, '/delete-prefix');
+        window._viewsInventory = (window._viewsInventory || []).filter((x) => x.view_id !== id);
+        _viewsSyncFamilyCount();
+        _viewsRenderPane();
+        log(`View deleted: ${m.view_id}`, 'ok', 'render-log');
+    } catch (e) {
+        log(`View delete failed: ${e.message}`, 'err', 'render-log');
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
+function _viewRenderEnsureModal() {
+    if (document.getElementById('view-render-modal-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'view-render-modal-overlay';
+    overlay.className = 'tri-popup-overlay';
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.style.zIndex = '1600';
+    overlay.addEventListener('click', (ev) => { if (ev.target === overlay) _viewRenderClose(); });
+    overlay.innerHTML = `
+        <div style="background:#141424; border:1px solid #444; border-radius:8px; padding:16px 18px; width:360px; font-family:monospace; color:#eee" role="dialog" aria-label="View Render">
+            <div style="font-size:14px; color:#e8eef5; margin-bottom:2px">ViewRender</div>
+            <div id="view-render-source" style="font-size:11px; color:#8899aa; margin-bottom:10px"></div>
+            <div style="display:grid; grid-template-columns:90px 1fr; gap:8px 10px; align-items:center; font-size:12px">
+                <span>projection</span>
+                <select id="view-render-projection" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">
+                    <option value="front" selected>front (Re →)</option>
+                    <option value="rear">rear (Re mirrored)</option>
+                    <option value="left">left (Im mirrored)</option>
+                    <option value="right">right (Im →)</option>
+                    <option value="radial">radial (r = |root|)</option>
+                </select>
+                <span>vertical</span>
+                <select id="view-render-vertical" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">
+                    <option value="t2" selected>t2 up</option>
+                    <option value="t1">t1 up</option>
+                </select>
+                <span>lattice</span>
+                <select id="view-render-lattice" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">
+                    <option value="128">128²</option>
+                    <option value="192">192²</option>
+                    <option value="384" selected>384²</option>
+                    <option value="512">512²</option>
+                </select>
+                <span>size</span>
+                <select id="view-render-pix" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">
+                    <option value="512">512px</option>
+                    <option value="1024" selected>1024px</option>
+                    <option value="2048">2048px</option>
+                </select>
+            </div>
+            <div style="font-size:11px; color:#666; margin-top:10px">plots the artifact's own stored roots + scores — no re-render, its palette, all angles collapse in radial</div>
+            <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+                <button type="button" class="btn-secondary btn-inline" onclick="_viewRenderClose()">Cancel</button>
+                <button type="button" class="btn-secondary btn-inline" id="view-render-go" onclick="runViewRenderStart()">Render</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+function _viewRenderOpenModal() {
+    // the SELECTED color artifact is the source — the popup only sets how
+    // to view it (user spec: views are views of existing color items)
+    const art = _sculptureSourceColorArtifact();
+    if (!art || !art.artifact_id) {
+        log('ViewRender: no color artifact selected — render one first (Color tab)', 'err', 'render-log');
+        return;
+    }
+    _viewRenderEnsureModal();
+    document.getElementById('view-render-source').textContent = `source: ${art.artifact_id}`;
+    const overlay = document.getElementById('view-render-modal-overlay');
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    document.getElementById('view-render-go').focus();
+}
+
+function _viewRenderClose() {
+    const overlay = document.getElementById('view-render-modal-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+async function runViewRenderStart() {
+    const btn = document.getElementById('btn-view-render');
+    let ok = false;
+    try {
+        const jobId = document.getElementById('render-results-dir').value.trim();
+        if (!jobId) throw new Error('no job selected');
+        const art = _sculptureSourceColorArtifact();
+        if (!art || !art.artifact_id) throw new Error('no color artifact selected');
+        const val = (id) => document.getElementById(id).value;
+        const projection = val('view-render-projection');
+        const vertical = val('view-render-vertical') === 't1' ? 't1' : 't2';
+        const n = parseInt(val('view-render-lattice'), 10) || 384;
+        const pix = parseInt(val('view-render-pix'), 10) || 1024;
+        _viewRenderClose();
+        if (btn) { btn.disabled = true; btn.textContent = 'Rendering…'; }
+        await _viewRenderStartAndFollow(jobId, {
+            artifact_id: String(art.artifact_id), projection, vertical, n, pix,
+        }, `view · ${projection}/${vertical} · ${art.artifact_id}`);
+        ok = true;
+    } catch (e) {
+        log(`ViewRender failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        // re-query: the follow driver re-renders the pane on completion, so
+        // the captured node may be detached — feedback must land on the LIVE one
+        const live = document.getElementById('btn-view-render') || btn;
+        if (live) {
+            live.disabled = false;
+            live.textContent = ok ? '✓ ViewRender' : '✗ ViewRender';
+            setTimeout(() => {
+                const b = document.getElementById('btn-view-render');
+                if (b && !b.disabled) b.textContent = 'ViewRender';
+            }, 2500);
+        }
+    }
+}
+
+async function _viewRenderStartAndFollow(jobId, payload, railLabel) {
+    // the shared view driver: register the job, follow it on the rail,
+    // insert the associated-artifact row when it lands
+    const startResp = await lambdaPost('storage', { job_id: jobId, ...payload }, '/start-view-render');
+    const taskId = startResp && startResp.task_id;
+    if (!taskId) throw new Error('start-view-render returned no task_id');
+    const railId = 'viewrender:' + taskId;
+    const startedAt = Date.now();
+    _jobsRailUpsert({ id: railId, kind: 'viewrender', label: railLabel,
+                      jobId, tab: 'render', state: 'running', startedAt, detail: 'rendering' });
+    let row = null;
+    try {
+        for (;;) {
+            const elapsed = Math.round((Date.now() - startedAt) / 1000);
+            if (elapsed > 360) throw new Error('view render timed out after 6 minutes');
+            const liveBtn = document.getElementById('btn-view-render');
+            if (liveBtn && liveBtn.disabled) liveBtn.textContent = `Rendering ${elapsed}s…`;
+            _jobsRailProgress(railId, `${railLabel} · ${elapsed}s`);
+            let check = null;
+            try {
+                check = await lambdaPost('storage', {
+                    job_id: jobId, task_prefix: taskId, expected: 1,
+                }, '/check-status');
+            } catch (err) { /* transient — keep polling */ }
+            if (check && check.errors > 0) {
+                const detail = (check.error_details && check.error_details[0]
+                    && check.error_details[0].error_msg) || 'view render failed';
+                throw new Error(detail);
+            }
+            if (check && check.done >= 1) {
+                const r = (check.results || []).find((x) => x && x.view);
+                if (!r) throw new Error('view result carries no view row');
+                row = r.view;
+                row._provenance = r.provenance || null;
+                break;
+            }
+            await new Promise((r2) => setTimeout(r2, 3000));
+        }
+    } catch (err) {
+        _jobsRailUpsert({ id: railId, kind: 'viewrender', label: railLabel,
+                          jobId, tab: 'render', state: 'failed',
+                          detail: err && err.message ? err.message : String(err) });
+        throw err;
+    }
+    const doneSecs = Math.round((Date.now() - startedAt) / 1000);
+    _jobsRailUpsert({ id: railId, kind: 'viewrender', label: railLabel,
+                      jobId, tab: 'render', state: 'complete', detail: `done in ${doneSecs}s` });
+    if (window._viewsInventoryJob === jobId) {
+        window._viewsInventory = [row, ...(window._viewsInventory || [])];
+    } else {
+        window._viewsInventory = [row];
+        window._viewsInventoryJob = jobId;
+    }
+    _viewsSyncFamilyCount();
+    _viewsRenderPane();
+    const prov = row._provenance;
+    delete row._provenance;
+    const provLabel = prov && typeof prov.generate_cache_hit === 'boolean'
+        ? (prov.generate_cache_hit
+            ? ` · generate CACHE HIT ${((prov.generate_ms || 0) / 1000).toFixed(1)}s`
+            : ` · lattice materialized ${((prov.generate_ms || 0) / 1000).toFixed(1)}s (first time for this artifact+size; cached now)`)
+        : '';
+    log(`View rendered: ${row.projection}/${row.vertical} · ${Number(row.lattice_n || 0)}² · `
+        + `${Number(row.pix || 0)}px · ${doneSecs}s${provLabel}`, 'ok', 'render-log');
     return row;
 }
 

@@ -73,6 +73,7 @@
       "/list-sculptures",
       "/list-sheets",
       "/list-solve-score-programs",
+      "/list-views",
       "/migrate-coeff-program",
       "/migrate-compute",
       "/migrate-param-program",
@@ -94,7 +95,8 @@
       "/snapshot-book-cover",
       "/solve-score-chain-to-source",
       "/start-sculpture-artifact",
-      "/start-splat-bake"
+      "/start-splat-bake",
+      "/start-view-render"
     ]
   },
   "deploy": {
@@ -153,6 +155,7 @@
       "/list-sculptures",
       "/list-sheets",
       "/list-solve-score-programs",
+      "/list-views",
       "/migrate-coeff-program",
       "/migrate-compute",
       "/migrate-param-program",
@@ -182,6 +185,7 @@
       "/solve-score-chain-to-source",
       "/start-sculpture-artifact",
       "/start-splat-bake",
+      "/start-view-render",
       "/sweep-cm",
       "/sweep-mt",
       "/tiff-compat",
@@ -291,6 +295,7 @@
       "/list-sculptures",
       "/list-sheets",
       "/list-solve-score-programs",
+      "/list-views",
       "/migrate-compute",
       "/presign",
       "/render-count",
@@ -308,7 +313,8 @@
       "/snapshot-book-cover",
       "/solve-score-chain-to-source",
       "/start-sculpture-artifact",
-      "/start-splat-bake"
+      "/start-splat-bake",
+      "/start-view-render"
     ]
   },
   "version": 1

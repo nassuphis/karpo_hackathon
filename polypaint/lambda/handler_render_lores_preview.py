@@ -77,6 +77,7 @@ s3 = (boto3.client("s3", config=_S3_CLIENT_CONFIG)
 
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
 SPLAT_BAKE_BIN = os.path.join(os.path.dirname(__file__), "splat_bake")
+VIEW_RASTER_BIN = os.path.join(os.path.dirname(__file__), "view_raster")
 SOLVE_PROXIMITY_STATS = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
 SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
 SWEEP_MT = os.path.join(os.path.dirname(__file__), "sweep_mt")
@@ -103,6 +104,10 @@ TMP_STEP_SCORES = "/tmp/render_lores_preview_step_scores.raw"
 TMP_SPLAT_ROOTS = "/tmp/render_lores_preview_splat_roots.bin"
 TMP_SPLAT_COLORS = "/tmp/render_lores_preview_splat_colors.raw"
 TMP_SPLAT_PACK = "/tmp/render_lores_preview_splat_pack.bin"
+TMP_VIEW_SCORES = "/tmp/render_lores_preview_view_scores.raw"
+TMP_VIEW_RAW = "/tmp/render_lores_preview_view.raw"
+TMP_VIEW_EQ = "/tmp/render_lores_preview_view_eq.bin"
+TMP_VIEW_IMAGE = "/tmp/render_lores_preview_view.png"
 
 MAX_PREVIEW_PIX = int(os.environ.get("RENDER_LORES_PREVIEW_MAX_PIX", "1024"))
 MAX_LOGICAL_LORES_N = int(os.environ.get("RENDER_LOGICAL_LORES_MAX_N", "256"))
@@ -139,6 +144,10 @@ def _cleanup_tmp():
         TMP_SPLAT_ROOTS,
         TMP_SPLAT_COLORS,
         TMP_SPLAT_PACK,
+        TMP_VIEW_SCORES,
+        TMP_VIEW_RAW,
+        TMP_VIEW_EQ,
+        TMP_VIEW_IMAGE,
         TMP_FRAGMENT_PREFIX + "*",
         TMP_PALETTE_FRAGMENT_PREFIX + "*",
     ):
@@ -1765,6 +1774,200 @@ def _run_splat_bake(params, job_id, spec, t_start):
     })
 
 
+_VIEW_PROJECTIONS = ("front", "rear", "left", "right", "radial")
+
+
+def _run_view_render(params, job_id, spec, t_start):
+    """A VIEW is an associated artifact of an existing color render — like
+    the palette, but indexed (horizontal coordinate, t) instead of
+    (t1, t2): front/rear plot Re, left/right plot Im, radial plots
+    r = |root| with all angles collapsing. Everything comes from the
+    SELECTED artifact's own stored derivatives (the post-transform dump via
+    the generate core's cache, the per-solve score bytes from stored
+    step_scores) — nothing re-renders, no score re-evaluates, and the
+    Color family is untouched: views live in renders/{job}/views/."""
+    task_id = str(params.get("sculpture_task_id") or "").strip()
+    if task_id:
+        report_status(job_id, task_id, "running")
+    source = (spec or {}).get("source") or {}
+    p = (spec or {}).get("params") or {}
+    artifact_id = str(source.get("artifact_id") or "").strip()
+    if not _ARTIFACT_ID_RE.fullmatch(artifact_id):
+        raise RuntimeError("view_render requires a valid artifact_id")
+    try:
+        n = int(source.get("n"))
+    except (TypeError, ValueError):
+        raise RuntimeError("view_render requires integer lattice n")
+    projection = str(p.get("projection") or "")
+    if projection not in _VIEW_PROJECTIONS:
+        raise RuntimeError(f"view projection must be one of {_VIEW_PROJECTIONS}, got {projection!r}")
+    vertical = p.get("vertical") if p.get("vertical") in ("t1", "t2") else "t2"
+    try:
+        pix = int(p.get("pix") or 1024)
+    except (TypeError, ValueError):
+        pix = 1024
+    if not (64 <= pix <= 4096):
+        raise RuntimeError(f"view pix out of range: {pix}")
+
+    # the artifact's own recorded provenance drives everything
+    head = load_color_artifact_head(s3, BUCKET, job_id, artifact_id)
+    meta = dict(head.get("metadata") or {})
+    step_scores_key = str(meta.get("step_scores_key") or "").strip()
+    if not step_scores_key:
+        raise RuntimeError(
+            f"color artifact {artifact_id} has no stored per-solve scores (step_scores) — "
+            "re-render it to view it")
+    full_n = int(meta.get("step_scores_grid_n") or 0)
+    channels = int(meta.get("score_output_channel_count") or 1)
+    if channels not in (1, 3):
+        raise RuntimeError(f"color artifact {artifact_id} has unsupported score channel count {channels}")
+    interpretation = str(meta.get("score_output_interpretation") or ("scalar_lut" if channels == 1 else "rgb"))
+    palette = str(meta.get("palette") or "inferno")
+    background_color = normalize_background_color(meta.get("background_color"))
+
+    # ensure the post-transform dump exists (cache-aware; warm = seconds)
+    t_gen = time.time()
+    gen = _run_artifact_sculpture(
+        {"preview_source_size": n, "sculpture_format": "u16"},
+        job_id, {"artifact_id": artifact_id}, time.time())
+    body = json.loads(gen["body"])
+    sc = body["sculpture"]
+    grid_n = int(sc["grid_n"])
+    degree = int(sc["degree"])
+    fmt = "u16" if sc.get("format") == "u16" else "f32"
+    viewport = {k: float(sc["viewport"][k]) for k in ("min_re", "max_re", "min_im", "max_im")}
+    provenance = {
+        "generate_cache_hit": bool((body.get("cache") or {}).get("hit")),
+        "generate_ms": int((time.time() - t_gen) * 1000),
+    }
+    expected_dump = int(sc.get("roots_bytes") or 0)
+    if (os.path.exists(TMP_XFORMED_ROOTS)
+            and expected_dump > 0
+            and os.path.getsize(TMP_XFORMED_ROOTS) == expected_dump):
+        os.replace(TMP_XFORMED_ROOTS, TMP_SPLAT_ROOTS)
+        provenance["roots_reused_locally"] = True
+    else:
+        _download_to_file(f"renders/{job_id}/sculpture_roots.bin", TMP_SPLAT_ROOTS)
+        provenance["roots_reused_locally"] = False
+
+    # per-solve score bytes on the SAME lattice as the dump
+    t_scores = time.time()
+    _download_to_file(step_scores_key, TMP_STEP_SCORES)
+    _subsample_step_scores_pass0(
+        TMP_STEP_SCORES, TMP_VIEW_SCORES,
+        full_n=full_n, view_n=grid_n, channels=channels)
+    scores_ms = int((time.time() - t_scores) * 1000)
+
+    t_tool = time.time()
+    proc = subprocess.run([
+        VIEW_RASTER_BIN,
+        f"--roots={TMP_SPLAT_ROOTS}",
+        f"--scores={TMP_VIEW_SCORES}",
+        f"--out={TMP_VIEW_RAW}",
+        f"--roots_format={fmt}",
+        f"--projection={projection}",
+        f"--vertical={vertical}",
+        f"--grid_n={grid_n}",
+        f"--degree={degree}",
+        f"--pix={pix}",
+        f"--channels={channels}",
+        f"--min_re={viewport['min_re']}",
+        f"--max_re={viewport['max_re']}",
+        f"--min_im={viewport['min_im']}",
+        f"--max_im={viewport['max_im']}",
+    ], capture_output=True, text=True, timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(f"view_raster failed: {proc.stderr.strip() or 'unknown error'}")
+    try:
+        tool = json.loads(proc.stdout or "{}")
+    except Exception as exc:
+        raise RuntimeError(f"view_raster returned invalid JSON: {(proc.stdout or '')[:200]!r}") from exc
+    tool_ms = int((time.time() - t_tool) * 1000)
+
+    # equalize + palette EXACTLY like the plan raw
+    histogram = histogram_from_raw_path_channel0(
+        TMP_VIEW_RAW, channels=channels, expected_size=pix * pix * channels)
+    write_equalization_lut(TMP_VIEW_EQ, histogram)
+    render_meta = render_score_raw(
+        raw_path=TMP_VIEW_RAW,
+        out_path=TMP_VIEW_IMAGE,
+        preview_path="",
+        pix=pix,
+        eq_lut_path=TMP_VIEW_EQ,
+        palette=palette,
+        background_color=background_color,
+        quality=90,
+        channels=channels,
+        interpretation=interpretation,
+    )
+
+    def _b36_view(v):
+        digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+        out = ""
+        v = int(v)
+        while v:
+            v, rem = divmod(v, 36)
+            out = digits[rem] + out
+        return out or "0"
+
+    view_id = f"view_{_b36_view(int(time.time() * 1000))}_{projection}_{vertical}"
+    vprefix = f"renders/{job_id}/views/{view_id}/"
+    image_key = vprefix + "image.png"
+    with open(TMP_VIEW_IMAGE, "rb") as fh:
+        s3.put_object(
+            Bucket=BUCKET, Key=image_key, Body=fh.read(),
+            ContentType="image/png",
+            CacheControl="public, max-age=31536000, immutable")
+    row = {
+        "version": 1,
+        "view_id": view_id,
+        "job_id": job_id,
+        "source_artifact_id": artifact_id,
+        "projection": projection,
+        "vertical": vertical,
+        "lattice_n": int(grid_n),
+        "pix": int(pix),
+        "palette": palette,
+        "channels": int(channels),
+        "image_key": image_key,
+        "plotted": int(tool.get("plotted") or 0),
+        "clipped": int(tool.get("clipped") or 0),
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    s3.put_object(
+        Bucket=BUCKET, Key=vprefix + "meta.json",
+        Body=json.dumps(row).encode("utf-8"),
+        ContentType="application/json", CacheControl="no-cache")
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    out_row = dict(row)
+    out_row["prefix"] = vprefix
+    out_row["image_url"] = f"https://{BUCKET}.s3.{region}.amazonaws.com/{image_key}"
+
+    total_ms = int((time.time() - t_start) * 1000)
+    logs = [
+        f"View render: {projection}/{vertical} src={artifact_id} lattice={grid_n}² pix={pix} "
+        f"plotted={row['plotted']} clipped={row['clipped']}"
+        + (f" · generate {'CACHE HIT' if provenance.get('generate_cache_hit') else 'materialized'}"
+           f" {provenance.get('generate_ms', 0) / 1000.0:.1f}s"),
+        f"View render timings: scores={scores_ms / 1000.0:.2f}s tool={tool_ms / 1000.0:.2f}s "
+        f"total={total_ms / 1000.0:.2f}s",
+    ]
+    if task_id:
+        report_status(job_id, task_id, "done", result_data={
+            "view": out_row,
+            "provenance": provenance,
+            "total_ms": total_ms,
+        })
+    return ok_response({
+        "view": out_row,
+        "provenance": provenance,
+        "tool": tool,
+        "render": render_meta,
+        "logs": logs,
+        "timings_ms": {"scores": scores_ms, "tool": tool_ms, "total": total_ms},
+    })
+
+
 def handler(event, context):
     params = {}
     t_start = time.time()
@@ -1778,6 +1981,9 @@ def handler(event, context):
         job_id = str(params.get("job_id") or "").strip()
         if not job_id:
             raise RuntimeError("job_id is required")
+        if params.get("view_render") is not None:
+            # a VIEW: an associated artifact of an existing color render
+            return _run_view_render(params, job_id, params.get("view_render"), t_start)
         if params.get("splat_bake") is not None:
             # server-side SplatBake: settings in, hosted baked viewer out
             return _run_splat_bake(params, job_id, params.get("splat_bake"), t_start)

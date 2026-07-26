@@ -1705,6 +1705,10 @@ def handler(event, context):
         return _handle_storage_route(handle_save_sculpture, event)
     elif path.endswith("/start-sculpture-artifact"):
         return _handle_storage_route(handle_start_sculpture_from_artifact, event)
+    elif path.endswith("/start-view-render"):
+        return _handle_storage_route(handle_start_view_render, event)
+    elif path.endswith("/list-views"):
+        return _handle_storage_route(handle_list_views, event)
     elif path.endswith("/start-splat-bake"):
         return _handle_storage_route(handle_start_splat_bake, event)
     return {
@@ -7038,6 +7042,8 @@ def handle_delete_task(event):
 _DEEPZOOM_EXPORT_PREFIX = re.compile(r"deepzoom/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}/")
 # exactly sculptures/<id>/ — one saved sculpture (same single-item discipline)
 _SCULPTURE_PREFIX = re.compile(r"sculptures/[A-Za-z0-9_-]{1,64}/")
+# exactly renders/<job_id>/views/<view_id>/ — one associated view artifact
+_VIEW_PREFIX = re.compile(r"renders/[A-Za-z0-9_-]{1,64}/views/[A-Za-z0-9_.-]{1,64}/")
 
 
 def handle_delete_prefix(event):
@@ -7048,11 +7054,13 @@ def handle_delete_prefix(event):
     """
     params = parse_body(event)
     prefix = str(params.get("prefix") or "")
-    if not (_DEEPZOOM_EXPORT_PREFIX.fullmatch(prefix) or _SCULPTURE_PREFIX.fullmatch(prefix)):
+    if not (_DEEPZOOM_EXPORT_PREFIX.fullmatch(prefix) or _SCULPTURE_PREFIX.fullmatch(prefix)
+            or _VIEW_PREFIX.fullmatch(prefix)):
         return {
             "statusCode": 400,
             "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"error": "delete-prefix requires exactly deepzoom/<job_id>/<export_id>/ or sculptures/<id>/"}),
+            "body": json.dumps({"error": "delete-prefix requires exactly deepzoom/<job_id>/<export_id>/, "
+                                         "sculptures/<id>/ or renders/<job_id>/views/<view_id>/"}),
         }
 
     objects = []
@@ -7362,6 +7370,104 @@ def handle_start_splat_bake(event):
         }).encode("utf-8"),
     )
     return ok_response({"task_id": task_id})
+
+
+_VIEW_PROJECTIONS = ("front", "rear", "left", "right", "radial")
+
+
+def handle_start_view_render(event):
+    """Kick a VIEW render — an associated artifact of an existing color
+    render (like the palette): same data, re-plotted with the horizontal
+    axis = Re (front/rear), Im (left/right) or r = |root| (radial) and the
+    vertical axis = t. Common task infra; the selected color artifact is
+    the only source, and artifacts predating step-scores storage fail HERE
+    synchronously ("re-render it" beats a dead rail card)."""
+    params = parse_body(event)
+    job_id = str(params.get("job_id") or "").strip()
+    if not _SCULPTURE_JOB_ID.fullmatch(job_id):
+        raise RuntimeError("start-view-render requires a valid job_id")
+    artifact_id = str(params.get("artifact_id") or "").strip()
+    if not _SCULPTURE_SOURCE_ARTIFACT.fullmatch(artifact_id):
+        raise RuntimeError("start-view-render requires a valid artifact_id")
+    projection = str(params.get("projection") or "").strip()
+    if projection not in _VIEW_PROJECTIONS:
+        raise RuntimeError(f"start-view-render projection must be one of {_VIEW_PROJECTIONS}, got {projection!r}")
+    vertical = str(params.get("vertical") or "t2").strip()
+    if vertical not in ("t1", "t2"):
+        raise RuntimeError(f"start-view-render vertical must be t1 or t2, got {vertical!r}")
+    try:
+        n = int(params.get("n"))
+    except (TypeError, ValueError):
+        raise RuntimeError("start-view-render requires integer n")
+    if n not in (128, 192, 384, 512):
+        raise RuntimeError(f"start-view-render lattice must be one of 128/192/384/512, got {n}")
+    try:
+        pix = int(params.get("pix"))
+    except (TypeError, ValueError):
+        raise RuntimeError("start-view-render requires integer pix")
+    if pix not in (512, 1024, 2048):
+        raise RuntimeError(f"start-view-render pix must be one of 512/1024/2048, got {pix}")
+    head = load_color_artifact_head(s3, BUCKET, job_id, artifact_id)
+    meta = dict(head.get("metadata") or {})
+    if not str(meta.get("step_scores_key") or "").strip():
+        raise RuntimeError(
+            f"color artifact {artifact_id} has no stored per-solve scores (step_scores) — "
+            "re-render it to view it")
+    grid = int(meta.get("step_scores_grid_n") or 0)
+    if grid and n > grid:
+        raise RuntimeError(f"view lattice {n} exceeds the solve grid {grid}")
+    task_id = f"view_render_{int(time.time() * 1000)}"
+    report_status(job_id, task_id, "running")
+    boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")).invoke(
+        FunctionName=os.environ.get("RENDER_LORES_PREVIEW_FUNCTION", "polypaint-render-lores-preview"),
+        InvocationType="Event",
+        Payload=json.dumps({
+            "job_id": job_id,
+            "view_render": {
+                "source": {"artifact_id": artifact_id, "n": n},
+                "params": {"projection": projection, "vertical": vertical, "pix": pix},
+            },
+            "sculpture_task_id": task_id,
+        }).encode("utf-8"),
+    )
+    return ok_response({"task_id": task_id, "source_artifact_id": artifact_id})
+
+
+def handle_list_views(event):
+    """List one job's view artifacts: a delimiter pass over
+    renders/{job}/views/ plus parallel meta.json reads (the sculpture
+    listing pattern, job-scoped)."""
+    import concurrent.futures
+
+    params = parse_body(event)
+    job_id = str(params.get("job_id") or "").strip()
+    if not _SCULPTURE_JOB_ID.fullmatch(job_id):
+        raise RuntimeError("list-views requires a valid job_id")
+
+    paginator = s3.get_paginator("list_objects_v2")
+    prefixes = []
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=f"renders/{job_id}/views/",
+                                   Delimiter="/"):
+        prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
+
+    region = os.environ.get("AWS_REGION", "us-east-1")
+
+    def read_meta(prefix):
+        try:
+            obj = s3.get_object(Bucket=BUCKET, Key=prefix + "meta.json")
+            meta = json.loads(obj["Body"].read())
+            meta["prefix"] = prefix
+            key = meta.get("image_key") or (prefix + "image.png")
+            meta["image_url"] = f"https://{BUCKET}.s3.{region}.amazonaws.com/{key}"
+            return meta
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+        views = [m for m in pool.map(read_meta, prefixes) if m]
+
+    views.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+    return ok_response({"views": views, "count": len(views)})
 
 
 def handle_save_sculpture(event):

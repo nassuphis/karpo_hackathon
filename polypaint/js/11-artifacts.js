@@ -1785,6 +1785,8 @@ async function _sculptureEnsureInventory(force) {
         }
     }
     _sculptureRenderPane();
+    _splatsTabRefresh();
+    return ok;
 }
 
 function _sculptureSyncFamilyCount() {
@@ -1835,6 +1837,7 @@ async function _sculptureDelete(id, btn) {
         window._sculptureInventory = (window._sculptureInventory || []).filter((x) => x.id !== id);
         _sculptureRenderPane();
         _sculptureSyncFamilyCount();
+        _splatsTabRefresh();
         log(`Sculpture deleted: ${m.title || m.id}`, 'ok', 'render-log');
     } catch (e) {
         log(`Sculpture delete failed: ${e.message}`, 'err', 'render-log');
@@ -1875,6 +1878,7 @@ async function runSculptureSave() {
         window._sculptureInventoryLoaded = true;
         _sculptureRenderPane();
         _sculptureSyncFamilyCount();
+        _splatsTabRefresh();
         log(`Sculpture saved: ${saved.title || saved.id} — ${saved.share_url}`, 'ok', 'render-log');
         ok = true;
     } catch (e) {
@@ -1939,6 +1943,7 @@ async function _splatBakeStartAndFollow(jobId, source, params, btnId, railLabel)
     window._sculptureInventoryLoaded = true;
     _sculptureRenderPane();
     _sculptureSyncFamilyCount();
+    _splatsTabRefresh();
     const prov = row._provenance;
     delete row._provenance;
     window.__lastSplatBake = { id: row.id, count: row.splat_count, bytes: row.bytes,
@@ -2118,6 +2123,144 @@ async function _sculptureBakeSaved(id, btn) {
             setTimeout(() => { if (btn && !btn.disabled) btn.textContent = orig; }, 2500);
         }
     }
+}
+
+/* ---- Splats tab: every saved viewer across ALL jobs, DeepZoom-style ----
+   The server list is already global (one pass over sculptures/); the job
+   scoping elsewhere is a client-side filter. This tab shows the unfiltered
+   truth: baked splats by default (they embed live — a few MB each,
+   immutable-cached so revisits are instant), full saves on request (they
+   open in a tab instead: 20-36MB of roots per selection defeats flipping). */
+let _splatsTabSelId = '';
+let _splatsTabLoadTimer = null;
+
+function _splatsTabRows() {
+    const sel = document.getElementById('splats-kind-filter');
+    const filter = sel ? sel.value : 'baked';
+    const inv = window._sculptureInventory || [];
+    if (filter === 'baked') return inv.filter((m) => m.kind === 'splatbake');
+    if (filter === 'full') return inv.filter((m) => m.kind !== 'splatbake');
+    return inv.slice();
+}
+
+async function loadSplatsTab() {
+    await _sculptureEnsureInventory();       // global, session-cached
+    _splatsTabRender();
+}
+
+async function _splatsTabRefreshClick() {
+    const btn = document.getElementById('btn-splats-refresh');
+    let ok = false;
+    if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+    try {
+        ok = (await _sculptureEnsureInventory(true)) !== false;
+    } finally {
+        _splatsTabRender();
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = ok ? '✓ Refreshed' : '✗ Refresh';
+            setTimeout(() => {
+                const b = document.getElementById('btn-splats-refresh');
+                if (b && !b.disabled) b.textContent = 'Refresh';
+            }, 2500);
+        }
+    }
+}
+
+function _splatsTabRefresh() {
+    // inventory-mutation hook: live only while the tab is showing
+    const tab = document.getElementById('tab-splats');
+    if (tab && tab.classList.contains('active')) _splatsTabRender();
+}
+
+function _splatsTabRender() {
+    const el = document.getElementById('splats-list');
+    if (!el) return;
+    const rows = _splatsTabRows();
+    if (!rows.length) {
+        el.innerHTML = '<div style="padding:10px; color:#666">Nothing here yet — bake splats with SaveSplat on the Render tab\u2019s Sculpture pane.</div>';
+        _splatsTabSelId = '';
+        _splatsTabShowSelection();
+        return;
+    }
+    if (!rows.some((m) => m.id === _splatsTabSelId)) _splatsTabSelId = rows[0].id;
+    el.innerHTML = rows.map((m) => {
+        const isBaked = m.kind === 'splatbake';
+        const shape = isBaked
+            ? `baked \u00b7 ${Number(m.splat_count || 0).toLocaleString()} splats \u00b7 ${((Number(m.bytes) || 0) / (1024 * 1024)).toFixed(1)}MB`
+            : `${Number(m.grid_n) || '?'}\u00d7${Number(m.grid_n) || '?'} \u00b7 d${Number(m.degree) || '?'}`;
+        const selected = m.id === _splatsTabSelId;
+        return `
+        <div class="splats-row" data-id="${_escapeHtml(m.id || '')}" onclick="_splatsTabSelectId(this.dataset.id)"
+             style="display:flex; align-items:center; gap:10px; padding:6px 10px; border-bottom:1px solid #26263a; cursor:pointer${selected ? '; background:#1d2438' : ''}">
+            <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#e8eef5">${_escapeHtml(m.title || m.id || '')}</span>
+            <span style="color:#778599; white-space:nowrap">${shape}</span>
+            <span style="color:#667a90; font-size:11px; white-space:nowrap; max-width:150px; overflow:hidden; text-overflow:ellipsis">${_escapeHtml(m.job_id || '')}</span>
+            <span style="color:#556; font-size:11px; white-space:nowrap; max-width:150px; overflow:hidden; text-overflow:ellipsis">${_escapeHtml(m.source_artifact_id ? 'src ' + m.source_artifact_id : '')}</span>
+            <span style="color:#556; font-size:11px; white-space:nowrap">${_escapeHtml(String(m.created_at || '').slice(0, 10))}</span>
+            <button type="button" class="btn-secondary btn-inline" onclick="event.stopPropagation(); _sculptureOpen('${_escapeHtml(m.id || '')}')">Open</button>
+            <button type="button" class="btn-secondary btn-inline" onclick="event.stopPropagation(); _sculptureCopyLink('${_escapeHtml(m.id || '')}', this)">Copy link</button>
+            <button type="button" class="btn-secondary btn-inline" onclick="event.stopPropagation(); _sculptureDelete('${_escapeHtml(m.id || '')}', this)">Delete</button>
+        </div>`;
+    }).join('');
+    _splatsTabShowSelection();
+}
+
+function _splatsTabShowSelection() {
+    const frame = document.getElementById('splats-frame');
+    const empty = document.getElementById('splats-frame-empty');
+    if (!frame || !empty) return;
+    const row = _splatsTabSelId ? _sculptureById(_splatsTabSelId) : null;
+    if (_splatsTabLoadTimer) clearTimeout(_splatsTabLoadTimer);
+    if (!row) {
+        frame.style.display = 'none';
+        frame.removeAttribute('src');
+        empty.style.display = 'flex';
+        empty.textContent = 'select a baked splat below — arrow keys browse, Enter opens in a tab';
+        return;
+    }
+    if (row.kind !== 'splatbake') {
+        frame.style.display = 'none';
+        frame.removeAttribute('src');
+        empty.style.display = 'flex';
+        empty.textContent = `\u201c${row.title || row.id}\u201d is a full save (roots download + topology rebuild — too heavy to flip through) — press Enter or Open to load it in its own tab`;
+        return;
+    }
+    // debounce: holding an arrow key must not queue a download per step
+    const url = _sculptureShareUrl(row);
+    _splatsTabLoadTimer = setTimeout(() => {
+        _splatsTabLoadTimer = null;
+        if (frame.getAttribute('src') !== url) frame.setAttribute('src', url);
+        frame.style.display = 'block';
+        empty.style.display = 'none';
+    }, 200);
+}
+
+function _splatsTabSelectId(id) {
+    if (!id || id === _splatsTabSelId) return;
+    _splatsTabSelId = id;
+    const list = document.getElementById('splats-list');
+    if (list) {
+        for (const rowEl of list.querySelectorAll('.splats-row')) {
+            rowEl.style.background = rowEl.dataset.id === id ? '#1d2438' : '';
+        }
+        const selEl = list.querySelector(`.splats-row[data-id="${CSS.escape(id)}"]`);
+        if (selEl) selEl.scrollIntoView({ block: 'nearest' });
+    }
+    _splatsTabShowSelection();
+}
+
+function _splatsTabMove(delta) {
+    const rows = _splatsTabRows();
+    if (!rows.length) return;
+    let idx = rows.findIndex((m) => m.id === _splatsTabSelId);
+    idx = Math.max(0, Math.min(rows.length - 1, (idx < 0 ? 0 : idx) + delta));
+    _splatsTabSelectId(rows[idx].id);
+}
+
+function _splatsTabOpenSelected() {
+    const row = _splatsTabSelId ? _sculptureById(_splatsTabSelId) : null;
+    if (row) _sculptureOpen(row.id);
 }
 
 async function refreshDeepZoomInventory() {

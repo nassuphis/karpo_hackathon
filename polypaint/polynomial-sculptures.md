@@ -555,6 +555,31 @@ zero uploads), the no-viewer artifact path, and the saved-row Bake
 mapping; `splat-bake.spec.js` renders a template-substituted page
 headless (pixel readback, tour autoplay, pointerdown stop).
 
+## The Splats tab (global browser)
+
+A top-level app tab (peer of DeepZoom), because the server list was
+always global — the job scoping elsewhere is a client-side filter.
+The tab shows every saved viewer across ALL jobs, newest first, with
+a kind filter (baked splats default / full saves / all); rows carry
+title, shape (splat count + MB for bakes, grid×grid·d for saves),
+job id, source artifact, date, and the same Open / Copy link /
+Delete (id/prefix-based, global-safe as-is). The SELECTED baked row
+embeds LIVE in an iframe above the table — framing needs no CORS,
+the baked pages are immutable-cached so revisits are instant, and a
+baked tour autoplays in the frame. Arrow keys move the selection
+(200ms debounce so held keys don't queue downloads; the key listener
+lives in js/12 per the boot convention, guarded by the active tab +
+text-input focus); Enter opens the selected row in its own tab. Full
+saves list but NEVER embed (a 20–36MB roots download per selection
+defeats flipping) — the frame area explains and Enter/Open still
+work. Inventory mutations (save/bake/delete) refresh the tab live
+via `_splatsTabRefresh()`; deleting the selected row falls through
+to the next with the frame following. Pinned e2e: cross-job listing
+under the default filter, frame src following arrow keys + row
+highlight, Enter opening the selection, the full-save no-embed
+placeholder, delete pruning + selection fall-through, and Refresh
+button feedback.
+
 ## Motion LOD (viewer)
 
 At 384² × degree ~34, threads alone are ~5M segments = 10M vertices

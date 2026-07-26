@@ -1308,6 +1308,15 @@ populateDropdown();
 
 document.addEventListener('keydown', function(e) {
     if (_isTextInputFocused()) return;
+    const splatsTab = document.getElementById('tab-splats');
+    if (!splatsTab || !splatsTab.classList.contains('active')) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); _splatsTabMove(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); _splatsTabMove(-1); }
+    else if (e.key === 'Enter') { e.preventDefault(); _splatsTabOpenSelected(); }
+});
+
+document.addEventListener('keydown', function(e) {
+    if (_isTextInputFocused()) return;
     const favTab = document.getElementById('tab-favorites');
     if (!favTab || !favTab.classList.contains('active')) return;
     const inv = _favoriteArtifacts || [];

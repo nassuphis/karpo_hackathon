@@ -238,6 +238,7 @@ npx playwright test --retries=1 \
     tests/e2e/favorites-ui.spec.js \
     tests/e2e/results-ui.spec.js \
     tests/e2e/deepzoom-inventory.spec.js \
+    tests/e2e/splats-tab.spec.js \
     tests/e2e/compute-ui.spec.js \
     tests/e2e/palette-ui.spec.js \
     tests/e2e/render-refresh.spec.js \

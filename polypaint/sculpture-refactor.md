@@ -181,23 +181,25 @@ sculpture keeps its pass-0 convention.
    cache/saved/artifact (parameters → hosted baked share in one job,
    no tabs; saved rows get a Bake button). ~1KB request, no browser
    upload, no CORS dependency.
-7. Views (2026-07-26): ASSOCIATED artifacts of existing color renders
-   — like the palette, but indexed (horizontal, t) instead of (t1,t2):
-   front/rear plot Re, left/right plot Im, radial plots r = |root|
-   with all angles collapsing. First build wired them INTO the color
-   pipeline as a render mode (view flags in roots2pix_mt + plan/ASL —
-   kept as inert, tested foundation); the user rejected that shape
-   ("views are views of existing color items — do not pollute the
-   hard-won clarity of the color tab"), and the shipped design is:
-   view_raster.c (musl static, oracle-pinned incl. pixel ownership) +
-   a lores-lambda view_render mode that composes the artifact
-   generate core (cached dump) with the stored step_scores, rendered
-   with the artifact's own palette into renders/{job}/views/{id}/;
-   /start-view-render + /list-views + delete-prefix widening; the
-   Views family tab lists the job's views with a ViewRender modal
-   (projection/vertical/lattice/pix) and GoColor / Download /
-   DeepZoom / Delete row actions. No re-render, no score
-   re-evaluation, Color family untouched.
+7. Views (2026-07-26/27, final architecture by the user — reviewed in
+   code-review-36.md): ViewRender is a FULL ColorRender-MT dispatch with
+   view_projection (front/rear/left/right/radial/isometric), view_vertical
+   and source_color_artifact_id; every other parameter derives from the
+   selected Color artifact's recorded provenance, and pix is forced to
+   calc N — a view IS the N×N parameter square. The plan routes the run
+   into a first-class "views" family (renders/{job}/views/view_{run}/),
+   finalize writes meta.json there and returns family+artifact_id so the
+   completion hook refreshes and selects the new row; view rows normalize
+   onto the shared render-artifact contract, so the standard catalog,
+   preview, arrows, Download, Delete, and DeepZoom just work. Isometric
+   projection math is shared between roots2pix_mt and view_raster via
+   lambda/view_projection.h. An earlier build (ac9ca1e) that rendered
+   views through a separate ≤512² lores path with its own storage route,
+   C tool, and bespoke pane was rejected and replaced — the recorded
+   lesson: a feature that is "the same computation with one changed
+   mapping" must be a parameter on the existing path, not a second path.
+   The lores view_render mode + view_raster remain in the tree with no
+   caller (CR36-F1: keep-as-fast-preview-donor or delete — undecided).
 8. Remaining backlog (stripe fan-out, progressive tiles, lambda knobs,
    WebGPU) stays gated on demonstrated need: they exist to fix a
    slowness Wave B was built to remove — the first deployed artifact

@@ -1774,14 +1774,14 @@ def _run_splat_bake(params, job_id, spec, t_start):
     })
 
 
-_VIEW_PROJECTIONS = ("front", "rear", "left", "right", "radial")
+_VIEW_PROJECTIONS = ("front", "rear", "left", "right", "radial", "isometric")
 
 
 def _run_view_render(params, job_id, spec, t_start):
-    """A VIEW is an associated artifact of an existing color render — like
-    the palette, but indexed (horizontal coordinate, t) instead of
-    (t1, t2): front/rear plot Re, left/right plot Im, radial plots
-    r = |root| with all angles collapsing. Everything comes from the
+    """A VIEW is an associated artifact of an existing color render.
+    Front/rear plot Re against t, left/right plot Im against t, radial plots
+    r = |root| with all angles collapsing, and isometric projects normalized
+    (Re, Im, t). Everything comes from the
     SELECTED artifact's own stored derivatives (the post-transform dump via
     the generate core's cache, the per-solve score bytes from stored
     step_scores) — nothing re-renders, no score re-evaluates, and the

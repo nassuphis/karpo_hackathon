@@ -24,6 +24,7 @@
 #include "multispan_reader.h"
 #include "root_xforms.h"
 #include "solve_score.h"
+#include "view_projection.h"
 
 #define MAXDEG 256
 typedef struct {
@@ -60,12 +61,13 @@ typedef struct {
     int emitPaletteBins;
     long long paletteStepStart;
     int paletteGridN;
-    int viewProjection;       /* 0 plan | 1 front | 2 rear | 3 left | 4 right | 5 radial */
-    int viewVertical;         /* 0 t2 | 1 t1 (elevation vertical axis) */
+    int viewProjection;       /* 0 plan | 1 front | 2 rear | 3 left | 4 right | 5 radial | 6 isometric */
+    int viewVertical;         /* 0 t2 | 1 t1 (selected parameter axis) */
     int viewGridN;            /* parameter grid for the step -> t mapping */
     long long viewStepStart;  /* section's global step offset */
     double imHScale;          /* W / im span — left/right horizontal scale */
     double radialScale;       /* W / farthest viewport-corner radius */
+    ViewIsometricProjection isometricProjection;
     int scoreCoeffDegree;
     int scoreCoeffStride;
     int scoreParamDegree;
@@ -530,7 +532,7 @@ static void *worker_main(void *arg_) {
             }
         }
 
-        /* elevations: this step's parameter height, computed once per
+        /* views: this step's selected parameter, computed once per
          * solve (serpentine step -> (row, col), t2 = col/N, t1 = row/N;
          * pass > 0 folds onto pass 0 like the plan view's overplot) */
         double viewT = 0.0;
@@ -564,9 +566,8 @@ static void *worker_main(void *arg_) {
             }
             /* the ONE projection-dependent line pair: which pixel does
              * this root land on. plan = the classic (Re, Im) top-down;
-             * elevations put the root coordinate horizontal and the
-             * solve's t vertical (t = 1 at the top), the architecture
-             * views of the shape whose plan this pipeline always drew. */
+             * elevation modes put one root coordinate against t; isometric
+             * uses both root coordinates and t. */
             double pxf, pyf;
             if (arg->viewProjection != 0
                     && (rotRe < arg->minRe || rotRe > arg->maxRe
@@ -594,6 +595,14 @@ static void *worker_main(void *arg_) {
             case 5:   /* radial: distance from origin rightward */
                 pxf = hypot(rotRe, rotIm) * arg->radialScale;
                 pyf = (1.0 - viewT) * (double)arg->H;
+                break;
+            case 6:   /* isometric: viewport-normalized (Re, Im, t) */
+                if (!view_project_isometric(
+                        &arg->isometricProjection,
+                        rotRe, rotIm, viewT, &pxf, &pyf)) {
+                    arg->rootsClipped++;
+                    continue;
+                }
                 break;
             default:  /* plan */
                 pxf = (rotRe - arg->minRe) * arg->xScale;
@@ -664,7 +673,7 @@ int main(int argc, char **argv) {
                 "[--step_scores_output=/tmp/step_scores.bin] "
                 "[--xformed_roots_output=/tmp/xformed_roots.bin] "
                 "[--xformed_roots_format=f32|u16] "
-                "[--view_projection=plan|front|rear|left|right|radial] [--view_vertical=t2|t1] "
+                "[--view_projection=plan|front|rear|left|right|radial|isometric] [--view_vertical=t2|t1] "
                 "[--view_grid_n=N] [--view_step_start=STEP] "
                 "[--root_xforms=file.json]\n");
         return 1;
@@ -726,8 +735,9 @@ int main(int argc, char **argv) {
     else if (strcmp(viewProjectionArg, "left") == 0) viewProjection = 3;
     else if (strcmp(viewProjectionArg, "right") == 0) viewProjection = 4;
     else if (strcmp(viewProjectionArg, "radial") == 0) viewProjection = 5;
+    else if (strcmp(viewProjectionArg, "isometric") == 0) viewProjection = 6;
     else {
-        fprintf(stderr, "Invalid --view_projection: %s (plan|front|rear|left|right|radial)\n", viewProjectionArg);
+        fprintf(stderr, "Invalid --view_projection: %s (plan|front|rear|left|right|radial|isometric)\n", viewProjectionArg);
         return 1;
     }
     int viewVertical = 0;
@@ -738,7 +748,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (viewProjection != 0 && viewGridN < 2) {
-        fprintf(stderr, "Elevation projections require --view_grid_n >= 2\n");
+        fprintf(stderr, "View projections require --view_grid_n >= 2\n");
         return 1;
     }
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
@@ -794,6 +804,13 @@ int main(int argc, char **argv) {
         }
     }
     double radialScale = (double)W / (radialMax > 0.0 ? radialMax : 1.0);
+    ViewIsometricProjection isometricProjection;
+    if (!view_isometric_projection_init(
+            &isometricProjection,
+            minRe, maxRe, minIm, maxIm, W, H)) {
+        fprintf(stderr, "Invalid isometric projection geometry\n");
+        return 1;
+    }
     if (retries < 0 || retries > 10) {
         fprintf(stderr, "Invalid retries: %d\n", retries);
         return 1;
@@ -1156,6 +1173,7 @@ int main(int argc, char **argv) {
         args[i].viewStepStart = viewStepStart;
         args[i].imHScale = (double)W / (maxIm - minIm);
         args[i].radialScale = radialScale;
+        args[i].isometricProjection = isometricProjection;
         args[i].cosA = cosA;
         args[i].sinA = sinA;
         args[i].solveScoreProgram = solveScoreProgram;

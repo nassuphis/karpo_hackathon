@@ -1963,7 +1963,7 @@ test.describe('Solve Score UI', () => {
         if (path === '/list-views') {
           const views = [mkRow('view_old_front_t2', 'front', 't2', '2026-07-26T09:00:00Z')];
           if (window._viewDispatched && !window._viewDeleted) {
-            views.unshift(mkRow('view_new_radial_t1', 'radial', 't1', '2026-07-26T10:00:00Z'));
+            views.unshift(mkRow('view_new_isometric_t1', 'isometric', 't1', '2026-07-26T10:00:00Z'));
           }
           return { views, count: views.length };
         }
@@ -1974,8 +1974,8 @@ test.describe('Solve Score UI', () => {
         }
         if (path === '/check-status') {
           return { complete: true, done: 1, errors: 0, results: [{
-            phase: 'done', family: 'views', artifact_id: 'view_new_radial_t1',
-            image_key: 'renders/test_job/views/view_new_radial_t1/image.jpeg',
+            phase: 'done', family: 'views', artifact_id: 'view_new_isometric_t1',
+            image_key: 'renders/test_job/views/view_new_isometric_t1/image.jpeg',
           }] };
         }
         if (path === '/delete-render-artifact') {
@@ -2021,7 +2021,7 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#view-render-source')).toHaveText('source: color_1 · N=2000 · output 2000×2000');
     await expect(page.locator('#view-render-lattice')).toHaveCount(0);
     await expect(page.locator('#view-render-pix')).toHaveCount(0);
-    await page.selectOption('#view-render-projection', 'radial');
+    await page.selectOption('#view-render-projection', 'isometric');
     await page.selectOption('#view-render-vertical', 't1');
     await page.click('#view-render-go');
     const dispatch = await page.evaluate(() => window._storageCalls.find((c) => c[2] === 'dispatch')[1]);
@@ -2046,17 +2046,17 @@ test.describe('Solve Score UI', () => {
       solve_score_program_source_text: 'score = metric(proximity, slv, q=0.1%)',
       solve_score_normalize: true,
       root_program_source_text: 'rotate(0.125)',
-      view_projection: 'radial',
+      view_projection: 'isometric',
       view_vertical: 't1',
       source_color_artifact_id: 'color_1',
     });
     expect(viewJob.params).not.toHaveProperty('n');
     // The finished View lands on top, becomes the selected preview, and the
     // shared Arrow-key navigator moves between View rows.
-    await expect(catalog).toContainText('radial · t1 · color:color_1');
+    await expect(catalog).toContainText('isometric · t1 · color:color_1');
     await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(2)');
     await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
-      'src', /renders\/test_job\/views\/view_new_radial_t1\/preview\.png/
+      'src', /renders\/test_job\/views\/view_new_isometric_t1\/preview\.png/
     );
     await page.keyboard.press('ArrowDown');
     await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
@@ -2064,7 +2064,7 @@ test.describe('Solve Score UI', () => {
     );
     await page.keyboard.press('ArrowUp');
     await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
-      'src', /renders\/test_job\/views\/view_new_radial_t1\/preview\.png/
+      'src', /renders\/test_job\/views\/view_new_isometric_t1\/preview\.png/
     );
     const rail = await page.evaluate(() => (typeof _jobsRailJobs !== 'undefined' ? _jobsRailJobs : [])
       .filter((j) => j.kind === 'render' && j.label.startsWith('view ·')).map((j) => j.state));
@@ -2089,8 +2089,8 @@ test.describe('Solve Score UI', () => {
       .poll(async () => page.evaluate(() => window._downloadCalls.length))
       .toBe(1);
     expect(await page.evaluate(() => window._downloadCalls[0])).toMatchObject({
-      key: 'renders/test_job/views/view_new_radial_t1/image.jpeg',
-      filename: 'test_job_view_new_radial_t1.jpeg',
+      key: 'renders/test_job/views/view_new_isometric_t1/image.jpeg',
+      filename: 'test_job_view_new_isometric_t1.jpeg',
     });
     await page.click('#btn-render-deepzoom');
     await expect
@@ -2098,25 +2098,25 @@ test.describe('Solve Score UI', () => {
       .toBe(1);
     expect(await page.evaluate(() => window._dzCalls[0])).toEqual([
       'test_job',
-      'renders/test_job/views/view_new_radial_t1/image.jpeg',
+      'renders/test_job/views/view_new_isometric_t1/image.jpeg',
       { rawKey: '', rawMetaKey: '', skipRenderRefresh: true },
     ]);
 
     // Delete uses the generic selected-artifact route and then refreshes the
     // job-scoped Views inventory.
     await page.click('#btn-render-delete');
-    await expect(catalog).not.toContainText('radial · t1');
+    await expect(catalog).not.toContainText('isometric · t1');
     await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(1)');
     const del = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/delete-render-artifact')[1]);
     expect(del).toEqual({
       job_id: 'test_job',
       family: 'views',
-      artifact_id: 'view_new_radial_t1',
+      artifact_id: 'view_new_isometric_t1',
     });
 
     // the hard-won clarity of the Color tab: views NEVER appear there
     await page.click('[data-render-family="color"]');
-    await expect(page.locator('#tab-render')).not.toContainText('radial · t1');
+    await expect(page.locator('#tab-render')).not.toContainText('isometric · t1');
     const colorCount = await page.locator('.render-artifact-family-tabs [data-render-family="color"] .subtab-count').first().textContent();
     expect(colorCount).toBe('(2)');
   });

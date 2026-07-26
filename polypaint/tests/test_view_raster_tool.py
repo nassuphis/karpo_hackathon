@@ -44,6 +44,17 @@ def _scores():
     return bytes(out)
 
 
+def _isometric_pixel(re, im, t):
+    x = (re + 1.0) / 2.0
+    y = (im + 1.0) / 2.0
+    extent = PIX - 1
+    scale = extent / 2.0
+    return (
+        math.floor(extent / 2.0 + scale * (x - y) * (math.sqrt(3.0) / 2.0)),
+        math.floor(extent / 2.0 + scale * ((x + y) / 2.0 - t)),
+    )
+
+
 class TestViewRasterTool(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -164,6 +175,28 @@ class TestViewRasterTool(unittest.TestCase):
                 expected[key] = 16 * row + col + 1
         self.assertEqual(cells, expected)
         self.assertEqual(meta["plotted"], len(expected))
+
+    def test_isometric_t1_and_t2_pixels_and_ownership(self):
+        # The u16 dump is dequantized before projection. Pin both geometry
+        # and first-claim score ownership against those exact coordinates.
+        for vertical in ("t1", "t2"):
+            cells, meta = self._run("isometric", vertical)
+            expected = {}
+            for step in range(GRID * GRID):
+                row = step // GRID
+                j = step % GRID
+                col = (GRID - 1 - j) if (row & 1) else j
+                re_q = _js_round((-0.875 + 0.25 * row + 1.0) / 2.0 * 65534.0)
+                im_q = _js_round((-0.875 + 0.25 * col + 1.0) / 2.0 * 65534.0)
+                re = -1.0 + re_q / 65534.0 * 2.0
+                im = -1.0 + im_q / 65534.0 * 2.0
+                t = (row if vertical == "t1" else col) / GRID
+                key = _isometric_pixel(re, im, t)
+                if key not in expected:
+                    expected[key] = 16 * row + col + 1
+            self.assertEqual(cells, expected)
+            self.assertEqual(meta["plotted"], len(expected))
+            self.assertEqual(meta["deduped"], GRID * GRID - len(expected))
 
     def test_sentinel_and_rejects(self):
         roots = bytearray(_roots_u16())

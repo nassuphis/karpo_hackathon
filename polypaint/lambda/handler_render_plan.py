@@ -409,12 +409,15 @@ def _build_fused_color_plan(
     }
     for key, default in defaults.items():
         fused_params[key] = rp.get(key, default)
-    # Views: elevations re-map only the plot pixel; validate here so a bad
+    # Views re-map only the plot pixel; validate here so a bad
     # request dies at plan time, not inside a raster section
     fused_params["view_projection"] = str(fused_params.get("view_projection") or "plan").strip().lower()
-    if fused_params["view_projection"] not in ("plan", "front", "rear", "left", "right", "radial"):
+    if fused_params["view_projection"] not in (
+        "plan", "front", "rear", "left", "right", "radial", "isometric"
+    ):
         raise RuntimeError(
-            f"view_projection must be plan/front/rear/left/right/radial, got {fused_params['view_projection']!r}")
+            "view_projection must be "
+            f"plan/front/rear/left/right/radial/isometric, got {fused_params['view_projection']!r}")
     fused_params["view_vertical"] = str(fused_params.get("view_vertical") or "t2").strip().lower()
     if fused_params["view_vertical"] not in ("t1", "t2"):
         raise RuntimeError(f"view_vertical must be t1 or t2, got {fused_params['view_vertical']!r}")
@@ -744,8 +747,8 @@ def _build_fused_color_plan(
         "render_execution": json.dumps(render_execution, separators=(",", ":")),
         "format": "jpeg" if fused_params.get("fmt", "jpeg") != "png" else "png",
         # Views provenance: which projection this artifact IS (plan is the
-        # classic top-down; elevations put a root coordinate horizontal and
-        # the solve's t vertical — the architecture views of the sculpture)
+        # classic top-down; other modes project roots with the selected
+        # parameter axis to produce architecture views of the sculpture)
         "view_projection": str(fused_params.get("view_projection") or "plan"),
         "view_vertical": str(fused_params.get("view_vertical") or "t2"),
         "quality": str(fused_params.get("quality", 90)),

@@ -942,16 +942,16 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         with patch("handler_render_lores_preview.report_status") as mock_report:
             resp = handler(_event(
                 view_render={"source": {"artifact_id": "color_run_abc", "n": 4},
-                             "params": {"projection": "radial", "vertical": "t1", "pix": 64}},
+                             "params": {"projection": "isometric", "vertical": "t1", "pix": 64}},
                 sculpture_task_id="view_render_7",
             ), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
         body = json.loads(resp["body"])
         view = body["view"]
         self.assertTrue(view["view_id"].startswith("view_"))
-        self.assertTrue(view["view_id"].endswith("_radial_t1"))
+        self.assertTrue(view["view_id"].endswith("_isometric_t1"))
         self.assertEqual(view["source_artifact_id"], "color_run_abc")
-        self.assertEqual(view["projection"], "radial")
+        self.assertEqual(view["projection"], "isometric")
         self.assertEqual(view["vertical"], "t1")
         self.assertEqual(view["lattice_n"], 4)
         self.assertEqual(view["pix"], 64)
@@ -962,7 +962,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         # lattice dump (reused locally from the composed generate), and the
         # stored scores de-serpentined row-major
         cmd = seen["view_cmd"]
-        self.assertIn("--projection=radial", cmd)
+        self.assertIn("--projection=isometric", cmd)
         self.assertIn("--vertical=t1", cmd)
         self.assertIn("--grid_n=4", cmd)
         self.assertIn("--degree=1", cmd)

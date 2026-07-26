@@ -3857,9 +3857,8 @@ def test_splat_bake_runtime():
 
 
 def test_roots2pix_view_projection_runtime():
-    """Views: the SHIPPED ARM64 raster maps elevations exactly — front/t2
-    puts the root's Re horizontal and the solve's t2 vertical (condensed
-    from the hand-computed oracle in tests/test_raster_mt_parity.py)."""
+    """Views: the SHIPPED ARM64 raster maps elevations and the isometric
+    unit cube exactly (condensed from tests/test_raster_mt_parity.py)."""
     print("\n=== roots2pix_mt view projection runtime ===")
     grid = 4
     roots = bytearray()
@@ -3929,19 +3928,52 @@ def test_roots2pix_view_projection_runtime():
             radial_expected.add((px, py))
     assert radial_pixels == radial_expected, (
         sorted(radial_pixels), sorted(radial_expected))
+
+    isometric = subprocess.run([
+        "/src/roots2pix_mt", "/tmp/vp_isometric_pix", "--pix=8",
+        "--min_re=-1", "--max_re=1", "--min_im=-1", "--max_im=1",
+        "--degree=1", "--rotation=0", "--threads=2",
+        "--input_manifest=/tmp/vp_manifest.json", "--step_count=16",
+        "--score_metrics=centroid_re", "--score_clip_los=-2", "--score_clip_his=2",
+        "--score_program=m0",
+        "--fragment_prefix=/tmp/vp_isometric_fragment",
+        "--view_projection=isometric", "--view_vertical=t2", "--view_grid_n=4",
+        "--retries=1",
+    ], capture_output=True, text=True, timeout=30)
+    assert isometric.returncode == 0, isometric.stderr
+    isometric_frag = open("/tmp/vp_isometric_fragment.frag", "rb").read()
+    isometric_pixels = set()
+    for o in range(0, len(isometric_frag), 5):
+        idx = struct.unpack_from("<I", isometric_frag, o)[0]
+        isometric_pixels.add((idx % 8, idx // 8))
+    isometric_expected = set()
+    extent = 7.0
+    for row in range(grid):
+        for col in range(grid):
+            re = -0.875 + 0.25 * row
+            im = -0.875 + 0.25 * col
+            x = (re + 1.0) / 2.0
+            y = (im + 1.0) / 2.0
+            px = math.floor(extent / 2.0 + extent / 2.0
+                            * (x - y) * (math.sqrt(3.0) / 2.0))
+            py = math.floor(extent / 2.0 + extent / 2.0
+                            * ((x + y) / 2.0 - col / 4.0))
+            isometric_expected.add((px, py))
+    assert isometric_pixels == isometric_expected, (
+        sorted(isometric_pixels), sorted(isometric_expected))
     cleanup(
         "/tmp/vp_roots.bin",
         "/tmp/vp_manifest.json",
         "/tmp/vp_fragment.frag",
         "/tmp/vp_radial_fragment.frag",
+        "/tmp/vp_isometric_fragment.frag",
     )
-    print("  front/t2 + radial/t2 elevation pixels exact: OK")
+    print("  front/t2 + radial/t2 + isometric/t2 pixels exact: OK")
 
 
 def test_view_raster_runtime():
-    """view_raster ARM64 binary: the front/t2 pixel+OWNERSHIP oracle from
-    tests/test_view_raster_tool.py, condensed — 4x4 drift grid, degree 1,
-    pix 8; every solve claims its own pixel and carries its own score byte."""
+    """view_raster ARM64 binary: front/t2 and isometric/t2 pixel+ownership
+    oracles from tests/test_view_raster_tool.py."""
     print("\n=== view_raster runtime (front/t2 ownership oracle) ===")
     grid, pix = 4, 8
 
@@ -3980,8 +4012,40 @@ def test_view_raster_runtime():
     expected = {(row, py_of[col]): 16 * row + col + 1
                 for row in range(4) for col in range(4)}
     assert cells == expected, (sorted(cells.items()), sorted(expected.items()))
-    cleanup("/tmp/vr_roots.bin", "/tmp/vr_scores.raw", "/tmp/vr_view.raw")
-    print("  front/t2 pixels + score-byte ownership exact: OK")
+
+    iso = subprocess.run([
+        "/src/view_raster", "--roots=/tmp/vr_roots.bin",
+        "--scores=/tmp/vr_scores.raw", "--out=/tmp/vr_iso.raw",
+        "--roots_format=u16", "--projection=isometric", "--vertical=t2",
+        f"--grid_n={grid}", "--degree=1", f"--pix={pix}",
+        "--min_re=-1", "--max_re=1", "--min_im=-1", "--max_im=1",
+    ], capture_output=True, text=True, timeout=30)
+    assert iso.returncode == 0, iso.stderr
+    with open("/tmp/vr_iso.raw", "rb") as fh:
+        iso_img = fh.read()
+    iso_cells = {(i % pix, i // pix): b for i, b in enumerate(iso_img) if b}
+    iso_expected = {}
+    extent = pix - 1
+    for step in range(grid * grid):
+        row = step // grid
+        j = step % grid
+        col = (grid - 1 - j) if (row & 1) else j
+        re = -1.0 + q16(-0.875 + 0.25 * row) / 65534.0 * 2.0
+        im = -1.0 + q16(-0.875 + 0.25 * col) / 65534.0 * 2.0
+        x = (re + 1.0) / 2.0
+        y = (im + 1.0) / 2.0
+        px = math.floor(extent / 2.0 + extent / 2.0
+                        * (x - y) * (math.sqrt(3.0) / 2.0))
+        py = math.floor(extent / 2.0 + extent / 2.0
+                        * ((x + y) / 2.0 - col / 4.0))
+        iso_expected.setdefault((px, py), 16 * row + col + 1)
+    assert iso_cells == iso_expected, (
+        sorted(iso_cells.items()), sorted(iso_expected.items()))
+    cleanup(
+        "/tmp/vr_roots.bin", "/tmp/vr_scores.raw",
+        "/tmp/vr_view.raw", "/tmp/vr_iso.raw",
+    )
+    print("  front/t2 + isometric/t2 pixels and ownership exact: OK")
 
 
 if __name__ == "__main__":

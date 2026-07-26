@@ -153,7 +153,7 @@ class TestRenderPlan(unittest.TestCase):
             max_re=2.0,
             min_im=-1.5,
             max_im=4.0,
-            view_projection="radial",
+            view_projection="isometric",
             view_vertical="t1",
             source_color_artifact_id="color_source_7",
         ), None)
@@ -164,7 +164,7 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(plan["grid"]["pix"], 2000)
         self.assertEqual(plan["calc"]["N"], 2000)
         self.assertEqual(plan["params"]["pix"], 2000)
-        self.assertEqual(plan["params"]["view_projection"], "radial")
+        self.assertEqual(plan["params"]["view_projection"], "isometric")
         self.assertEqual(plan["params"]["view_vertical"], "t1")
         self.assertEqual(plan["params"]["source_color_artifact_id"], "color_source_7")
         self.assertEqual(plan["outputs"]["family"], "views")
@@ -175,7 +175,7 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(meta["family"], "views")
         self.assertEqual(meta["view_id"], "view_run_t")
         self.assertEqual(meta["source_artifact_id"], "color_source_7")
-        self.assertEqual(meta["projection"], "radial")
+        self.assertEqual(meta["projection"], "isometric")
         self.assertEqual(meta["vertical"], "t1")
         self.assertEqual(meta["lattice_n"], "2000")
         self.assertEqual(meta["pix"], "2000")

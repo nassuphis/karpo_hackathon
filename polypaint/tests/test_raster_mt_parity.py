@@ -17,6 +17,17 @@ LAMBDA_DIR = ROOT / "lambda"
 sys.path.insert(0, str(LAMBDA_DIR))
 
 
+def _isometric_pixel(re, im, t, *, pix=8, min_re=-1.0, max_re=1.0,
+                     min_im=-1.0, max_im=1.0):
+    x = (re - min_re) / (max_re - min_re)
+    y = (im - min_im) / (max_im - min_im)
+    extent = pix - 1
+    scale = extent / 2.0
+    px = extent / 2.0 + scale * (x - y) * (math.sqrt(3.0) / 2.0)
+    py = extent / 2.0 + scale * ((x + y) / 2.0 - t)
+    return math.floor(px), math.floor(py)
+
+
 class _RangeRequestHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         rel = self.path.lstrip("/")
@@ -306,11 +317,10 @@ class TestRasterMtParity(unittest.TestCase):
         return {(idx % 8, idx // 8) for idx, _ in pairs}
 
     def test_view_projections_land_on_the_hand_computed_pixels(self):
-        """Elevations are the plan pipeline with ONE changed mapping: the
-        root coordinate goes horizontal and the solve's t goes vertical
-        (t=1 at the top; t=0 lands ON the bottom row, not off the edge).
+        """Views are the plan pipeline with one changed point mapping.
         Every projection is pinned against exact pixel sets, including the
-        degenerate ones where dedup collapses coincident columns."""
+        degenerate elevations where dedup collapses coincident columns and
+        both isometric choices that consume x, y, and the selected t."""
         grid_n = 4
         roots = self._projection_fixture_roots(grid_n)
         view = lambda proj, vert: [f"--view_projection={proj}",
@@ -351,6 +361,23 @@ class TestRasterMtParity(unittest.TestCase):
                     py = 7 if col == 0 else math.floor((1 - col / 4) * 8)
                     expected.add((px, py))
             self.assertEqual(got, expected)
+            # isometric uses all three coordinates. The selected t axis is
+            # the only difference between the two unit-cube projections.
+            for vertical in ("t1", "t2"):
+                got = self._run_projection(
+                    root, roots, label=f"iso_{vertical}",
+                    view_args=view("isometric", vertical),
+                )
+                expected = {
+                    _isometric_pixel(
+                        -0.875 + 0.25 * row,
+                        -0.875 + 0.25 * col,
+                        (row if vertical == "t1" else col) / 4.0,
+                    )
+                    for row in range(4)
+                    for col in range(4)
+                }
+                self.assertEqual(got, expected)
 
     def test_view_step_start_offsets_the_section_lattice(self):
         """MT sections pass their global step offset — the SAME contract as

@@ -580,7 +580,7 @@ class TestRasterMT(unittest.TestCase):
     @patch("handler_raster_mt.subprocess.run")
     @patch("handler_raster_mt.s3")
     def test_view_projection_flags_ride_the_section_cmd(self, mock_s3, mock_run, mock_report):
-        # Views: elevations pass projection + vertical + the calc grid +
+        # Views pass projection + parameter axis + the calc grid +
         # the SECTION's step offset — the same contract as the palette path
         import handler_raster_mt as mod
         uploads = {}
@@ -620,13 +620,13 @@ class TestRasterMT(unittest.TestCase):
         mock_run.side_effect = fake_run
 
         result = mod.handler(_fused_event(
-            view_projection="radial",
+            view_projection="isometric",
             view_vertical="t1",
             view_grid_n=100,
             step_start=2,
         ), None)
         self.assertEqual(result["statusCode"], 200, result)
-        self.assertIn("--view_projection=radial", seen["cmd"])
+        self.assertIn("--view_projection=isometric", seen["cmd"])
         self.assertIn("--view_vertical=t1", seen["cmd"])
         self.assertIn("--view_grid_n=100", seen["cmd"])
         self.assertIn("--view_step_start=2", seen["cmd"])
@@ -641,7 +641,7 @@ class TestRasterMT(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             mod.handler(_fused_event(view_projection="top", view_grid_n=100), None)
 
-        # an elevation without the grid dies loudly too
+        # a view without the grid dies loudly too
         with self.assertRaises(RuntimeError):
             mod.handler(_fused_event(view_projection="front"), None)
 

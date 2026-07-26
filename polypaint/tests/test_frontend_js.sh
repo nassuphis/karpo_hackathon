@@ -629,6 +629,7 @@ assertIncludes("function _viewRenderParamsFromArtifact(art, projection, vertical
 assertIncludes("function _viewRenderGridN(art) {", 'ViewRender should derive image geometry from calculation N');
 assertIncludes("const pix = _viewRenderGridN(art);", 'ViewRender must use N for both image dimensions');
 assertIncludes("source_color_artifact_id: String(art.artifact_id),", 'ViewRender should preserve the selected Color artifact identity');
+assertIncludes('<option value="isometric">isometric (x, y, t)</option>', 'ViewRender must expose the shared isometric x/y/t projection');
 assertNotIncludes("id=\"view-render-lattice\"", 'ViewRender must not expose the interactive sculpture lattice cap');
 assertNotIncludes("id=\"view-render-pix\"", 'ViewRender must derive N x N geometry instead of exposing a size selector');
 assertNotIncludes("'/start-view-render'", 'ViewRender must not dispatch through the capped low-resolution storage route');

@@ -9,6 +9,7 @@
  *   right  : Im rightward,          t upward
  *   radial : r = |root| rightward,  t upward   (all angles collapse —
  *            a palette is (t1,t2); a view is (r, t))
+ *   isometric: viewport-normalized (Re, Im, t) projected as a unit cube
  *
  * Inputs are the artifact's OWN stored derivatives — the post-transform
  * roots dump (u16 sentinel-encoded or f32) and the per-solve score bytes
@@ -27,6 +28,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "view_projection.h"
 
 static const char *arg_str(int argc, char **argv, const char *name, const char *dflt) {
     size_t len = strlen(name);
@@ -67,6 +70,7 @@ int main(int argc, char **argv) {
         else if (strcmp(projection, "left") == 0) proj = 2;
         else if (strcmp(projection, "right") == 0) proj = 3;
         else if (strcmp(projection, "radial") == 0) proj = 4;
+        else if (strcmp(projection, "isometric") == 0) proj = 5;
     }
     int vert_t1 = (vertical && strcmp(vertical, "t1") == 0) ? 1
                 : (vertical && strcmp(vertical, "t2") == 0) ? 0 : -1;
@@ -79,7 +83,7 @@ int main(int argc, char **argv) {
         || (strcmp(fmt, "u16") != 0 && strcmp(fmt, "f32") != 0)) {
         fprintf(stderr,
             "usage: view_raster --roots=F --scores=F --out=F --roots_format=u16|f32 "
-            "--projection=front|rear|left|right|radial --vertical=t2|t1 "
+            "--projection=front|rear|left|right|radial|isometric --vertical=t2|t1 "
             "--grid_n=N --degree=D --pix=P [--channels=1|3] "
             "--min_re= --max_re= --min_im= --max_im=\n");
         return 2;
@@ -123,6 +127,13 @@ int main(int argc, char **argv) {
         }
     }
     double rScale = (double)pix / (rmax > 0 ? rmax : 1.0);
+    ViewIsometricProjection isometricProjection;
+    if (!view_isometric_projection_init(
+            &isometricProjection,
+            min_re, max_re, min_im, max_im, (int)pix, (int)pix)) {
+        fprintf(stderr, "view_raster: invalid isometric projection geometry\n");
+        return 2;
+    }
 
     uint8_t *img = calloc((size_t)pix * (size_t)pix, (size_t)channels);
     uint8_t *claimed = calloc((size_t)pix * (size_t)pix, 1);
@@ -134,10 +145,15 @@ int main(int argc, char **argv) {
         long j = s % grid_n;
         long col = (row & 1) ? (grid_n - 1 - j) : j;   /* serpentine */
         double t = vert_t1 ? (double)row / grid_n : (double)col / grid_n;
-        double pyf = (1.0 - t) * (double)pix;
-        int py = (int)floor(pyf);
-        if (py == pix && t <= 0.0) py = (int)pix - 1;   /* t=0 -> bottom row */
-        if (py < 0 || py >= pix) { clipped += degree; continue; }
+        const double elevation_py = (1.0 - t) * (double)pix;
+        int elevation_py_pixel = (int)floor(elevation_py);
+        if (elevation_py_pixel == pix && t <= 0.0) {
+            elevation_py_pixel = (int)pix - 1;   /* t=0 -> bottom row */
+        }
+        if (proj != 5 && (elevation_py_pixel < 0 || elevation_py_pixel >= pix)) {
+            clipped += degree;
+            continue;
+        }
         const uint8_t *sc = scores + ((size_t)row * grid_n + col) * (size_t)channels;
         for (long r = 0; r < degree; r++) {
             double re, im;
@@ -157,16 +173,27 @@ int main(int argc, char **argv) {
                 }
             }
             double pxf;
+            int py = elevation_py_pixel;
             switch (proj) {
             case 0: pxf = (re - min_re) * xScale; break;          /* front */
             case 1: pxf = (max_re - re) * xScale; break;          /* rear */
             case 2: pxf = (max_im - im) * imScale; break;         /* left */
             case 3: pxf = (im - min_im) * imScale; break;         /* right */
-            default: pxf = hypot(re, im) * rScale; break;         /* radial */
+            case 4: pxf = hypot(re, im) * rScale; break;          /* radial */
+            default: {                                              /* isometric */
+                double pyf;
+                if (!view_project_isometric(
+                        &isometricProjection, re, im, t, &pxf, &pyf)) {
+                    clipped++;
+                    continue;
+                }
+                py = (int)floor(pyf);
+                break;
+            }
             }
             if (!isfinite(pxf)) { clipped++; continue; }
             int px = (int)floor(pxf);
-            if (px < 0 || px >= pix) { clipped++; continue; }
+            if (px < 0 || px >= pix || py < 0 || py >= pix) { clipped++; continue; }
             size_t idx = (size_t)py * (size_t)pix + (size_t)px;
             if (claimed[idx]) { deduped++; continue; }
             claimed[idx] = 1;

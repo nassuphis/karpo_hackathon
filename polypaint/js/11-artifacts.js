@@ -1147,8 +1147,8 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         const sourceId = source && source.artifact_id ? String(source.artifact_id) : '';
         const n = source ? _viewRenderGridN(source) : null;
         controlsExtra = sourceId
-            ? `<span style="font-size:11px; color:#666">ViewRender source: <span style="color:#cfd8e3; font-family:monospace">${_escapeHtml(sourceId)}</span>. Each view is ${n ? `${n}×${n}` : 'N×N'}: t1/t2 supplies one N-pixel axis and the selected root projection supplies the other. Select a row to preview it.</span>`
-            : '<span style="font-size:11px; color:#666">Select a Color artifact first. Views are associated N×N images: t1/t2 supplies one axis and front/rear/left/right/radial supplies the other.</span>';
+            ? `<span style="font-size:11px; color:#666">ViewRender source: <span style="color:#cfd8e3; font-family:monospace">${_escapeHtml(sourceId)}</span>. Each view is ${n ? `${n}×${n}` : 'N×N'}: choose a root-coordinate elevation or an isometric x/y/t1 or x/y/t2 projection. Select a row to preview it.</span>`
+            : '<span style="font-size:11px; color:#666">Select a Color artifact first. Views are associated N×N images: choose an elevation or an isometric x/y/t1 or x/y/t2 projection.</span>';
     }
 
     let catalogHtml = '';
@@ -2154,6 +2154,7 @@ function _viewRenderEnsureModal() {
                     <option value="left">left (Im mirrored)</option>
                     <option value="right">right (Im →)</option>
                     <option value="radial">radial (r = |root|)</option>
+                    <option value="isometric">isometric (x, y, t)</option>
                 </select>
                 <span>vertical</span>
                 <select id="view-render-vertical" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">
@@ -2161,7 +2162,7 @@ function _viewRenderEnsureModal() {
                     <option value="t1">t1 up</option>
                 </select>
             </div>
-            <div style="font-size:11px; color:#666; margin-top:10px">full ColorRender-MT render · output is N×N: the selected t1/t2 parameter supplies one N-pixel axis and the selected root projection supplies the other · viewport, score program, transforms, palette, and format come from the selected Color artifact</div>
+            <div style="font-size:11px; color:#666; margin-top:10px">full ColorRender-MT render · output is N×N · elevation modes plot one root coordinate against t1/t2; isometric projects normalized x/y/t1 or x/y/t2 without stretching · viewport, score program, transforms, palette, and format come from the selected Color artifact</div>
             <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
                 <button type="button" class="btn-secondary btn-inline" onclick="_viewRenderClose()">Cancel</button>
                 <button type="button" class="btn-secondary btn-inline" id="view-render-go" onclick="runViewRenderStart()">Render</button>

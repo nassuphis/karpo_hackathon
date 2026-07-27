@@ -959,9 +959,12 @@ hashes):
 
 - `roots2pix_mt`, `assemble_greyscale`, and `score_raw_render` binary
   sha256s;
-- BOTH stage package identities as CANONICAL CONTENT HASHES — the
-  repo's existing `zip_content_hash()` (sorted paths + file contents,
-  ZIP metadata ignored): the Raster handler package (its Python prep,
+- BOTH stage package identities as CANONICAL CONTENT HASHES — an
+  EXTENDED `zip_content_hash()`: sorted paths + file contents PLUS
+  normalized permission/type metadata per entry (the executable bit is
+  runtime-significant — packaging explicitly `chmod +x`es the native
+  binaries, and the current hash ignores modes entirely), while
+  continuing to ignore timestamps and compression metadata: the Raster handler package (its Python prep,
   boto configuration, and helpers set the handler wall the rates were
   measured under) AND the Finalize package. Raw AWS `CodeSha256` is NOT
   the validity key — packaging stages files into fresh directories, so
@@ -970,18 +973,28 @@ hashes):
   provenance only. (`PP_GIT_SHA` remains rejected as blind to dirty
   trees; `PP_BUILD_ID` as timestamped.);
 - the exact libvips `LayerVersionArn`;
-- Lambda memory size and architecture for BOTH raster and finalize;
+- Lambda memory size, architecture, TIMEOUT, ephemeral-storage size,
+  runtime, and (preferably) `RuntimeVersionArn` for BOTH raster and
+  finalize — the admission formulas lean on the 900-second envelope and
+  the 10 GiB `/tmp` as hard constants, so a configuration change must
+  stale the calibration exactly like a code change;
 - the calibrated thread/worker values above;
 - the COST MODEL itself, verified MECHANICALLY, not by an honesty
   check: the entire admission model (`work_units_s`, footprint
   estimation, the section search, the phase estimators) lives in ONE
   isolated module (e.g. `view_snap_cost_model.py`), and the calibration
-  artifact stores the GENERATED canonical SHA-256 of that module's
-  content alongside a human-readable `cost_model_version`. The loader
-  recomputes the module hash and refuses on mismatch — an estimator
-  change that forgets to bump the version CANNOT stay green, because
-  the hash moves by construction. The version string exists for humans
-  and provenance; the hash is the authority.
+  artifact stores the GENERATED canonical SHA-256 of a DECLARED
+  DEPENDENCY SET — the module itself plus every behavioral input it
+  consumes: the logical-section sizing helpers it calls and the
+  registry/compiler cost-class metadata it reads (either hashed as
+  files in the set, or passed in as normalized DATA whose schema hash
+  rides the artifact). Moving the top-level equations into one file is
+  insufficient if behavioral helpers remain imported from un-hashed
+  files — a test pins that the module imports nothing behavioral
+  outside the declared set. The loader recomputes the set hash and
+  refuses on mismatch — a change that forgets the version bump CANNOT
+  stay green. The human-readable `cost_model_version` exists for
+  provenance; the hash is the authority.
 
 A deploy that changes ANY of them invalidates the rate — an encoder or
 finalizer change must not inherit an optimistic raster-era calibration —
@@ -1061,6 +1074,11 @@ provenance               [per-cell matrix results, dates, recorded
 The planner LOADS AND VALIDATES it fail-closed: a missing artifact, a
 schema mismatch, a cost-model hash mismatch, or an identity mismatch
 with the live deployment refuses camera runs as calibration-stale.
+Validation also rejects INCOMPLETE NUMERIC COVERAGE: every rate,
+latency, deration, and headroom must be finite and positive; every
+supported `{format, quality}` encode key must exist; piecewise
+envelopes must be ordered and non-overlapping; a missing coefficient
+REFUSES camera runs — it never defaults.
 "Recorded in this document" is provenance for humans; the artifact is
 the authority the code reads.
 
@@ -1081,6 +1099,26 @@ must be ADDED there, and identities must exist before it is packaged:
 
 Packaging tests pin the artifact's presence in the plan zip and the
 deploy-time validation step.
+
+RECALIBRATION is a supported lifecycle, not an error state. A
+legitimate Raster/Finalize/layer/model change correctly fails the
+production artifact at deploy time; the transition sequence (scripted,
+dry-run-first, like every fleet tool in this repo) is:
+
+```text
+1. prepare a calibration-mode artifact for the NEW identities
+   (fixture allowlist carried over; rates empty/provisional);
+2. deploy the workers + the calibration-mode planner;
+3. run the matrix; collect per-cell telemetry;
+4. promote: write the production artifact (rates, derations,
+   identities, provenance) — a reviewed commit;
+5. deploy the planner only, now carrying the production artifact;
+6. post-verify: live identities equal the artifact's; mode is
+   production; a canary camera admission succeeds.
+```
+
+Until step 5 completes, camera runs refuse as calibration-stale — that
+is the intended safe state, not an outage to be worked around.
 
 There is NO admission override: a payload flag is not "internal" merely
 because the UI does not send it, and a case the budget rejects is

@@ -981,9 +981,10 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
                           if c.kwargs["Key"].startswith("sculptures/")])
 
     def _ambiguous_meta_put_scenario(self, mock_s3, mock_run, mock_render, *,
-                                     marker_read, delete_errors=None):
-        # shared harness: SaveFull where the marker PUT raises AMBIGUOUSLY;
-        # marker_read decides what the resolving read-back sees
+                                     marker_read, delete_errors=None, fail_at="meta"):
+        # shared harness: SaveFull where a publication PUT raises; marker_read
+        # decides what the resolving read-back sees (fail_at="viewer" models
+        # the marker-never-attempted branch)
         from handler_render_lores_preview import TMP_XFORMED_ROOTS, handler
 
         calc, roots_key, roots_bytes = self._artifact_calc(4)
@@ -1003,7 +1004,9 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
             return base_get(**kwargs)
 
         def put_object(Bucket=None, Key=None, Body=b"", **kw):
-            if str(Key).startswith("sculptures/") and str(Key).endswith("meta.json"):
+            if fail_at == "viewer" and str(Key).startswith("sculptures/") and str(Key).endswith("viewer.html"):
+                raise RuntimeError("viewer upload failed")
+            if fail_at == "meta" and str(Key).startswith("sculptures/") and str(Key).endswith("meta.json"):
                 written[Key] = Body        # the PUT "fails" but may have landed
                 raise RuntimeError("socket timeout mid-PUT")
             return {}
@@ -1048,16 +1051,17 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
-    def test_confirmed_absent_marker_cleans_marker_first_then_payload(self, mock_s3, mock_run, mock_render):
-        # CR: ordered cleanup — the marker key is deleted (and checked)
-        # BEFORE the payload, so no interleaving leaves a marker over
-        # deleted files
+    def test_absent_at_read_still_preserves_the_payload(self, mock_s3, mock_run, mock_render):
+        # CR (ambiguous-write invariant): a 404 read-back does NOT prove a
+        # timed-out marker PUT will never land — it may complete AFTER the
+        # read and after any cleanup, recreating marker-over-deleted-files.
+        # Once the marker was ATTEMPTED, anything but the exact read-back
+        # preserves everything.
         resp = self._ambiguous_meta_put_scenario(mock_s3, mock_run, mock_render,
                                                  marker_read="absent")
         self.assertEqual(resp["statusCode"], 500)
-        calls = [ [o["Key"].rsplit("/", 1)[-1] for o in c.kwargs["Delete"]["Objects"]]
-                  for c in mock_s3.delete_objects.call_args_list ]
-        self.assertEqual(calls, [["meta.json"], ["roots.bin", "palette.png", "viewer.html"]])
+        self.assertIn("PRESERVED", json.loads(resp["body"])["detail"])
+        mock_s3.delete_objects.assert_not_called()
 
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")
@@ -1074,16 +1078,23 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
-    def test_marker_delete_errors_block_payload_deletion(self, mock_s3, mock_run, mock_render):
-        # CR: DeleteObjects reports per-key failures WITHOUT raising — a
-        # failed marker delete must abort the cleanup before the payload
-        # goes, or the broken row survives
+    def test_never_attempted_marker_cleans_payload_only_and_checks_errors(self, mock_s3, mock_run, mock_render):
+        # cleanup is legal ONLY when the marker PUT was never attempted (a
+        # viewer failure) — it sweeps exactly the payload, never the marker
+        # key, and per-key DeleteObjects Errors surface instead of passing
+        resp = self._ambiguous_meta_put_scenario(mock_s3, mock_run, mock_render,
+                                                 marker_read="absent", fail_at="viewer")
+        self.assertEqual(resp["statusCode"], 500)
+        calls = [ [o["Key"].rsplit("/", 1)[-1] for o in c.kwargs["Delete"]["Objects"]]
+                  for c in mock_s3.delete_objects.call_args_list ]
+        self.assertEqual(calls, [["roots.bin", "palette.png", "viewer.html"]])
+
+        mock_s3.reset_mock()
         resp = self._ambiguous_meta_put_scenario(
-            mock_s3, mock_run, mock_render, marker_read="absent",
-            delete_errors=[{"Key": "meta.json", "Code": "InternalError"}])
+            mock_s3, mock_run, mock_render, marker_read="absent", fail_at="viewer",
+            delete_errors=[{"Key": "roots.bin", "Code": "InternalError"}])
         self.assertEqual(resp["statusCode"], 500)
         self.assertIn("could not delete", json.loads(resp["body"])["detail"])
-        self.assertEqual(len(mock_s3.delete_objects.call_args_list), 1)   # payload delete never issued
 
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")

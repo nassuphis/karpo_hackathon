@@ -1241,16 +1241,19 @@ def _sculpture_save_full(save_spec, *, job_id, export, source):
     if view:
         meta["view"] = view
     # meta.json is the PUBLICATION MARKER the listing trusts — it goes
-    # LAST, after the viewer. On failure the cleanup is state-resolving,
-    # ordered, and checked (CR: DeleteObjects reports per-key failures
-    # without raising, and an ambiguous marker PUT may have landed):
-    #   1. if the marker PUT was attempted, READ IT BACK — the exact bytes
-    #      present means the publication actually completed: succeed;
-    #   2. confirmed-absent marker: delete-and-check the marker key FIRST,
-    #      only then the payload, so no interleaving can leave a marker
-    #      over deleted files;
-    #   3. unknown marker state (read failed non-404): PRESERVE everything
-    #      — orphaned bytes are recoverable, a broken catalog row is not.
+    # LAST, after the viewer. Failure handling (CR, ambiguous-write
+    # invariant): once the marker PUT has been ATTEMPTED, no read-back can
+    # prove it will never land — a timed-out request may complete AFTER a
+    # 404 read and after any cleanup, recreating marker-over-deleted-files.
+    # So:
+    #   - attempted + exact read-back        -> the publication completed:
+    #     report SUCCESS;
+    #   - attempted + anything else (absent, foreign bytes, unreadable)
+    #     -> PRESERVE everything and fail — orphaned bytes are recoverable,
+    #     a marker over deleted files is not;
+    #   - cleanup (checked: DeleteObjects reports per-key Errors without
+    #     raising) runs ONLY when the marker PUT was never attempted, where
+    #     no marker can ever materialize.
     meta_bytes = json.dumps(meta).encode("utf-8")
     marker_key = sprefix + "meta.json"
 
@@ -1271,27 +1274,26 @@ def _sculpture_save_full(save_spec, *, job_id, export, source):
                       Body=meta_bytes,
                       ContentType="application/json", CacheControl="no-cache")
     except Exception as publish_exc:
-        marker_state = "absent"
         if marker_attempted:
+            marker_state = "unknown"
             try:
                 got = s3.get_object(Bucket=BUCKET, Key=marker_key)
                 marker_state = "published" if got["Body"].read() == meta_bytes else "foreign"
             except Exception as read_exc:
-                marker_state = "absent" if is_missing_s3_error(read_exc) else "unknown"
-        if marker_state == "published":
+                marker_state = "absent_now" if is_missing_s3_error(read_exc) else "unknown"
+            if marker_state != "published":
+                raise RuntimeError(
+                    f"save publication for {sprefix} is unresolved (marker {marker_state} "
+                    f"after an attempted write that may still land) — objects PRESERVED "
+                    f"({type(publish_exc).__name__}: {publish_exc})") from publish_exc
             # the "failed" PUT landed: payload + viewer + marker all exist —
             # this publication is complete and reports as SUCCESS
-            pass
-        elif marker_state == "absent":
-            _delete_checked([marker_key], "marker")
+        else:
+            # the marker was never requested: it can never appear, so the
+            # partial payload is safe to remove
             _delete_checked([sprefix + k for k in ("roots.bin", "palette.png", "viewer.html")],
                             "payload")
             raise
-        else:
-            raise RuntimeError(
-                f"save publication state for {sprefix} is {marker_state} after a failed "
-                f"marker write — objects PRESERVED for manual inspection "
-                f"({type(publish_exc).__name__}: {publish_exc})") from publish_exc
     region = os.environ.get("AWS_REGION", "us-east-1")
     out = dict(meta)
     out["prefix"] = sprefix

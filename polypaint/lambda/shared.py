@@ -578,7 +578,7 @@ _SAFE_RENDER_OBJECT_KEY = re.compile(r"renders/[A-Za-z0-9._/-]+\.(?:jpe?g|png|ti
 # Canonical render family directories under renders/<job>/. 'palettes' holds
 # per-job palette artifacts. A canonical artifact key is always
 # renders/<job>/<family>/<artifact>/<leaf> — every artifact has a family dir.
-RENDER_FAMILY_DIRS = ("color", "bilevel", "coeffs", "pdf", "palettes")
+RENDER_FAMILY_DIRS = ("color", "bilevel", "coeffs", "pdf", "palettes", "views")
 
 
 def is_safe_render_image_key(key):

@@ -12,7 +12,7 @@ function _parseRenderSourceRef(sourceKey) {
         const dir = artifactMatch[2];
         const family = dir === 'palettes'
             ? 'palette'
-            : (dir === 'color' || dir === 'bilevel' || dir === 'coeffs' || dir === 'pdf' ? dir : '');
+            : (dir === 'color' || dir === 'bilevel' || dir === 'coeffs' || dir === 'pdf' || dir === 'views' ? dir : '');
         return {
             jobId: artifactMatch[1],
             family,
@@ -249,13 +249,21 @@ async function _dzGotoSelectedRender() {
     const statusEl = document.getElementById('deepzoom-status');
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Opening...'; }
+        const isViewSource = renderRef.family === 'views';
         _setRenderResultsJob(renderRef.jobId);
         const refreshOptions = renderRef.family && renderRef.artifactId
             ? { selectFamily: renderRef.family, selectArtifactId: renderRef.artifactId }
             : {};
         await refreshRenderArtifacts(renderRef.jobId, refreshOptions);
+        if (isViewSource && typeof _viewsEnsureInventory === 'function') {
+            // views live in their own job-scoped inventory, not the render
+            // summary — fetch (or reuse) it and select the row (CR36 follow-up)
+            await _viewsEnsureInventory(false, { selectViewId: renderRef.artifactId });
+        }
         switchTab('render');
-        if (canPopulate) {
+        if (isViewSource) {
+            log(`DeepZoom GoRender: view ${renderRef.artifactId} (${renderRef.jobId})`, 'ok', 'deepzoom-log');
+        } else if (canPopulate) {
             populateSelectedRenderArtifact();
             const visible = _dzViewportReadoutState.visibleBounds;
             if (visible) {

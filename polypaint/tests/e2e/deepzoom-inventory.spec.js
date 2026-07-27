@@ -424,6 +424,52 @@ test.describe('DeepZoom Inventory', () => {
     });
   });
 
+  test('GotoRender selects a View source through the views inventory', async ({ page }) => {
+    // CR36 follow-up: views are a first-class source family. A views-source
+    // export must jump to the views family, select the row via the
+    // job-scoped views inventory, and never run the color populate flow.
+    await page.evaluate(() => {
+      window._dzRenderJumps = [];
+      window._dzPopulateCalls = 0;
+      window._viewsEnsureCalls = [];
+      window.populateSelectedRenderArtifact = function () { window._dzPopulateCalls += 1; };
+      window.refreshRenderArtifacts = async function (jobId, opts) {
+        window._dzRenderJumps.push({ jobId, opts: opts || null });
+        return { families: {}, calc: {} };
+      };
+      window._viewsEnsureInventory = async function (force, options) {
+        window._viewsEnsureCalls.push([!!force, JSON.parse(JSON.stringify(options || {}))]);
+        return true;
+      };
+    });
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.evaluate(() => {
+      window._dzInventory = [{
+        job_id: 'compute_v', source_key: 'renders/render_v/views/view_iso_9/image.jpeg',
+        width: 2000, height: 2000, created_at: '2026-07-27T10:00:00',
+        tiles_uploaded: 44, dzi_url: 'https://dz/v.dzi',
+      }];
+      window._dzSelectedIdx = 0;
+      _dzRenderInventory();
+    });
+    await page.click('#btn-dz-goto-render');
+    await expect(page.locator('#render-results-dir')).toHaveValue('render_v');
+    const st = await page.evaluate(() => ({
+      jumps: window._dzRenderJumps,
+      ensure: window._viewsEnsureCalls,
+      populates: window._dzPopulateCalls,
+    }));
+    expect(st.jumps).toContainEqual({
+      jobId: 'render_v',
+      opts: { selectFamily: 'views', selectArtifactId: 'view_iso_9' },
+    });
+    // the render-tab switch fires the panel's own inventory kick too —
+    // the SELECTION call is what matters
+    expect(st.ensure).toContainEqual([false, { selectViewId: 'view_iso_9' }]);
+    expect(st.populates).toBe(0);
+  });
+
   test('GotoRender stays disabled for legacy exports without source keys', async ({ page }) => {
     await page.evaluate(() => {
       window.lambdaPost = async function (name, body, path) {

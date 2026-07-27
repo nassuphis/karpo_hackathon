@@ -29,6 +29,14 @@ class TestParseRenderKey(unittest.TestCase):
         self.assertEqual(p["family"], "palettes")
         self.assertEqual(p["artifact_id"], "pal_7")
 
+    def test_canonical_views_family(self):
+        # CR36 follow-up: views are a first-class family — every family
+        # parser must agree, or DeepZoom provenance loses the artifact
+        parsed = parse_render_key("renders/j/views/view_9_iso_t1/image.jpeg")
+        self.assertEqual(parsed["variant"], "canonical")
+        self.assertEqual(parsed["family"], "views")
+        self.assertEqual(parsed["artifact_id"], "view_9_iso_t1")
+
     def test_canonical_deeper_leaf(self):
         p = parse_render_key("renders/j/color/a/chunks/section_0.bin")
         self.assertEqual(p["variant"], "canonical")

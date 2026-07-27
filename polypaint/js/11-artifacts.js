@@ -2059,6 +2059,7 @@ async function _viewsEnsureInventory(force, options = {}) {
     }
     const btn = document.getElementById('btn-views-refresh');
     let ok = false;
+    let unreadable = 0;
     if (btn) { btn.disabled = true; if (force) btn.textContent = 'Refreshing…'; }
     try {
         const data = await lambdaPost('storage', { job_id: jobId }, '/list-views');
@@ -2067,23 +2068,37 @@ async function _viewsEnsureInventory(force, options = {}) {
         window._viewsInventory = (data.views || []).map(_viewAsRenderArtifact);
         window._viewsInventoryJob = jobId;
         _viewsSyncFamilyCount();
+        // partial success is not success (CR36 follow-up): the backend
+        // reports meta reads it could not complete — say so, on the button
+        // AND the log, instead of presenting a shorter list as authoritative
+        unreadable = Number(data.metadata_error_count || 0);
+        if (unreadable > 0) {
+            log(`View list: ${unreadable} meta.json unreadable — the list may be incomplete (Refresh to retry)`, 'err', 'render-log');
+        }
         if (options.selectViewId) _viewsSelectInventoryArtifact(options.selectViewId);
         ok = true;
     } catch (e) {
         log(`View list failed: ${e.message}`, 'err', 'render-log');
     } finally {
-        if (btn) {
-            btn.disabled = false;
-            if (force) {
-                btn.textContent = ok ? '✓ Refreshed' : '✗ Refresh';
-                setTimeout(() => {
-                    const b = document.getElementById('btn-views-refresh');
-                    if (b && !b.disabled) b.textContent = 'Refresh';
-                }, 2500);
-            }
-        }
+        if (btn) btn.disabled = false;
     }
     if (ok) _viewsRenderPane({ ensureSelected: !!options.selectViewId });
+    if (force) {
+        // feedback AFTER the pane re-render, on the LIVE button — the
+        // re-render replaces the node the try block captured (the recorded
+        // detached-button trap)
+        const live = document.getElementById('btn-views-refresh');
+        if (live) {
+            live.disabled = false;
+            live.textContent = ok
+                ? (unreadable > 0 ? `✓ Refreshed (${unreadable} unreadable)` : '✓ Refreshed')
+                : '✗ Refresh';
+            setTimeout(() => {
+                const b = document.getElementById('btn-views-refresh');
+                if (b && !b.disabled) b.textContent = 'Refresh';
+            }, 2500);
+        }
+    }
     return ok;
 }
 

@@ -2121,6 +2121,37 @@ test.describe('Solve Score UI', () => {
     expect(colorCount).toBe('(2)');
   });
 
+  test('Views refresh reports unreadable metadata instead of a silent short list', async ({ page }) => {
+    // CR36 follow-up: partial success is not success — the backend's
+    // metadata_error_count reaches the BUTTON and the log.
+    await page.click('.tab-btn:text("Render")');
+    await seedRenderPopupState(page);
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-sculptures') return { sculptures: [], count: 0 };
+        if (path === '/list-views') return {
+          views: [{ view_id: 'view_ok', job_id: 'test_job', source_artifact_id: 'color_1',
+                    projection: 'front', vertical: 't2', lattice_n: 2000, pix: 2000,
+                    image_key: 'renders/test_job/views/view_ok/image.jpeg',
+                    prefix: 'renders/test_job/views/view_ok/',
+                    created_at: '2026-07-26T09:00:00Z' }],
+          count: 1,
+          metadata_error_count: 2,
+        };
+        if (path === '/render-summary') return { families: { color: [] }, calc: { N: 2000 } };
+        return {};
+      };
+      renderArtifactPanel('test_job', { families: { color: [] }, calc: { N: 2000 } });
+    });
+    await page.click('[data-render-family="views"]');
+    await expect(page.locator('#views-list, #render-artifact-catalog')).toContainText('front · t2');
+    await page.click('#btn-views-refresh');
+    await expect(page.locator('#btn-views-refresh')).toHaveText('✓ Refreshed (2 unreadable)');
+    const logText = await page.evaluate(() => document.getElementById('render-log')?.textContent || '');
+    expect(logText).toContain('2 meta.json unreadable');
+  });
+
   test('DeepZoom from a view dispatches the image-based export with the exact payload', async ({ page }) => {
     // CR36-F7 truthful-behavior pin: DeepZoom is IMAGE-based by contract.
     // A selected view's image key dispatches deepzoom_export with the

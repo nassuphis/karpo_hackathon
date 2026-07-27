@@ -7417,6 +7417,9 @@ def handle_list_views(event):
             meta = json.loads(raw_body)
             view_id = str(meta.get("view_id") or meta.get("artifact_id") or "").strip()
             if not view_id:
+                # PRESENT but identity-less metadata is an error, not absence
+                print(f"list-views: meta at {prefix} carries no view_id/artifact_id")
+                meta_errors.append(prefix)
                 return None
             image_key = str(meta.get("image_key") or (prefix + "image.png")).strip()
             preview_key = str(meta.get("preview_key") or "").strip()

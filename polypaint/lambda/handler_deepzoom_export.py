@@ -25,7 +25,7 @@ s3 = boto3.client("s3")
 DZ_EXPORT = os.path.join(os.path.dirname(__file__), "dz_export")
 VIEWER_TEMPLATE = os.path.join(os.path.dirname(__file__), "deepzoom_viewer_template.html")
 # dir token (from the structured render-key parser) -> semantic source family.
-_SOURCE_FAMILY_DIR_MAP = {"color": "color", "bilevel": "bilevel", "coeffs": "coeffs", "palettes": "palette"}
+_SOURCE_FAMILY_DIR_MAP = {"color": "color", "bilevel": "bilevel", "coeffs": "coeffs", "palettes": "palette", "views": "views"}
 
 
 def _render_viewer(job_id, export_id, created_at):
@@ -162,8 +162,8 @@ def handle_deepzoom_export_request(params, *, task_id="deepzoom_export"):
         t0 = time.time()
         if not source_key:
             raise RuntimeError("DeepZoom requires source_key")
-        # code-review-27 F5: pin the source (and raw sidecars) to this job
-        # before the download, so the export can't pull another job's bytes
+        # code-review-27 F5: pin the source to this job before the
+        # download, so the export can't pull another job's bytes
         assert_render_source(source_key, job_id, None, "source_key")
         if _export_prefix_exists(job_id, export_id):
             raise RuntimeError(

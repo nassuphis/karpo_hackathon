@@ -1667,6 +1667,23 @@ class TestListViews(unittest.TestCase):
         self.assertEqual(body["metadata_error_count"], 1)
 
     @patch("handler_storage.s3")
+    def test_identityless_meta_counts_as_error_not_absence(self, mock_s3):
+        # PRESENT metadata without view_id/artifact_id is an ERROR the
+        # response reports — not a silently shorter inventory
+        import handler_storage
+        paginator = mock_s3.get_paginator.return_value
+        paginator.paginate.return_value = [{"CommonPrefixes": [
+            {"Prefix": "renders/compute_j1/views/view_noid/"},
+        ]}]
+        body_mock = MagicMock()
+        body_mock.read.return_value = json.dumps({"projection": "front"}).encode("utf-8")
+        mock_s3.get_object.return_value = {"Body": body_mock}
+        resp = handler_storage.handler(_event("/list-views", {"job_id": "compute_j1"}), None)
+        body = json.loads(resp["body"])
+        self.assertEqual(body["count"], 0)
+        self.assertEqual(body["metadata_error_count"], 1)
+
+    @patch("handler_storage.s3")
     def test_generic_render_delete_removes_one_view_prefix(self, mock_s3):
         import handler_storage
 

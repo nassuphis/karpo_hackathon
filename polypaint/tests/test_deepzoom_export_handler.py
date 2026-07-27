@@ -82,6 +82,11 @@ class TestInternalActionBoundary(unittest.TestCase):
         self.assertEqual(ref["artifact_id"], "pal_7")
         # a non-canonical (legacy root) key yields an empty ref, not a guess
         self.assertEqual(mod._source_ref_from_key("renders/j/image.jpeg")["artifact_id"], "")
+        # views are a first-class source family (CR36 follow-up): the ref
+        # keeps the identity so the inventory/GotoRender can return to it
+        view_ref = mod._source_ref_from_key("renders/j/views/view_9_iso_t1/image.jpeg")
+        self.assertEqual(view_ref["family"], "views")
+        self.assertEqual(view_ref["artifact_id"], "view_9_iso_t1")
 
 
 class TestDeepZoomExportRaw(unittest.TestCase):
@@ -288,4 +293,3 @@ class TestOperationIdentity(unittest.TestCase):
                  "export_id": "dz_dupe"})
         mock_s3.get_object.assert_not_called()   # refused before any download
         self.assertIn("error", {c.args[2] for c in report.call_args_list})
-

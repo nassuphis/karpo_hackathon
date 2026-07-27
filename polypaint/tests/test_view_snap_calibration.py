@@ -170,14 +170,13 @@ def test_production_artifact_is_fail_closed_on_identity_and_encode_gaps():
         validate_calibration_artifact(malformed, live_identities=_identities())
 
 
-def test_explicitly_unconfigured_artifact_is_not_a_runtime_mode(tmp_path):
+def test_explicitly_unconfigured_artifact_selects_resource_only_runtime_mode(tmp_path):
     path = tmp_path / "view_snap_calibration.json"
     artifact = _artifact(mode="calibration", digest="a" * 64)
     artifact["provenance"] = {"state": "unconfigured"}
     path.write_text(json.dumps(artifact), encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="unconfigured"):
-        calibration_artifact_mode(path)
+    assert calibration_artifact_mode(path) == "unconfigured"
     with pytest.raises(RuntimeError, match="unconfigured"):
         validate_calibration_artifact(
             artifact,

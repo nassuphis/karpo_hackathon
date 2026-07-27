@@ -2,9 +2,9 @@
 """Prepare and validate the packaged ViewSnap calibration artifact.
 
 The deploy script exports the exact worker identities before calling this
-tool. An explicitly unconfigured artifact is allowed only to deploy the
-feature in a fail-closed state; once preparation starts, every mismatch or
-incomplete coefficient blocks deployment.
+tool. An explicitly unconfigured artifact selects resource-only admission;
+once timing calibration is configured, every identity mismatch or incomplete
+coefficient blocks deployment.
 """
 
 from __future__ import annotations
@@ -65,7 +65,8 @@ def _validate(path, *, allow_unconfigured, schema_only=False):
     if allow_unconfigured and state == "unconfigured":
         validate_calibration_envelope(artifact)
         print(
-            "ViewSnap calibration: UNCONFIGURED (camera requests remain fail-closed)"
+            "ViewSnap calibration: UNCONFIGURED "
+            "(resource-only camera admission is active)"
         )
         return 0
     identities = (
@@ -191,7 +192,7 @@ def _verify_live(
     if state == "unconfigured":
         print(
             "ViewSnap post-deploy verification: SKIPPED "
-            "(artifact unconfigured; camera renders remain disabled)"
+            "(artifact unconfigured; resource-only camera admission is active)"
         )
         return 0
 

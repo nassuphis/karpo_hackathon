@@ -1,9 +1,10 @@
-"""Fail-closed runtime calibration contract for ViewSnap admission.
+"""Optional wall-time calibration contract for ViewSnap admission.
 
 Deterministic byte accounting lives in :mod:`view_snap_cost_model`.  This
 module owns the measured coefficients needed to compare that work with the
-actual Raster/Finalize Lambda timeouts.  Camera renders never fall back to
-guessed rates when the packaged artifact is missing, stale, or incomplete.
+actual Raster/Finalize Lambda timeouts.  An explicitly unconfigured artifact
+selects resource-only admission; configured timing artifacts remain strict and
+never fall back to guessed rates when stale or incomplete.
 """
 
 from __future__ import annotations
@@ -411,7 +412,7 @@ def validate_calibration_artifact(
     provenance = envelope["provenance"]
     if str(provenance.get("state") or "").strip().lower() == "unconfigured":
         raise ViewSnapCalibrationError(
-            "ViewSnap calibration is unconfigured; run the calibration lifecycle before camera renders"
+            "ViewSnap calibration is unconfigured and cannot provide timing admission"
         )
     mode = envelope["mode"]
 
@@ -509,9 +510,7 @@ def calibration_artifact_mode(path=None, *, base_dir=None):
     envelope = validate_calibration_envelope(raw)
     provenance = envelope["provenance"]
     if str(provenance.get("state") or "").strip().lower() == "unconfigured":
-        raise ViewSnapCalibrationError(
-            "ViewSnap calibration is unconfigured; run the calibration lifecycle before camera renders"
-        )
+        return "unconfigured"
     return envelope["mode"]
 
 

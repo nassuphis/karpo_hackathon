@@ -10,6 +10,6 @@
   "identities": {},
   "provenance": {
     "state": "unconfigured",
-    "note": "Populate from the deployed calibration matrix before enabling ViewSnap."
+    "note": "Resource-only ViewSnap admission is active; optional timing calibration has not been configured."
   }
 }

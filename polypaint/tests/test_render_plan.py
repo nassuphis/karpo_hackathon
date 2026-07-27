@@ -423,6 +423,45 @@ class TestRenderPlan(unittest.TestCase):
             self.assertGreater(estimate["work_units"], 0)
         self.assertTrue(plan["outputs"]["plan_params_digest"].startswith("sha256:"))
 
+    @patch("handler_render_plan.load_calibration_artifact")
+    @patch("handler_render_plan.calibration_artifact_mode", return_value="unconfigured")
+    @patch("handler_render_plan._storage_call")
+    def test_camera_view_plan_runs_with_resource_only_admission(
+        self,
+        mock_storage,
+        _mock_mode,
+        mock_calibration,
+    ):
+        mock_storage.side_effect = _mock_storage_detail(_camera_calc(N=32))
+        from handler_render_plan import handler
+
+        result = handler(_make_event(
+            view_projection="camera",
+            view_camera=_view_camera(),
+            source_color_artifact_id="color_source_7",
+            source_sculpture_id="scu_source_4",
+        ), None)
+        plan = json.loads(result["body"])
+        admission = plan["raster"]["camera_admission"]
+
+        mock_calibration.assert_not_called()
+        self.assertEqual(admission["calibration_mode"], "unconfigured")
+        self.assertFalse(admission["timing_admission_enforced"])
+        self.assertIsNone(admission["calibration_schema_version"])
+        self.assertIsNone(admission["calibration_cost_model_version"])
+        self.assertEqual(admission["fixture_admission_digest"], "")
+        self.assertEqual(admission["wall_seconds"], {})
+        self.assertEqual(admission["wall_gates"], {})
+        self.assertGreaterEqual(
+            admission["section_count"],
+            plan["raster"]["workers"],
+        )
+        self.assertEqual(
+            admission["baseline_section_count"],
+            plan["raster"]["workers"],
+        )
+        self.assertTrue(plan["raster"]["map_items"])
+
     @patch.dict(os.environ, {
         "VIEW_SNAP_RASTER_THREADS": "7",
         "VIEW_SNAP_RASTER_WORKERS": "9",
@@ -535,17 +574,14 @@ class TestRenderPlan(unittest.TestCase):
                 source_sculpture_id="scu_source_4",
             ), None)
 
-    @patch("handler_render_plan.load_calibration_artifact")
-    @patch("handler_render_plan.calibration_artifact_mode", return_value="production")
+    @patch("handler_render_plan.calibration_artifact_mode", return_value="unconfigured")
     @patch("handler_render_plan._storage_call")
     def test_camera_view_plan_rejects_calculated_rgb_finalize_tmp(
         self,
         mock_storage,
         _mock_mode,
-        mock_calibration,
     ):
         mock_storage.side_effect = _mock_storage_detail(_camera_calc(N=32768))
-        mock_calibration.return_value = _view_snap_calibration()
         from handler_render_plan import handler
 
         with self.assertRaisesRegex(RuntimeError, r"Raster /tmp admission failed"):

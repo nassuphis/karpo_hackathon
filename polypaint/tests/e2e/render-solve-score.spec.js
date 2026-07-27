@@ -2542,12 +2542,21 @@ test.describe('Solve Score UI', () => {
           created_at: '2026-07-28T09:00:00Z',
           prefix: 'sculptures/scu_baked/',
         },
+        {
+          id: 'scu_legacy',
+          title: 'Older full save',
+          job_id: 'source_job',
+          grid_n: 192,
+          degree: 9,
+          created_at: '2026-07-28T08:00:00Z',
+          prefix: 'sculptures/scu_legacy/',
+        },
       ];
       window._sculptureInventoryLoaded = true;
       window._snapSourceMode = 'ok';
       window.lambdaPost = async function (name, body, path) {
         if (path === '/list-sculptures') {
-          return { sculptures: window._sculptureInventory, count: 2 };
+          return { sculptures: window._sculptureInventory, count: 3 };
         }
         if (path === '/render-summary') {
           if (body.job_id !== 'source_job') throw new Error('wrong source job');
@@ -2570,9 +2579,12 @@ test.describe('Solve Score UI', () => {
             solve_score_program_source_text: 'score = metric(proximity, slv, q=0.1%)',
             root_program_source_text: 'rotate(0.125)',
           };
+          const selectedColor = { ...source, artifact_id: 'color_current' };
           const colors = window._snapSourceMode === 'missing'
-            ? []
-            : (window._snapSourceMode === 'ambiguous' ? [source, { ...source }] : [source]);
+            ? [selectedColor]
+            : (window._snapSourceMode === 'ambiguous'
+              ? [source, { ...source }, selectedColor]
+              : [source, selectedColor]);
           return {
             calc: { exists: true, N: 1234, degree: 9 },
             families: { color: colors },
@@ -2684,5 +2696,16 @@ test.describe('Solve Score UI', () => {
       'title',
       'Baked splat snapshots are not supported in v1',
     );
+
+    // Full saves created before source_artifact_id remain snappable. The
+    // Color selection retained for this job supplies their missing lineage.
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#btn-sculpture-snap')).toBeDisabled();
+    await expect(page.locator('#btn-sculpture-snap')).toBeEnabled();
+    await page.evaluate(() => { window._snapDispatches = []; });
+    await page.click('#btn-sculpture-snap');
+    await expect.poll(() => page.evaluate(() => window._snapDispatches.length)).toBe(1);
+    const legacyDispatch = await page.evaluate(() => window._snapDispatches[0]);
+    expect(legacyDispatch.payload.params.source_color_artifact_id).toBe('color_current');
   });
 });

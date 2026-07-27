@@ -1788,9 +1788,6 @@ function _sculptureSnapAvailability(meta) {
     if (meta.kind === 'splatbake') {
         return { enabled: false, title: 'Baked splat snapshots are not supported in v1' };
     }
-    if (!meta.job_id || !meta.source_artifact_id) {
-        return { enabled: false, title: 'Source Color artifact is unavailable' };
-    }
     if (_activeRenderRun) return { enabled: false, title: 'Wait for the active render to finish' };
     if (_sculptureSnapState.inFlight) return { enabled: false, title: 'Snapshot is already in progress' };
     if (!_sculptureSnapState.ready
@@ -1935,12 +1932,34 @@ async function _sculptureDeleteSelected(btn) {
     if (m) await _sculptureDelete(m.id, btn);
 }
 
-async function _resolveViewSnapSource(meta) {
+function _viewSnapSourceRef(meta) {
     const jobId = String((meta && meta.job_id) || '').trim();
-    const artifactId = String((meta && meta.source_artifact_id) || '').trim();
-    if (!jobId || !artifactId) {
-        throw new Error('selected Sculpture has no source job/artifact identity');
+    if (!jobId) throw new Error('selected Sculpture has no source job identity');
+
+    const savedArtifactId = String((meta && meta.source_artifact_id) || '').trim();
+    if (savedArtifactId) {
+        return { jobId, artifactId: savedArtifactId, origin: 'saved Sculpture' };
     }
+
+    // Full saves created before source_artifact_id was added are still valid
+    // camera sources. Use the Color selection carried into this job's
+    // Sculpture pane instead of permanently disabling those rows.
+    const selectedJobId = document.getElementById('render-results-dir')?.value.trim() || '';
+    const selectedColor = _sculptureSourceColorArtifact();
+    const selectedArtifactId = String((selectedColor && selectedColor.artifact_id) || '').trim();
+    if (selectedJobId !== jobId || !selectedArtifactId) {
+        throw new Error(
+            'this older Sculpture has no saved Color lineage; '
+            + 'select its source Color artifact in this job first'
+        );
+    }
+    return { jobId, artifactId: selectedArtifactId, origin: 'selected Color' };
+}
+
+async function _resolveViewSnapSource(meta, sourceRef) {
+    const ref = sourceRef || _viewSnapSourceRef(meta);
+    const jobId = ref.jobId;
+    const artifactId = ref.artifactId;
     const summary = await lambdaPost('storage', { job_id: jobId }, '/render-summary');
     const calc = summary && summary.calc;
     if (!calc || !calc.exists) {
@@ -1955,7 +1974,12 @@ async function _resolveViewSnapSource(meta) {
         throw new Error(`source Color artifact ${artifactId} is ambiguous`);
     }
     const artifact = matches[0];
-    return { jobId, calc, artifact: { ...artifact, family: 'color' } };
+    return {
+        jobId,
+        calc,
+        sourceOrigin: ref.origin,
+        artifact: { ...artifact, family: 'color' },
+    };
 }
 
 function _viewSnapParamsFromArtifact(source, snapshot, meta) {
@@ -1986,6 +2010,13 @@ async function runSculptureSnap() {
     const selectedGeneration = _sculptureSnapState.generation;
     const btn = document.getElementById('btn-sculpture-snap');
     let ok = false;
+    let sourceRef;
+    try {
+        sourceRef = _viewSnapSourceRef(meta);
+    } catch (error) {
+        log(`ViewSnap failed: ${error.message}`, 'err', 'render-log');
+        return;
+    }
     const snapshotPromise = _requestSculptureSnapshot(meta);
     _sculptureSnapState.inFlight = true;
     _sculptureUpdateSnapButton();
@@ -1998,7 +2029,7 @@ async function runSculptureSnap() {
         }
         if (_activeRenderRun) throw new Error('another render started during capture');
         if (btn && btn.isConnected) btn.textContent = 'Dispatching…';
-        const source = await _resolveViewSnapSource(meta);
+        const source = await _resolveViewSnapSource(meta, sourceRef);
         if (_sculptureSnapState.generation !== selectedGeneration
                 || String((_sculptureSelectedMeta() || {}).id || '') !== selectedId) {
             throw new Error('Sculpture selection changed while resolving its source');
@@ -2007,7 +2038,8 @@ async function runSculptureSnap() {
         const params = _viewSnapParamsFromArtifact(source, snapshot, meta);
         log(
             `ViewSnap: camera from ${selectedId}, source ${source.artifact.artifact_id}, `
-            + `${params.pix}x${params.pix} — dispatching full ColorRender-MT…`,
+            + `${params.pix}x${params.pix} (${source.sourceOrigin}) — `
+            + 'dispatching full ColorRender-MT…',
             'ok',
             'render-log'
         );

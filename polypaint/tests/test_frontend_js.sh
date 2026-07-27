@@ -636,7 +636,10 @@ assertIncludes("function _viewRenderGridNFrom(calc, art) {", 'ViewSnap must deri
 assertIncludes("? _viewRenderGridNFrom(calcOverride, art)", 'ViewSnap must use the explicit source calculation for both image dimensions');
 assertIncludes("source_color_artifact_id: String(art.artifact_id),", 'ViewRender should preserve the selected Color artifact identity');
 assertIncludes("id=\"btn-sculpture-snap\" onclick=\"runSculptureSnap()\"", 'Sculpture should expose the full-resolution camera Snap command');
-assertIncludes("function _resolveViewSnapSource(meta) {", 'ViewSnap must resolve the selected Sculpture source by stored identity');
+assertIncludes("function _viewSnapSourceRef(meta) {", 'ViewSnap must capture source identity before its asynchronous snapshot');
+assertIncludes("if (savedArtifactId) {", 'ViewSnap must prefer source identity stored on the Sculpture');
+assertIncludes("selectedJobId !== jobId || !selectedArtifactId", 'legacy Sculpture fallback must require a selected Color artifact from the same job');
+assertIncludes("async function _resolveViewSnapSource(meta, sourceRef) {", 'ViewSnap must resolve the captured source identity through storage');
 assertIncludes("'/render-summary'", 'ViewSnap source resolution must use a fresh source-job render summary');
 assertIncludes("params.source_sculpture_id = String(meta.id);", 'ViewSnap dispatch must preserve the source Sculpture identity');
 assertIncludes("window.addEventListener('message', _sculptureSnapReceiveMessage);", 'ViewSnap must use an identity-scoped postMessage protocol');

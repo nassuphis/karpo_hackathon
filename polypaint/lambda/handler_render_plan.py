@@ -920,11 +920,12 @@ def _build_fused_color_plan(
         )
         deployed_limits = _view_snap_deployed_limits()
         calibration_mode = calibration_artifact_mode()
+        timing_admission_enabled = calibration_mode in ("calibration", "production")
         production_calibration = None
         fixture_source_identity = {}
         if calibration_mode == "production":
             production_calibration = load_calibration_artifact()
-        else:
+        elif calibration_mode == "calibration":
             if fused_params["raster_section_mode"] == "logical_sections_auto":
                 raise RuntimeError(
                     "ViewSnap calibration fixtures require an explicit raster_section_count"
@@ -960,44 +961,49 @@ def _build_fused_color_plan(
                 finalize_memory_bytes=deployed_limits["finalize_memory_bytes"],
                 finalize_tmp_bytes=deployed_limits["finalize_tmp_bytes"],
             )
-            fixture_payload = _view_snap_fixture_payload(
-                pix=pix,
-                times=times,
-                degree=degree,
-                n_coeffs=calc_n_coeffs,
-                channels=solve_score_output_channel_count,
-                camera=camera,
-                fmt=fused_params["fmt"],
-                quality=fused_params["quality"],
-                root_program_fingerprint=root_program_payload.get("fingerprint", ""),
-                solve_score_fingerprint=solve_score_compiled.get("fingerprint", ""),
-                solve_score_prelude=solve_score_prelude,
-                section_items=items,
-                fused_params=fused_params,
-                palette=palette,
-                background_color=background_color,
-                source_identity=fixture_source_identity,
-            )
-            fixture_digest = fixture_admission_digest(fixture_payload)
-            calibration = production_calibration or load_calibration_artifact(
-                fixture_admission_digest=fixture_digest
-            )
-            wall = estimate_camera_wall_times(
-                estimate,
-                section_count=len(items),
-                fmt=fused_params["fmt"],
-                quality=fused_params["quality"],
-                calibration=calibration,
-            )
-            gates = enforce_wall_time_limits(
-                wall,
-                calibration=calibration,
-                stages=(
-                    ("raster_native", "raster_handler")
-                    if raster_only
-                    else None
-                ),
-            )
+            fixture_digest = ""
+            calibration = None
+            wall = {}
+            gates = {}
+            if timing_admission_enabled:
+                fixture_payload = _view_snap_fixture_payload(
+                    pix=pix,
+                    times=times,
+                    degree=degree,
+                    n_coeffs=calc_n_coeffs,
+                    channels=solve_score_output_channel_count,
+                    camera=camera,
+                    fmt=fused_params["fmt"],
+                    quality=fused_params["quality"],
+                    root_program_fingerprint=root_program_payload.get("fingerprint", ""),
+                    solve_score_fingerprint=solve_score_compiled.get("fingerprint", ""),
+                    solve_score_prelude=solve_score_prelude,
+                    section_items=items,
+                    fused_params=fused_params,
+                    palette=palette,
+                    background_color=background_color,
+                    source_identity=fixture_source_identity,
+                )
+                fixture_digest = fixture_admission_digest(fixture_payload)
+                calibration = production_calibration or load_calibration_artifact(
+                    fixture_admission_digest=fixture_digest
+                )
+                wall = estimate_camera_wall_times(
+                    estimate,
+                    section_count=len(items),
+                    fmt=fused_params["fmt"],
+                    quality=fused_params["quality"],
+                    calibration=calibration,
+                )
+                gates = enforce_wall_time_limits(
+                    wall,
+                    calibration=calibration,
+                    stages=(
+                        ("raster_native", "raster_handler")
+                        if raster_only
+                        else None
+                    ),
+                )
             return (
                 items,
                 estimate,
@@ -1013,6 +1019,17 @@ def _build_fused_color_plan(
                 max(1, int(chunk_summary["total_solves"])),
                 MAX_LOGICAL_SECTIONS,
             )
+            # Resource-only admission must still use the Step Functions Map.
+            # Preserve at least the source chunk fan-out and fill the configured
+            # worker pool; resource or optional timing gates may raise it further.
+            baseline_sections = min(
+                high,
+                max(
+                    1,
+                    len(chunk_items),
+                    int(fused_params["raster_workers"]),
+                ),
+            )
             # Prove the most finely sectioned legal plan fits before binary
             # searching for the smallest safe fan-out. If this fails, no
             # larger section count exists to rescue the request.
@@ -1025,7 +1042,7 @@ def _build_fused_color_plan(
                 best_fixture_digest,
                 best_calibration,
             ) = evaluate_camera_sections(high, raster_only=True)
-            low = 1
+            low = baseline_sections
             best_count = len(best_items)
             while low <= high:
                 mid = (low + high) // 2
@@ -1050,11 +1067,16 @@ def _build_fused_color_plan(
                 high = mid - 1
             raster_section_items = best_items
             selected_raster_sections = best_count
-            best_gates = enforce_wall_time_limits(
-                best_wall,
-                calibration=best_calibration,
+            best_gates = (
+                enforce_wall_time_limits(
+                    best_wall,
+                    calibration=best_calibration,
+                )
+                if best_calibration is not None
+                else {}
             )
         else:
+            baseline_sections = None
             selected_raster_sections = fused_params["raster_section_count"]
             if selected_raster_sections in ("", None):
                 selected_raster_sections = 1
@@ -1080,13 +1102,31 @@ def _build_fused_color_plan(
             "row_bytes": source_row_bytes + solve_score_output_channel_count,
             "prelude_row_bytes": prelude_row_bytes,
         }
+        if baseline_sections is not None:
+            raster_section_auto["baseline_section_count"] = int(
+                baseline_sections
+            )
         camera_admission = {
             "model_version": 1,
-            "calibration_schema_version": best_calibration["schema_version"],
-            "calibration_mode": best_calibration["mode"],
-            "calibration_cost_model_version": best_calibration["cost_model_version"],
+            "calibration_schema_version": (
+                best_calibration["schema_version"]
+                if best_calibration is not None
+                else None
+            ),
+            "calibration_mode": calibration_mode,
+            "calibration_cost_model_version": (
+                best_calibration["cost_model_version"]
+                if best_calibration is not None
+                else None
+            ),
+            "timing_admission_enforced": best_calibration is not None,
             "fixture_admission_digest": best_fixture_digest,
             "section_count": int(selected_raster_sections),
+            "baseline_section_count": (
+                int(baseline_sections)
+                if baseline_sections is not None
+                else None
+            ),
             "pixel_count": best_estimate["pixel_count"],
             "record_size_bytes": best_estimate["record_size_bytes"],
             "max_point_side": best_estimate["footprint"]["max_point_side"],

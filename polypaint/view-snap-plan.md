@@ -99,19 +99,24 @@ The selected catalogue item is embedded in an iframe after a debounce.
 The action row already contains SaveFull, SaveSplat, Refresh, Open,
 Copy Link, and Delete.
 
-The global Sculpture inventory contains `id`, `job_id`,
-`source_artifact_id`, viewer URL, viewport, and saved-view metadata for
-full saves. A full-resolution snap is possible only when:
+The global Sculpture inventory contains `id`, `job_id`, viewer URL,
+viewport, and saved-view metadata for full saves. Current saves also
+contain `source_artifact_id`; 28 valid full saves in the production
+inventory predate that field. A full-resolution snap is possible when:
 
 - the selected row is a full Sculpture, not `kind="splatbake"`;
-- `job_id` and `source_artifact_id` are present;
+- `job_id` is present;
+- either the row has `source_artifact_id`, or the user has selected the
+  intended Color artifact from the same job;
 - the source Color artifact and the original calculation still exist;
 - the source Color artifact carries the normal ViewRender provenance,
   including a valid viewport and solve-score source.
 
-The command must resolve the source from the selected Sculpture's explicit
-identity. It must not use whichever Color row happens to be selected in
-global UI state.
+The command prefers the selected Sculpture's explicit source identity.
+For a row that predates `source_artifact_id`, the retained Color-family
+selection is an explicit compatibility input, not an accidental global
+fallback: it must belong to `meta.job_id`, it is captured synchronously
+when Snap is pressed, and `/render-summary` must resolve it exactly once.
 
 ### 1.3 ViewRender
 
@@ -197,7 +202,6 @@ The button is enabled only when all of the following are true:
 - its embedded iframe has announced the ViewSnap protocol as ready;
 - the ready message belongs to the selected Sculpture and current iframe
   generation;
-- the row has `job_id` and `source_artifact_id`;
 - `_activeRenderRun` is false;
 - no snapshot request is already in flight.
 
@@ -206,7 +210,6 @@ Disabled states need informative `title` text:
 - `Select a full Sculpture first`
 - `Baked splat snapshots are not supported in v1`
 - `Viewer is still loading`
-- `Source Color artifact is unavailable`
 - `Wait for the active render to finish`
 
 The button lifecycle is:
@@ -1071,14 +1074,17 @@ provenance               [per-cell matrix results, dates, recorded
                           thresholds]
 ```
 
-The planner LOADS AND VALIDATES it fail-closed: a missing artifact, a
-schema mismatch, a cost-model hash mismatch, or an identity mismatch
-with the live deployment refuses camera runs as calibration-stale.
-Validation also rejects INCOMPLETE NUMERIC COVERAGE: every rate,
-latency, deration, and headroom must be finite and positive; every
-supported `{format, quality}` encode key must exist; piecewise
-envelopes must be ordered and non-overlapping; a missing coefficient
-REFUSES camera runs — it never defaults.
+The planner always validates the artifact envelope fail-closed: a
+missing artifact or schema mismatch refuses camera runs. An explicit
+`provenance.state = "unconfigured"` is a packaged deployment policy,
+not a request override: it selects deterministic resource-only
+admission. Once timing calibration is configured, a cost-model hash
+mismatch or identity mismatch with the live deployment refuses camera
+runs as calibration-stale. Configured-artifact validation also rejects
+INCOMPLETE NUMERIC COVERAGE: every rate, latency, deration, and
+headroom must be finite and positive; every supported
+`{format, quality}` encode key must exist; piecewise envelopes must be
+ordered and non-overlapping; a missing coefficient never defaults.
 "Recorded in this document" is provenance for humans; the artifact is
 the authority the code reads.
 
@@ -1090,8 +1096,10 @@ must be ADDED there, and identities must exist before it is packaged:
 1. build worker binaries and the libvips layer;
 2. compute canonical identities (zip_content_hash for both worker
    packages, binary sha256s, LayerVersionArn, Lambda sizing);
-3. validate view_snap_calibration.json against those identities —
-   fail the DEPLOY on mismatch, not the first camera request;
+3. validate a configured view_snap_calibration.json against those
+   identities — fail the DEPLOY on mismatch, not the first camera
+   request; an explicit unconfigured artifact receives schema
+   validation and keeps resource-only admission active;
 4. package the validated artifact into the Render Plan zip;
 5. deploy, then verify the live deployment's identities equal the
    artifact's (post-deploy check).
@@ -1117,15 +1125,18 @@ dry-run-first, like every fleet tool in this repo) is:
    production; a canary camera admission succeeds.
 ```
 
-Until step 5 completes, camera runs refuse as calibration-stale — that
-is the intended safe state, not an outage to be worked around.
+Until step 5 completes, camera runs use deterministic resource-only
+admission: raster/finalizer memory and `/tmp` limits remain enforced,
+while empirical wall-time gates are omitted. A production calibration
+adds conservative per-invocation timing admission; it is not a
+prerequisite for rendering.
 
-There is NO admission override: a payload flag is not "internal" merely
-because the UI does not send it, and a case the budget rejects is
-itself a result (it was genuinely at risk of the 600-second cap) —
-record it as such. If a bypass ever becomes unavoidable it must be a
-deployment-level environment gate or a separate unrouted alias, never a
-request field.
+There is NO request-level admission override: a payload flag is not
+"internal" merely because the UI does not send it. Deterministic
+resource-limit failures always reject. When configured, timing-budget
+failures also reject because they indicate risk against a subprocess or
+Lambda ceiling. The unconfigured resource-only state is an explicit
+packaged deployment policy, not a client-selected bypass.
 - `total_fragment_bytes` is primarily a transfer and wall-time
   constraint, not resident memory once streaming is implemented — but
   camera fragments are NOT Finalize's only serial transfer. Finalize
@@ -1297,8 +1308,12 @@ Required helpers:
 - `_sculptureSnapReceiveMessage(event)` validates source, origin, version,
   request id, row id, and generation.
 - `_requestSculptureSnapshot(meta, iframe)` returns a bounded Promise.
-- `_resolveViewSnapSource(meta)` fetches `/render-summary` for
-  `meta.job_id` and finds the exact `meta.source_artifact_id`.
+- `_viewSnapSourceRef(meta)` captures `{jobId, artifactId}` before the
+  asynchronous camera request. It prefers `meta.source_artifact_id`; for
+  a pre-lineage full save only, it accepts the retained same-job Color
+  selection or raises an actionable error.
+- `_resolveViewSnapSource(meta, sourceRef)` fetches `/render-summary` for
+  the captured job and finds the exact captured artifact id.
 - `_viewSnapParamsFromArtifact({jobId, calc, artifact}, snapshot,
   sculptureMeta)` extends the existing `_viewRenderParamsFromArtifact`
   contract without reading current Color selection — the resolved calc
@@ -1315,8 +1330,9 @@ refresh:
 - disable Snap;
 - ignore late responses.
 
-Do not implement Snap as a button handler that reads `_selectedJobId` or
-the current Color row halfway through an async sequence.
+Do not read `_selectedJobId` or the current Color row halfway through an
+async sequence. The legacy compatibility source is captured once before
+the snapshot request and then treated as immutable command data.
 
 The existing `Open` and `Copy Link` actions continue using the saved
 row's frozen public `viewer_url`. Only the in-app catalogue iframe uses the
@@ -1327,14 +1343,17 @@ current packaged viewer.
 `_resolveViewSnapSource` should:
 
 1. use the selected Sculpture's `job_id`;
-2. call the existing `/render-summary`;
-3. locate the exact Color artifact by `source_artifact_id`;
-4. reject missing, unreadable, or ambiguous matches;
-5. return `{jobId, calc, artifact}` — the summary's OWN calc, not a
+2. prefer its stored `source_artifact_id`;
+3. only when that field is absent, capture the retained Color selection
+   after proving the visible job equals the Sculpture job;
+4. call the existing `/render-summary`;
+5. locate the exact captured Color artifact id;
+6. reject missing, unreadable, or ambiguous matches;
+7. return `{jobId, calc, artifact}` — the summary's OWN calc, not a
    global;
-6. derive ViewRender provenance with N taken EXPLICITLY from that
+8. derive ViewRender provenance with N taken EXPLICITLY from that
    returned `calc.N`;
-7. add the camera snapshot and source Sculpture id.
+9. add the camera snapshot and source Sculpture id.
 
 `_viewRenderGridN` is NOT usable here: it reads
 `window._lastRenderSummary.calc` before the artifact — the currently
@@ -1636,8 +1655,10 @@ Extend `tests/e2e/render-solve-score.spec.js`:
 - a pre-feature full row loads through the packaged viewer while Open and
   Copy Link retain its frozen share URL;
 - stale ready/snapshot messages from a replaced iframe do nothing;
-- source is resolved by Sculpture `job_id + source_artifact_id`, not
-  current Color selection;
+- stored `job_id + source_artifact_id` always wins over current Color
+  selection;
+- a pre-lineage full row uses the retained same-job Color selection,
+  captured before the asynchronous snapshot;
 - missing source gives an error and zero dispatches;
 - exact dispatch payload carries `view_projection="camera"`,
   `view_camera`, source Color id, source Sculpture id, and `pix=N`;
@@ -1837,8 +1858,10 @@ feature. That would be a separately designed v2.
   FIVE wall-gate formulae (raster native, raster handler, assembler,
   encoder, total Finalize), including the admission invariants and the
   digest semantics-marker tests.
-- Freeze the calibration artifact schema and its fail-closed loader
-  (missing/invalid/version-mismatch/identity-mismatch all refuse).
+- Freeze the calibration artifact schema and loader: missing, malformed,
+  or version-mismatched artifacts refuse; configured identity
+  mismatches refuse; explicit unconfigured state selects resource-only
+  admission.
 - Freeze the exact fixture-admission digest and the identity-comparison
   logic.
 - Freeze the phase-estimator equations with coefficient-loading tests.

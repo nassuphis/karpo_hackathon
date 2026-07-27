@@ -198,8 +198,10 @@ sculpture keeps its pass-0 convention.
    C tool, and bespoke pane was rejected and replaced — the recorded
    lesson: a feature that is "the same computation with one changed
    mapping" must be a parameter on the existing path, not a second path.
-   The lores view_render mode + view_raster remain in the tree with no
-   caller (CR36-F1: keep-as-fast-preview-donor or delete — undecided).
+   The lores view_render mode + view_raster were DELETED per CR36-F1
+   (no first-party caller; version control is the donor if a fast preview
+   is ever designed). lambda/view_projection.h stays — roots2pix_mt is
+   its remaining consumer.
 8. Remaining backlog (stripe fan-out, progressive tiles, lambda knobs,
    WebGPU) stays gated on demonstrated need: they exist to fix a
    slowness Wave B was built to remove — the first deployed artifact

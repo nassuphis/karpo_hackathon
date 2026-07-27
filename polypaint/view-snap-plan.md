@@ -432,6 +432,15 @@ Reject NaN, infinity, wrong lengths, unexpected keys, wrong enums,
 `effective_tlo > effective_thi`, bounds outside `[0,1]`, or a non-square
 target aspect at both the frontend and render plan.
 
+Discrete controls validate against their REACHABLE sets, not just
+types: `slices` must be one of `{0, 2, 3, 4, 5, 8, 11, 16, 24, 32}`
+(the viewer's select options — an "integer" contract would admit values
+the viewer cannot produce). `point_world_size` is DELIBERATELY accepted
+as continuous within `[0.0004, 0.016]` rather than snapped to the 40
+slider steps: float formatting of `control * 0.0004` makes exact step
+matching epsilon-fragile, and the closed range already bounds the
+resource math.
+
 `point_scale` and the clamp fractions are CAPTURED, never reconstructed:
 
 ```text
@@ -841,15 +850,25 @@ Uploads           = any object over the 5 GiB single-PUT ceiling must go
                     sidecar crosses it first at large N*times.
 ```
 
-Output bytes are still not the whole cost — rasterization WORK is. Every
-footprint candidate is processed before deduplication, so the true work
-is approximately `sum(roots_s * footprint_area_s)`; with screen-space
-point size this grows toward `N^4` for a near camera on a dense cloud.
-Admission therefore also computes:
+Output bytes are still not the whole cost — rasterization WORK is, and
+footprint updates are only PART of that work. Camera plotting is
+pass-0-only, but every section still executes root transforms, solve
+scoring, and sidecar writes for EVERY pass (`times <= 1000` in
+production), and several score metrics do quadratic pair work in
+`degree` — so `times=1` and `times=1000` renders must not receive the
+same estimate. Admission uses ONE combined v1 work unit:
 
 ```text
-estimated_footprint_updates = sum over sections of R_s * A_max
+estimated_work_units =
+    all-pass scoring/root work:  times * N^2 * degree_weight
+  + pass-0 footprint updates:    sum over pass-0 sections of R_s * A_max
 ```
+
+where `degree_weight` absorbs the per-metric degree scaling (linear vs
+quadratic pair metrics) via calibration rather than a formula. With
+screen-space point size the footprint term grows toward `N^4` for a
+near camera on a dense cloud; the scoring term grows with
+`times * degree^2` for pair metrics — both must be priced.
 
 and rejects when it exceeds a budget calibrated from measured native
 throughput against the 600-second native subprocess limit (the raster
@@ -861,9 +880,12 @@ budget. v1 COMMITS to one policy: a SINGLE conservative
 effective-throughput constant (baseline-plus-footprint accounting is
 the recorded v2 refinement, not an open fork). The constant is
 calibrated from a MATRIX, not a run: scalar and RGB outputs, expensive
-root and solve-score programs, source preludes, `A ~= 1`, and a
-collision-heavy footprint — take the MINIMUM measured throughput,
-subtract named startup headroom, apply the named deration. The staged
+root and solve-score programs, source preludes, `A ~= 1`, a
+collision-heavy footprint, AND the times/degree extremes (times=1 vs
+the largest supported multi-pass; a low-degree and a high-degree
+pair-metric program) so the combined work unit's two terms are both
+exercised — take the MINIMUM measured throughput in work units per
+second, subtract named startup headroom, apply the named deration. The staged
 calibration in this section and Milestone 4 measure exactly that
 matrix and record every cell's result alongside the chosen constant.
 
@@ -1054,8 +1076,10 @@ Rules:
   fixed view) could advertise the same raw-sidecar digest. Include
   `view_projection`, `view_vertical`, and a canonical hash of the
   camera's EXECUTION SUBSET whenever the projection is not `plan`: the
-  matrices, vertical, slices, effective t-window, point size/scale/clamp
-  fractions, and frame — serialized with sorted keys and the codebase's
+  schema `version` and `matrix_layout` (semantics markers — a future
+  schema with changed meaning must not reuse a v1 sidecar identity),
+  the matrices, vertical, slices, effective t-window, point
+  size/scale/clamp fractions, and frame — serialized with sorted keys and the codebase's
   frozen `canonical_number_g17` policy (`.17g` round-trip formatting
   plus signed-zero folding, exactly as `program_source_core` documents
   for fingerprint hashing), and EXCLUDING `debug` (it is declared
@@ -1433,15 +1457,25 @@ GB-seconds. Do not guess a lower N limit from a laptop benchmark.
 
 The depth prototype has a go/no-go gate before frontend integration:
 
-- run one collision-heavy synthetic case;
+- run the CALIBRATION MATRIX, cell by cell: {scalar, RGB} x {cheap
+  program, expensive root+score program with preludes} x {A ~= 1,
+  collision-heavy footprint} x {times=1, max supported times} x
+  {low degree, high-degree pair metric} — recording each cell's work
+  units, wall time, and implied throughput, with the deployed constant
+  = min(cells) minus startup headroom, derated by the named factor;
 - run one representative production Sculpture at its actual N;
 - confirm the native raster fits the 600-second SUBPROCESS limit
   (`handler_raster_mt` runs the binary with `timeout=600` — that, not
   the 900-second Lambda envelope, is the raster ceiling);
-- confirm sequential Finalize streaming fits its 900-second envelope AND
-  its manifest URLs: `build_native_manifest_urls` presigns for 900
-  seconds by default, so a long merge must regenerate URLs or request an
-  expiry sized to the measured merge time before it starts.
+- confirm the Finalize MERGE fits the assembler's OWN 600-second
+  subprocess timeout (`handler_finalize_mt` runs the native assembler
+  with `timeout=600` — the 900-second Lambda envelope bounds the whole
+  handler, downloads and encodes included, but the merge itself has the
+  tighter limit) AND its fragment URLs: Finalize presigns via its own
+  `_presign_fragment_urls` with a fixed 900-second expiry, so a long
+  merge must regenerate URLs or request an expiry sized to the measured
+  merge before it starts. Gate: merge < 600 s, total Finalize < 900 s,
+  both with named headroom.
 
 The pass/fail thresholds are DEFINED AND RECORDED when the benchmark runs
 — wall-time headroom against the 900-second envelope, peak memory against

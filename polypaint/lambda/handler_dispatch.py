@@ -22,7 +22,6 @@ logger.setLevel(logging.INFO)
 FUNCTIONS = {
     "sweep_mt": os.environ.get("SWEEP_MT_FUNCTION", "polypaint-sweep-mt"),
     "deepzoom_export": os.environ.get("DZ_EXPORT_FUNCTION", "polypaint-deepzoom-export"),
-    "deepzoom_from_raw": os.environ.get("DZ_FROM_RAW_FUNCTION", "polypaint-deepzoom-from-raw"),
     "coeffgen": os.environ.get("COEFFGEN_FUNCTION", "polypaint-coeffgen"),
     "sweep_cm": os.environ.get("SWEEP_CM_FUNCTION", "polypaint-sweep-cm"),
     "render_preview": os.environ.get("RENDER_PREVIEW_FUNCTION", "polypaint-render-preview"),

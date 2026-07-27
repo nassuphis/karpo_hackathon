@@ -2099,7 +2099,7 @@ test.describe('Solve Score UI', () => {
     expect(await page.evaluate(() => window._dzCalls[0])).toEqual([
       'test_job',
       'renders/test_job/views/view_new_isometric_t1/image.jpeg',
-      { rawKey: '', rawMetaKey: '', skipRenderRefresh: true },
+      { skipRenderRefresh: true },
     ]);
 
     // Delete uses the generic selected-artifact route and then refreshes the
@@ -2119,6 +2119,30 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#tab-render')).not.toContainText('isometric · t1');
     const colorCount = await page.locator('.render-artifact-family-tabs [data-render-family="color"] .subtab-count').first().textContent();
     expect(colorCount).toBe('(2)');
+  });
+
+  test('DeepZoom from a view dispatches the image-based export with the exact payload', async ({ page }) => {
+    // CR36-F7 truthful-behavior pin: DeepZoom is IMAGE-based by contract.
+    // A selected view's image key dispatches deepzoom_export with the
+    // four-field job — no raw keys exist anywhere in the payload.
+    const calls = await page.evaluate(async () => {
+      window._calls = [];
+      window.lambdaPost = async (name, body, path) => {
+        window._calls.push([name, path, JSON.parse(JSON.stringify(body || {}))]);
+        if (path === '/check-status') return { complete: true };
+        return {};
+      };
+      await runDeepZoomExport('test_job', 'renders/test_job/views/view_x/image.jpeg', null,
+                              { skipRenderRefresh: true });
+      return window._calls;
+    });
+    const disp = calls.find((c) => c[0] === 'dispatch');
+    expect(disp[2].target).toBe('deepzoom_export');
+    expect(disp[2].jobs).toHaveLength(1);
+    const job = disp[2].jobs[0];
+    expect(job.source_key).toBe('renders/test_job/views/view_x/image.jpeg');
+    expect(Object.keys(job).sort()).toEqual(['export_id', 'job_id', 'source_key', 'task_id']);
+    expect(job.task_id.startsWith('deepzoom_export_')).toBe(true);
   });
 
   test('Sculpture tab: SaveSplat modal — explicit settings, hardwired rest', async ({ page }) => {

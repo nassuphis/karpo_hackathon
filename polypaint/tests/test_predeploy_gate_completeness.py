@@ -63,7 +63,6 @@ ALLOWED_UNGATED = {
     "test_coeff_catalog_consistency.py",
     "test_coeff_parity_results.py",
     "test_companion_matrix.py",
-    "test_deepzoom_from_raw.py",
     "test_deepzoom_viewport_math.py",
     "test_dither.py",
     "test_exact_viewport_parity.py",

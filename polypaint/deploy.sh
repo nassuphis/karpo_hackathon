@@ -1487,17 +1487,6 @@ chmod +x "$DZ_EXPORT_DIR"/dz_export "$DZ_EXPORT_DIR"/wall_dz
 cd "$DZ_EXPORT_DIR" && zip -FS -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
 echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + libvips layer)"
 
-# DeepZoom-from-raw: strict wrapper over the raw-sidecar DeepZoom path
-DZ_FROM_RAW_DIR=/tmp/polypaint-deepzoom-from-raw
-rm -rf "$DZ_FROM_RAW_DIR"
-mkdir -p "$DZ_FROM_RAW_DIR"
-cp lambda/handler_deepzoom_from_raw.py lambda/handler_deepzoom_export.py lambda/handler_wall_pyramid.py lambda/shared.py lambda/raw_sidecar.py \
-   lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
-   lambda/deepzoom_viewer_template.html "$DZ_FROM_RAW_DIR/"
-cp lambda/dz_export lambda/wall_dz "$DZ_FROM_RAW_DIR/"
-chmod +x "$DZ_FROM_RAW_DIR"/dz_export "$DZ_FROM_RAW_DIR"/wall_dz
-cd "$DZ_FROM_RAW_DIR" && zip -FS -r9 /tmp/polypaint-deepzoom-from-raw.zip . -q && cd "$SCRIPT_DIR"
-echo "  DzRaw:   $(du -h /tmp/polypaint-deepzoom-from-raw.zip | cut -f1)  (raw-sidecar-only deepzoom)"
 
 # Solve Proximity: handler_solve_proximity.py + shared.py + solve_score_chain.py + logical section helpers + solve_proximity_stats binary
 SOLVE_PROXIMITY_DIR=/tmp/polypaint-solve-proximity

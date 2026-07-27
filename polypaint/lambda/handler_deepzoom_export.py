@@ -147,45 +147,24 @@ def _export_prefix_exists(job_id, export_id):
         raise
 
 
-def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id="deepzoom_export"):
+def handle_deepzoom_export_request(params, *, task_id="deepzoom_export"):
     # job_id + export_id become an S3 prefix AND public viewer HTML — validate
     # to a safe charset before any use (CR28 F9): no slashes / HTML / control
     # chars. This blocks both stored-HTML injection and malformed prefixes.
     job_id = assert_safe_id(params["job_id"], "job_id")
     export_id = assert_safe_id(params.get("export_id", f"dz_{int(time.time())}"), "export_id")
     source_key = str(params.get("source_key") or "").strip()
-    raw_key = str(params.get("raw_key") or "").strip()
-    raw_meta_key = str(params.get("raw_meta_key") or "").strip()
     source_path = ""
 
     try:
         report_status(job_id, task_id, "started")
 
         t0 = time.time()
-        if require_raw_sidecar and not (raw_key and raw_meta_key):
-            raise RuntimeError("DeepZoom-from-raw requires raw_key and raw_meta_key")
         if not source_key:
             raise RuntimeError("DeepZoom requires source_key")
         # code-review-27 F5: pin the source (and raw sidecars) to this job
         # before the download, so the export can't pull another job's bytes
         assert_render_source(source_key, job_id, None, "source_key")
-        # Tie the raw sidecars to the SAME artifact as the source, not merely
-        # the job (code-review-28 F12). In the from-raw flow the client sends
-        # the artifact's own raw_key/raw_meta_key, which live beside its image
-        # under renders/<job>/<family>/<artifact>/. Fall back to a job-scope pin
-        # only for a legacy/non-canonical source key with no artifact segment.
-        _src = parse_render_key(source_key)
-        if _src["variant"] == "canonical":
-            artifact_prefix = f"renders/{_src['job']}/{_src['family']}/{_src['artifact_id']}/"
-            for label, k in (("raw_key", raw_key), ("raw_meta_key", raw_meta_key)):
-                if k and not k.startswith(artifact_prefix):
-                    raise ValueError(
-                        f"{label} {k!r} is not under the source artifact prefix "
-                        f"{artifact_prefix} (artifact mismatch)")
-        else:
-            for label, k in (("raw_key", raw_key), ("raw_meta_key", raw_meta_key)):
-                if k and not k.startswith(f"renders/{job_id}/"):
-                    raise ValueError(f"{label} {k!r} is not under renders/{job_id}/ (job mismatch)")
         if _export_prefix_exists(job_id, export_id):
             raise RuntimeError(
                 f"export prefix deepzoom/{job_id}/{export_id}/ already exists — "
@@ -520,4 +499,4 @@ def handler(event, context):
         task_id = assert_safe_id(str(params.get("task_id") or "sheet_deepzoom"), "task_id")
         return handle_sheet_deepzoom(params, task_id=task_id)
     task_id = assert_safe_id(str(params.get("task_id") or "deepzoom_export"), "task_id")
-    return handle_deepzoom_export_request(params, require_raw_sidecar=False, task_id=task_id)
+    return handle_deepzoom_export_request(params, task_id=task_id)

@@ -991,8 +991,6 @@ async function deepZoomSelectedRenderArtifact() {
     if (!jobId || !art) return;
     const btn = document.getElementById('btn-render-deepzoom');
     await runDeepZoomExport(jobId, art.image_key, btn, {
-        rawKey: art.raw_key || '',
-        rawMetaKey: art.raw_meta_key || '',
         skipRenderRefresh: _renderActiveFamily === 'views',
     });
 }
@@ -1311,11 +1309,12 @@ async function runPngExport(jobId, sourceKey, pix) {
 async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
     const btn = btnEl || document.getElementById('btn-deepzoom');
     if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
-    const rawKey = options && typeof options === 'object' ? String(options.rawKey || '') : '';
-    const rawMetaKey = options && typeof options === 'object' ? String(options.rawMetaKey || '') : '';
     const skipRenderRefresh = !!(options && options.skipRenderRefresh);
-    const useExactSource = !!String(sourceKey || '').trim();
-    const dispatchTarget = useExactSource ? 'deepzoom_export' : ((rawKey && rawMetaKey) ? 'deepzoom_from_raw' : 'deepzoom_export');
+    // DeepZoom is IMAGE-based by contract (CR36-F7): the export always
+    // tiles the artifact's encoded image key. A nominal raw-sidecar branch
+    // used to sit here but could never execute — a non-empty source key
+    // forced the image target and dropped the raw keys.
+    const dispatchTarget = 'deepzoom_export';
     // ONE operation identity end-to-end (code-review-29 F1): a unique export_id
     // (the S3 prefix) + task_id (the status row) minted here and threaded
     // through dispatch, so overlapping exports for one job can never share a
@@ -1337,16 +1336,9 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
         // is no shared row to go stale against.
         const dispResult = await lambdaPost('dispatch', {
             target: dispatchTarget,
-            jobs: [useExactSource ? {
+            jobs: [{
                 job_id: jobId,
                 source_key: sourceKey,
-                export_id: exportId,
-                task_id: taskId,
-            } : {
-                job_id: jobId,
-                source_key: sourceKey,
-                raw_key: rawKey,
-                raw_meta_key: rawMetaKey,
                 export_id: exportId,
                 task_id: taskId,
             }],

@@ -745,10 +745,14 @@ slice it, with all corners far while interior points graze near):
 ```text
 depths     = { -view.z over the 8 prism corners }
 frustum cull: transform the 8 corners to CLIP space; if all 8 violate
-            any ONE of the six frustum half-spaces (left, right, top,
-            bottom, near, far — the standard conservative convex cull),
-            REJECT at plan time as "empty camera frustum: nothing
-            visible from this pose". Near-only detection misses a prism
+            any ONE of the six half-spaces — explicitly, all eight
+            satisfy the SAME inequality among `x < -w`, `x > w`,
+            `y < -w`, `y > w`, `z < -w`, `z > w` — REJECT at plan time
+            as "empty camera frustum: nothing visible from this pose".
+            Reject non-finite derived view/clip coordinates outright,
+            and pin corner-on-boundary behavior to the native edge
+            policy so admission and rasterization agree at the exact
+            frustum surface. Near-only detection misses a prism
             panned off-screen or beyond the far plane, and zero
             footprint does NOT mean zero cost — the run would still
             score every step for the sidecar, allocate and upload the
@@ -835,7 +839,17 @@ estimated_footprint_updates = sum over sections of R_s * A_max
 
 and rejects when it exceeds a budget calibrated from measured native
 throughput against the 600-second native subprocess limit (the raster
-handler's hard `timeout=600`), with named headroom.
+handler's hard `timeout=600`), with named headroom. That limit spans
+the WHOLE subprocess — startup, manifest downloads, root transforms,
+solve-score execution, projection, and serialization — not only
+footprint writes, so a single updates-per-second constant from one
+friendly program is not a safe budget. Use either a
+baseline-plus-footprint model (measured non-footprint wall for the
+section's program + priced footprint work) or a constant calibrated
+from the SLOWEST supported combination: scalar and RGB outputs,
+expensive score/root programs, source preludes, and a collision-heavy
+footprint. The calibration runs must say which policy they used and
+record its inputs.
 
 Calibration bootstrap (the deadlock is otherwise real: admission needs
 the constant, and the benchmark that measures it must pass admission),
@@ -1011,6 +1025,13 @@ Rules:
   unchanged), and a request that carries BOTH with different values is
   rejected — two authorities rendering t1 while metadata says t2 is the
   exact mismatch class this plan exists to prevent.
+  IMPLEMENTATION TRAP: the plan's defaults loop fills
+  `view_vertical="t2"` for EVERY request before validation
+  (`fused_params[key] = rp.get(key, default)`), so presence must be
+  captured FIRST — `"view_vertical" in rp` — or an omitted value
+  falsely conflicts with `view_camera.vertical="t1"`. Pin four cases:
+  omitted (derived, no conflict), matching, mismatching (rejected), and
+  fixed-view requests untouched.
 - `plan_params_digest` gains canonical projection identity: the digest
   today covers viewport/pix/transforms/score settings but no projection,
   vertical, or camera — two different camera outputs (or a camera and a
@@ -1018,10 +1039,13 @@ Rules:
   `view_projection`, `view_vertical`, and a canonical hash of the
   camera's EXECUTION SUBSET whenever the projection is not `plan`: the
   matrices, vertical, slices, effective t-window, point size/scale/clamp
-  fractions, and frame — serialized with sorted keys and fixed float
-  formatting, and EXCLUDING `debug` (it is declared non-authoritative;
-  hashing it would give equivalent renders different sidecar
-  identities).
+  fractions, and frame — serialized with sorted keys and the codebase's
+  frozen `canonical_number_g17` policy (`.17g` round-trip formatting
+  plus signed-zero folding, exactly as `program_source_core` documents
+  for fingerprint hashing), and EXCLUDING `debug` (it is declared
+  non-authoritative; hashing it would give equivalent renders different
+  sidecar identities). Digest tests: debug-only changes do not move the
+  digest; adjacent binary64 values do; `-0.0` hashes equal to `0.0`.
 - Validate matrices, enums, effective t-window, style, and point size.
 - Calculate camera depth-buffer resource requirements.
 - Store compact canonical camera JSON and `source_sculpture_id` in the

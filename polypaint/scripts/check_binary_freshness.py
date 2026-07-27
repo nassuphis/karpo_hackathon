@@ -39,10 +39,15 @@ DEPLOY_BINARIES = {
     "palette_bins_render": ["palette_bins_render.c"],
     "step_scores_to_palette_raw": ["step_scores_to_palette_raw.c"],
     "splat_bake": ["splat_bake.c"],
-    "roots2pix_mt": ["roots2pix_mt.c", "multispan_reader.c"],
+    "roots2pix_mt": [
+        "roots2pix_mt.c",
+        "multispan_reader.c",
+        "camera_fragment_format.h",
+        "view_camera_projection.h",
+    ],
     "solve_proximity_hist_sectioned": ["solve_proximity_hist_sectioned.c", "multispan_reader.c"],
     "solve_palette_chunk_mt": ["solve_palette_chunk_mt.c", "multispan_reader.c"],
-    "assemble_greyscale": ["assemble_greyscale.c"],
+    "assemble_greyscale": ["assemble_greyscale.c", "camera_fragment_format.h"],
     "sweep_coeffgen": ["sweep_cli.c"],
     "sweep_cm": ["sweep_cm.c"],
     # libvips docker set (deploy.sh VIPS block)

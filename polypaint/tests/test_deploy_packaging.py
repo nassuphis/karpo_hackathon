@@ -22,6 +22,7 @@ LOCAL_MODULES = {p.stem for p in LAMBDA_DIR.glob("*.py")}
 HANDLER_STORAGE_TEXT = (LAMBDA_DIR / "handler_storage.py").read_text()
 API_MANIFEST_PATH = ROOT / "api_manifest.json"
 PREDEPLOY_SCRIPT_PATH = ROOT / "scripts" / "predeploy_check.sh"
+PREDEPLOY_TEXT = PREDEPLOY_SCRIPT_PATH.read_text()
 WORKFLOW_RENDERER_PATH = ROOT / "workflow_template_render.py"
 AWS_CLI_JSON_PATH = ROOT / "scripts" / "aws_cli_json.py"
 AWS_CLI_JSON_TEXT = AWS_CLI_JSON_PATH.read_text()
@@ -368,6 +369,37 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("root_program_source.py", packaged["handler_render_plan.py"])
         self.assertIn("program_source_core.py", packaged["handler_render_plan.py"])
         self.assertIn("calc_chunks.py", packaged["handler_render_plan.py"])
+        self.assertIn("view_camera.py", packaged["handler_render_plan.py"])
+        self.assertIn("view_snap_calibration.py", packaged["handler_render_plan.py"])
+        self.assertIn("view_snap_calibration.json", packaged["handler_render_plan.py"])
+        self.assertIn("view_snap_cost_model.py", packaged["handler_render_plan.py"])
+        self.assertIn(
+            'scripts/view_snap_calibration.py" validate',
+            DEPLOY_TEXT,
+        )
+        self.assertIn("--allow-unconfigured", DEPLOY_TEXT)
+        self.assertIn("--schema-only", PREDEPLOY_TEXT)
+        self.assertIn("verify_view_snap_deployment", DEPLOY_TEXT)
+        self.assertIn('"prepare-view-snap"', DEPLOY_TEXT)
+        self.assertIn('"promote-view-snap"', DEPLOY_TEXT)
+        self.assertIn('view_snap_calibration.py" prepare', DEPLOY_TEXT)
+        self.assertIn('view_snap_calibration.py" promote', DEPLOY_TEXT)
+        self.assertIn('"$RASTER_MT_NAME"', DEPLOY_TEXT)
+        self.assertIn('"$FINALIZE_MT_NAME"', DEPLOY_TEXT)
+        self.assertIn('"$RENDER_PLAN_NAME"', DEPLOY_TEXT)
+        self.assertIn("info.external_attr >> 16", DEPLOY_TEXT)
+        for identity_var in (
+            "VIEW_SNAP_RASTER_MEMORY_MB",
+            "VIEW_SNAP_FINALIZE_MEMORY_MB",
+            "VIEW_SNAP_RASTER_TMP_MB",
+            "VIEW_SNAP_FINALIZE_TMP_MB",
+        ):
+            self.assertIn(f'{identity_var}="', DEPLOY_TEXT)
+            self.assertRegex(
+                DEPLOY_TEXT,
+                rf"export [^\n]*\b{identity_var}\b|"
+                rf"export \b{identity_var}\b[^\n]*",
+            )
         self.assertIn("handler_palette_render_plan.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_palette_render_plan.py"])
         self.assertIn("color_render_contract.py", packaged["handler_palette_render_plan.py"])
@@ -466,6 +498,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("roots2pix_mt", packaged["handler_raster_mt.py"])
         self.assertIn("solve_score_pipeline_programs.py", packaged["handler_raster_mt.py"])
         self.assertIn("solve_score_program_source.py", packaged["handler_raster_mt.py"])
+        self.assertIn("view_camera.py", packaged["handler_raster_mt.py"])
         self.assertIn('deploy_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', GEN_TEXT)
         self.assertIn("RASTER_MT_THREADS", DEPLOY_TEXT)
         self.assertIn('build_libcurl_binary roots2pix_mt multispan_reader.c', DEPLOY_TEXT)
@@ -567,6 +600,10 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("solve_score_chain.py", packaged["handler_finalize_mt.py"])
         self.assertIn("assemble_greyscale", packaged["handler_finalize_mt.py"])
         self.assertIn("score_raw_render", packaged["handler_finalize_mt.py"])
+        self.assertIn("view_camera.py", packaged["handler_finalize_mt.py"])
+        self.assertIn("program_source_core.py", packaged["handler_finalize_mt.py"])
+        self.assertIn("program_profiles.py", packaged["handler_finalize_mt.py"])
+        self.assertIn("program_profiles.json", packaged["handler_finalize_mt.py"])
         self.assertNotIn("handler_finalize.py", packaged)
         self.assertNotIn('deploy_lambda "$FINALIZE_NAME"', GEN_TEXT)
         self.assertIn('deploy_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip"', GEN_TEXT)
@@ -1051,6 +1088,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("lambda/logical_sections.py", helper_body)
         self.assertIn("lambda/param_source.py", helper_body)
         self.assertIn("lambda/solve_score_chain.py", helper_body)
+        self.assertIn("lambda/view_camera.py", helper_body)
 
 
 if __name__ == "__main__":

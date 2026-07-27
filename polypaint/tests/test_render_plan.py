@@ -54,6 +54,29 @@ def _base_color_calc(**overrides):
     return calc
 
 
+def _camera_calc(*, N=100, times=1, **overrides):
+    total = N * N * times
+    counts = [total // 4] * 4
+    for idx in range(total % 4):
+        counts[idx] += 1
+    start = 0
+    chunks = []
+    for idx, count in enumerate(counts):
+        chunks.append({
+            "idx": idx,
+            "bin_key": f"renders/j/chunk_{idx}.bin",
+            "step_start": start,
+            "step_count": count,
+        })
+        start += count
+    return _base_color_calc(
+        N=N,
+        times=times,
+        chunks=chunks,
+        **overrides,
+    )
+
+
 def _make_event(mode="color", pix=1024, **extra_params):
     params = {
         "pix": pix,
@@ -74,6 +97,91 @@ def _make_event(mode="color", pix=1024, **extra_params):
         "task_id": "render_run_color_run_t",
         "mode": mode,
         "params": params,
+    }
+
+
+def _view_camera(vertical="t2"):
+    f = 2.1445069205095586
+    near = 0.01
+    far = 50.0
+    return {
+        "version": 1,
+        "projection": "perspective",
+        "matrix_layout": "column_major",
+        "model_view_matrix": [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            0, 0, -3, 1,
+        ],
+        "projection_matrix": [
+            f, 0, 0, 0,
+            0, f, 0, 0,
+            0, 0, (far + near) / (near - far), -1,
+            0, 0, (2 * far * near) / (near - far), 0,
+        ],
+        "vertical": vertical,
+        "slices": 0,
+        "effective_tlo": 0,
+        "effective_thi": 1,
+        "point_world_size": 0.0004,
+        "point_scale": 1000,
+        "point_min_fraction": 0.0004,
+        "point_max_fraction": 0.016,
+        "style": "solid",
+        "show": {
+            "points": True,
+            "ribbons": False,
+            "threads": False,
+            "clu": False,
+            "splats": False,
+        },
+        "frame": {"aspect": 1, "crop": "center_square"},
+    }
+
+
+def _view_snap_calibration(*, work_rate=1.0e15):
+    rates = {
+        "work_units_per_second": work_rate,
+        "raster_prep_seconds": 0.001,
+        "raster_upload_setup_seconds": 0.001,
+        "raster_upload_bytes_per_second": 1.0e15,
+        "fragment_request_seconds": 0.001,
+        "fragment_download_bytes_per_second": 1.0e15,
+        "merge_records_per_second": 1.0e15,
+        "presign_object_seconds": 0.001,
+        "sidecar_get_seconds": 0.001,
+        "sidecar_download_bytes_per_second": 1.0e15,
+        "tmp_write_bytes_per_second": 1.0e15,
+        "sidecar_upload_setup_seconds": 0.001,
+        "sidecar_upload_bytes_per_second": 1.0e15,
+        "publication_put_seconds": 0.001,
+        "publication_upload_bytes_per_second": 1.0e15,
+        "encode_segments": [
+            {
+                "format": fmt,
+                "quality_min": 1,
+                "quality_max": 100,
+                "bytes_per_second": 1.0e15,
+            }
+            for fmt in ("jpeg", "png")
+        ],
+    }
+    return {
+        "schema_version": 1,
+        "cost_model_version": 1,
+        "mode": "production",
+        "rates_and_latencies": rates,
+        "derations": {"throughput": 1.0, "latency": 1.0},
+        "headrooms": {
+            "raster_native_seconds": 30.0,
+            "raster_handler_seconds": 60.0,
+            "assembler_seconds": 30.0,
+            "encoder_seconds": 30.0,
+            "finalize_total_seconds": 60.0,
+            "fragment_url_setup_margin_seconds": 60.0,
+        },
+        "identities": {"test": True},
     }
 
 
@@ -110,6 +218,77 @@ class TestRenderPlanHelpers(unittest.TestCase):
 
         self.assertIn("_rtabcdef12/", key)
         self.assertNotEqual(key, fallback)
+
+    @patch("handler_render_plan.s3")
+    def test_fixture_source_identity_binds_manifest_and_every_source_object(
+        self,
+        mock_s3,
+    ):
+        from handler_render_plan import _view_snap_fixture_source_identity
+
+        manifest = {
+            "v": 2,
+            "j": "compute_fixture_a",
+            "s": {
+                "slv": {
+                    "r": 8,
+                    "k": ["renders/j/chunk_0.bin", "renders/j/chunk_1.bin"],
+                    "g": [[0, 0, 4, 0], [1, 4, 4, 2]],
+                },
+                "cf": {"r": 0, "k": [], "g": []},
+                "pm": {"r": 0, "k": [], "g": []},
+            },
+        }
+        heads = {
+            "renders/j/chunk_0.bin": {
+                "ContentLength": 32,
+                "ETag": '"etag-0"',
+                "VersionId": "version-0",
+            },
+            "renders/j/chunk_1.bin": {
+                "ContentLength": 64,
+                "ETag": '"etag-1"',
+            },
+        }
+        mock_s3.head_object.side_effect = (
+            lambda Bucket, Key: dict(heads[Key])
+        )
+
+        identity = _view_snap_fixture_source_identity(manifest)
+        descriptor = identity["descriptor"]
+        self.assertEqual(descriptor["schema_version"], 1)
+        self.assertEqual(len(descriptor["manifest_sha256"]), 64)
+        self.assertEqual(
+            [row["key"] for row in descriptor["objects"]],
+            sorted(heads),
+        )
+        self.assertEqual(descriptor["objects"][0]["required_bytes"], 32)
+        self.assertEqual(descriptor["objects"][1]["required_bytes"], 48)
+        self.assertEqual(len(identity["descriptor_sha256"]), 64)
+
+        renamed_manifest = dict(manifest)
+        renamed_manifest["j"] = "compute_fixture_b"
+        renamed_manifest["job_id"] = "compute_fixture_alias"
+        renamed = _view_snap_fixture_source_identity(renamed_manifest)
+        self.assertEqual(
+            renamed["descriptor"]["manifest_sha256"],
+            descriptor["manifest_sha256"],
+        )
+        self.assertEqual(
+            renamed["descriptor_sha256"],
+            identity["descriptor_sha256"],
+        )
+
+        heads["renders/j/chunk_1.bin"]["ETag"] = '"etag-mutated"'
+        changed = _view_snap_fixture_source_identity(manifest)
+        self.assertNotEqual(
+            changed["descriptor_sha256"],
+            identity["descriptor_sha256"],
+        )
+
+        heads["renders/j/chunk_1.bin"]["ContentLength"] = 47
+        with self.assertRaisesRegex(RuntimeError, "truncated"):
+            _view_snap_fixture_source_identity(manifest)
 
 
 class TestRenderPlan(unittest.TestCase):
@@ -187,6 +366,204 @@ class TestRenderPlan(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "source_color_artifact_id"):
             handler(_make_event(view_projection="front"), None)
+
+    @patch("handler_render_plan.load_calibration_artifact")
+    @patch("handler_render_plan.calibration_artifact_mode", return_value="production")
+    @patch("handler_render_plan._storage_call")
+    def test_camera_view_plan_uses_camera_authority_and_fragment_contract(
+        self,
+        mock_storage,
+        _mock_mode,
+        mock_calibration,
+    ):
+        mock_storage.side_effect = _mock_storage_detail(_camera_calc(N=1536))
+        mock_calibration.return_value = _view_snap_calibration()
+        from handler_render_plan import handler
+
+        result = handler(_make_event(
+            pix=256,
+            view_projection="camera",
+            view_camera=_view_camera("t1"),
+            source_color_artifact_id="color_source_7",
+            source_sculpture_id="scu_source_4",
+        ), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["grid"]["pix"], 1536)
+        self.assertEqual(plan["params"]["view_vertical"], "t1")
+        self.assertEqual(plan["params"]["source_sculpture_id"], "scu_source_4")
+        self.assertEqual(plan["fragment_contract"], {
+            "encoding": "u32le_f32depth_u8_channels_v1",
+            "record_size_bytes": 9,
+            "channels": 1,
+        })
+        self.assertEqual(
+            plan["outputs"]["metadata"]["source_sculpture_id"],
+            "scu_source_4",
+        )
+        self.assertGreater(plan["raster"]["section_fixed_bytes"], 0)
+        self.assertGreater(plan["raster"]["section_row_bytes"], 0)
+        admission = plan["raster"]["camera_admission"]
+        self.assertEqual(admission["model_version"], 1)
+        self.assertEqual(admission["record_size_bytes"], 9)
+        self.assertGreater(admission["total_fragment_bytes"], 0)
+        self.assertGreater(admission["max_work_units"], 0)
+        self.assertLessEqual(
+            admission["max_raster_tmp_bytes"],
+            admission["limits"]["raster_tmp_bytes"],
+        )
+        self.assertTrue(plan["raster"]["map_items"])
+        for item in plan["raster"]["map_items"]:
+            estimate = item["camera_estimate"]
+            self.assertGreater(estimate["candidate_roots"], 0)
+            self.assertGreater(estimate["occupied_pixels_upper"], 0)
+            self.assertGreater(estimate["fragment_bytes_upper"], 0)
+            self.assertGreater(estimate["raster_memory_bytes"], 0)
+            self.assertGreater(estimate["raster_tmp_bytes"], 0)
+            self.assertGreater(estimate["work_units"], 0)
+        self.assertTrue(plan["outputs"]["plan_params_digest"].startswith("sha256:"))
+
+    @patch.dict(os.environ, {
+        "VIEW_SNAP_RASTER_THREADS": "7",
+        "VIEW_SNAP_RASTER_WORKERS": "9",
+        "VIEW_SNAP_FINALIZE_WORKERS": "13",
+    }, clear=False)
+    @patch("handler_render_plan.load_calibration_artifact")
+    @patch("handler_render_plan.calibration_artifact_mode", return_value="production")
+    @patch("handler_render_plan._storage_call")
+    def test_camera_execution_shape_comes_from_calibration_identity_environment(
+        self,
+        mock_storage,
+        _mock_mode,
+        mock_calibration,
+    ):
+        mock_storage.side_effect = _mock_storage_detail(_camera_calc())
+        calibration = _view_snap_calibration()
+        calibration["identities"].update({
+            "raster_threads": 7,
+            "raster_workers": 9,
+            "finalize_workers": 13,
+        })
+        mock_calibration.return_value = calibration
+        from handler_render_plan import handler
+
+        result = handler(_make_event(
+            view_projection="camera",
+            view_camera=_view_camera(),
+            source_color_artifact_id="color_source_7",
+            source_sculpture_id="scu_source_4",
+            raster_mt_threads=1,
+            raster_workers=1,
+            finalize_workers=1,
+        ), None)
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["raster"]["threads"], 7)
+        self.assertEqual(plan["raster"]["workers"], 9)
+        self.assertEqual(plan["solve_score"]["threads"], 7)
+        self.assertEqual(plan["finalize"]["workers"], 13)
+        self.assertEqual(plan["render_execution"]["raster_mt_threads"], 7)
+        self.assertEqual(plan["render_execution"]["raster_workers"], 9)
+        self.assertEqual(plan["render_execution"]["finalize_workers"], 13)
+
+    @patch("handler_render_plan.load_calibration_artifact")
+    @patch("handler_render_plan.calibration_artifact_mode", return_value="production")
+    @patch("handler_render_plan._storage_call")
+    def test_camera_joint_search_raises_sections_for_native_wall_gate(
+        self,
+        mock_storage,
+        _mock_mode,
+        mock_calibration,
+    ):
+        mock_storage.side_effect = _mock_storage_detail(_camera_calc())
+        mock_calibration.return_value = _view_snap_calibration(work_rate=8.0)
+        from handler_render_plan import handler
+
+        result = handler(_make_event(
+            view_projection="camera",
+            view_camera=_view_camera(),
+            source_color_artifact_id="color_source_7",
+            source_sculpture_id="scu_source_4",
+        ), None)
+        plan = json.loads(result["body"])
+        admission = plan["raster"]["camera_admission"]
+        self.assertGreater(admission["section_count"], 1)
+        self.assertLess(
+            admission["wall_seconds"]["raster_native_seconds"],
+            admission["wall_gates"]["raster_native"]["available_seconds"],
+        )
+        self.assertEqual(
+            set(admission["wall_gates"]),
+            {
+                "raster_native",
+                "raster_handler",
+                "finalize_assembler",
+                "finalize_encoder",
+                "finalize_total",
+            },
+        )
+
+    @patch("handler_render_plan._storage_call")
+    def test_camera_view_plan_rejects_conflicting_or_missing_identity(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, "conflicts"):
+            handler(_make_event(
+                view_projection="camera",
+                view_vertical="t2",
+                view_camera=_view_camera("t1"),
+                source_color_artifact_id="color_source_7",
+                source_sculpture_id="scu_source_4",
+            ), None)
+        with self.assertRaisesRegex(RuntimeError, "source_sculpture_id"):
+            handler(_make_event(
+                view_projection="camera",
+                view_camera=_view_camera(),
+                source_color_artifact_id="color_source_7",
+            ), None)
+
+    @patch("handler_render_plan._storage_call")
+    def test_camera_view_plan_rejects_incomplete_source_steps(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, r"expected N\*N\*times=10000"):
+            handler(_make_event(
+                view_projection="camera",
+                view_camera=_view_camera(),
+                source_color_artifact_id="color_source_7",
+                source_sculpture_id="scu_source_4",
+            ), None)
+
+    @patch("handler_render_plan.load_calibration_artifact")
+    @patch("handler_render_plan.calibration_artifact_mode", return_value="production")
+    @patch("handler_render_plan._storage_call")
+    def test_camera_view_plan_rejects_calculated_rgb_finalize_tmp(
+        self,
+        mock_storage,
+        _mock_mode,
+        mock_calibration,
+    ):
+        mock_storage.side_effect = _mock_storage_detail(_camera_calc(N=32768))
+        mock_calibration.return_value = _view_snap_calibration()
+        from handler_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, r"Raster /tmp admission failed"):
+            handler(_make_event(
+                view_projection="camera",
+                view_camera=_view_camera(),
+                source_color_artifact_id="color_source_7",
+                source_sculpture_id="scu_source_4",
+                color_interpretation="rgb",
+                solve_score_chain=[
+                    ["proximity", "0.1"],
+                    ["emit_norm"],
+                    ["spread", "0.1"],
+                    ["emit_norm"],
+                    ["angular_entropy_16", "0.1"],
+                    ["emit_norm"],
+                ],
+            ), None)
 
     @patch("handler_render_plan._storage_call")
     def test_view_plan_accepts_established_128_char_artifact_ids(self, mock_storage):

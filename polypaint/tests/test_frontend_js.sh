@@ -630,10 +630,16 @@ assertNotIncludes("id=\"sculpture-title\"", 'no title input — too early in the
 assertNotIncludes("id=\"render-sculpture-n\"", 'the pane-level size dropdown is gone — resolution lives in the SaveFull popup');
 assertNotIncludes("_sculptureBakeSaved", 'per-row buttons are gone — selection toolbar only');
 assertNotIncludes("'/save-sculpture'", 'SaveFull is ONE server-side task — the client second step (and its shared-key race) is gone');
-assertIncludes("function _viewRenderParamsFromArtifact(art, projection, vertical) {", 'ViewRender should derive its full render request from the selected Color artifact');
+assertIncludes("function _viewRenderParamsFromArtifact(art, projection, vertical, calcOverride) {", 'ViewRender should derive its full render request from the selected Color artifact or an explicit source calculation');
 assertIncludes("function _viewRenderGridN(art) {", 'ViewRender should derive image geometry from calculation N');
-assertIncludes("const pix = _viewRenderGridN(art);", 'ViewRender must use N for both image dimensions');
+assertIncludes("function _viewRenderGridNFrom(calc, art) {", 'ViewSnap must derive N from its resolved source calculation rather than visible UI state');
+assertIncludes("? _viewRenderGridNFrom(calcOverride, art)", 'ViewSnap must use the explicit source calculation for both image dimensions');
 assertIncludes("source_color_artifact_id: String(art.artifact_id),", 'ViewRender should preserve the selected Color artifact identity');
+assertIncludes("id=\"btn-sculpture-snap\" onclick=\"runSculptureSnap()\"", 'Sculpture should expose the full-resolution camera Snap command');
+assertIncludes("function _resolveViewSnapSource(meta) {", 'ViewSnap must resolve the selected Sculpture source by stored identity');
+assertIncludes("'/render-summary'", 'ViewSnap source resolution must use a fresh source-job render summary');
+assertIncludes("params.source_sculpture_id = String(meta.id);", 'ViewSnap dispatch must preserve the source Sculpture identity');
+assertIncludes("window.addEventListener('message', _sculptureSnapReceiveMessage);", 'ViewSnap must use an identity-scoped postMessage protocol');
 assertIncludes('<option value="isometric">isometric (x, y, t)</option>', 'ViewRender must expose the shared isometric x/y/t projection');
 assertNotIncludes("id=\"view-render-lattice\"", 'ViewRender must not expose the interactive sculpture lattice cap');
 assertNotIncludes("id=\"view-render-pix\"", 'ViewRender must derive N x N geometry instead of exposing a size selector');

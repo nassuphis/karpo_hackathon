@@ -24,9 +24,12 @@
 #include "multispan_reader.h"
 #include "root_xforms.h"
 #include "solve_score.h"
+#include "camera_fragment_format.h"
+#include "view_camera_projection.h"
 #include "view_projection.h"
 
 #define MAXDEG 256
+#define CAMERA_WRITE_STRIPES 4096
 typedef struct {
     unsigned char *data;
     size_t len;
@@ -61,13 +64,14 @@ typedef struct {
     int emitPaletteBins;
     long long paletteStepStart;
     int paletteGridN;
-    int viewProjection;       /* 0 plan | 1 front | 2 rear | 3 left | 4 right | 5 radial | 6 isometric */
+    int viewProjection;       /* 0 plan | 1 front | 2 rear | 3 left | 4 right | 5 radial | 6 isometric | 7 camera */
     int viewVertical;         /* 0 t2 | 1 t1 (selected parameter axis) */
     int viewGridN;            /* parameter grid for the step -> t mapping */
     long long viewStepStart;  /* section's global step offset */
     double imHScale;          /* W / im span — left/right horizontal scale */
     double radialScale;       /* W / farthest viewport-corner radius */
     ViewIsometricProjection isometricProjection;
+    ViewCameraProjection cameraProjection;
     int scoreCoeffDegree;
     int scoreCoeffStride;
     int scoreParamDegree;
@@ -96,6 +100,9 @@ typedef struct {
     RootXformEntry *rtChain;
     int nRt;
     uint64_t *pixelBits;
+    float *cameraDepth;
+    unsigned char *cameraScores;
+    pthread_mutex_t *cameraWriteLocks;
     ByteVec fragmentByteVec;
     ByteVec paletteFragmentByteVec;
     unsigned char *stepScores;
@@ -105,6 +112,14 @@ typedef struct {
     long rootsPlotted;
     long rootsClipped;
     long rootsDeduped;
+    long cameraCandidateRoots;
+    long cameraBehindRejects;
+    long cameraClipRejects;
+    long cameraRangeRejects;
+    long cameraInvalidRejects;
+    long cameraProjectedPoints;
+    long long cameraFootprintPixelCandidates;
+    long cameraDepthReplacements;
     long downloadUs;          /* accumulated per-thread download time (worker sum) */
     long nativeUs;            /* accumulated per-thread native time (worker sum) */
     long long dlWallStartUs;  /* CR33 telemetry: absolute span for download WALL */
@@ -135,6 +150,24 @@ static int getArgInt(int argc, char **argv, const char *key, int def) {
 static double getArgDouble(int argc, char **argv, const char *key, double def) {
     const char *v = getArg(argc, argv, key);
     return v ? atof(v) : def;
+}
+
+static int parse_csv_doubles(const char *text, double *out, int expected) {
+    if (!text || !*text || !out || expected < 1) return 0;
+    const char *cursor = text;
+    char *end = NULL;
+    for (int i = 0; i < expected; i++) {
+        double value = strtod(cursor, &end);
+        if (end == cursor || !isfinite(value)) return 0;
+        out[i] = value == 0.0 ? 0.0 : value;
+        if (i + 1 < expected) {
+            if (*end != ',') return 0;
+            cursor = end + 1;
+        } else if (*end != '\0') {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static long long getArgLongLong(int argc, char **argv, const char *key, long long def) {
@@ -226,6 +259,32 @@ static int claim_pixel(uint64_t *pixelWords, uint32_t pix_idx) {
     uint64_t bit = 1ULL << (pix_idx & 63);
     uint64_t old = __atomic_fetch_or(&pixelWords[wordIdx], bit, __ATOMIC_RELAXED);
     return (old & bit) == 0;
+}
+
+static int camera_update_pixel(
+        WorkerArgs *arg,
+        uint32_t pix_idx,
+        float depth,
+        const uint8_t *channels) {
+    int stripe = (int)(pix_idx & (CAMERA_WRITE_STRIPES - 1));
+    int won = 0;
+    pthread_mutex_lock(&arg->cameraWriteLocks[stripe]);
+    if (depth < arg->cameraDepth[pix_idx]) {
+        arg->cameraDepth[pix_idx] = depth;
+        memcpy(
+            arg->cameraScores + (size_t)pix_idx * (size_t)arg->outputChannelCount,
+            channels,
+            (size_t)arg->outputChannelCount
+        );
+        __atomic_fetch_or(
+            &arg->pixelBits[(size_t)(pix_idx >> 6)],
+            1ULL << (pix_idx & 63),
+            __ATOMIC_RELAXED
+        );
+        won = 1;
+    }
+    pthread_mutex_unlock(&arg->cameraWriteLocks[stripe]);
+    return won;
 }
 
 static void worker_fail(WorkerArgs *arg, const char *msg) {
@@ -537,9 +596,15 @@ static void *worker_main(void *arg_) {
          * pass > 0 folds onto pass 0 like the plan view's overplot) */
         double viewT = 0.0;
         int viewPy = 0;
+        int viewCanPlot = 1;
         if (arg->viewProjection != 0) {
             long long pass0 = (long long)arg->viewGridN * (long long)arg->viewGridN;
-            long long gstep = (arg->viewStepStart + p) % pass0;
+            long long globalStep = arg->viewStepStart + p;
+            if (arg->viewProjection == 7
+                    && (globalStep < 0 || globalStep >= pass0)) {
+                viewCanPlot = 0;
+            }
+            long long gstep = globalStep % pass0;
             if (gstep < 0) gstep += pass0;
             int vrow = (int)(gstep / arg->viewGridN);
             int vj = (int)(gstep % arg->viewGridN);
@@ -553,6 +618,10 @@ static void *worker_main(void *arg_) {
              * is exactly H-1-k when H == N; 64-bit product by doctrine. */
             viewPy = (int)((long long)arg->H - 1
                            - (long long)vk * (long long)arg->H / (long long)arg->viewGridN);
+        }
+        if (!viewCanPlot) {
+            if (usesLag) solve_score_lag_stream_advance(&lagStream);
+            continue;
         }
         for (int r = 0; r < arg->degree; r++) {
             double re = step[r * 2];
@@ -582,6 +651,8 @@ static void *worker_main(void *arg_) {
                 arg->rootsClipped++;
                 continue;
             }
+            float cameraDepth = 0.0f;
+            int cameraPointSide = 1;
             switch (arg->viewProjection) {
             case 1:   /* front: Re rightward */
                 pxf = (rotRe - arg->minRe) * arg->xScale;
@@ -611,6 +682,37 @@ static void *worker_main(void *arg_) {
                     continue;
                 }
                 break;
+            case 7: { /* perspective camera: viewport-normalized sculpture */
+                double side = fmax(arg->maxRe - arg->minRe, arg->maxIm - arg->minIm);
+                int cameraRejectReason = VIEW_CAMERA_REJECT_INVALID;
+                arg->cameraCandidateRoots++;
+                if (!isfinite(side) || !(side > 0.0)
+                        || !view_camera_project(
+                            &arg->cameraProjection,
+                            (rotRe - arg->centerRe) / side,
+                            viewT,
+                            -(rotIm - arg->centerIm) / side,
+                            arg->W,
+                            &pxf,
+                            &pyf,
+                            &cameraDepth,
+                            &cameraPointSide,
+                            &cameraRejectReason)) {
+                    if (cameraRejectReason == VIEW_CAMERA_REJECT_T_RANGE) {
+                        arg->cameraRangeRejects++;
+                    } else if (cameraRejectReason == VIEW_CAMERA_REJECT_BEHIND) {
+                        arg->cameraBehindRejects++;
+                    } else if (cameraRejectReason == VIEW_CAMERA_REJECT_CLIP) {
+                        arg->cameraClipRejects++;
+                    } else {
+                        arg->cameraInvalidRejects++;
+                    }
+                    arg->rootsClipped++;
+                    continue;
+                }
+                arg->cameraProjectedPoints++;
+                break;
+            }
             default:  /* plan */
                 pxf = (rotRe - arg->minRe) * arg->xScale;
                 pyf = (arg->maxIm - rotIm) * arg->yScale;
@@ -620,28 +722,63 @@ static void *worker_main(void *arg_) {
                 arg->rootsClipped++;
                 continue;
             }
-            int px = (int)floor(pxf);
-            int py = (int)floor(pyf);
-            if (px < 0 || px >= arg->W || py < 0 || py >= arg->H) {
-                arg->rootsClipped++;
-                continue;
-            }
+            if (arg->viewProjection == 7) {
+                int px0 = (int)floor(pxf - 0.5 * (double)(cameraPointSide - 1));
+                int py0 = (int)floor(pyf - 0.5 * (double)(cameraPointSide - 1));
+                int px1 = px0 + cameraPointSide - 1;
+                int py1 = py0 + cameraPointSide - 1;
+                if (px1 < 0 || py1 < 0 || px0 >= arg->W || py0 >= arg->H) {
+                    arg->rootsClipped++;
+                    continue;
+                }
+                if (px0 < 0) px0 = 0;
+                if (py0 < 0) py0 = 0;
+                if (px1 >= arg->W) px1 = arg->W - 1;
+                if (py1 >= arg->H) py1 = arg->H - 1;
+                arg->cameraFootprintPixelCandidates +=
+                    (long long)(px1 - px0 + 1) * (long long)(py1 - py0 + 1);
+                int writes = 0;
+                for (int py = py0; py <= py1; py++) {
+                    for (int px = px0; px <= px1; px++) {
+                        uint32_t globalPixIdx =
+                            (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
+                        if (camera_update_pixel(
+                                arg,
+                                globalPixIdx,
+                                cameraDepth,
+                                outputBytes)) {
+                            writes++;
+                            arg->cameraDepthReplacements++;
+                        } else {
+                            arg->rootsDeduped++;
+                        }
+                    }
+                }
+                arg->rootsPlotted += writes;
+            } else {
+                int px = (int)floor(pxf);
+                int py = (int)floor(pyf);
+                if (px < 0 || px >= arg->W || py < 0 || py >= arg->H) {
+                    arg->rootsClipped++;
+                    continue;
+                }
 
-            uint32_t globalPixIdx = (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
-            if (!claim_pixel(arg->pixelBits, globalPixIdx)) {
-                arg->rootsDeduped++;
-                continue;
-            }
+                uint32_t globalPixIdx = (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
+                if (!claim_pixel(arg->pixelBits, globalPixIdx)) {
+                    arg->rootsDeduped++;
+                    continue;
+                }
 
-            if (!bytevec_push_u32le_channels(
-                    &arg->fragmentByteVec,
-                    globalPixIdx,
-                    outputBytes,
-                    arg->outputChannelCount)) {
-                worker_fail(arg, "fragment vec alloc failed");
-                goto cleanup;
+                if (!bytevec_push_u32le_channels(
+                        &arg->fragmentByteVec,
+                        globalPixIdx,
+                        outputBytes,
+                        arg->outputChannelCount)) {
+                    worker_fail(arg, "fragment vec alloc failed");
+                    goto cleanup;
+                }
+                arg->rootsPlotted++;
             }
-            arg->rootsPlotted++;
         }
         if (usesLag) {
             solve_score_lag_stream_advance(&lagStream);
@@ -677,8 +814,13 @@ int main(int argc, char **argv) {
                 "[--step_scores_output=/tmp/step_scores.bin] "
                 "[--xformed_roots_output=/tmp/xformed_roots.bin] "
                 "[--xformed_roots_format=f32|u16] "
-                "[--view_projection=plan|front|rear|left|right|radial|isometric] [--view_vertical=t2|t1] "
+                "[--view_projection=plan|front|rear|left|right|radial|isometric|camera] [--view_vertical=t2|t1] "
                 "[--view_grid_n=N] [--view_step_start=STEP] "
+                "[--view_model_view=csv16 --view_projection_matrix=csv16 --view_slices=N] "
+                "[--view_effective_tlo=X --view_effective_thi=Y] "
+                "[--view_point_world_size=X --view_point_scale=X "
+                "--view_point_min_fraction=X --view_point_max_fraction=X] "
+                "[--fragment_encoding=name] "
                 "[--root_xforms=file.json]\n");
         return 1;
     }
@@ -691,6 +833,11 @@ int main(int argc, char **argv) {
         "--xformed_roots_output", "--xformed_roots_format",
         "--palette_grid_n", "--palette_step_start", "--root_xforms",
         "--view_projection", "--view_vertical", "--view_grid_n", "--view_step_start",
+        "--view_model_view", "--view_projection_matrix", "--view_slices",
+        "--view_effective_tlo", "--view_effective_thi",
+        "--view_point_world_size", "--view_point_scale",
+        "--view_point_min_fraction", "--view_point_max_fraction",
+        "--fragment_encoding",
         "--score_metrics", "--score_sources",
         "--score_clip_los", "--score_clip_his", "--score_program",
         "--score_output_normalize", "--score_output_clip_lo", "--score_output_clip_hi",
@@ -732,6 +879,9 @@ int main(int argc, char **argv) {
     const char *viewVerticalArg = getArgStr(argc, argv, "--view_vertical", "t2");
     int viewGridN = getArgInt(argc, argv, "--view_grid_n", 0);
     long long viewStepStart = getArgLongLong(argc, argv, "--view_step_start", 0);
+    const char *fragmentEncoding = getArgStr(argc, argv, "--fragment_encoding", "");
+    ViewCameraProjection cameraProjection;
+    memset(&cameraProjection, 0, sizeof(cameraProjection));
     int viewProjection = 0;
     if (strcmp(viewProjectionArg, "plan") == 0) viewProjection = 0;
     else if (strcmp(viewProjectionArg, "front") == 0) viewProjection = 1;
@@ -740,8 +890,9 @@ int main(int argc, char **argv) {
     else if (strcmp(viewProjectionArg, "right") == 0) viewProjection = 4;
     else if (strcmp(viewProjectionArg, "radial") == 0) viewProjection = 5;
     else if (strcmp(viewProjectionArg, "isometric") == 0) viewProjection = 6;
+    else if (strcmp(viewProjectionArg, "camera") == 0) viewProjection = 7;
     else {
-        fprintf(stderr, "Invalid --view_projection: %s (plan|front|rear|left|right|radial|isometric)\n", viewProjectionArg);
+        fprintf(stderr, "Invalid --view_projection: %s (plan|front|rear|left|right|radial|isometric|camera)\n", viewProjectionArg);
         return 1;
     }
     int viewVertical = 0;
@@ -753,6 +904,41 @@ int main(int argc, char **argv) {
     }
     if (viewProjection != 0 && viewGridN < 2) {
         fprintf(stderr, "View projections require --view_grid_n >= 2\n");
+        return 1;
+    }
+    if (viewProjection == 7) {
+        const char *modelViewArg = getArgStr(argc, argv, "--view_model_view", NULL);
+        const char *projectionMatrixArg = getArgStr(argc, argv, "--view_projection_matrix", NULL);
+        cameraProjection.vertical = viewVertical;
+        cameraProjection.slices = getArgInt(argc, argv, "--view_slices", -1);
+        cameraProjection.effective_tlo = getArgDouble(argc, argv, "--view_effective_tlo", NAN);
+        cameraProjection.effective_thi = getArgDouble(argc, argv, "--view_effective_thi", NAN);
+        cameraProjection.point_world_size = getArgDouble(argc, argv, "--view_point_world_size", NAN);
+        cameraProjection.point_scale = getArgDouble(argc, argv, "--view_point_scale", NAN);
+        cameraProjection.point_min_fraction = getArgDouble(argc, argv, "--view_point_min_fraction", NAN);
+        cameraProjection.point_max_fraction = getArgDouble(argc, argv, "--view_point_max_fraction", NAN);
+        if (!parse_csv_doubles(modelViewArg, cameraProjection.model_view, 16)
+                || !parse_csv_doubles(projectionMatrixArg, cameraProjection.projection, 16)
+                || cameraProjection.slices < 0
+                || !isfinite(cameraProjection.effective_tlo)
+                || !isfinite(cameraProjection.effective_thi)
+                || cameraProjection.effective_tlo < 0.0
+                || cameraProjection.effective_thi > 1.0
+                || cameraProjection.effective_tlo > cameraProjection.effective_thi
+                || !isfinite(cameraProjection.point_world_size)
+                || !(cameraProjection.point_world_size > 0.0)
+                || !isfinite(cameraProjection.point_scale)
+                || !(cameraProjection.point_scale > 0.0)
+                || !isfinite(cameraProjection.point_min_fraction)
+                || !isfinite(cameraProjection.point_max_fraction)
+                || !(cameraProjection.point_min_fraction > 0.0)
+                || cameraProjection.point_min_fraction > cameraProjection.point_max_fraction
+                || strcmp(fragmentEncoding, CAMERA_FRAGMENT_ENCODING) != 0) {
+            fprintf(stderr, "Invalid or incomplete camera projection contract\n");
+            return 1;
+        }
+    } else if (strcmp(fragmentEncoding, CAMERA_FRAGMENT_ENCODING) == 0) {
+        fprintf(stderr, "Camera fragment encoding requires --view_projection=camera\n");
         return 1;
     }
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
@@ -1088,6 +1274,10 @@ int main(int argc, char **argv) {
     }
 
     uint64_t *pixelBits = NULL;
+    float *cameraDepth = NULL;
+    unsigned char *cameraScores = NULL;
+    pthread_mutex_t *cameraWriteLocks = NULL;
+    int cameraLocksInitialized = 0;
     int emitFragments = fragmentPrefix && *fragmentPrefix;
     int emitPaletteBins = paletteFragmentPrefix && *paletteFragmentPrefix;
     int emitStepScores = stepScoresOutputPath && *stepScoresOutputPath;
@@ -1117,6 +1307,14 @@ int main(int argc, char **argv) {
     long rootsPlotted = 0;
     long rootsClipped = 0;
     long rootsDeduped = 0;
+    long cameraCandidateRoots = 0;
+    long cameraBehindRejects = 0;
+    long cameraClipRejects = 0;
+    long cameraRangeRejects = 0;
+    long cameraInvalidRejects = 0;
+    long cameraProjectedPoints = 0;
+    long long cameraFootprintPixelCandidates = 0;
+    long cameraDepthReplacements = 0;
     long totalDownloadUs = 0;
     long long dlWallMinStart = 0, dlWallMaxEnd = 0;   /* CR33: download WALL span */
     long long ntWallMinStart = 0, ntWallMaxEnd = 0;   /* F5: native WALL span */
@@ -1128,11 +1326,42 @@ int main(int argc, char **argv) {
         fprintf(stderr, "pix is too large for u32 pixel indexes: %d\n", pix);
         goto cleanup;
     }
-    size_t pixelWordCount = (size_t)((totalPixels + 63u) / 64u);
+    int cameraHasPass0Overlap = 1;
+    if (viewProjection == 7) {
+        long long pass0Steps = (long long)viewGridN * (long long)viewGridN;
+        long long sectionStart = viewStepStart;
+        long long sectionEnd = sectionStart + (long long)nPoints;
+        cameraHasPass0Overlap = sectionStart < pass0Steps && sectionEnd > 0;
+    }
+    size_t pixelWordCount = cameraHasPass0Overlap
+        ? (size_t)((totalPixels + 63u) / 64u)
+        : 1u;
     pixelBits = calloc(pixelWordCount, sizeof(uint64_t));
     if (!pixelBits) {
         fprintf(stderr, "Cannot allocate pixel bitset\n");
         goto cleanup;
+    }
+    if (viewProjection == 7 && cameraHasPass0Overlap) {
+        cameraDepth = malloc((size_t)totalPixels * sizeof(float));
+        cameraScores = calloc(
+            (size_t)totalPixels * (size_t)solveScoreProgram.outputCount,
+            sizeof(unsigned char)
+        );
+        cameraWriteLocks = calloc(CAMERA_WRITE_STRIPES, sizeof(pthread_mutex_t));
+        if (!cameraDepth || !cameraScores || !cameraWriteLocks) {
+            fprintf(stderr, "Cannot allocate camera depth/score planes\n");
+            goto cleanup;
+        }
+        for (size_t idx = 0; idx < (size_t)totalPixels; idx++) {
+            cameraDepth[idx] = INFINITY;
+        }
+        for (int idx = 0; idx < CAMERA_WRITE_STRIPES; idx++) {
+            if (pthread_mutex_init(&cameraWriteLocks[idx], NULL) != 0) {
+                fprintf(stderr, "Cannot initialize camera write locks\n");
+                goto cleanup;
+            }
+            cameraLocksInitialized++;
+        }
     }
 
     {
@@ -1178,6 +1407,7 @@ int main(int argc, char **argv) {
         args[i].imHScale = (double)W / (maxIm - minIm);
         args[i].radialScale = radialScale;
         args[i].isometricProjection = isometricProjection;
+        args[i].cameraProjection = cameraProjection;
         args[i].cosA = cosA;
         args[i].sinA = sinA;
         args[i].solveScoreProgram = solveScoreProgram;
@@ -1237,6 +1467,9 @@ int main(int argc, char **argv) {
         args[i].scoreCoeffReader = scoreProgramUsesCoeffSources ? &scoreCoeffReader : NULL;
         args[i].scoreParamReader = scoreProgramUsesParamSources ? &scoreParamReader : NULL;
         args[i].pixelBits = pixelBits;
+        args[i].cameraDepth = cameraDepth;
+        args[i].cameraScores = cameraScores;
+        args[i].cameraWriteLocks = cameraWriteLocks;
         args[i].stepScoreChannels = solveScoreProgram.outputCount;
         args[i].stepScores = emitStepScores
             ? calloc((size_t)(width > 0 ? width : 1) * (size_t)args[i].stepScoreChannels, sizeof(unsigned char))
@@ -1267,6 +1500,14 @@ int main(int argc, char **argv) {
         rootsPlotted += args[i].rootsPlotted;
         rootsClipped += args[i].rootsClipped;
         rootsDeduped += args[i].rootsDeduped;
+        cameraCandidateRoots += args[i].cameraCandidateRoots;
+        cameraBehindRejects += args[i].cameraBehindRejects;
+        cameraClipRejects += args[i].cameraClipRejects;
+        cameraRangeRejects += args[i].cameraRangeRejects;
+        cameraInvalidRejects += args[i].cameraInvalidRejects;
+        cameraProjectedPoints += args[i].cameraProjectedPoints;
+        cameraFootprintPixelCandidates += args[i].cameraFootprintPixelCandidates;
+        cameraDepthReplacements += args[i].cameraDepthReplacements;
         totalDownloadUs += args[i].downloadUs;
         totalNativeUs += args[i].nativeUs;
         if (args[i].dlWallStartUs > 0 &&
@@ -1295,30 +1536,72 @@ int main(int argc, char **argv) {
     long totalEntries = 0;
     int fragmentsWithData = 0;
     size_t totalFragmentBytes = 0;
-    size_t fragmentRecordSize = 4u + (size_t)solveScoreProgram.outputCount;
-    for (int i = 0; i < threads; i++) {
-        totalFragmentBytes += args[i].fragmentByteVec.len;
+    size_t fragmentRecordSize = (viewProjection == 7 ? 8u : 4u)
+        + (size_t)solveScoreProgram.outputCount;
+    if (viewProjection == 7 && cameraHasPass0Overlap) {
+        for (size_t wordIdx = 0; wordIdx < pixelWordCount; wordIdx++) {
+            totalEntries += (long)__builtin_popcountll(pixelBits[wordIdx]);
+        }
+        totalFragmentBytes = (size_t)totalEntries * fragmentRecordSize;
+    } else {
+        for (int i = 0; i < threads; i++) {
+            totalFragmentBytes += args[i].fragmentByteVec.len;
+        }
+        totalEntries = (long)(
+            fragmentRecordSize > 0 ? totalFragmentBytes / fragmentRecordSize : 0u
+        );
     }
-    if (totalFragmentBytes > 0) fragmentsWithData = 1;
-    totalEntries = (long)(fragmentRecordSize > 0 ? totalFragmentBytes / fragmentRecordSize : 0u);
+    if (totalEntries > 0) fragmentsWithData = 1;
     if (emitFragments) {
-        if (totalFragmentBytes > 0) {
-            if (!write_suffix_path(pathBuf, sizeof(pathBuf), fragmentPrefix, ".frag")) {
-                fprintf(stderr, "Cannot build fused fragment path from %s\n", fragmentPrefix);
-                goto cleanup;
-            }
-            FILE *fb = fopen(pathBuf, "wb");
-            if (!fb) {
-                fprintf(stderr, "Cannot create %s\n", pathBuf);
-                goto cleanup;
-            }
-            for (int i = 0; i < threads; i++) {
-                if (args[i].fragmentByteVec.len > 0) {
-                    fwrite(args[i].fragmentByteVec.data, 1, args[i].fragmentByteVec.len, fb);
+        if (!write_suffix_path(pathBuf, sizeof(pathBuf), fragmentPrefix, ".frag")) {
+            fprintf(stderr, "Cannot build fused fragment path from %s\n", fragmentPrefix);
+            goto cleanup;
+        }
+        FILE *fb = fopen(pathBuf, "wb");
+        if (!fb) {
+            fprintf(stderr, "Cannot create %s\n", pathBuf);
+            goto cleanup;
+        }
+        if (viewProjection == 7 && cameraHasPass0Overlap) {
+            uint8_t record[8 + SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
+            for (uint32_t pixelIdx = 0; pixelIdx < (uint32_t)totalPixels; pixelIdx++) {
+                uint64_t bit = 1ULL << (pixelIdx & 63);
+                if (!(pixelBits[(size_t)(pixelIdx >> 6)] & bit)) continue;
+                float depth = cameraDepth[pixelIdx];
+                if (!isfinite(depth) || !(depth > 0.0f)) {
+                    fclose(fb);
+                    fprintf(stderr, "Camera depth plane contains an invalid occupied value\n");
+                    goto cleanup;
+                }
+                camera_fragment_write_u32le(record, pixelIdx);
+                camera_fragment_write_f32le(record + 4, depth);
+                memcpy(
+                    record + 8,
+                    cameraScores + (size_t)pixelIdx * (size_t)solveScoreProgram.outputCount,
+                    (size_t)solveScoreProgram.outputCount
+                );
+                if (fwrite(record, 1, fragmentRecordSize, fb) != fragmentRecordSize) {
+                    fclose(fb);
+                    fprintf(stderr, "Cannot write camera fragment %s\n", pathBuf);
+                    goto cleanup;
                 }
             }
-            fclose(fb);
+        } else {
+            for (int i = 0; i < threads; i++) {
+                if (args[i].fragmentByteVec.len > 0) {
+                    if (fwrite(
+                            args[i].fragmentByteVec.data,
+                            1,
+                            args[i].fragmentByteVec.len,
+                            fb) != args[i].fragmentByteVec.len) {
+                        fclose(fb);
+                        fprintf(stderr, "Cannot write fused fragment %s\n", pathBuf);
+                        goto cleanup;
+                    }
+                }
+            }
         }
+        fclose(fb);
     }
     if (emitPaletteBins) {
         size_t totalPaletteBytes = 0;
@@ -1431,6 +1714,35 @@ int main(int argc, char **argv) {
      * (causally attached), instead of an env-gated stderr line only */
     solve_score_print_plan_fields(stdout, &solveScoreProgram);
     printf(",\"solve_score\":true");
+    printf(",\"fragment_encoding\":\"%s\"",
+           viewProjection == 7 ? CAMERA_FRAGMENT_ENCODING
+                               : (fragmentEncoding && *fragmentEncoding
+                                   ? fragmentEncoding
+                                   : "legacy"));
+    if (viewProjection == 7) {
+        printf(",\"camera_pass0_overlap\":%s",
+               cameraHasPass0Overlap ? "true" : "false");
+        printf(",\"camera_candidate_roots\":%ld"
+               ",\"camera_behind_rejects\":%ld"
+               ",\"camera_clip_rejects\":%ld"
+               ",\"camera_range_rejects\":%ld"
+               ",\"camera_invalid_rejects\":%ld"
+               ",\"camera_projected_points\":%ld"
+               ",\"camera_footprint_pixel_candidates\":%lld"
+               ",\"camera_depth_replacements\":%ld"
+               ",\"camera_occupied_pixels\":%ld"
+               ",\"camera_fragment_bytes\":%zu",
+               cameraCandidateRoots,
+               cameraBehindRejects,
+               cameraClipRejects,
+               cameraRangeRejects,
+               cameraInvalidRejects,
+               cameraProjectedPoints,
+               cameraFootprintPixelCandidates,
+               cameraDepthReplacements,
+               totalEntries,
+               totalFragmentBytes);
+    }
     if (emitStepScores) {
         printf(",\"step_score_channels\":%d", solveScoreProgram.outputCount);
     }
@@ -1442,6 +1754,12 @@ cleanup:
         for (int i = 0; i < workersStarted; i++) pthread_join(workers[i], NULL);
     }
     free_worker_storage(args, workersPrepared);
+    for (int i = 0; i < cameraLocksInitialized; i++) {
+        pthread_mutex_destroy(&cameraWriteLocks[i]);
+    }
+    free(cameraWriteLocks);
+    free(cameraScores);
+    free(cameraDepth);
     free(pixelBits);
     free(workers);
     free(args);

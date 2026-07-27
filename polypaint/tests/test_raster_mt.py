@@ -124,10 +124,55 @@ def _fused_event(**overrides):
         "associated_palette_mode": "none",
         "associated_palette_fragment_prefix": "",
         "associated_palette_grid_n": 0,
+        "fragment_contract": {
+            "encoding": "u32le_u8_v1",
+            "record_size_bytes": 5,
+            "channels": 1,
+        },
     }
     payload.update(_bounds_from_center_scale(payload["pix"], payload["pix"], 0.0, 0.0, 1.0))
     payload.update(overrides)
     return payload
+
+
+def _camera_payload():
+    f = 2.1445069205095586
+    near = 0.01
+    far = 50.0
+    return {
+        "version": 1,
+        "projection": "perspective",
+        "matrix_layout": "column_major",
+        "model_view_matrix": [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            0, 0, -3, 1,
+        ],
+        "projection_matrix": [
+            f, 0, 0, 0,
+            0, f, 0, 0,
+            0, 0, (far + near) / (near - far), -1,
+            0, 0, (2 * far * near) / (near - far), 0,
+        ],
+        "vertical": "t2",
+        "slices": 0,
+        "effective_tlo": 0,
+        "effective_thi": 1,
+        "point_world_size": 0.0004,
+        "point_scale": 1000,
+        "point_min_fraction": 0.0004,
+        "point_max_fraction": 0.016,
+        "style": "solid",
+        "show": {
+            "points": True,
+            "ribbons": False,
+            "threads": False,
+            "clu": False,
+            "splats": False,
+        },
+        "frame": {"aspect": 1, "crop": "center_square"},
+    }
 
 
 class TestRasterMT(unittest.TestCase):
@@ -403,6 +448,11 @@ class TestRasterMT(unittest.TestCase):
                     {"channel": 2, "clip_lo": 0.0, "clip_hi": 1.0},
                 ],
             },
+            "fragment_contract": {
+                "encoding": "u32le_pixel_idx_plus_u8_channels_v1",
+                "record_size_bytes": 7,
+                "channels": 3,
+            },
         })
 
         cmd = mod._build_cmd(params)
@@ -410,6 +460,51 @@ class TestRasterMT(unittest.TestCase):
         self.assertIn("--score_output_clip_los=0.1,0.2,0.0", cmd)
         self.assertIn("--score_output_clip_his=0.9,0.8,1.0", cmd)
         self.assertIn("--step_scores_output=/tmp/step_scores.bin", cmd)
+
+    def test_build_cmd_forwards_validated_camera_contract(self):
+        import handler_raster_mt as mod
+
+        params = _fused_event(
+            view_projection="camera",
+            view_vertical="t2",
+            view_grid_n=512,
+            view_camera=_camera_payload(),
+            fragment_contract={
+                "encoding": "u32le_f32depth_u8_channels_v1",
+                "record_size_bytes": 9,
+                "channels": 1,
+            },
+        )
+        params.update({
+            "effective_input_mode": "multispan_sectioned",
+            "input_manifest_path": "/tmp/input_manifest.json",
+            "solve_score_bins_data": _clip_artifact(
+                chain=[["crowding", "1"], ["omega_cosine", "4"]],
+                metric="crowding",
+                quantile=0.01,
+                omega=4.0,
+                omega_enabled=True,
+                clip_lo=-1.0,
+                clip_hi=2.0,
+            ),
+        })
+
+        cmd = mod._build_cmd(params)
+        self.assertIn("--view_projection=camera", cmd)
+        self.assertIn("--view_vertical=t2", cmd)
+        self.assertIn("--fragment_encoding=u32le_f32depth_u8_channels_v1", cmd)
+        self.assertTrue(any(item.startswith("--view_model_view=") for item in cmd))
+        self.assertTrue(any(item.startswith("--view_projection_matrix=") for item in cmd))
+
+        with self.assertRaisesRegex(RuntimeError, "fragment_contract mismatch"):
+            mod._build_cmd({
+                **params,
+                "fragment_contract": {
+                    "encoding": "u32le_u8_v1",
+                    "record_size_bytes": 5,
+                    "channels": 1,
+                },
+            })
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -644,6 +739,117 @@ class TestRasterMT(unittest.TestCase):
         # a view without the grid dies loudly too
         with self.assertRaises(RuntimeError):
             mod.handler(_fused_event(view_projection="front"), None)
+
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_camera_reports_admission_estimate_against_actual_output(
+        self, mock_s3, mock_run, mock_report
+    ):
+        import handler_raster_mt as mod
+
+        clip = _clip_artifact(
+            chain=[["crowding", "1"], ["omega_cosine", "4"]],
+            metric="crowding",
+            quantile=0.01,
+            omega=4.0,
+            omega_enabled=True,
+            clip_lo=-1.0,
+            clip_hi=2.0,
+        )
+        mock_s3.get_object.return_value = {
+            "Body": MagicMock(read=lambda: json.dumps(clip).encode())
+        }
+        mock_s3.generate_presigned_url.side_effect = (
+            lambda _op, Params=None, ExpiresIn=None:
+            f"https://example.com/{Params['Key']}?sig=1"
+        )
+        mock_s3.upload_fileobj.side_effect = lambda *_args, **_kwargs: None
+        mock_s3.put_object.side_effect = lambda **_kwargs: None
+
+        def fake_run(_cmd, capture_output=False, text=False, timeout=None):
+            with open("/tmp/fused_fragment.frag", "wb") as fh:
+                fh.write(b"x" * 18)
+            with open("/tmp/step_scores.bin", "wb") as fh:
+                fh.write(b"y" * 4)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "threads": 2,
+                    "roots_plotted": 2,
+                    "roots_clipped": 0,
+                    "camera_candidate_roots": 10,
+                    "camera_projected_points": 3,
+                    "camera_occupied_pixels": 2,
+                    "camera_fragment_bytes": 18,
+                }),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+        result = mod.handler(_fused_event(
+            view_projection="camera",
+            view_vertical="t1",
+            view_grid_n=512,
+            view_camera=_camera_payload(),
+            fragment_contract={
+                "encoding": "u32le_f32depth_u8_channels_v1",
+                "record_size_bytes": 9,
+                "channels": 1,
+            },
+            camera_estimate={
+                "candidate_roots": 100,
+                "occupied_pixels_upper": 8,
+                "fragment_bytes_upper": 72,
+                "raster_memory_bytes": 4096,
+                "raster_tmp_bytes": 128,
+                "work_units": 1000,
+            },
+        ), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["camera_estimated_candidate_roots"], 100)
+        self.assertEqual(body["camera_estimated_occupied_pixels_upper"], 8)
+        self.assertEqual(body["camera_occupied_pixels"], 2)
+        self.assertEqual(body["camera_occupancy_fraction_of_upper"], 0.25)
+        self.assertEqual(body["camera_fragment_bytes_uploaded"], 18)
+        self.assertEqual(body["camera_fragment_fraction_of_upper"], 0.25)
+        self.assertEqual(body["camera_raster_tmp_bytes_actual"], 22)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "requires the planner admission estimate fields",
+        ):
+            mod._normalize_camera_estimate({"view_projection": "camera"})
+
+        mock_s3.upload_fileobj.reset_mock()
+        mock_s3.put_object.reset_mock()
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "exceeded its planner admission bound.*fragment_bytes_upper",
+        ):
+            mod.handler(_fused_event(
+                view_projection="camera",
+                view_vertical="t1",
+                view_grid_n=512,
+                view_camera=_camera_payload(),
+                fragment_contract={
+                    "encoding": "u32le_f32depth_u8_channels_v1",
+                    "record_size_bytes": 9,
+                    "channels": 1,
+                },
+                camera_estimate={
+                    "candidate_roots": 100,
+                    "occupied_pixels_upper": 8,
+                    "fragment_bytes_upper": 17,
+                    "raster_memory_bytes": 4096,
+                    "raster_tmp_bytes": 128,
+                    "work_units": 1000,
+                },
+            ), None)
+        mock_s3.upload_fileobj.assert_not_called()
+        mock_s3.put_object.assert_not_called()
 
 
 if __name__ == "__main__":

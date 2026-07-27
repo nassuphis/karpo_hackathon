@@ -7,6 +7,7 @@
 // params, truncated bin) run before renderer creation, so they hold in any
 // browser.
 const { test, expect } = require('@playwright/test');
+const VIEW_SNAP_ORACLE = require('../fixtures/view_snap_projection_oracle.json');
 
 test.use({ launchOptions: { args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] } });
 
@@ -56,6 +57,209 @@ test('a truncated roots bin fails with a readable size message', async ({ page }
   const frag = new URLSearchParams({ v: '1', r: '/fx/roots.bin', p: '/fx/palette.png', n: '4', d: '2', s: '16', x0: '-1', x1: '1', y0: '-1', y1: '1' });
   await page.goto(VIEWER + '#' + frag.toString());
   await expect(page.locator('#message-title')).toHaveText('Sculpture data is too small');
+});
+
+test('embedded viewer exposes a square, identity-scoped camera snapshot protocol', async ({ page }) => {
+  await page.route('**/snap-parent.html', (route) => route.fulfill({
+    status: 200,
+    contentType: 'text/html',
+    body: `<!doctype html><body>
+      <script>
+        window.snapshotMessages = [];
+        addEventListener('message', (event) => {
+          window.snapshotMessages.push({ origin: event.origin, data: event.data });
+        });
+      </script>
+    </body>`,
+  }));
+  await page.route('**/fx/snap-roots.bin', (route) => route.fulfill({
+    status: 200, contentType: 'application/octet-stream', body: rootsBuffer(4),
+  }));
+  await page.route('**/fx/snap-palette.png', (route) => route.fulfill({
+    status: 200,
+    contentType: 'image/png',
+    body: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  }));
+  await page.goto('http://localhost:8765/snap-parent.html');
+  await page.evaluate(() => {
+    const qp = new URLSearchParams({
+      r: '/fx/snap-roots.bin',
+      p: '/fx/snap-palette.png',
+      n: '4',
+      d: '3',
+      s: '16',
+      x0: '-1',
+      x1: '1',
+      y0: '-1',
+      y1: '1',
+      sid: 'scu_snap',
+    });
+    const frame = document.createElement('iframe');
+    frame.id = 'snap-frame';
+    frame.style.cssText = 'width:640px;height:360px;border:0';
+    frame.src = '/sculpture.html#' + qp.toString();
+    document.body.appendChild(frame);
+  });
+  await page.waitForFunction(() => window.snapshotMessages.some(
+    (row) => row.data && row.data.type === 'polypaint-sculpture-ready'
+      && row.data.sculpture_id === 'scu_snap',
+  ), { timeout: 10000 });
+  const frame = page.frames().find((candidate) => candidate.url().includes('/sculpture.html#'));
+  expect(frame).toBeTruthy();
+  await frame.waitForFunction(() => !!window.__sculptureViewer);
+  await expect(frame.locator('#view-snap-guide')).toBeVisible();
+
+  await page.evaluate(() => {
+    const frame = document.getElementById('snap-frame');
+    frame.contentWindow.postMessage({
+      type: 'polypaint-sculpture-snapshot-request',
+      protocol_version: 1,
+      request_id: 'req-1',
+      sculpture_id: 'scu_snap',
+      target_aspect: 1,
+    }, location.origin);
+  });
+  await page.waitForFunction(() => window.snapshotMessages.some(
+    (row) => row.data && row.data.request_id === 'req-1',
+  ));
+  const response = await page.evaluate(() => window.snapshotMessages.find(
+    (row) => row.data && row.data.request_id === 'req-1',
+  ));
+  expect(response.origin).toBe('http://localhost:8765');
+  expect(response.data.error).toBeUndefined();
+  expect(response.data.snapshot).toMatchObject({
+    version: 1,
+    projection: 'perspective',
+    matrix_layout: 'column_major',
+    vertical: 't2',
+    slices: 0,
+    style: 'solid',
+    show: {
+      points: true,
+      ribbons: false,
+      threads: false,
+      clu: false,
+      splats: false,
+    },
+    frame: { aspect: 1, crop: 'center_square' },
+  });
+  expect(response.data.snapshot.model_view_matrix).toHaveLength(16);
+  expect(response.data.snapshot.projection_matrix).toHaveLength(16);
+  expect(response.data.snapshot.projection_matrix[0]).toBeCloseTo(
+    response.data.snapshot.projection_matrix[5],
+    10,
+  );
+  expect(response.data.snapshot.point_scale).toBeCloseTo(0.5, 6);
+
+  await frame.evaluate((pointWorldSize) => {
+    const viewer = window.__sculptureViewer;
+    viewer.controls.enabled = false;
+    viewer.camera.position.set(0, 0, 2);
+    viewer.camera.quaternion.set(0, 0, 0, 1);
+    viewer.camera.scale.set(1, 1, 1);
+    viewer.camera.fov = 90;
+    viewer.camera.near = 0.1;
+    viewer.camera.far = 100;
+    viewer.camera.updateProjectionMatrix();
+    viewer.camera.updateMatrixWorld(true);
+    viewer.sculpt.position.set(0, 0.5, 0);
+    viewer.sculpt.quaternion.set(0, 0, 0, 1);
+    viewer.sculpt.scale.set(1, 1, 1);
+    viewer.sculpt.updateMatrixWorld(true);
+    viewer.material.size = pointWorldSize;
+  }, VIEW_SNAP_ORACLE.camera.point_world_size);
+  await page.evaluate(() => {
+    document.getElementById('snap-frame').contentWindow.postMessage({
+      type: 'polypaint-sculpture-snapshot-request',
+      protocol_version: 1,
+      request_id: 'req-oracle',
+      sculpture_id: 'scu_snap',
+      target_aspect: 1,
+    }, location.origin);
+  });
+  await page.waitForFunction(() => window.snapshotMessages.some(
+    (row) => row.data && row.data.request_id === 'req-oracle',
+  ));
+  const oracleSnapshot = await page.evaluate(() => window.snapshotMessages.find(
+    (row) => row.data && row.data.request_id === 'req-oracle',
+  ).data.snapshot);
+  for (const [idx, value] of VIEW_SNAP_ORACLE.camera.model_view_matrix.entries()) {
+    expect(oracleSnapshot.model_view_matrix[idx]).toBeCloseTo(value, 12);
+  }
+  for (const [idx, value] of VIEW_SNAP_ORACLE.camera.projection_matrix.entries()) {
+    expect(oracleSnapshot.projection_matrix[idx]).toBeCloseTo(value, 12);
+  }
+  expect(oracleSnapshot.point_world_size).toBeCloseTo(
+    VIEW_SNAP_ORACLE.camera.point_world_size, 12,
+  );
+  expect(oracleSnapshot.point_scale).toBeCloseTo(
+    VIEW_SNAP_ORACLE.camera.point_scale, 12,
+  );
+
+  const projected = VIEW_SNAP_ORACLE.points.map((point) => {
+    const multiply = (matrix, vector) => [0, 1, 2, 3].map((row) => (
+      matrix[row] * vector[0]
+      + matrix[4 + row] * vector[1]
+      + matrix[8 + row] * vector[2]
+      + matrix[12 + row] * vector[3]
+    ));
+    const row = Math.floor(point.step_start / VIEW_SNAP_ORACLE.grid_n);
+    const j = point.step_start % VIEW_SNAP_ORACLE.grid_n;
+    const col = (row & 1) ? VIEW_SNAP_ORACLE.grid_n - 1 - j : j;
+    const t = col / VIEW_SNAP_ORACLE.grid_n;
+    const local = [point.re / 2, t - 0.5, -point.im / 2, 1];
+    const view = multiply(oracleSnapshot.model_view_matrix, local);
+    const clip = multiply(oracleSnapshot.projection_matrix, view);
+    const depth = -view[2];
+    const center = [
+      (clip[0] / clip[3] * 0.5 + 0.5) * VIEW_SNAP_ORACLE.pix,
+      (0.5 - clip[1] / clip[3] * 0.5) * VIEW_SNAP_ORACLE.pix,
+    ];
+    const fraction = (
+      oracleSnapshot.point_world_size * oracleSnapshot.point_scale / depth
+    );
+    expect(fraction).toBeGreaterThanOrEqual(oracleSnapshot.point_min_fraction);
+    expect(fraction).toBeLessThanOrEqual(oracleSnapshot.point_max_fraction);
+    return {
+      center,
+      depth,
+      pointSide: Math.ceil(VIEW_SNAP_ORACLE.pix * fraction),
+    };
+  });
+  projected.forEach((actual, idx) => {
+    const expected = VIEW_SNAP_ORACLE.points[idx];
+    expect(actual.center[0]).toBeCloseTo(expected.pixel_center[0], 10);
+    expect(actual.center[1]).toBeCloseTo(expected.pixel_center[1], 10);
+    expect(actual.depth).toBeCloseTo(expected.depth, 10);
+    expect(actual.pointSide).toBe(expected.point_side);
+  });
+
+  await frame.evaluate(() => {
+    const ctl = document.getElementById('ctl-style');
+    ctl.value = 'ghost';
+    ctl.dispatchEvent(new Event('change'));
+  });
+  await page.evaluate(() => {
+    document.getElementById('snap-frame').contentWindow.postMessage({
+      type: 'polypaint-sculpture-snapshot-request',
+      protocol_version: 1,
+      request_id: 'req-unsupported',
+      sculpture_id: 'scu_snap',
+      target_aspect: 1,
+    }, location.origin);
+  });
+  await page.waitForFunction(() => window.snapshotMessages.some(
+    (row) => row.data && row.data.request_id === 'req-unsupported',
+  ));
+  const unsupported = await page.evaluate(() => window.snapshotMessages.find(
+    (row) => row.data && row.data.request_id === 'req-unsupported',
+  ).data);
+  expect(unsupported.snapshot).toBeUndefined();
+  expect(unsupported.unsupported_state).toEqual(['ghost style']);
+  expect(unsupported.error).toContain('ghost style');
 });
 
 test('builds the point cloud: serpentine z = t2, per-step palette colors, shadow flatten', async ({ page }) => {

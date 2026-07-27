@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "cost_model_version": 1,
+  "mode": "calibration",
+  "fixture_allowlist": [],
+  "provisional_rates_and_latencies": {},
+  "rates_and_latencies": {},
+  "derations": {},
+  "headrooms": {},
+  "identities": {},
+  "provenance": {
+    "state": "unconfigured",
+    "note": "Populate from the deployed calibration matrix before enabling ViewSnap."
+  }
+}

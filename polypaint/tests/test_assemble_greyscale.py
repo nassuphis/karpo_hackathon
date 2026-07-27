@@ -3,9 +3,11 @@ import json
 import pathlib
 import shutil
 import socketserver
+import struct
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 
 
@@ -18,6 +20,14 @@ def _encode_pairs(pairs):
     for pixel_idx, score in pairs:
         payload.extend(int(pixel_idx).to_bytes(4, "little", signed=False))
         payload.append(int(score) & 0xFF)
+    return bytes(payload)
+
+
+def _encode_camera_records(records):
+    payload = bytearray()
+    for pixel_idx, depth, channels in records:
+        payload.extend(struct.pack("<If", int(pixel_idx), float(depth)))
+        payload.extend(bytes(channels))
     return bytes(payload)
 
 
@@ -91,6 +101,32 @@ class TestAssembleGreyscale(unittest.TestCase):
             hist = json.loads(hist_path.read_text()) if hist_path.exists() else None
             return result, output, hist
 
+    def _run_camera(self, pix, fragment_payloads, *, channels=1, workers=4):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            out_path = root / "out.raw"
+            hist_path = root / "hist.json"
+            frag_paths = []
+            for idx, payload in enumerate(fragment_payloads):
+                path = root / f"camera_{idx}.frag"
+                path.write_bytes(payload)
+                frag_paths.append(path)
+            cmd = [
+                str(self._binary),
+                f"--pix={pix}",
+                f"--output={out_path}",
+                f"--hist-output={hist_path}",
+                f"--channels={channels}",
+                "--allow-zero=1",
+                f"--workers={workers}",
+                "--fragment_encoding=u32le_f32depth_u8_channels_v1",
+                *(str(path) for path in frag_paths),
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            output = out_path.read_bytes() if out_path.exists() else b""
+            hist = json.loads(hist_path.read_text()) if hist_path.exists() else None
+            return result, output, hist
+
     def _run_with_url_manifest(self, pix, fragment_payloads, workers=1):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
@@ -128,6 +164,60 @@ class TestAssembleGreyscale(unittest.TestCase):
                     output = out_path.read_bytes() if out_path.exists() else b""
                     hist = json.loads(hist_path.read_text()) if hist_path.exists() else None
                     return result, output, hist
+                finally:
+                    server.shutdown()
+                    thread.join(timeout=5)
+
+    def _run_camera_with_chunked_url(self, pix, payload, *, channels, chunk_bytes):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+
+            class ChunkedHandler(http.server.BaseHTTPRequestHandler):
+                def log_message(self, *args):
+                    pass
+
+                def do_GET(self):
+                    if self.path != "/camera.frag":
+                        self.send_error(404)
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    for start in range(0, len(payload), chunk_bytes):
+                        self.wfile.write(payload[start:start + chunk_bytes])
+                        self.wfile.flush()
+                        time.sleep(0.001)
+
+            with socketserver.TCPServer(("127.0.0.1", 0), ChunkedHandler) as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    manifest = root / "urls.txt"
+                    manifest.write_text(
+                        f"http://127.0.0.1:{server.server_address[1]}/camera.frag\n",
+                        encoding="utf-8",
+                    )
+                    out_path = root / "out.raw"
+                    hist_path = root / "hist.json"
+                    result = subprocess.run(
+                        [
+                            str(self._binary),
+                            f"--pix={pix}",
+                            f"--output={out_path}",
+                            f"--hist-output={hist_path}",
+                            f"--channels={channels}",
+                            "--allow-zero=1",
+                            "--workers=1",
+                            "--fragment_encoding=u32le_f32depth_u8_channels_v1",
+                            f"--url-manifest={manifest}",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    output = out_path.read_bytes() if out_path.exists() else b""
+                    return result, output
                 finally:
                     server.shutdown()
                     thread.join(timeout=5)
@@ -181,6 +271,109 @@ class TestAssembleGreyscale(unittest.TestCase):
                 self.assertEqual(output[1], 4)
                 seen.add(bytes(output))
         self.assertEqual(len(seen), 1)   # identical bytes every run/worker-count
+
+    def test_camera_fragments_choose_nearest_depth_and_lowest_ordinal_tie(self):
+        fragments = [
+            _encode_camera_records([
+                (0, 2.0, [10]),
+                (1, 1.0, [20]),
+            ]),
+            _encode_camera_records([
+                (0, 1.0, [30]),
+                (1, 1.0, [40]),
+            ]),
+        ]
+        result, output, hist = self._run_camera(2, fragments)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, bytes([30, 20, 0, 0]))
+        self.assertEqual(hist["nonzero_pixels"], 2)
+        telemetry = json.loads(result.stdout)
+        self.assertEqual(telemetry["camera_fragments_processed"], 2)
+        self.assertEqual(telemetry["camera_fragment_records_seen"], 4)
+        self.assertEqual(telemetry["camera_fragment_transfer_bytes"], 36)
+        self.assertEqual(telemetry["camera_final_depth_replacements"], 3)
+        self.assertEqual(telemetry["camera_depth_buffer_bytes"], 16)
+        self.assertLessEqual(
+            telemetry["camera_stream_carry_peak_bytes"],
+            9,
+        )
+        self.assertGreaterEqual(telemetry["camera_merge_us"], 0)
+
+    def test_camera_fragments_stream_rgb_records(self):
+        fragments = [
+            _encode_camera_records([
+                (3, 4.0, [1, 2, 3]),
+                (3, 2.0, [7, 8, 9]),
+            ]),
+        ]
+        result, output, _ = self._run_camera(2, fragments, channels=3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, bytes([0] * 9 + [7, 8, 9]))
+
+    def test_camera_fragment_rejects_partial_record(self):
+        result, _, _ = self._run_camera(
+            1,
+            [_encode_camera_records([(0, 1.0, [9])]) + b"\x00"],
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("partial bytes", result.stderr)
+
+    def test_camera_fragment_rejects_invalid_depth_and_pixel_records(self):
+        invalid_depths = (0.0, -1.0, float("nan"), float("inf"), -float("inf"))
+        for depth in invalid_depths:
+            with self.subTest(depth=depth):
+                result, _, _ = self._run_camera(
+                    1,
+                    [_encode_camera_records([(0, depth, [9])])],
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("invalid depth", result.stderr)
+
+        result, _, _ = self._run_camera(
+            1,
+            [_encode_camera_records([(1, 1.0, [9])])],
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("out of bounds", result.stderr)
+
+    def test_camera_url_stream_can_split_every_record_field(self):
+        payload = _encode_camera_records([
+            (0, 2.0, [1, 2, 3]),
+            (0, 1.0, [7, 8, 9]),
+            (3, 4.0, [11, 12, 13]),
+        ])
+        result, output = self._run_camera_with_chunked_url(
+            2,
+            payload,
+            channels=3,
+            chunk_bytes=1,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, bytes([7, 8, 9, 0, 0, 0, 0, 0, 0, 11, 12, 13]))
+        telemetry = json.loads(result.stdout)
+        self.assertEqual(telemetry["camera_fragment_records_seen"], 3)
+        self.assertEqual(
+            telemetry["camera_fragment_transfer_bytes"],
+            len(payload),
+        )
+        self.assertLessEqual(telemetry["camera_stream_carry_peak_bytes"], 11)
+
+    def test_large_camera_fragment_keeps_only_one_record_of_stream_carry(self):
+        record_count = 100_000
+        payload = struct.pack("<IfB", 0, 1.0, 9) * record_count
+        result, output, _ = self._run_camera(1, [payload])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, bytes([9]))
+        telemetry = json.loads(result.stdout)
+        self.assertEqual(
+            telemetry["camera_fragment_transfer_bytes"],
+            len(payload),
+        )
+        self.assertEqual(
+            telemetry["camera_fragment_records_seen"],
+            record_count,
+        )
+        self.assertLessEqual(telemetry["camera_stream_carry_peak_bytes"], 9)
 
     def test_missing_fragment_path_is_clear_error(self):
         frags = [_encode_pairs([(0, 5)])]

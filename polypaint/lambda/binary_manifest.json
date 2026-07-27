@@ -1,15 +1,16 @@
 {
   "binaries": {
     "assemble_greyscale": {
-      "built_mtime": 1785144030,
-      "sha256": "0082832b62a6508e53b2ac15e838c0bac6ac65d8f7fe8cfa866a9149a89c1719",
-      "size": 204656,
+      "built_mtime": 1785167474,
+      "sha256": "da9b01a3b7abee039c0aba0e597add6153eb0eb81e602e412a48ede0a65c5a95",
+      "size": 205000,
       "source_sha256": {
-        "lambda/assemble_greyscale.c": "1656b959a5ed39d21a8f5d628d390deb4d6dc9b09c368fd98e4d4ea56ac35d17"
+        "lambda/assemble_greyscale.c": "db69ca002af92affcbbc7de6463b927232b52200638b975309ef8028b4d8f846",
+        "lambda/camera_fragment_format.h": "a51142b6f6576607c665756e0853889f8c18e9435064f69ff60b6d877dc201ed"
       }
     },
     "autolevels_render": {
-      "built_mtime": 1785144136,
+      "built_mtime": 1785167497,
       "sha256": "532f26aa33cb764c3dd9d6a4adf833edf0f53ad49a628ceca8168946ee101674",
       "size": 204568,
       "source_sha256": {
@@ -17,7 +18,7 @@
       }
     },
     "bilevel_merge": {
-      "built_mtime": 1785144135,
+      "built_mtime": 1785167496,
       "sha256": "aef99c616f1849d02dbf1e9496a41363f2fae8fa31141556d716b8698c5e3e39",
       "size": 203728,
       "source_sha256": {
@@ -25,7 +26,7 @@
       }
     },
     "bilevel_section_raster": {
-      "built_mtime": 1785144031,
+      "built_mtime": 1785167367,
       "sha256": "a7a4c79a1d9c639b1f5525851c7450e6652be099535609704a7426c084812441",
       "size": 247232,
       "source_sha256": {
@@ -34,7 +35,7 @@
       }
     },
     "coeffs_bilevel_raster": {
-      "built_mtime": 1785144030,
+      "built_mtime": 1785167367,
       "sha256": "ce9fdb789d6623005cecbc7099d47dcc5ce129fd5c029791fb9dc634d7ec5cef",
       "size": 180728,
       "source_sha256": {
@@ -42,7 +43,7 @@
       }
     },
     "dz_export": {
-      "built_mtime": 1785144136,
+      "built_mtime": 1785167496,
       "sha256": "47addd02277891f021535d41f6a89328fb1c50a45f07e4b54d2c41d92014466d",
       "size": 202984,
       "source_sha256": {
@@ -50,7 +51,7 @@
       }
     },
     "palette_bins_render": {
-      "built_mtime": 1785144113,
+      "built_mtime": 1785167370,
       "sha256": "e298905530c49cce7418b941fe21eab31098ff9e495efe61c273eb59a17c1570",
       "size": 233576,
       "source_sha256": {
@@ -61,7 +62,7 @@
       }
     },
     "png_export": {
-      "built_mtime": 1785144135,
+      "built_mtime": 1785167496,
       "sha256": "aaeddd7e720ef409a5a81d16b8379c2e61260a01d433388cd7a3b70fe0f4e19f",
       "size": 203184,
       "source_sha256": {
@@ -69,7 +70,7 @@
       }
     },
     "raw2jpeg": {
-      "built_mtime": 1785144134,
+      "built_mtime": 1785167495,
       "sha256": "32e026d795f832ec43b827638f138a45d33049a4689579385c7dc27751666c52",
       "size": 203560,
       "source_sha256": {
@@ -77,7 +78,7 @@
       }
     },
     "raw_to_bilevel": {
-      "built_mtime": 1785144135,
+      "built_mtime": 1785167496,
       "sha256": "86dba12c9a202812ccf7ca4ed9a08fb1abe1afcddc18a7468f94bf35d3c7b13d",
       "size": 203504,
       "source_sha256": {
@@ -85,20 +86,22 @@
       }
     },
     "roots2pix_mt": {
-      "built_mtime": 1785144005,
-      "sha256": "486775e300902dbc4a33dd6c68620189ce3796498fb1c11c3a2165e3527c1aa1",
-      "size": 207416,
+      "built_mtime": 1785167404,
+      "sha256": "39c6d26600b0046d93608eaf211b236ca1cd86f3269ee2105a737c0394f5451d",
+      "size": 207664,
       "source_sha256": {
+        "lambda/camera_fragment_format.h": "a51142b6f6576607c665756e0853889f8c18e9435064f69ff60b6d877dc201ed",
         "lambda/multispan_reader.c": "f5c167bb53be996dd2c72087bcc2b51026515813ba8de23d652c9e6aec9309a5",
         "lambda/multispan_reader.h": "2bcaccbe8f69025e92b18b0ca585e0c8c8a8e87c2b9e078b15a42e4483fdfead",
         "lambda/root_xforms.h": "3724d40fce728fa63f359e9fa53cd5f42e7b546623bc5adadb6892d4d0fc81b4",
-        "lambda/roots2pix_mt.c": "65b7f3bc4f5a862440526eda23ff10b77fcd980ebfa23eb4923d8309ac8d01a9",
+        "lambda/roots2pix_mt.c": "7a020284ea3ebaa2cd7c31f980d544a423ed259aba89911fa4abdb810e312f7d",
         "lambda/solve_score.h": "f579ace48b0a318143c78f728852ec8497ace4e38738e7e99bd7f3f38eec3b0e",
+        "lambda/view_camera_projection.h": "d7f63350253e5a64a4130378d5cfa428c46a692c41ff1dc71aa0a391e3d7970b",
         "lambda/view_projection.h": "7ce7478451bcc5d97d0771cff908d694ad88c9b9de7f39cbc506bd94288563e4"
       }
     },
     "score_raw_render": {
-      "built_mtime": 1785144135,
+      "built_mtime": 1785167495,
       "sha256": "07830202601f02ce87b609339ee0aa8049fd22d13ef33945f7b3287e5873ddea",
       "size": 228304,
       "source_sha256": {
@@ -109,7 +112,7 @@
       }
     },
     "sheet_stitch": {
-      "built_mtime": 1785144136,
+      "built_mtime": 1785167496,
       "sha256": "a6e549dfbf6bdd93c8875a6713113f85a5c8af8d1756765098ff9ef32eb1a5bf",
       "size": 203904,
       "source_sha256": {
@@ -117,7 +120,7 @@
       }
     },
     "solve_palette_chunk": {
-      "built_mtime": 1785144094,
+      "built_mtime": 1785167370,
       "sha256": "2b77be790bc19740806f57eda20031a2aed550e1f5c30ecaef1799c640196973",
       "size": 250928,
       "source_sha256": {
@@ -127,7 +130,7 @@
       }
     },
     "solve_palette_chunk_mt": {
-      "built_mtime": 1785144113,
+      "built_mtime": 1785167453,
       "sha256": "3fc6719881581b99fae88ad7afc00e0f03acd34e97f2e77cfaa6e55dcd192335",
       "size": 207288,
       "source_sha256": {
@@ -139,7 +142,7 @@
       }
     },
     "solve_palette_debug": {
-      "built_mtime": 1785144093,
+      "built_mtime": 1785167369,
       "sha256": "a598c15957baa2d35fc51f7ed52ec0fe8aa29d74cf36f90af418d5b7f9552936",
       "size": 338568,
       "source_sha256": {
@@ -152,7 +155,7 @@
       }
     },
     "solve_proximity_hist_sectioned": {
-      "built_mtime": 1785144093,
+      "built_mtime": 1785167430,
       "sha256": "e518d94cd7a32013c776945ee48693df105efa617a508731165651b287385994",
       "size": 207928,
       "source_sha256": {
@@ -164,7 +167,7 @@
       }
     },
     "solve_proximity_stats": {
-      "built_mtime": 1785144032,
+      "built_mtime": 1785167368,
       "sha256": "f4f80e02f8c4b739fcd13eebe4ad450b1df7c5053bb52b667b5d005ccc7aab59",
       "size": 323152,
       "source_sha256": {
@@ -174,7 +177,7 @@
       }
     },
     "splat_bake": {
-      "built_mtime": 1785144113,
+      "built_mtime": 1785167370,
       "sha256": "6acb5b306c199c32dbf3205aab6f9559083c5a1d37d49a4d374fec1be242d13d",
       "size": 246680,
       "source_sha256": {
@@ -182,7 +185,7 @@
       }
     },
     "step_scores_to_palette_raw": {
-      "built_mtime": 1785144113,
+      "built_mtime": 1785167370,
       "sha256": "105967512a95e9413b5300ac7694f4c57bf6dd2a15c3680387d5ff70ecad2460",
       "size": 144664,
       "source_sha256": {
@@ -190,7 +193,7 @@
       }
     },
     "sweep": {
-      "built_mtime": 1785143980,
+      "built_mtime": 1785167367,
       "sha256": "7b5a7b15352ed310234ab514c96e21db096f910e4b96413ced8c6f229df8de02",
       "size": 2018920,
       "source_sha256": {
@@ -231,7 +234,7 @@
       }
     },
     "sweep_cm": {
-      "built_mtime": 1785144178,
+      "built_mtime": 1785167547,
       "sha256": "94ceffcc4d6b107ebb0a2d606269230e5b2d05663e868058dd4802e568b64c37",
       "size": 204376,
       "source_sha256": {
@@ -242,7 +245,7 @@
       }
     },
     "sweep_coeffgen": {
-      "built_mtime": 1785144177,
+      "built_mtime": 1785167546,
       "sha256": "b37e8152685e6bf3cfc3d2fe5cf3b3a2573a881dabc23cb26b31bfa3a045bfa8",
       "size": 1959392,
       "source_sha256": {
@@ -283,7 +286,7 @@
       }
     },
     "sweep_mt": {
-      "built_mtime": 1785143980,
+      "built_mtime": 1785167367,
       "sha256": "dd83ea360250b16fa4013b7a89c48699903ab2a8b62a75a037972058ccd3032f",
       "size": 253160,
       "source_sha256": {
@@ -291,7 +294,7 @@
       }
     },
     "tiff_compat": {
-      "built_mtime": 1785144135,
+      "built_mtime": 1785167496,
       "sha256": "c99135897734087c55453c1108b67ae2df469afaebb21646c22b1cb3d214aaba",
       "size": 203624,
       "source_sha256": {
@@ -299,7 +302,7 @@
       }
     },
     "wall_dz": {
-      "built_mtime": 1785144136,
+      "built_mtime": 1785167496,
       "sha256": "67d4865dbbed5b3dc40c4c635557964ab3e0bf53416ab784e046959b3a70a80f",
       "size": 203800,
       "source_sha256": {
@@ -307,7 +310,7 @@
       }
     }
   },
-  "generated_at": 1785144178,
-  "git_dirty": false,
-  "git_sha": "6e020db8fd48aba758c934b17932cf01cd92763a"
+  "generated_at": 1785167547,
+  "git_dirty": true,
+  "git_sha": "35967d150efcfed2acbb56dae80072afd9d593c3"
 }

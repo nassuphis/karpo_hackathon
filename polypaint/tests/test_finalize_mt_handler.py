@@ -102,6 +102,20 @@ class _Body:
         yield self._data
 
 
+def _capture_managed_uploads(fake_s3, uploads):
+    def upload_fileobj(fileobj, Bucket, Key, ExtraArgs=None, Config=None):
+        extra = dict(ExtraArgs or {})
+        uploads[Key] = {
+            "data": fileobj.read(),
+            "content_type": extra.get("ContentType"),
+            "metadata": extra.get("Metadata"),
+            "cache_control": extra.get("CacheControl"),
+            "managed_upload": True,
+        }
+
+    fake_s3.upload_fileobj.side_effect = upload_fileobj
+
+
 class TestFinalizeMTHandler(unittest.TestCase):
     def test_finalize_mt_rejects_invalid_contract_fields(self):
         import handler_finalize_mt as mod
@@ -119,6 +133,53 @@ class TestFinalizeMTHandler(unittest.TestCase):
         bad_manifest = dict(_event()["fragment_manifest"], pair_encoding="broken")
         with self.assertRaisesRegex(RuntimeError, "fragment_manifest.pair_encoding"):
             mod.handler(_event(fragment_manifest=bad_manifest), None)
+
+        aliases_disagree = dict(
+            _event()["fragment_manifest"],
+            fragment_encoding="u32le_pixel_idx_plus_u8_channels_v1",
+        )
+        with self.assertRaisesRegex(RuntimeError, "encoding aliases disagree"):
+            mod.handler(_event(fragment_manifest=aliases_disagree), None)
+
+    def test_camera_fragment_manifest_requires_camera_projection_and_record_size(self):
+        import handler_finalize_mt as mod
+
+        camera_manifest = {
+            **_event()["fragment_manifest"],
+            "pair_encoding": "u32le_f32depth_u8_channels_v1",
+            "fragment_encoding": "u32le_f32depth_u8_channels_v1",
+            "channels": 1,
+            "record_size_bytes": 9,
+        }
+        with self.assertRaisesRegex(RuntimeError, "encoding/projection mismatch"):
+            mod._validate_fragment_manifest(
+                camera_manifest,
+                source_item_count=1,
+                fragment_prefix=TEST_FRAGMENT_PREFIX,
+                expected_chain_fingerprint="fp_test",
+                expected_projection="front",
+            )
+
+        validated = mod._validate_fragment_manifest(
+            camera_manifest,
+            source_item_count=1,
+            fragment_prefix=TEST_FRAGMENT_PREFIX,
+            expected_chain_fingerprint="fp_test",
+            expected_projection="camera",
+        )
+        self.assertEqual(
+            validated["pair_encoding"],
+            "u32le_f32depth_u8_channels_v1",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "record_size_bytes mismatch"):
+            mod._validate_fragment_manifest(
+                {**camera_manifest, "record_size_bytes": 5},
+                source_item_count=1,
+                fragment_prefix=TEST_FRAGMENT_PREFIX,
+                expected_chain_fingerprint="fp_test",
+                expected_projection="camera",
+            )
 
     @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
     @patch("handler_finalize_mt.report_status")
@@ -158,6 +219,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
             lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
         )
         fake_s3.put_object.side_effect = put_object
+        _capture_managed_uploads(fake_s3, uploads)
         mock_client_factory.return_value = fake_s3
 
         def run_side_effect(cmd, capture_output=False, text=False, timeout=None, env=None):
@@ -294,6 +356,81 @@ class TestFinalizeMTHandler(unittest.TestCase):
         self.assertEqual(raw_meta["artifact_family"], "views")
         mock_overlay.assert_not_called()
 
+        # ViewSnap keeps the bulky camera contract in the Views sidecar only.
+        # It must never leak into the image object's 2 KiB user-metadata
+        # budget at the end of an expensive render.
+        uploads.clear()
+        camera_prefix = f"renders/{TEST_JOB_ID}/views/view_camera_run_123/"
+        camera_meta_key = camera_prefix + "meta.json"
+        camera_snapshot = {
+            "version": 1,
+            "projection": "perspective",
+            "matrix_layout": "column_major",
+            "model_view_matrix": [1.0, 0.0, 0.0, 0.0] * 4,
+            "projection_matrix": [2.0, 0.0, 0.0, 0.0] * 4,
+            "vertical": "t2",
+            "slices": 0,
+            "effective_tlo": 0.0,
+            "effective_thi": 1.0,
+            "point_world_size": 0.004,
+            "point_scale": 0.5,
+            "point_min_fraction": 1.0 / 1024.0,
+            "point_max_fraction": 1.0,
+            "style": "solid",
+            "show": {
+                "points": True,
+                "ribbons": False,
+                "threads": False,
+                "clu": False,
+                "splats": False,
+            },
+            "frame": {"aspect": 1.0, "crop": "center_square"},
+        }
+        camera_metadata = dict(
+            view_metadata,
+            artifact_id="view_camera_run_123",
+            view_id="view_camera_run_123",
+            projection="camera",
+            view_projection="camera",
+            source_sculpture_id="scu_source_4",
+            camera_snapshot_version="1",
+            view_camera=json.dumps(camera_snapshot, separators=(",", ":")),
+            prefix=camera_prefix,
+        )
+        camera_manifest = {
+            **_event()["fragment_manifest"],
+            "pair_encoding": "u32le_f32depth_u8_channels_v1",
+            "fragment_encoding": "u32le_f32depth_u8_channels_v1",
+            "channels": 1,
+            "record_size_bytes": 9,
+        }
+        mod.handler(_event(
+            pix=2000,
+            image_key=camera_prefix + "image.jpeg",
+            preview_key=camera_prefix + "preview.png",
+            meta_key=camera_meta_key,
+            raw_key=camera_prefix + "greyscale.raw",
+            raw_meta_key=camera_prefix + "greyscale.meta.json",
+            fragment_manifest=camera_manifest,
+            metadata=camera_metadata,
+        ), None)
+        saved_camera = json.loads(
+            uploads[camera_meta_key]["data"].decode("utf-8")
+        )
+        self.assertEqual(saved_camera["projection"], "camera")
+        self.assertEqual(saved_camera["source_sculpture_id"], "scu_source_4")
+        self.assertEqual(
+            json.loads(saved_camera["view_camera"])["matrix_layout"],
+            "column_major",
+        )
+        camera_headers = uploads[camera_prefix + "image.jpeg"]["metadata"]
+        self.assertNotIn("view_camera", camera_headers)
+        self.assertNotIn("source_sculpture_id", camera_headers)
+        self.assertLessEqual(
+            mod._metadata_size_bytes(camera_headers),
+            mod.S3_USER_METADATA_LIMIT_BYTES,
+        )
+
     @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
     @patch("handler_finalize_mt.report_status")
     @patch("raw_score_render.subprocess.run")
@@ -332,6 +469,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
             lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
         )
         fake_s3.put_object.side_effect = put_object
+        _capture_managed_uploads(fake_s3, uploads)
         mock_client_factory.return_value = fake_s3
 
         def run_side_effect(cmd, capture_output=False, text=False, timeout=None, env=None):
@@ -446,6 +584,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
             lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
         )
         fake_s3.put_object.side_effect = put_object
+        _capture_managed_uploads(fake_s3, uploads)
         mock_client_factory.return_value = fake_s3
 
         assoc_raw_key = f"renders/{TEST_JOB_ID}/palettes/pal_{TEST_ARTIFACT_ID}/greyscale.raw"
@@ -603,6 +742,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
             lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
         )
         fake_s3.put_object.side_effect = put_object
+        _capture_managed_uploads(fake_s3, uploads)
         mock_client_factory.return_value = fake_s3
 
         def run_side_effect(cmd, capture_output=False, text=False, timeout=None, env=None):
@@ -697,6 +837,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
             lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
         )
         fake_s3.put_object.side_effect = put_object
+        _capture_managed_uploads(fake_s3, uploads)
         mock_client_factory.return_value = fake_s3
 
         def run_side_effect(cmd, capture_output=False, text=False, timeout=None, env=None):

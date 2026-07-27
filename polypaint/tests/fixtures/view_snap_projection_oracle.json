@@ -1,0 +1,80 @@
+{
+  "description": "Three.js r160 PerspectiveCamera(90, square, 0.1, 100) with an identity-oriented camera at z=2 and Sculpture translated by y=0.5.",
+  "pix": 256,
+  "grid_n": 4,
+  "camera": {
+    "version": 1,
+    "projection": "perspective",
+    "matrix_layout": "column_major",
+    "model_view_matrix": [
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0.5, -2, 1
+    ],
+    "projection_matrix": [
+      1.0000000000000002, 0, 0, 0,
+      0, 1.0000000000000002, 0, 0,
+      0, 0, -1.002002002002002, -1,
+      0, 0, -0.20020020020020018, 0
+    ],
+    "vertical": "t2",
+    "slices": 0,
+    "effective_tlo": 0,
+    "effective_thi": 1,
+    "point_world_size": 0.016,
+    "point_scale": 0.5,
+    "point_min_fraction": 0.001,
+    "point_max_fraction": 1,
+    "style": "solid",
+    "show": {
+      "points": true,
+      "ribbons": false,
+      "threads": false,
+      "clu": false,
+      "splats": false
+    },
+    "frame": {
+      "aspect": 1,
+      "crop": "center_square"
+    }
+  },
+  "points": [
+    {
+      "step_start": 0,
+      "re": 0,
+      "im": 0,
+      "pixel_center": [128, 128],
+      "depth": 2,
+      "point_side": 2,
+      "pixels": [32639, 32640, 32895, 32896]
+    },
+    {
+      "step_start": 1,
+      "re": 1,
+      "im": 1,
+      "pixel_center": [153.6, 115.2],
+      "depth": 2.5,
+      "point_side": 1,
+      "pixels": [29593]
+    },
+    {
+      "step_start": 2,
+      "re": -1,
+      "im": -1,
+      "pixel_center": [85.33333333333333, 85.33333333333334],
+      "depth": 1.5,
+      "point_side": 2,
+      "pixels": [21588, 21589, 21844, 21845]
+    },
+    {
+      "step_start": 3,
+      "re": 0.5,
+      "im": 0,
+      "pixel_center": [144, 80],
+      "depth": 2,
+      "point_side": 2,
+      "pixels": [20367, 20368, 20623, 20624]
+    }
+  ]
+}

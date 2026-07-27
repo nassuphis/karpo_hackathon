@@ -15,6 +15,7 @@
 #include <ctype.h>
 #include <curl/curl.h>
 #include <errno.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -22,6 +23,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#include "camera_fragment_format.h"
 
 /* Deterministic collision policy (CR28 F1): when two fragments carry the same
  * global pixel, the one from the LOWEST source ordinal wins, independent of
@@ -43,9 +46,11 @@ typedef struct {
     int height;
     int channels;
     int allow_zero;
+    int camera_mode;
     size_t record_size;
     size_t npix;
     uint8_t *buf;
+    float *depth;
     uint16_t *owner;                 /* per-pixel winning fragment ordinal */
     char **paths;
     int n_paths;
@@ -55,12 +60,25 @@ typedef struct {
     pthread_mutex_t queue_mu;
     pthread_mutex_t err_mu;
     pthread_mutex_t write_mu[AG_WRITE_STRIPES];
+    uint64_t camera_bytes_received;
+    uint64_t camera_records_seen;
+    uint64_t camera_depth_replacements;
+    uint64_t camera_fragments_processed;
+    size_t camera_peak_carry_bytes;
+    long long camera_merge_us;
 } AssembleState;
 
 typedef struct {
     AssembleState *st;
     CURL *curl;
 } WorkerCtx;
+
+typedef struct {
+    AssembleState *st;
+    const char *path;
+    uint8_t carry[8 + 8];
+    size_t carry_size;
+} CameraStreamCtx;
 
 static const char *getArg(int argc, char **argv, const char *key) {
     int klen = (int)strlen(key);
@@ -70,6 +88,12 @@ static const char *getArg(int argc, char **argv, const char *key) {
         }
     }
     return NULL;
+}
+
+static long long monotonic_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000000LL + (long long)ts.tv_nsec / 1000LL;
 }
 
 static int getArgInt(int argc, char **argv, const char *key, int def) {
@@ -318,6 +342,190 @@ static int process_fragment_bytes(AssembleState *st, int frag_ord, const char *p
     return 1;
 }
 
+static int process_camera_record(
+        AssembleState *st,
+        const char *path,
+        const uint8_t *record) {
+    uint32_t pixel_idx = camera_fragment_read_u32le(record);
+    float depth = camera_fragment_read_f32le(record + 4);
+    st->camera_records_seen++;
+    if ((size_t)pixel_idx >= st->npix) {
+        set_error(
+            st,
+            "assemble_greyscale: camera fragment %s pixel_idx %lld out of bounds for npix=%lld",
+            path,
+            (long long)pixel_idx,
+            (long long)st->npix
+        );
+        return 0;
+    }
+    if (!isfinite(depth) || !(depth > 0.0f)) {
+        set_error(
+            st,
+            "assemble_greyscale: camera fragment %s has invalid depth at pixel %lld",
+            path,
+            (long long)pixel_idx,
+            0
+        );
+        return 0;
+    }
+    if (depth < st->depth[pixel_idx]) {
+        st->depth[pixel_idx] = depth;
+        st->camera_depth_replacements++;
+        memcpy(
+            st->buf + (size_t)pixel_idx * (size_t)st->channels,
+            record + 8,
+            (size_t)st->channels
+        );
+    }
+    return 1;
+}
+
+static size_t write_camera_stream_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    CameraStreamCtx *stream = (CameraStreamCtx *)userdata;
+    size_t total = size * nmemb;
+    stream->st->camera_bytes_received += (uint64_t)total;
+    size_t consumed = 0;
+    while (consumed < total) {
+        size_t need = stream->st->record_size - stream->carry_size;
+        size_t take = total - consumed < need ? total - consumed : need;
+        memcpy(stream->carry + stream->carry_size, ptr + consumed, take);
+        stream->carry_size += take;
+        if (stream->carry_size > stream->st->camera_peak_carry_bytes) {
+            stream->st->camera_peak_carry_bytes = stream->carry_size;
+        }
+        consumed += take;
+        if (stream->carry_size == stream->st->record_size) {
+            if (!process_camera_record(stream->st, stream->path, stream->carry)) {
+                return 0;
+            }
+            stream->carry_size = 0;
+        }
+    }
+    return total;
+}
+
+static int process_camera_url(AssembleState *st, const char *url) {
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        set_error(st, "assemble_greyscale: cannot initialize camera download for %s", url, 0, 0);
+        return 0;
+    }
+    char curlErr[CURL_ERROR_SIZE] = {0};
+    CURLcode rc = CURLE_OK;
+    long httpStatus = 0;
+    int attempts_made = 0;
+    for (int attempt = 0; attempt < AG_DOWNLOAD_ATTEMPTS; attempt++) {
+        CameraStreamCtx stream = {
+            .st = st,
+            .path = url,
+            .carry_size = 0,
+        };
+        curlErr[0] = 0;
+        httpStatus = 0;
+        curl_easy_reset(curl);
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_camera_stream_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &stream);
+        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlErr);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "identity");
+        curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+        /* The enclosing assembler process owns the 600-second deadline.
+         * A separate 120-second object cap rejected large, healthy streams
+         * that admission had correctly priced inside that budget. */
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
+        rc = curl_easy_perform(curl);
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+        attempts_made = attempt + 1;
+        if (rc == CURLE_OK && stream.carry_size == 0 && !atomic_load(&st->failed)) {
+            curl_easy_cleanup(curl);
+            return 1;
+        }
+        if (rc == CURLE_OK && stream.carry_size != 0 && !atomic_load(&st->failed)) {
+            set_error(
+                st,
+                "assemble_greyscale: camera fragment %s ends with %lld partial bytes",
+                url,
+                (long long)stream.carry_size,
+                0
+            );
+        }
+        if (atomic_load(&st->failed)
+                || attempts_made >= AG_DOWNLOAD_ATTEMPTS
+                || !ag_retryable_failure(rc, httpStatus)) {
+            break;
+        }
+        ag_sleep_ms(150L * (attempt + 1));
+    }
+    curl_easy_cleanup(curl);
+    if (!atomic_load(&st->failed)) {
+        char detail[512];
+        snprintf(
+            detail,
+            sizeof(detail),
+            "assemble_greyscale: camera download failed after %d attempt(s) "
+            "(curl %d %s; http %ld; %s): %s",
+            attempts_made,
+            (int)rc,
+            curl_easy_strerror(rc),
+            httpStatus,
+            curlErr[0] ? curlErr : "no detail",
+            url
+        );
+        set_error(st, "%s", detail, 0, 0);
+    }
+    return 0;
+}
+
+static int process_camera_local(AssembleState *st, const char *path) {
+    FILE *fh = fopen(path, "rb");
+    if (!fh) {
+        set_error(st, "assemble_greyscale: cannot open %s (%lld)", path, (long long)errno, 0);
+        return 0;
+    }
+    uint8_t buffer[64 * 1024];
+    CameraStreamCtx stream = {
+        .st = st,
+        .path = path,
+        .carry_size = 0,
+    };
+    size_t got = 0;
+    while ((got = fread(buffer, 1, sizeof(buffer), fh)) > 0) {
+        if (write_camera_stream_cb((char *)buffer, 1, got, &stream) != got) {
+            fclose(fh);
+            return 0;
+        }
+    }
+    if (ferror(fh)) {
+        fclose(fh);
+        set_error(st, "assemble_greyscale: cannot read %s (%lld)", path, (long long)errno, 0);
+        return 0;
+    }
+    fclose(fh);
+    if (stream.carry_size != 0) {
+        set_error(
+            st,
+            "assemble_greyscale: camera fragment %s ends with %lld partial bytes",
+            path,
+            (long long)stream.carry_size,
+            0
+        );
+        return 0;
+    }
+    return 1;
+}
+
+static int process_camera_source(AssembleState *st, const char *path) {
+    return is_url(path)
+        ? process_camera_url(st, path)
+        : process_camera_local(st, path);
+}
+
 static int process_fragment_source(WorkerCtx *ctx, int frag_ord, const char *path) {
     uint8_t *data = NULL;
     size_t size = 0;
@@ -439,6 +647,7 @@ int main(int argc, char **argv) {
     const char *urlManifest = getArg(argc, argv, "--url-manifest");
     const char *widthArg = getArg(argc, argv, "--width");
     const char *heightArg = getArg(argc, argv, "--height");
+    const char *fragmentEncoding = getArg(argc, argv, "--fragment_encoding");
     int pix = getArgInt(argc, argv, "--pix", 0);
     int channels = getArgInt(argc, argv, "--channels", 1);
     int allow_zero = getArgInt(argc, argv, "--allow-zero", 0);
@@ -458,6 +667,23 @@ int main(int argc, char **argv) {
     }
     if (channels < 1 || channels > 8) {
         fprintf(stderr, "assemble_greyscale: --channels must be in [1,8], got %d\n", channels);
+        return 2;
+    }
+    int camera_mode = fragmentEncoding
+        && strcmp(fragmentEncoding, CAMERA_FRAGMENT_ENCODING) == 0;
+    if (fragmentEncoding && *fragmentEncoding
+            && !camera_mode
+            && strcmp(fragmentEncoding, "u32le_u8_v1") != 0
+            && strcmp(fragmentEncoding, "u32le_pixel_idx_plus_u8_channels_v1") != 0) {
+        fprintf(
+            stderr,
+            "assemble_greyscale: unsupported --fragment_encoding=%s\n",
+            fragmentEncoding
+        );
+        return 2;
+    }
+    if (camera_mode && !allow_zero) {
+        fprintf(stderr, "assemble_greyscale: camera fragments require --allow-zero=1\n");
         return 2;
     }
     int width = pix;
@@ -495,26 +721,40 @@ int main(int argc, char **argv) {
     size_t npix = (size_t)width * (size_t)height;
     size_t raw_size = npix * (size_t)channels;
     uint8_t *buf = (uint8_t *)calloc(raw_size ? raw_size : 1, 1);
-    /* per-pixel winning ordinal, init 0xFFFF (unclaimed) via 0xFF byte fill */
-    uint16_t *owner = (uint16_t *)malloc((npix ? npix : 1) * sizeof(uint16_t));
-    if (!buf || !owner) {
+    /* Legacy fragments need an ordinal plane. Camera fragments need a
+     * nearest-depth plane and are processed in ordinal order, so equal-depth
+     * ties retain the earlier source without a second ownership plane. */
+    uint16_t *owner = camera_mode
+        ? NULL
+        : (uint16_t *)malloc((npix ? npix : 1) * sizeof(uint16_t));
+    float *depth = camera_mode
+        ? (float *)malloc((npix ? npix : 1) * sizeof(float))
+        : NULL;
+    if (!buf || (camera_mode ? !depth : !owner)) {
         fprintf(stderr, "assemble_greyscale: cannot allocate %zu bytes\n", raw_size);
-        free(buf); free(owner);
+        free(buf); free(owner); free(depth);
         for (int i = 0; i < n_paths; i++) free(paths[i]);
         free(paths);
         curl_global_cleanup();
         return 4;
     }
-    memset(owner, 0xFF, (npix ? npix : 1) * sizeof(uint16_t));
+    if (owner) {
+        memset(owner, 0xFF, (npix ? npix : 1) * sizeof(uint16_t));
+    }
+    if (depth) {
+        for (size_t i = 0; i < npix; i++) depth[i] = INFINITY;
+    }
 
     AssembleState st;
     memset(&st, 0, sizeof(st));
     st.owner = owner;
+    st.depth = depth;
     st.width = width;
     st.height = height;
     st.channels = channels;
     st.allow_zero = allow_zero ? 1 : 0;
-    st.record_size = 4u + (size_t)channels;
+    st.camera_mode = camera_mode;
+    st.record_size = (camera_mode ? 8u : 4u) + (size_t)channels;
     st.npix = npix;
     st.buf = buf;
     st.paths = paths;
@@ -523,36 +763,46 @@ int main(int argc, char **argv) {
     pthread_mutex_init(&st.err_mu, NULL);
     for (int i = 0; i < AG_WRITE_STRIPES; i++) pthread_mutex_init(&st.write_mu[i], NULL);
 
-    pthread_t *threads = (pthread_t *)calloc((size_t)workers, sizeof(pthread_t));
-    WorkerCtx *ctxs = (WorkerCtx *)calloc((size_t)workers, sizeof(WorkerCtx));
-    if (!threads || !ctxs) {
-        fprintf(stderr, "assemble_greyscale: cannot allocate worker state\n");
-        free(ctxs);
-        free(threads);
-        free(buf); free(owner);
-        for (int i = 0; i < n_paths; i++) free(paths[i]);
-        free(paths);
-        curl_global_cleanup();
-        return 5;
-    }
-
-    /* Safe partial thread startup (CR28 F2): on a mid-loop pthread_create
-     * failure, signal stop and JOIN the threads already created before freeing
-     * any shared state they still reference. */
-    int created = 0;
     int start_failed = 0;
-    for (int i = 0; i < workers; i++) {
-        ctxs[i].st = &st;
-        ctxs[i].curl = NULL;
-        if (pthread_create(&threads[i], NULL, worker_main, &ctxs[i]) != 0) {
-            fprintf(stderr, "assemble_greyscale: pthread_create failed\n");
-            request_stop(&st);
-            start_failed = 1;
-            break;
+    pthread_t *threads = NULL;
+    WorkerCtx *ctxs = NULL;
+    if (camera_mode) {
+        /* Camera fragments can be enormous. Stream one source at a time so
+         * memory is O(output pixels), and preserve source order so equal
+         * float32 depths deterministically keep the lower ordinal. */
+        long long camera_merge_start_us = monotonic_us();
+        for (int i = 0; i < n_paths && !atomic_load(&st.failed); i++) {
+            if (!process_camera_source(&st, paths[i])) break;
+            st.camera_fragments_processed++;
         }
-        created++;
+        st.camera_merge_us = monotonic_us() - camera_merge_start_us;
+    } else {
+        threads = (pthread_t *)calloc((size_t)workers, sizeof(pthread_t));
+        ctxs = (WorkerCtx *)calloc((size_t)workers, sizeof(WorkerCtx));
+        if (!threads || !ctxs) {
+            fprintf(stderr, "assemble_greyscale: cannot allocate worker state\n");
+            start_failed = 1;
+        }
+
+        /* Safe partial thread startup (CR28 F2): on a mid-loop
+         * pthread_create failure, signal stop and JOIN the threads already
+         * created before freeing shared state. */
+        int created = 0;
+        if (!start_failed) {
+            for (int i = 0; i < workers; i++) {
+                ctxs[i].st = &st;
+                ctxs[i].curl = NULL;
+                if (pthread_create(&threads[i], NULL, worker_main, &ctxs[i]) != 0) {
+                    fprintf(stderr, "assemble_greyscale: pthread_create failed\n");
+                    request_stop(&st);
+                    start_failed = 1;
+                    break;
+                }
+                created++;
+            }
+        }
+        for (int i = 0; i < created; i++) pthread_join(threads[i], NULL);
     }
-    for (int i = 0; i < created; i++) pthread_join(threads[i], NULL);
 
     pthread_mutex_destroy(&st.queue_mu);
     pthread_mutex_destroy(&st.err_mu);
@@ -560,7 +810,7 @@ int main(int argc, char **argv) {
     free(ctxs);
     free(threads);
     if (start_failed) {
-        free(buf); free(owner);
+        free(buf); free(owner); free(depth);
         for (int i = 0; i < n_paths; i++) free(paths[i]);
         free(paths);
         curl_global_cleanup();
@@ -569,7 +819,7 @@ int main(int argc, char **argv) {
 
     if (st.failed) {
         fprintf(stderr, "%s\n", st.error);
-        free(buf); free(owner);
+        free(buf); free(owner); free(depth);
         for (int i = 0; i < n_paths; i++) free(paths[i]);
         free(paths);
         curl_global_cleanup();
@@ -579,7 +829,7 @@ int main(int argc, char **argv) {
     FILE *out = fopen(outPath, "wb");
     if (!out) {
         fprintf(stderr, "assemble_greyscale: cannot create %s\n", outPath);
-        free(buf); free(owner);
+        free(buf); free(owner); free(depth);
         for (int i = 0; i < n_paths; i++) free(paths[i]);
         free(paths);
         curl_global_cleanup();
@@ -588,7 +838,7 @@ int main(int argc, char **argv) {
     if (raw_size > 0 && fwrite(buf, 1, raw_size, out) != raw_size) {
         fprintf(stderr, "assemble_greyscale: short write to %s\n", outPath);
         fclose(out);
-        free(buf); free(owner);
+        free(buf); free(owner); free(depth);
         for (int i = 0; i < n_paths; i++) free(paths[i]);
         free(paths);
         curl_global_cleanup();
@@ -599,7 +849,7 @@ int main(int argc, char **argv) {
     if (histPath && *histPath) {
         if (!write_histogram_json(histPath, width, height, channels, buf, npix)) {
             fprintf(stderr, "assemble_greyscale: cannot write histogram %s\n", histPath);
-            free(buf);
+            free(buf); free(owner); free(depth);
             for (int i = 0; i < n_paths; i++) free(paths[i]);
             free(paths);
             curl_global_cleanup();
@@ -607,7 +857,26 @@ int main(int argc, char **argv) {
         }
     }
 
-    free(buf); free(owner);
+    if (camera_mode) {
+        printf(
+            "{\"camera_fragment_transfer_bytes\":%llu"
+            ",\"camera_fragment_records_seen\":%llu"
+            ",\"camera_final_depth_replacements\":%llu"
+            ",\"camera_fragments_processed\":%llu"
+            ",\"camera_stream_carry_peak_bytes\":%zu"
+            ",\"camera_depth_buffer_bytes\":%zu"
+            ",\"camera_merge_us\":%lld}\n",
+            (unsigned long long)st.camera_bytes_received,
+            (unsigned long long)st.camera_records_seen,
+            (unsigned long long)st.camera_depth_replacements,
+            (unsigned long long)st.camera_fragments_processed,
+            st.camera_peak_carry_bytes,
+            npix * sizeof(float),
+            st.camera_merge_us
+        );
+    }
+
+    free(buf); free(owner); free(depth);
     for (int i = 0; i < n_paths; i++) free(paths[i]);
     free(paths);
     curl_global_cleanup();

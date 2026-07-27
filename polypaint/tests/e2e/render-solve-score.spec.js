@@ -1927,7 +1927,7 @@ test.describe('Solve Score UI', () => {
     expect(st.selectedKey).toBe('sculpture::scu_full1');
     await expect(page.locator('#render-artifact-catalog')).toContainText('scu_full1');
     await expect(page.locator('#render-artifact-viewer iframe')).toHaveAttribute(
-      'src', /sculptures\/scu_full1\/viewer\.html/);
+      'src', /sculpture\.html#meta=https%3A%2F%2Fpolypaint\.s3\.us-east-1\.amazonaws\.com%2Fsculptures%2Fscu_full1%2Fmeta\.json&sid=scu_full1/);
     await expect(page.locator('[data-render-family="sculpture"] .subtab-count').first()).toHaveText('(1)');
   });
 
@@ -2444,7 +2444,7 @@ test.describe('Solve Score UI', () => {
 
     // first row selected; its hosted viewer previews in the frame
     await expect(page.locator('#render-artifact-viewer iframe')).toHaveAttribute(
-      'src', /sculptures\/scu_full\/viewer\.html/);
+      'src', /sculpture\.html#meta=https%3A%2F%2Fpolypaint\.s3\.us-east-1\.amazonaws\.com%2Fsculptures%2Fscu_full%2Fmeta\.json&sid=scu_full/);
 
     // arrows move the selection AND the frame (the shared navigator)
     await page.keyboard.press('ArrowDown');
@@ -2452,7 +2452,7 @@ test.describe('Solve Score UI', () => {
       'src', /sculptures\/scu_bake\/viewer\.html/);
     await page.keyboard.press('ArrowUp');
     await expect(page.locator('#render-artifact-viewer iframe')).toHaveAttribute(
-      'src', /sculptures\/scu_full\/viewer\.html/);
+      'src', /sculpture\.html#meta=https%3A%2F%2Fpolypaint\.s3\.us-east-1\.amazonaws\.com%2Fsculptures%2Fscu_full%2Fmeta\.json&sid=scu_full/);
 
     // toolbar: Open + Copy Link act on the SELECTION
     await page.click('#btn-sculpture-open');
@@ -2469,5 +2469,220 @@ test.describe('Solve Score UI', () => {
     const del = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/delete-prefix')[1]);
     expect(del).toEqual({ prefix: 'sculptures/scu_full/' });
     await expect(page.locator('[data-render-family="sculpture"] .subtab-count').first()).toHaveText('(1)');
+  });
+
+  test('Sculpture Snap uses the saved source identity and source calculation N', async ({ page }) => {
+    await page.route('**/sculpture.html*', (route) => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: `<!doctype html><script>
+        const sid = new URLSearchParams(location.hash.slice(1)).get('sid') || '';
+        parent.postMessage({
+          type: 'polypaint-sculpture-ready',
+          protocol_version: 1,
+          sculpture_id: sid,
+        }, location.origin);
+        addEventListener('message', (event) => {
+          const req = event.data || {};
+          if (req.type !== 'polypaint-sculpture-snapshot-request') return;
+          setTimeout(() => {
+            parent.postMessage({
+              type: 'polypaint-sculpture-snapshot-response',
+              protocol_version: 1,
+              sculpture_id: sid,
+              request_id: req.request_id,
+              snapshot: {
+                version: 1,
+                projection: 'perspective',
+                matrix_layout: 'column_major',
+                model_view_matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,-2,1],
+                projection_matrix: [2,0,0,0, 0,2,0,0, 0,0,-1.0004,-1, 0,0,-0.020004,0],
+                vertical: 't1',
+                slices: 4,
+                effective_tlo: 0.2,
+                effective_thi: 0.8,
+                point_world_size: 0.004,
+                point_scale: 0.5,
+                point_min_fraction: 0.001,
+                point_max_fraction: 0.1,
+                style: 'solid',
+                show: { points: true, ribbons: false, threads: false, clu: false, splats: false },
+                frame: { aspect: 1, crop: 'center_square' },
+              },
+            }, location.origin);
+          }, 60);
+        });
+      </script>`,
+    }));
+    await page.click('.tab-btn:text("Render")');
+    await seedRenderPopupState(page);
+    await page.evaluate(() => {
+      _activeRenderRun = null;
+      window._snapDispatches = [];
+      window._dispatchRenderOrchestrator = async function (mode, payload) {
+        window._snapDispatches.push({ mode, payload: JSON.parse(JSON.stringify(payload)) });
+      };
+      window._sculptureInventory = [
+        {
+          id: 'scu_source',
+          title: 'Source pose',
+          job_id: 'source_job',
+          source_artifact_id: 'color_source',
+          grid_n: 192,
+          degree: 9,
+          created_at: '2026-07-28T10:00:00Z',
+          prefix: 'sculptures/scu_source/',
+        },
+        {
+          id: 'scu_baked',
+          kind: 'splatbake',
+          title: 'Baked',
+          job_id: 'source_job',
+          source_artifact_id: 'color_source',
+          created_at: '2026-07-28T09:00:00Z',
+          prefix: 'sculptures/scu_baked/',
+        },
+      ];
+      window._sculptureInventoryLoaded = true;
+      window._snapSourceMode = 'ok';
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-sculptures') {
+          return { sculptures: window._sculptureInventory, count: 2 };
+        }
+        if (path === '/render-summary') {
+          if (body.job_id !== 'source_job') throw new Error('wrong source job');
+          const source = {
+            artifact_id: 'color_source',
+            min_re: -3,
+            max_re: 2,
+            min_im: -1,
+            max_im: 4,
+            format: 'jpeg',
+            quality: 88,
+            quantile: 0.02,
+            shim: 0.04,
+            square_extent: 3,
+            rotation: 0.25,
+            background_color: '101820',
+            color_interpretation: 'scalar_lut',
+            palette: 'reef',
+            palette_display_name: 'Reef',
+            solve_score_program_source_text: 'score = metric(proximity, slv, q=0.1%)',
+            root_program_source_text: 'rotate(0.125)',
+          };
+          const colors = window._snapSourceMode === 'missing'
+            ? []
+            : (window._snapSourceMode === 'ambiguous' ? [source, { ...source }] : [source]);
+          return {
+            calc: { exists: true, N: 1234, degree: 9 },
+            families: { color: colors },
+          };
+        }
+        throw new Error(`unexpected ${name} ${path || ''}`);
+      };
+      document.getElementById('render-results-dir').value = 'source_job';
+      renderArtifactPanel('source_job', {
+        families: {
+          color: [{
+            artifact_id: 'color_current',
+            min_re: -1,
+            max_re: 1,
+            min_im: -1,
+            max_im: 1,
+            solve_score_program_source_text: 'score = metric(crowding, slv, q=1%)',
+          }],
+        },
+        calc: { exists: true, N: 777, degree: 4 },
+      });
+    });
+
+    await page.click('[data-render-family="sculpture"]');
+    await expect(page.locator('#btn-sculpture-snap')).toBeDisabled();
+    await expect(page.locator('#btn-sculpture-snap')).toBeEnabled();
+    const embeddedViewerUrl = await page.locator(
+      '#render-artifact-viewer iframe[data-viewer-src]',
+    ).getAttribute('data-viewer-src');
+    expect(embeddedViewerUrl).toContain('embed=1');
+    await page.click('#btn-sculpture-snap');
+    await expect.poll(() => page.evaluate(() => window._snapDispatches.length)).toBe(1);
+
+    const dispatch = await page.evaluate(() => window._snapDispatches[0]);
+    expect(dispatch.mode).toBe('color');
+    expect(dispatch.payload.job_id).toBe('source_job');
+    expect(dispatch.payload.mode).toBe('color');
+    expect(dispatch.payload.params).toMatchObject({
+      pix: 1234,
+      view_projection: 'camera',
+      view_vertical: 't1',
+      source_color_artifact_id: 'color_source',
+      source_sculpture_id: 'scu_source',
+    });
+    expect(dispatch.payload.params.fmt).toBe('jpeg');
+    expect(dispatch.payload.params.quality).toBe(88);
+    expect(dispatch.payload.params.view_camera).toMatchObject({
+      version: 1,
+      projection: 'perspective',
+      vertical: 't1',
+      slices: 4,
+    });
+
+    // A run that starts elsewhere while Sculpture is visible must disable
+    // Snap before the backend's fail-closed 409 is needed.
+    await page.evaluate(() => {
+      _activeRenderRun = { run_id: 'run_busy', job_id: 'other_job', mode: 'color' };
+      _updateRenderActionButtons();
+    });
+    await expect(page.locator('#btn-sculpture-snap')).toBeDisabled();
+    await expect(page.locator('#btn-sculpture-snap')).toHaveAttribute(
+      'title',
+      'Wait for the active render to finish',
+    );
+    await page.evaluate(() => {
+      _activeRenderRun = null;
+      _updateRenderActionButtons();
+    });
+    await expect(page.locator('#btn-sculpture-snap')).toBeEnabled();
+
+    // Missing and duplicate source identities are both terminal lookup
+    // failures. Neither may fall back to the visible Color selection.
+    for (const mode of ['missing', 'ambiguous']) {
+      await page.evaluate((nextMode) => {
+        window._snapSourceMode = nextMode;
+        window._snapDispatches = [];
+      }, mode);
+      await page.click('#btn-sculpture-snap');
+      await expect.poll(() => page.evaluate(() => (
+        document.getElementById('render-log')?.textContent || ''
+      ))).toContain(mode === 'missing' ? 'is unavailable' : 'is ambiguous');
+      expect(await page.evaluate(() => window._snapDispatches.length)).toBe(0);
+      await expect(page.locator('#btn-sculpture-snap')).toBeEnabled();
+    }
+    await page.evaluate(() => {
+      window._snapSourceMode = 'ok';
+      window._snapDispatches = [];
+    });
+
+    // The response is deliberately delayed by the iframe fixture. Replacing
+    // that iframe before it replies must cancel the request and ignore the
+    // old WindowProxy's eventual response.
+    await page.click('#btn-sculpture-snap');
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#btn-sculpture-snap')).toBeDisabled();
+    await page.waitForTimeout(150);
+    expect(await page.evaluate(() => window._snapDispatches.length)).toBe(0);
+    await page.keyboard.press('ArrowUp');
+    await expect(page.locator('#btn-sculpture-snap')).toBeEnabled();
+
+    await page.click('[data-render-family="color"]');
+    await page.click('[data-render-family="sculpture"]');
+    await expect(page.locator('#btn-sculpture-snap')).toBeDisabled();
+    await expect(page.locator('#btn-sculpture-snap')).toBeEnabled();
+
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#btn-sculpture-snap')).toBeDisabled();
+    await expect(page.locator('#btn-sculpture-snap')).toHaveAttribute(
+      'title',
+      'Baked splat snapshots are not supported in v1',
+    );
   });
 });

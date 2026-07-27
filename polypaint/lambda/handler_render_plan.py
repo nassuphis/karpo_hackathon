@@ -22,10 +22,15 @@ from calc_chunks import (
     fallback_lores_params_key as calc_fallback_lores_params_key,
 )
 from logical_sections import (
+    MAX_LOGICAL_SECTIONS,
     build_logical_section_items,
     build_solve_source_manifest,
+    coeff_row_bytes,
     compute_safe_sectioning,
     normalize_section_mode,
+    param_row_bytes,
+    root_row_bytes,
+    section_source_row_bytes,
     summarize_chunk_items,
     validate_section_count,
     write_solve_source_manifest,
@@ -43,6 +48,24 @@ from solve_score_chain import (
     solve_score_uses_source,
 )
 from pipeline_programs import root_program_for_run, solve_score_program_for_run
+from view_camera import (
+    camera_execution_subset,
+    camera_execution_hash,
+    fragment_contract,
+    validate_view_camera,
+)
+from view_snap_calibration import (
+    calibration_artifact_mode,
+    fixture_admission_digest,
+    load_calibration_artifact,
+)
+from view_snap_cost_model import (
+    MIB,
+    enforce_hard_resource_limits,
+    enforce_wall_time_limits,
+    estimate_camera_sections,
+    estimate_camera_wall_times,
+)
 
 s3 = boto3.client("s3")
 lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1"))
@@ -55,9 +78,226 @@ MAX_PLAN_BYTES = 200 * 1024  # 200 KB — fail fast before hitting 256 KB SFN li
 MAX_PIX = 32768
 DEFAULT_BACKGROUND_THRESHOLD = 4
 COLOR_ARTIFACT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+VIEW_SNAP_MEMORY_HEADROOM_MB = 1024
+VIEW_SNAP_TMP_HEADROOM_MB = 512
 
 
-def _plan_params_digest(*, viewport, pix, root_transforms=None, root_program_fingerprint="", solve_score_normalize=False, color_interpretation="scalar_lut", background_color=None):
+def _view_snap_execution_config():
+    fields = (
+        ("raster_mt_threads", "VIEW_SNAP_RASTER_THREADS", 4),
+        ("raster_workers", "VIEW_SNAP_RASTER_WORKERS", 10),
+        ("finalize_workers", "VIEW_SNAP_FINALIZE_WORKERS", 16),
+    )
+    values = {}
+    for key, env_name, default in fields:
+        try:
+            value = int(os.environ.get(env_name, str(default)) or default)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"{env_name} must be a positive integer"
+            ) from exc
+        if value <= 0:
+            raise RuntimeError(f"{env_name} must be a positive integer")
+        values[key] = value
+    # Solve-score execution is inside Raster and uses the same calibrated
+    # native thread shape; it is not an independently tunable camera input.
+    values["solve_score_threads"] = values["raster_mt_threads"]
+    return values
+
+
+def _view_snap_deployed_limits():
+    raster_memory_mb = int(os.environ.get("VIEW_SNAP_RASTER_MEMORY_MB", "10240") or 10240)
+    finalize_memory_mb = int(os.environ.get("VIEW_SNAP_FINALIZE_MEMORY_MB", "10240") or 10240)
+    raster_tmp_mb = int(os.environ.get("VIEW_SNAP_RASTER_TMP_MB", "10240") or 10240)
+    finalize_tmp_mb = int(os.environ.get("VIEW_SNAP_FINALIZE_TMP_MB", "10240") or 10240)
+    values = {
+        "raster_memory_mb": raster_memory_mb,
+        "finalize_memory_mb": finalize_memory_mb,
+        "raster_tmp_mb": raster_tmp_mb,
+        "finalize_tmp_mb": finalize_tmp_mb,
+    }
+    if any(value <= 0 for value in values.values()):
+        raise RuntimeError("ViewSnap deployed memory and /tmp limits must be positive")
+    if raster_memory_mb <= VIEW_SNAP_MEMORY_HEADROOM_MB:
+        raise RuntimeError("ViewSnap raster memory is smaller than its named headroom")
+    if finalize_memory_mb <= VIEW_SNAP_MEMORY_HEADROOM_MB:
+        raise RuntimeError("ViewSnap Finalize memory is smaller than its named headroom")
+    if raster_tmp_mb <= VIEW_SNAP_TMP_HEADROOM_MB:
+        raise RuntimeError("ViewSnap raster /tmp is smaller than its named headroom")
+    if finalize_tmp_mb <= VIEW_SNAP_TMP_HEADROOM_MB:
+        raise RuntimeError("ViewSnap Finalize /tmp is smaller than its named headroom")
+    return {
+        **values,
+        "memory_headroom_mb": VIEW_SNAP_MEMORY_HEADROOM_MB,
+        "tmp_headroom_mb": VIEW_SNAP_TMP_HEADROOM_MB,
+        "raster_memory_bytes": (raster_memory_mb - VIEW_SNAP_MEMORY_HEADROOM_MB) * MIB,
+        "finalize_memory_bytes": (finalize_memory_mb - VIEW_SNAP_MEMORY_HEADROOM_MB) * MIB,
+        "raster_tmp_bytes": (raster_tmp_mb - VIEW_SNAP_TMP_HEADROOM_MB) * MIB,
+        "finalize_tmp_bytes": (finalize_tmp_mb - VIEW_SNAP_TMP_HEADROOM_MB) * MIB,
+    }
+
+
+def _view_snap_fixture_source_identity(solve_source_manifest):
+    """Bind a calibration fixture to every object the native reader consumes."""
+
+    manifest = dict(solve_source_manifest or {})
+    identity_manifest = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {"j", "job_id"}
+    }
+    required_by_key = {}
+    sources = dict(manifest.get("s") or manifest.get("sources") or {})
+    for family in ("slv", "cf", "pm"):
+        source = dict(sources.get(family) or {})
+        row_bytes = int(source.get("r") or source.get("row_bytes") or 0)
+        keys = list(source.get("k") or source.get("keys") or [])
+        segments = list(source.get("g") or source.get("segments") or [])
+        if row_bytes <= 0:
+            continue
+        for segment in segments:
+            if isinstance(segment, dict):
+                key = str(segment.get("key") or "").strip()
+                source_start = int(segment.get("source_solve_start") or 0)
+                source_count = int(segment.get("solve_count") or 0)
+            else:
+                try:
+                    key_idx, _solve_start, source_count, source_start = segment[:4]
+                    key = str(keys[int(key_idx)] or "").strip()
+                except (IndexError, TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        f"invalid ViewSnap fixture {family} source segment: {segment!r}"
+                    ) from exc
+            if not key or source_start < 0 or source_count <= 0:
+                raise RuntimeError(
+                    f"invalid ViewSnap fixture {family} source segment: {segment!r}"
+                )
+            required = (source_start + source_count) * row_bytes
+            required_by_key[key] = max(required_by_key.get(key, 0), required)
+
+    if not required_by_key:
+        raise RuntimeError("ViewSnap calibration fixture has no source objects")
+
+    objects = []
+    for key in sorted(required_by_key):
+        try:
+            head = s3.head_object(Bucket=BUCKET, Key=key)
+        except Exception as exc:
+            raise RuntimeError(
+                f"ViewSnap calibration fixture source is unreadable: s3://{BUCKET}/{key}"
+            ) from exc
+        size = int(head.get("ContentLength") or 0)
+        required = int(required_by_key[key])
+        if size < required:
+            raise RuntimeError(
+                "ViewSnap calibration fixture source is truncated: "
+                f"s3://{BUCKET}/{key} has {size} bytes, requires {required}"
+            )
+        etag = str(head.get("ETag") or "").strip().strip('"')
+        version_id = str(head.get("VersionId") or "").strip()
+        checksum = str(head.get("ChecksumSHA256") or "").strip()
+        if not (checksum or version_id or etag):
+            raise RuntimeError(
+                "ViewSnap calibration fixture source has no immutable content identity: "
+                f"s3://{BUCKET}/{key}"
+            )
+        row = {
+            "key": key,
+            "size_bytes": size,
+            "required_bytes": required,
+        }
+        if checksum:
+            row["checksum_sha256"] = checksum
+        if version_id:
+            row["version_id"] = version_id
+        if etag:
+            row["etag"] = etag
+        objects.append(row)
+
+    descriptor = {
+        "schema_version": 1,
+        "manifest_sha256": fixture_admission_digest(identity_manifest),
+        "objects": objects,
+    }
+    return {
+        "descriptor_sha256": fixture_admission_digest(descriptor),
+        "descriptor": descriptor,
+    }
+
+
+def _view_snap_fixture_payload(
+    *,
+    pix,
+    times,
+    degree,
+    n_coeffs,
+    channels,
+    camera,
+    fmt,
+    quality,
+    root_program_fingerprint,
+    solve_score_fingerprint,
+    solve_score_prelude,
+    section_items,
+    fused_params,
+    palette,
+    background_color,
+    source_identity,
+):
+    return {
+        "N": int(pix),
+        "times": int(times),
+        "degree": int(degree),
+        "n_coeffs": int(n_coeffs),
+        "channels": int(channels),
+        "view_projection": "camera",
+        "view_camera": camera_execution_subset(camera),
+        "format": str(fmt),
+        "quality": int(quality),
+        "root_program_fingerprint": str(root_program_fingerprint or ""),
+        "solve_score_program_fingerprint": str(solve_score_fingerprint or ""),
+        "prelude": {
+            "slv": int(solve_score_prelude.get("slv") or 0),
+            "cf": int(solve_score_prelude.get("cf") or 0),
+            "pm": int(solve_score_prelude.get("pm") or 0),
+        },
+        "sections": [
+            {
+                "section_idx": int(item.get("section_idx") or 0),
+                "step_start": int(item.get("step_start") or 0),
+                "step_count": int(item.get("step_count") or 0),
+            }
+            for item in section_items
+        ],
+        "execution": {
+            "raster_mt_threads": int(fused_params["raster_mt_threads"]),
+            "solve_score_threads": int(fused_params["solve_score_threads"]),
+            "raster_workers": int(fused_params["raster_workers"]),
+            "finalize_workers": int(fused_params["finalize_workers"]),
+        },
+        "output": {
+            "color_interpretation": str(fused_params["color_interpretation"]),
+            "solve_score_normalize": bool(fused_params["solve_score_normalize"]),
+            "palette": str(palette),
+            "background_color": str(background_color),
+        },
+        "source_identity": source_identity,
+    }
+
+
+def _plan_params_digest(
+    *,
+    viewport,
+    pix,
+    root_transforms=None,
+    root_program_fingerprint="",
+    solve_score_normalize=False,
+    color_interpretation="scalar_lut",
+    background_color=None,
+    view_projection="plan",
+    view_vertical="t2",
+    view_camera=None,
+):
     grid = {"pix": int(pix)}
     params = {
         "solve_score_normalize": bool(solve_score_normalize),
@@ -69,6 +309,12 @@ def _plan_params_digest(*, viewport, pix, root_transforms=None, root_program_fin
         params["root_transforms"] = root_transforms or []
     if background_color is not None:
         params["background_color"] = str(background_color or DEFAULT_BACKGROUND_COLOR).strip().lower()
+    projection = str(view_projection or "plan").strip().lower()
+    if projection != "plan":
+        params["view_projection"] = projection
+        params["view_vertical"] = str(view_vertical or "t2").strip().lower()
+        if projection == "camera":
+            params["view_camera_sha256"] = camera_execution_hash(view_camera)
     payload = {
         "viewport": viewport,
         "grid": grid,
@@ -123,16 +369,34 @@ def _fallback_lores_params_key(job_id, calc):
     return calc_fallback_lores_params_key(job_id, calc)
 
 
-def _compact_section_ranges(section_items):
-    return [
-        {
+def _compact_section_ranges(section_items, *, include_camera_estimate=False):
+    compact = []
+    for item in section_items or []:
+        camera_estimate = dict(item.get("camera_estimate") or {})
+        row = {
             "section_idx": int(item["section_idx"]),
             "section_count": int(item["section_count"]),
             "step_start": int(item.get("step_start") or 0),
             "step_count": int(item.get("step_count") or 0),
         }
-        for item in (section_items or [])
-    ]
+        if include_camera_estimate:
+            # Keep this object present for every Color Raster item. Step
+            # Functions JSONPath selectors fail when an optional source path
+            # is absent.
+            row["camera_estimate"] = {
+                key: int(camera_estimate[key])
+                for key in (
+                    "candidate_roots",
+                    "occupied_pixels_upper",
+                    "fragment_bytes_upper",
+                    "raster_memory_bytes",
+                    "raster_tmp_bytes",
+                    "work_units",
+                )
+                if key in camera_estimate
+            }
+        compact.append(row)
+    return compact
 
 
 def _validate_boolish(value, field_name, default=False):
@@ -299,7 +563,7 @@ def _explicit_viewport_from_params(rp):
 def _fused_render_execution_config(rp):
     return {
         "raster_engine": "mt",
-        "save_associated_palette": bool(rp.get("save_associated_palette", False)),
+        "save_associated_palette": rp.get("save_associated_palette", False),
         "background_color": normalize_background_color(rp.get("background_color")),
         "raster_mt_threads": int(rp.get("raster_mt_threads", 4) or 4),
         "raster_workers": int(rp.get("raster_workers", 10) or 10),
@@ -367,6 +631,7 @@ def _build_fused_color_plan(
     chunk_summary,
 ):
     raw_params = dict(rp)
+    view_vertical_supplied = "view_vertical" in raw_params
     _reject_fused_unsupported_params(raw_params)
 
     fused_params = {
@@ -405,7 +670,9 @@ def _build_fused_color_plan(
         "save_associated_palette": False,
         "view_projection": "plan",
         "view_vertical": "t2",
+        "view_camera": {},
         "source_color_artifact_id": "",
+        "source_sculpture_id": "",
     }
     for key, default in defaults.items():
         fused_params[key] = rp.get(key, default)
@@ -413,12 +680,27 @@ def _build_fused_color_plan(
     # request dies at plan time, not inside a raster section
     fused_params["view_projection"] = str(fused_params.get("view_projection") or "plan").strip().lower()
     if fused_params["view_projection"] not in (
-        "plan", "front", "rear", "left", "right", "radial", "isometric"
+        "plan", "front", "rear", "left", "right", "radial", "isometric", "camera"
     ):
         raise RuntimeError(
             "view_projection must be "
-            f"plan/front/rear/left/right/radial/isometric, got {fused_params['view_projection']!r}")
-    fused_params["view_vertical"] = str(fused_params.get("view_vertical") or "t2").strip().lower()
+            f"plan/front/rear/left/right/radial/isometric/camera, got {fused_params['view_projection']!r}")
+    camera = fused_params.get("view_camera")
+    if fused_params["view_projection"] == "camera":
+        camera = validate_view_camera(camera)
+        requested_vertical = str(fused_params.get("view_vertical") or "").strip().lower()
+        if view_vertical_supplied and requested_vertical != camera["vertical"]:
+            raise RuntimeError(
+                "view_vertical conflicts with authoritative view_camera.vertical: "
+                f"{requested_vertical!r} != {camera['vertical']!r}"
+            )
+        fused_params["view_vertical"] = camera["vertical"]
+        fused_params["view_camera"] = camera
+    else:
+        if camera not in (None, {}):
+            raise RuntimeError("view_camera is only valid for view_projection=camera")
+        fused_params["view_camera"] = {}
+        fused_params["view_vertical"] = str(fused_params.get("view_vertical") or "t2").strip().lower()
     if fused_params["view_vertical"] not in ("t1", "t2"):
         raise RuntimeError(f"view_vertical must be t1 or t2, got {fused_params['view_vertical']!r}")
     is_view = fused_params["view_projection"] != "plan"
@@ -432,6 +714,15 @@ def _build_fused_color_plan(
     elif source_color_artifact_id:
         raise RuntimeError("source_color_artifact_id is only valid for ViewRender")
     fused_params["source_color_artifact_id"] = source_color_artifact_id
+    source_sculpture_id = str(fused_params.get("source_sculpture_id") or "").strip()
+    if fused_params["view_projection"] == "camera":
+        if not source_sculpture_id:
+            raise RuntimeError("ViewSnap requires source_sculpture_id")
+        if not COLOR_ARTIFACT_ID_RE.fullmatch(source_sculpture_id):
+            raise RuntimeError(f"invalid source_sculpture_id: {source_sculpture_id!r}")
+    elif source_sculpture_id:
+        raise RuntimeError("source_sculpture_id is only valid for view_projection=camera")
+    fused_params["source_sculpture_id"] = source_sculpture_id
     root_program_payload = _apply_root_program_to_params(fused_params)
 
     fused_params["color_mode"] = str(fused_params.get("color_mode") or "solve_score").strip().lower()
@@ -454,6 +745,19 @@ def _build_fused_color_plan(
 
     background_color = normalize_background_color(fused_params.get("background_color"))
     fused_params["background_color"] = background_color
+    fmt = str(fused_params.get("fmt") or "jpeg").strip().lower()
+    if fmt == "jpg":
+        fmt = "jpeg"
+    if fmt not in ("jpeg", "png"):
+        raise RuntimeError(f"fmt must be jpeg or png, got {fmt!r}")
+    fused_params["fmt"] = fmt
+    try:
+        quality = int(fused_params.get("quality", 90))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("quality must be an integer in [1,100]") from exc
+    if not (1 <= quality <= 100):
+        raise RuntimeError("quality must be an integer in [1,100]")
+    fused_params["quality"] = quality
 
     fused_params["raster_engine"] = _validate_raster_engine(fused_params.get("raster_engine", "mt"))
     if fused_params["raster_engine"] != "mt":
@@ -482,11 +786,23 @@ def _build_fused_color_plan(
         fused_params.get("finalize_workers", 16),
         "finalize_workers",
     )
+    if fused_params["view_projection"] == "camera":
+        # ViewSnap admission and telemetry are calibrated for one fixed
+        # execution shape; request values are not competing authorities.
+        fused_params.update(_view_snap_execution_config())
     fused_params["save_associated_palette"] = _validate_boolish(
         fused_params.get("save_associated_palette", False),
         "save_associated_palette",
         False,
     )
+    if (
+        fused_params["view_projection"] == "camera"
+        and fused_params["save_associated_palette"]
+    ):
+        raise RuntimeError(
+            "ViewSnap does not support save_associated_palette; "
+            "camera admission prices only the Views artifact"
+        )
 
     fused_input_mode = _validate_raster_input_mode(fused_params.get("raster_input_mode", "sectioned"))
     if fused_input_mode != "sectioned":
@@ -559,40 +875,286 @@ def _build_fused_color_plan(
     fused_params["solve_score_chain"] = solve_score_chain_public
     fused_params["solve_score_program_source_text"] = solve_score_compiled.get("source_text", "")
     fused_params["color_interpretation"] = solve_score_output_interpretation
-
-    pix = fused_params["pix"]
-
-    raster_section_auto = compute_safe_sectioning(
-        chunk_summary["total_solves"],
-        degree,
-        calc_n_coeffs,
-        fused_params["raster_mt_threads"],
-        "raster",
-        include_coeff=solve_score_uses_coeff,
-        include_param=solve_score_uses_param,
+    render_fragment_contract = fragment_contract(
+        fused_params["view_projection"],
+        solve_score_output_channel_count,
+        has_explicit_outputs=bool(solve_score_compiled.get("has_explicit_outputs")),
     )
-    fused_params["raster_section_count_auto"] = raster_section_auto["computed_section_count"]
-    selected_raster_sections = fused_params["raster_section_count"]
-    if fused_params["raster_section_mode"] == "logical_sections_auto":
-        selected_raster_sections = raster_section_auto["computed_section_count"]
-    elif selected_raster_sections in ("", None):
-        selected_raster_sections = raster_section_auto["min_safe_sections"]
-    if int(selected_raster_sections) < int(raster_section_auto["min_safe_sections"]):
-        raise RuntimeError(
-            f"raster_section_count={selected_raster_sections} is below the safe minimum "
-            f"{raster_section_auto['min_safe_sections']}"
-        )
-    fused_params["raster_section_count"] = int(selected_raster_sections)
-
-    raster_section_items = build_logical_section_items(
+    solve_source_manifest = build_solve_source_manifest(
         chunk_items,
-        section_count=fused_params["raster_section_count"],
+        job_id=job_id,
         degree=degree,
         n_coeffs=calc_n_coeffs,
         include_coeff=solve_score_uses_coeff,
         include_param=solve_score_uses_param,
     )
-    raster_map_items = _compact_section_ranges(raster_section_items)
+
+    pix = fused_params["pix"]
+    camera_admission = {}
+    if fused_params["view_projection"] == "camera":
+        expected_camera_steps = int(full_n) * int(full_n) * int(times)
+        if int(chunk_summary["total_solves"]) != expected_camera_steps:
+            raise RuntimeError(
+                "ViewSnap requires complete source steps: "
+                f"chunks describe {int(chunk_summary['total_solves'])}, "
+                f"expected N*N*times={expected_camera_steps}"
+            )
+        source_row_bytes = section_source_row_bytes(
+            degree,
+            calc_n_coeffs,
+            include_coeff=solve_score_uses_coeff,
+            include_param=solve_score_uses_param,
+        )
+        prelude_row_bytes = (
+            (root_row_bytes(degree) if int(solve_score_prelude["slv"]) > 0 else 0)
+            + (
+                coeff_row_bytes(calc_n_coeffs)
+                if solve_score_uses_coeff and int(solve_score_prelude["cf"]) > 0
+                else 0
+            )
+            + (
+                param_row_bytes()
+                if solve_score_uses_param and int(solve_score_prelude["pm"]) > 0
+                else 0
+            )
+        )
+        deployed_limits = _view_snap_deployed_limits()
+        calibration_mode = calibration_artifact_mode()
+        production_calibration = None
+        fixture_source_identity = {}
+        if calibration_mode == "production":
+            production_calibration = load_calibration_artifact()
+        else:
+            if fused_params["raster_section_mode"] == "logical_sections_auto":
+                raise RuntimeError(
+                    "ViewSnap calibration fixtures require an explicit raster_section_count"
+                )
+            fixture_source_identity = _view_snap_fixture_source_identity(
+                solve_source_manifest
+            )
+
+        def evaluate_camera_sections(section_count, *, raster_only=False):
+            items = build_logical_section_items(
+                chunk_items,
+                section_count=section_count,
+                degree=degree,
+                n_coeffs=calc_n_coeffs,
+                include_coeff=solve_score_uses_coeff,
+                include_param=solve_score_uses_param,
+            )
+            estimate = estimate_camera_sections(
+                items,
+                pix=pix,
+                degree=degree,
+                n_coeffs=calc_n_coeffs,
+                channels=solve_score_output_channel_count,
+                times=times,
+                source_row_bytes=source_row_bytes,
+                prelude_row_bytes=prelude_row_bytes,
+                camera=camera,
+            )
+            limits = enforce_hard_resource_limits(
+                estimate,
+                raster_memory_bytes=deployed_limits["raster_memory_bytes"],
+                raster_tmp_bytes=deployed_limits["raster_tmp_bytes"],
+                finalize_memory_bytes=deployed_limits["finalize_memory_bytes"],
+                finalize_tmp_bytes=deployed_limits["finalize_tmp_bytes"],
+            )
+            fixture_payload = _view_snap_fixture_payload(
+                pix=pix,
+                times=times,
+                degree=degree,
+                n_coeffs=calc_n_coeffs,
+                channels=solve_score_output_channel_count,
+                camera=camera,
+                fmt=fused_params["fmt"],
+                quality=fused_params["quality"],
+                root_program_fingerprint=root_program_payload.get("fingerprint", ""),
+                solve_score_fingerprint=solve_score_compiled.get("fingerprint", ""),
+                solve_score_prelude=solve_score_prelude,
+                section_items=items,
+                fused_params=fused_params,
+                palette=palette,
+                background_color=background_color,
+                source_identity=fixture_source_identity,
+            )
+            fixture_digest = fixture_admission_digest(fixture_payload)
+            calibration = production_calibration or load_calibration_artifact(
+                fixture_admission_digest=fixture_digest
+            )
+            wall = estimate_camera_wall_times(
+                estimate,
+                section_count=len(items),
+                fmt=fused_params["fmt"],
+                quality=fused_params["quality"],
+                calibration=calibration,
+            )
+            gates = enforce_wall_time_limits(
+                wall,
+                calibration=calibration,
+                stages=(
+                    ("raster_native", "raster_handler")
+                    if raster_only
+                    else None
+                ),
+            )
+            return (
+                items,
+                estimate,
+                limits,
+                wall,
+                gates,
+                fixture_digest,
+                calibration,
+            )
+
+        if fused_params["raster_section_mode"] == "logical_sections_auto":
+            high = min(
+                max(1, int(chunk_summary["total_solves"])),
+                MAX_LOGICAL_SECTIONS,
+            )
+            # Prove the most finely sectioned legal plan fits before binary
+            # searching for the smallest safe fan-out. If this fails, no
+            # larger section count exists to rescue the request.
+            (
+                best_items,
+                best_estimate,
+                best_limits,
+                best_wall,
+                _best_raster_gates,
+                best_fixture_digest,
+                best_calibration,
+            ) = evaluate_camera_sections(high, raster_only=True)
+            low = 1
+            best_count = len(best_items)
+            while low <= high:
+                mid = (low + high) // 2
+                try:
+                    (
+                        items,
+                        estimate,
+                        limits,
+                        wall,
+                        _raster_gates,
+                        candidate_digest,
+                        candidate_calibration,
+                    ) = evaluate_camera_sections(mid, raster_only=True)
+                except RuntimeError:
+                    low = mid + 1
+                    continue
+                best_count = len(items)
+                best_items, best_estimate, best_limits = items, estimate, limits
+                best_wall = wall
+                best_fixture_digest = candidate_digest
+                best_calibration = candidate_calibration
+                high = mid - 1
+            raster_section_items = best_items
+            selected_raster_sections = best_count
+            best_gates = enforce_wall_time_limits(
+                best_wall,
+                calibration=best_calibration,
+            )
+        else:
+            selected_raster_sections = fused_params["raster_section_count"]
+            if selected_raster_sections in ("", None):
+                selected_raster_sections = 1
+            (
+                raster_section_items,
+                best_estimate,
+                best_limits,
+                best_wall,
+                best_gates,
+                best_fixture_digest,
+                best_calibration,
+            ) = evaluate_camera_sections(int(selected_raster_sections))
+            selected_raster_sections = len(raster_section_items)
+
+        fused_params["raster_section_count_auto"] = int(selected_raster_sections)
+        fused_params["raster_section_count"] = int(selected_raster_sections)
+        raster_section_auto = {
+            "computed_section_count": int(selected_raster_sections),
+            "min_safe_sections": int(selected_raster_sections),
+            "budget_bytes": best_limits["raster_memory_bytes"],
+            "memory_mb": deployed_limits["raster_memory_mb"],
+            "fixed_bytes": best_estimate["fixed_raster_bytes"],
+            "row_bytes": source_row_bytes + solve_score_output_channel_count,
+            "prelude_row_bytes": prelude_row_bytes,
+        }
+        camera_admission = {
+            "model_version": 1,
+            "calibration_schema_version": best_calibration["schema_version"],
+            "calibration_mode": best_calibration["mode"],
+            "calibration_cost_model_version": best_calibration["cost_model_version"],
+            "fixture_admission_digest": best_fixture_digest,
+            "section_count": int(selected_raster_sections),
+            "pixel_count": best_estimate["pixel_count"],
+            "record_size_bytes": best_estimate["record_size_bytes"],
+            "max_point_side": best_estimate["footprint"]["max_point_side"],
+            "max_point_area": best_estimate["footprint"]["max_point_area"],
+            "pricing_depth": best_estimate["footprint"]["pricing_depth"],
+            "max_fragment_bytes": best_estimate["max_fragment_bytes"],
+            "total_fragment_bytes": best_estimate["total_fragment_bytes"],
+            "max_raster_memory_bytes": best_estimate["max_raster_memory_bytes"],
+            "max_raster_tmp_bytes": best_estimate["max_raster_tmp_bytes"],
+            "finalize_memory_bytes": best_estimate["final_memory_bytes"],
+            "finalize_tmp_bytes": best_estimate["final_tmp_bytes"],
+            "step_scores_bytes": best_estimate["step_scores_bytes"],
+            "max_work_units": best_estimate["max_work_units"],
+            "total_work_units": best_estimate["total_work_units"],
+            "wall_seconds": {
+                key: value
+                for key, value in best_wall.items()
+                if key != "raster_sections"
+            },
+            "wall_gates": best_gates,
+            "limits": {
+                **best_limits,
+                "memory_headroom_mb": deployed_limits["memory_headroom_mb"],
+                "tmp_headroom_mb": deployed_limits["tmp_headroom_mb"],
+            },
+        }
+        camera_estimate_by_section = {
+            int(row["section_idx"]): row
+            for row in best_estimate["sections"]
+        }
+        for item in raster_section_items:
+            item["camera_estimate"] = camera_estimate_by_section[
+                int(item["section_idx"])
+            ]
+    else:
+        raster_section_auto = compute_safe_sectioning(
+            chunk_summary["total_solves"],
+            degree,
+            calc_n_coeffs,
+            fused_params["raster_mt_threads"],
+            "raster",
+            include_coeff=solve_score_uses_coeff,
+            include_param=solve_score_uses_param,
+        )
+        fused_params["raster_section_count_auto"] = raster_section_auto["computed_section_count"]
+        selected_raster_sections = fused_params["raster_section_count"]
+        if fused_params["raster_section_mode"] == "logical_sections_auto":
+            selected_raster_sections = raster_section_auto["computed_section_count"]
+        elif selected_raster_sections in ("", None):
+            selected_raster_sections = raster_section_auto["min_safe_sections"]
+        if int(selected_raster_sections) < int(raster_section_auto["min_safe_sections"]):
+            raise RuntimeError(
+                f"raster_section_count={selected_raster_sections} is below the safe minimum "
+                f"{raster_section_auto['min_safe_sections']}"
+            )
+        fused_params["raster_section_count"] = int(selected_raster_sections)
+        raster_section_items = build_logical_section_items(
+            chunk_items,
+            section_count=fused_params["raster_section_count"],
+            degree=degree,
+            n_coeffs=calc_n_coeffs,
+            include_coeff=solve_score_uses_coeff,
+            include_param=solve_score_uses_param,
+        )
+    raster_map_items = _compact_section_ranges(
+        raster_section_items,
+        include_camera_estimate=True,
+    )
 
     solve_score_clip_key = _solve_score_scratch_key(
         job_id,
@@ -640,6 +1202,8 @@ def _build_fused_color_plan(
         "section_count_auto": raster_section_auto["computed_section_count"],
         "section_budget_bytes": raster_section_auto["budget_bytes"],
         "section_memory_mb": raster_section_auto["memory_mb"],
+        "section_fixed_bytes": raster_section_auto.get("fixed_bytes", 0),
+        "section_row_bytes": raster_section_auto.get("row_bytes", 0),
         "section_min_safe_count": raster_section_auto["min_safe_sections"],
         "logical_section": True,
         "map_items": raster_map_items,
@@ -648,6 +1212,8 @@ def _build_fused_color_plan(
         "eligible": True,
         "reason": "fused_solve_score",
     }
+    if camera_admission:
+        raster["camera_admission"] = camera_admission
 
     artifact_family = "views" if is_view else "color"
     artifact_id = f"view_{run_id}" if is_view else f"color_{run_id}"
@@ -712,14 +1278,6 @@ def _build_fused_color_plan(
         }
 
     render_execution = _fused_render_execution_config(fused_params)
-    solve_source_manifest = build_solve_source_manifest(
-        chunk_items,
-        job_id=job_id,
-        degree=degree,
-        n_coeffs=calc_n_coeffs,
-        include_coeff=solve_score_uses_coeff,
-        include_param=solve_score_uses_param,
-    )
     solve_source_manifest_ref = write_solve_source_manifest(
         s3,
         BUCKET,
@@ -788,6 +1346,13 @@ def _build_fused_color_plan(
             "preview_key": artifact_prefix + "preview.png",
             "prefix": artifact_prefix,
         })
+        if fused_params["view_projection"] == "camera":
+            artifact_meta.update({
+                "source_sculpture_id": source_sculpture_id,
+                "camera_snapshot_version": str(camera["version"]),
+                "view_camera": json.dumps(camera, sort_keys=True, separators=(",", ":")),
+                "view_style": "solid_points",
+            })
     artifact_meta.update(_root_program_metadata(root_program_payload))
     artifact_meta.update(
         emit_solve_score_metadata(
@@ -835,6 +1400,9 @@ def _build_fused_color_plan(
         solve_score_normalize=solve_score_normalize,
         color_interpretation=solve_score_output_interpretation,
         background_color=background_color,
+        view_projection=fused_params["view_projection"],
+        view_vertical=fused_params["view_vertical"],
+        view_camera=fused_params["view_camera"],
     )
     outputs = {
         "family": artifact_family,
@@ -880,6 +1448,7 @@ def _build_fused_color_plan(
         "solve_score": solve_score,
         "finalize": finalize,
         "raster": raster,
+        "fragment_contract": render_fragment_contract,
         "associated_palette": associated_palette,
         "render_execution": render_execution,
         "outputs": outputs,

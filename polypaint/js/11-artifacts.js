@@ -417,10 +417,15 @@ function _renderArtifactSummary(art) {
         ].filter(Boolean).join(' · ');
     }
     if (art.family === 'views') {
+        const isCamera = (art.projection || art.view_projection) === 'camera';
         return [
-            art.projection || art.view_projection || '',
+            isCamera ? 'camera snap' : (art.projection || art.view_projection || ''),
             art.vertical || art.view_vertical || '',
+            isCamera && art.source_sculpture_id ? `sculpture:${art.source_sculpture_id}` : '',
             art.source_artifact_id ? `color:${art.source_artifact_id}` : '',
+            isCamera && _artifactColorInterpretation(art) === 'scalar_lut'
+                ? 'colors equalized from snap output'
+                : '',
         ].filter(Boolean).join(' · ');
     }
     if (art.family === 'pdf') {
@@ -741,6 +746,7 @@ function _updateRenderActionButtons() {
         favBtn.textContent = isFav ? 'Favorited' : 'Favorite';
         favBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && !isFav) || !!_activeRenderRun;
     }
+    _sculptureUpdateSnapButton();
 }
 
 function _captureRenderCatalogScroll(family) {
@@ -776,7 +782,12 @@ function _restoreRenderCatalogScroll(options = {}) {
 
 function _renderSelectFamily(family) {
     _captureRenderCatalogScroll(_renderActiveFamily);
-    if (family !== _renderActiveFamily) _clearRenderPreviewSelection();
+    if (family !== _renderActiveFamily) {
+        _clearRenderPreviewSelection();
+        if (_renderActiveFamily === 'sculpture') {
+            _sculptureSnapReset('Sculpture panel closed');
+        }
+    }
     _renderActiveFamily = family;
     const activeJobId = document.getElementById('render-results-dir').value.trim();
     const inv = _renderArtifacts[family] || [];
@@ -802,7 +813,12 @@ function _renderSelectArtifactByKey(family, key) {
     const nextKey = String(key || '');
     const idx = inv.findIndex((art) => _renderArtifactStableKey(art) === nextKey);
     if (idx < 0) return;
-    if (family !== _renderActiveFamily || nextKey !== _renderSelectedArtifactKey[family]) _clearRenderPreviewSelection();
+    if (family !== _renderActiveFamily || nextKey !== _renderSelectedArtifactKey[family]) {
+        _clearRenderPreviewSelection();
+        if (family !== _renderActiveFamily && _renderActiveFamily === 'sculpture') {
+            _sculptureSnapReset('Sculpture panel closed');
+        }
+    }
     _captureRenderCatalogScroll(family);
     _renderSelectedArtifact[family] = idx;
     _renderSelectedArtifactKey[family] = nextKey;
@@ -1162,7 +1178,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         if (activeArt.family === 'sculpture') {
             // src is set AFTER a debounce (arrow-scrubbing through 20-36MB
             // full saves must not download/boot a viewer per keypress)
-            viewerHtml = `<iframe data-viewer-src="${activeArt.viewer_url}" style="width:100%; height:100%; border:0; background:#000" title="saved sculpture viewer"></iframe>`;
+            viewerHtml = `<iframe data-viewer-src="${activeArt.viewer_url}" data-sculpture-id="${_escapeHtml(activeArt.artifact_id || '')}" style="width:100%; height:100%; border:0; background:#000" title="saved sculpture viewer"></iframe>`;
         } else if (activeArt.format === 'pdf' || (activeArt.content_type || '') === 'application/pdf') {
             const pdfSrc = `${activeArt.viewer_url}#toolbar=0&navpanes=0&view=FitH`;
             viewerHtml = `<iframe src="${pdfSrc}" style="width:100%; height:100%; border:0; background:#000"></iframe>`;
@@ -1184,6 +1200,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         actionButtons.push(`<button class="btn-primary" id="btn-sculpture-savefull" onclick="_saveFullOpenModal()" style="padding:4px 12px; font-size:11px" ${sfBusy || !hasSource ? 'disabled' : ''} title="Generate from the selected color artifact and save a FULL viewer in one go — a popup sets resolution and every viewer option; no tab opens">${sfBusy ? _escapeHtml(sfBusy) : 'SaveFull'}</button>`);
         actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-splatbake" onclick="_saveSplatOpenModal()" style="padding:4px 12px; font-size:11px" ${sbBusy || !hasSource ? 'disabled' : ''} title="Bake a self-contained splat viewer from the selected color artifact — a popup sets resolution, splat res, z, height, and point">${sbBusy ? _escapeHtml(sbBusy) : 'SaveSplat'}</button>`);
         actionButtons.push('<button class="btn-secondary" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)" style="padding:4px 12px; font-size:11px">Refresh</button>');
+        actionButtons.push('<button class="btn-primary" id="btn-sculpture-snap" onclick="runSculptureSnap()" style="padding:4px 12px; font-size:11px" disabled>Snap</button>');
         actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-open" onclick="_sculptureOpenSelected()" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Open</button>`);
         actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-copy" onclick="_sculptureCopyLinkSelected(this)" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Copy Link</button>`);
         actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-delete" onclick="_sculptureDeleteSelected(this)" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Delete</button>`);
@@ -1689,10 +1706,34 @@ function _sculptureShareUrl(meta) {
     return _publicStorageUrl(prefix + 'viewer.html');
 }
 
+function _sculptureCatalogViewerUrl(meta) {
+    const row = meta && typeof meta === 'object' ? meta : {};
+    if (row.kind === 'splatbake') return _sculptureShareUrl(row);
+    const id = String(row.id || '').trim();
+    const prefix = row.prefix || `sculptures/${id}/`;
+    const viewer = new URL('sculpture.html', window.location.href);
+    viewer.hash = new URLSearchParams({
+        meta: _publicStorageUrl(prefix + 'meta.json'),
+        sid: id,
+        embed: '1',
+    }).toString();
+    return viewer.href;
+}
+
 // async-creator state keyed by ACTION, not DOM: panel re-renders replace
 // the buttons, so busy/disabled must be re-derivable (CR: duplicate ops)
 let _sculptureOpState = { savefull: '', splatbake: '' };
 let _sculpturePreviewTimer = null;
+const SCULPTURE_SNAPSHOT_PROTOCOL_VERSION = 1;
+const SCULPTURE_SNAPSHOT_TIMEOUT_MS = 5000;
+const _sculptureSnapState = {
+    generation: 0,
+    sculptureId: '',
+    frame: null,
+    ready: false,
+    inFlight: false,
+    pending: null,
+};
 // inventory freshness: a shared in-flight fetch + a mutation generation —
 // a stale /list-sculptures response must never resurrect a deleted row or
 // hide a just-saved one (CR: stale-response race)
@@ -1723,21 +1764,155 @@ function _sculptureAsRenderArtifact(meta) {
         width: row.kind === 'splatbake' ? row.width : (gridN || row.width),
         height: row.kind === 'splatbake' ? row.height : (gridN || row.height),
         file_size: Number(row.bytes || row.roots_bytes || 0),
-        viewer_url: id ? _sculptureShareUrl(row) : '',
+        viewer_url: id ? _sculptureCatalogViewerUrl(row) : '',
     };
+}
+
+function _sculptureSnapReset(reason) {
+    _sculptureSnapState.generation++;
+    _sculptureSnapState.sculptureId = '';
+    _sculptureSnapState.frame = null;
+    _sculptureSnapState.ready = false;
+    _sculptureSnapState.inFlight = false;
+    const pending = _sculptureSnapState.pending;
+    _sculptureSnapState.pending = null;
+    if (pending) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error(reason || 'Sculpture viewer changed'));
+    }
+    _sculptureUpdateSnapButton();
+}
+
+function _sculptureSnapAvailability(meta) {
+    if (!meta || !meta.id) return { enabled: false, title: 'Select a full Sculpture first' };
+    if (meta.kind === 'splatbake') {
+        return { enabled: false, title: 'Baked splat snapshots are not supported in v1' };
+    }
+    if (!meta.job_id || !meta.source_artifact_id) {
+        return { enabled: false, title: 'Source Color artifact is unavailable' };
+    }
+    if (_activeRenderRun) return { enabled: false, title: 'Wait for the active render to finish' };
+    if (_sculptureSnapState.inFlight) return { enabled: false, title: 'Snapshot is already in progress' };
+    if (!_sculptureSnapState.ready
+            || _sculptureSnapState.sculptureId !== String(meta.id)
+            || !_sculptureSnapState.frame
+            || !_sculptureSnapState.frame.isConnected) {
+        return { enabled: false, title: 'Viewer is still loading' };
+    }
+    return { enabled: true, title: 'Render this camera pose at the source calculation N×N resolution' };
+}
+
+function _sculptureUpdateSnapButton() {
+    const btn = document.getElementById('btn-sculpture-snap');
+    if (!btn) return;
+    const availability = _sculptureSnapAvailability(_sculptureSelectedMeta());
+    btn.disabled = !availability.enabled;
+    btn.title = availability.title;
 }
 
 function _sculptureArmPreviewFrame() {
     // the frame's src lands after a debounce: arrow-scrubbing through
     // 20-36MB full saves must not download + boot a viewer per keypress
     if (_sculpturePreviewTimer) { clearTimeout(_sculpturePreviewTimer); _sculpturePreviewTimer = null; }
+    _sculptureSnapReset('Sculpture selection changed');
     const frame = document.querySelector('#render-artifact-viewer iframe[data-viewer-src]');
     if (!frame) return;
+    const generation = _sculptureSnapState.generation;
+    const sculptureId = String(frame.dataset.sculptureId || '');
+    frame.dataset.snapGeneration = String(generation);
+    _sculptureSnapState.frame = frame;
+    _sculptureSnapState.sculptureId = sculptureId;
     _sculpturePreviewTimer = setTimeout(() => {
         _sculpturePreviewTimer = null;
         const live = document.querySelector('#render-artifact-viewer iframe[data-viewer-src]');
-        if (live && !live.src) live.src = live.dataset.viewerSrc;
+        if (live
+                && live === _sculptureSnapState.frame
+                && live.dataset.snapGeneration === String(generation)
+                && !live.src) {
+            live.src = live.dataset.viewerSrc;
+        }
     }, 250);
+}
+
+function _sculptureSnapReceiveMessage(event) {
+    const frame = _sculptureSnapState.frame;
+    if (!frame || !frame.isConnected || event.source !== frame.contentWindow) return;
+    let expectedOrigin = '';
+    try {
+        expectedOrigin = new URL(frame.src).origin;
+    } catch (e) {
+        return;
+    }
+    if (!expectedOrigin || event.origin !== expectedOrigin) return;
+    const message = event.data;
+    if (!message || message.protocol_version !== SCULPTURE_SNAPSHOT_PROTOCOL_VERSION) return;
+    if (message.sculpture_id !== _sculptureSnapState.sculptureId) return;
+    const selected = _sculptureSelectedMeta();
+    if (!selected || String(selected.id) !== _sculptureSnapState.sculptureId) return;
+
+    if (message.type === 'polypaint-sculpture-ready') {
+        _sculptureSnapState.ready = true;
+        _sculptureUpdateSnapButton();
+        return;
+    }
+    if (message.type !== 'polypaint-sculpture-snapshot-response') return;
+    const pending = _sculptureSnapState.pending;
+    if (!pending
+            || message.request_id !== pending.requestId
+            || pending.generation !== _sculptureSnapState.generation
+            || pending.sculptureId !== _sculptureSnapState.sculptureId) return;
+    clearTimeout(pending.timer);
+    _sculptureSnapState.pending = null;
+    if (message.error) pending.reject(new Error(String(message.error)));
+    else if (!message.snapshot || typeof message.snapshot !== 'object') {
+        pending.reject(new Error('Sculpture viewer returned no camera snapshot'));
+    } else {
+        pending.resolve(message.snapshot);
+    }
+}
+
+function _bindSculptureSnapMessages() {
+    if (window._polypaintSculptureSnapMessagesBound) return;
+    window._polypaintSculptureSnapMessagesBound = true;
+    window.addEventListener('message', _sculptureSnapReceiveMessage);
+}
+
+function _requestSculptureSnapshot(meta) {
+    const availability = _sculptureSnapAvailability(meta);
+    if (!availability.enabled) return Promise.reject(new Error(availability.title));
+    const frame = _sculptureSnapState.frame;
+    const generation = _sculptureSnapState.generation;
+    const sculptureId = String(meta.id);
+    const requestId = `snap_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+    let targetOrigin;
+    try {
+        targetOrigin = new URL(frame.src).origin;
+    } catch (e) {
+        return Promise.reject(new Error('Sculpture viewer URL is invalid'));
+    }
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            const pending = _sculptureSnapState.pending;
+            if (!pending || pending.requestId !== requestId) return;
+            _sculptureSnapState.pending = null;
+            reject(new Error('Sculpture camera snapshot timed out'));
+        }, SCULPTURE_SNAPSHOT_TIMEOUT_MS);
+        _sculptureSnapState.pending = {
+            requestId,
+            generation,
+            sculptureId,
+            timer,
+            resolve,
+            reject,
+        };
+        frame.contentWindow.postMessage({
+            type: 'polypaint-sculpture-snapshot-request',
+            protocol_version: SCULPTURE_SNAPSHOT_PROTOCOL_VERSION,
+            request_id: requestId,
+            sculpture_id: sculptureId,
+            target_aspect: 1,
+        }, targetOrigin);
+    });
 }
 
 function _sculptureSelectedMeta() {
@@ -1758,6 +1933,104 @@ async function _sculptureCopyLinkSelected(btn) {
 async function _sculptureDeleteSelected(btn) {
     const m = _sculptureSelectedMeta();
     if (m) await _sculptureDelete(m.id, btn);
+}
+
+async function _resolveViewSnapSource(meta) {
+    const jobId = String((meta && meta.job_id) || '').trim();
+    const artifactId = String((meta && meta.source_artifact_id) || '').trim();
+    if (!jobId || !artifactId) {
+        throw new Error('selected Sculpture has no source job/artifact identity');
+    }
+    const summary = await lambdaPost('storage', { job_id: jobId }, '/render-summary');
+    const calc = summary && summary.calc;
+    if (!calc || !calc.exists) {
+        throw new Error(`source calculation ${jobId} is unavailable`);
+    }
+    const colors = ((summary.families || {}).color || []);
+    const matches = colors.filter((row) => String(row.artifact_id || '') === artifactId);
+    if (!matches.length) {
+        throw new Error(`source Color artifact ${artifactId} is unavailable`);
+    }
+    if (matches.length !== 1) {
+        throw new Error(`source Color artifact ${artifactId} is ambiguous`);
+    }
+    const artifact = matches[0];
+    return { jobId, calc, artifact: { ...artifact, family: 'color' } };
+}
+
+function _viewSnapParamsFromArtifact(source, snapshot, meta) {
+    if (!snapshot || snapshot.version !== SCULPTURE_SNAPSHOT_PROTOCOL_VERSION
+            || snapshot.projection !== 'perspective') {
+        throw new Error('Sculpture viewer returned an unsupported camera snapshot');
+    }
+    const vertical = snapshot.vertical === 't1' ? 't1' : 't2';
+    const params = _viewRenderParamsFromArtifact(
+        source.artifact,
+        'camera',
+        vertical,
+        source.calc
+    );
+    params.view_camera = snapshot;
+    params.source_sculpture_id = String(meta.id);
+    return params;
+}
+
+async function runSculptureSnap() {
+    const meta = _sculptureSelectedMeta();
+    const availability = _sculptureSnapAvailability(meta);
+    if (!availability.enabled) {
+        log(`ViewSnap: ${availability.title}`, 'err', 'render-log');
+        return;
+    }
+    const selectedId = String(meta.id);
+    const selectedGeneration = _sculptureSnapState.generation;
+    const btn = document.getElementById('btn-sculpture-snap');
+    let ok = false;
+    const snapshotPromise = _requestSculptureSnapshot(meta);
+    _sculptureSnapState.inFlight = true;
+    _sculptureUpdateSnapButton();
+    if (btn) btn.textContent = 'Capturing…';
+    try {
+        const snapshot = await snapshotPromise;
+        if (_sculptureSnapState.generation !== selectedGeneration
+                || String((_sculptureSelectedMeta() || {}).id || '') !== selectedId) {
+            throw new Error('Sculpture selection changed during capture');
+        }
+        if (_activeRenderRun) throw new Error('another render started during capture');
+        if (btn && btn.isConnected) btn.textContent = 'Dispatching…';
+        const source = await _resolveViewSnapSource(meta);
+        if (_sculptureSnapState.generation !== selectedGeneration
+                || String((_sculptureSelectedMeta() || {}).id || '') !== selectedId) {
+            throw new Error('Sculpture selection changed while resolving its source');
+        }
+        if (_activeRenderRun) throw new Error('another render started before dispatch');
+        const params = _viewSnapParamsFromArtifact(source, snapshot, meta);
+        log(
+            `ViewSnap: camera from ${selectedId}, source ${source.artifact.artifact_id}, `
+            + `${params.pix}x${params.pix} — dispatching full ColorRender-MT…`,
+            'ok',
+            'render-log'
+        );
+        await _dispatchRenderOrchestrator('color', {
+            job_id: source.jobId,
+            mode: 'color',
+            params,
+        });
+        ok = true;
+    } catch (error) {
+        log(`ViewSnap failed: ${error.message}`, 'err', 'render-log');
+    } finally {
+        _sculptureSnapState.inFlight = false;
+        const live = document.getElementById('btn-sculpture-snap') || btn;
+        if (live) {
+            live.textContent = ok ? '✓ Snap' : '✗ Snap';
+            setTimeout(() => {
+                const current = document.getElementById('btn-sculpture-snap');
+                if (current) current.textContent = 'Snap';
+            }, 2500);
+        }
+        _sculptureUpdateSnapButton();
+    }
 }
 
 async function _sculptureEnsureInventory(force) {
@@ -2228,9 +2501,13 @@ async function runViewRenderStart() {
 
 function _viewRenderGridN(art) {
     const calc = (window._lastRenderSummary && window._lastRenderSummary.calc) || {};
+    return _viewRenderGridNFrom(calc, art);
+}
+
+function _viewRenderGridNFrom(calc, art) {
     const candidates = [
-        calc.N,
-        calc.n1,
+        calc && calc.N,
+        calc && calc.n1,
         art && art.step_scores_grid_n,
     ];
     for (const candidate of candidates) {
@@ -2240,8 +2517,10 @@ function _viewRenderGridN(art) {
     return null;
 }
 
-function _viewRenderParamsFromArtifact(art, projection, vertical) {
-    const pix = _viewRenderGridN(art);
+function _viewRenderParamsFromArtifact(art, projection, vertical, calcOverride) {
+    const pix = calcOverride
+        ? _viewRenderGridNFrom(calcOverride, art)
+        : _viewRenderGridN(art);
     if (!pix) {
         throw new Error('selected calculation has no valid N for an N×N View render');
     }

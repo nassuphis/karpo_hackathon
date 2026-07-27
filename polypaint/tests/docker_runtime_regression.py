@@ -4006,6 +4006,108 @@ def test_roots2pix_view_projection_runtime():
     n_expected = {(r2, 7 - c) for r2 in range(8) for c in range(8)}
     assert n_pixels == n_expected, (sorted(n_pixels), sorted(n_expected))
 
+    oracle = json.load(open(
+        "/tests/fixtures/view_snap_projection_oracle.json",
+        "r",
+        encoding="utf-8",
+    ))
+    camera = oracle["camera"]
+    csv = lambda values: ",".join(format(float(value), ".17g") for value in values)
+    camera_fragments = []
+    expected_camera_raw = {}
+    for idx, point in enumerate(oracle["points"]):
+        roots_path = "/tmp/vp_camera_roots_%d.bin" % idx
+        manifest_path = "/tmp/vp_camera_manifest_%d.json" % idx
+        fragment_path = "/tmp/vp_camera_fragment_%d.frag" % idx
+        with open(roots_path, "wb") as fh:
+            fh.write(struct.pack("<ff", point["re"], point["im"]))
+        with open(manifest_path, "w") as fh:
+            json.dump({
+                "source_family": "slv",
+                "logical_size": 8,
+                "row_bytes": 8,
+                "solve_start": 0,
+                "solve_count": 1,
+                "sources": [{
+                    "id": 0,
+                    "url": "file://" + roots_path,
+                    "key": os.path.basename(roots_path),
+                }],
+                "spans": [{
+                    "source_id": 0,
+                    "logical_byte_start": 0,
+                    "byte_start": 0,
+                    "byte_length": 8,
+                }],
+            }, fh)
+        fragment_prefix = fragment_path[:-5]
+        camera_run = subprocess.run([
+            "/src/roots2pix_mt",
+            "/tmp/vp_camera_pix_%d" % idx,
+            "--pix=%d" % oracle["pix"],
+            "--min_re=-1", "--max_re=1", "--min_im=-1", "--max_im=1",
+            "--degree=1", "--rotation=0", "--threads=1",
+            "--input_manifest=" + manifest_path,
+            "--step_count=1",
+            "--score_metrics=centroid_re",
+            "--score_clip_los=-1",
+            "--score_clip_his=1",
+            "--score_program=m0",
+            "--fragment_prefix=" + fragment_prefix,
+            "--view_projection=camera",
+            "--view_vertical=" + camera["vertical"],
+            "--view_grid_n=%d" % oracle["grid_n"],
+            "--view_step_start=%d" % point["step_start"],
+            "--view_model_view=" + csv(camera["model_view_matrix"]),
+            "--view_projection_matrix=" + csv(camera["projection_matrix"]),
+            "--view_slices=%d" % camera["slices"],
+            "--view_effective_tlo=%s" % camera["effective_tlo"],
+            "--view_effective_thi=%s" % camera["effective_thi"],
+            "--view_point_world_size=%s" % camera["point_world_size"],
+            "--view_point_scale=%s" % camera["point_scale"],
+            "--view_point_min_fraction=%s" % camera["point_min_fraction"],
+            "--view_point_max_fraction=%s" % camera["point_max_fraction"],
+            "--fragment_encoding=u32le_f32depth_u8_channels_v1",
+            "--retries=1",
+        ], capture_output=True, text=True, timeout=30)
+        assert camera_run.returncode == 0, camera_run.stderr
+        camera_meta = json.loads(camera_run.stdout)
+        assert camera_meta["camera_footprint_pixel_candidates"] == len(point["pixels"])
+        payload = open(fragment_path, "rb").read()
+        assert len(payload) == 9 * len(point["pixels"])
+        got_pixels = []
+        for offset in range(0, len(payload), 9):
+            pixel, depth = struct.unpack_from("<If", payload, offset)
+            score = payload[offset + 8]
+            got_pixels.append(pixel)
+            assert abs(depth - point["depth"]) < 1e-6, (idx, depth, point["depth"])
+            expected_camera_raw[pixel] = score
+        assert got_pixels == point["pixels"], (idx, got_pixels, point["pixels"])
+        camera_fragments.append(fragment_path)
+
+    camera_raw_path = "/tmp/vp_camera.raw"
+    camera_hist_path = "/tmp/vp_camera_hist.json"
+    camera_merge = subprocess.run([
+        "/src/assemble_greyscale",
+        "--pix=%d" % oracle["pix"],
+        "--channels=1",
+        "--allow-zero=1",
+        "--output=" + camera_raw_path,
+        "--hist-output=" + camera_hist_path,
+        "--workers=1",
+        "--fragment_encoding=u32le_f32depth_u8_channels_v1",
+        *camera_fragments,
+    ], capture_output=True, text=True, timeout=30)
+    assert camera_merge.returncode == 0, camera_merge.stderr
+    camera_merge_meta = json.loads(camera_merge.stdout)
+    assert camera_merge_meta["camera_fragments_processed"] == len(camera_fragments)
+    assert camera_merge_meta["camera_fragment_records_seen"] == sum(
+        len(point["pixels"]) for point in oracle["points"]
+    )
+    camera_raw = open(camera_raw_path, "rb").read()
+    for pixel, score in expected_camera_raw.items():
+        assert camera_raw[pixel] == score, (pixel, camera_raw[pixel], score)
+
     cleanup(
         "/tmp/vp_roots.bin",
         "/tmp/vp_manifest.json",
@@ -4015,8 +4117,19 @@ def test_roots2pix_view_projection_runtime():
         "/tmp/vp_n_roots.bin",
         "/tmp/vp_n_manifest.json",
         "/tmp/vp_n_fragment.frag",
+        camera_raw_path,
+        camera_hist_path,
+        *camera_fragments,
+        *[
+            path
+            for idx in range(len(oracle["points"]))
+            for path in (
+                "/tmp/vp_camera_roots_%d.bin" % idx,
+                "/tmp/vp_camera_manifest_%d.json" % idx,
+            )
+        ],
     )
-    print("  front/t2 + radial/t2 + isometric/t2 + pix==N bijection exact: OK")
+    print("  front/radial/isometric + shared Three.js camera oracle exact: OK")
 
 
 if __name__ == "__main__":

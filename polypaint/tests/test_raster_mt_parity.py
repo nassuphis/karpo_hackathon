@@ -4,6 +4,7 @@ import math
 import pathlib
 import shutil
 import socketserver
+import struct
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,11 @@ from array import array
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAMBDA_DIR = ROOT / "lambda"
+VIEW_SNAP_ORACLE = json.loads(
+    (ROOT / "tests" / "fixtures" / "view_snap_projection_oracle.json").read_text(
+        encoding="utf-8"
+    )
+)
 sys.path.insert(0, str(LAMBDA_DIR))
 
 
@@ -158,6 +164,25 @@ class TestRasterMtParity(unittest.TestCase):
         result = subprocess.run(compile_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise AssertionError(f"failed to compile roots2pix_mt parity binary: {result.stderr}")
+        cls._camera_probe = cls._workdir / "view_camera_projection_probe"
+        result = subprocess.run(
+            [
+                cc,
+                "-O2",
+                "-I",
+                str(LAMBDA_DIR),
+                str(ROOT / "tests" / "view_camera_projection_probe.c"),
+                "-lm",
+                "-o",
+                str(cls._camera_probe),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise AssertionError(
+                f"failed to compile camera projection probe: {result.stderr}"
+            )
 
     @classmethod
     def tearDownClass(cls):
@@ -226,8 +251,114 @@ class TestRasterMtParity(unittest.TestCase):
             ))
         return records
 
+    def _read_camera_records(self, path, channels=1):
+        raw = path.read_bytes()
+        record_size = 8 + int(channels)
+        self.assertEqual(len(raw) % record_size, 0)
+        records = []
+        for off in range(0, len(raw), record_size):
+            pixel_idx, depth = struct.unpack_from("<If", raw, off)
+            records.append((
+                pixel_idx,
+                depth,
+                tuple(raw[off + 8:off + record_size]),
+            ))
+        return records
+
+    def _camera_view_args(self, *, grid_n=2, step_start=0):
+        near, far = 0.1, 100.0
+        projection = [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, (far + near) / (near - far), -1,
+            0, 0, (2 * far * near) / (near - far), 0,
+        ]
+        # Translate t=0 onto camera y=0 and place the sculpture two units
+        # in front of the camera. This makes differing root-imaginary values
+        # collide at the center while retaining different positive depths.
+        model_view = [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            0, 0.5, -2, 1,
+        ]
+        csv = lambda values: ",".join(format(float(value), ".17g") for value in values)
+        return [
+            "--view_projection=camera",
+            "--view_vertical=t2",
+            f"--view_grid_n={grid_n}",
+            f"--view_step_start={step_start}",
+            f"--view_model_view={csv(model_view)}",
+            f"--view_projection_matrix={csv(projection)}",
+            "--view_slices=0",
+            "--view_effective_tlo=0",
+            "--view_effective_thi=1",
+            "--view_point_world_size=0.0004",
+            "--view_point_scale=0.5",
+            "--view_point_min_fraction=0.125",
+            "--view_point_max_fraction=1",
+            "--fragment_encoding=u32le_f32depth_u8_channels_v1",
+        ]
+
+    def _oracle_camera_view_args(self, *, step_start):
+        camera = VIEW_SNAP_ORACLE["camera"]
+        csv = lambda values: ",".join(
+            format(float(value), ".17g") for value in values
+        )
+        return [
+            "--view_projection=camera",
+            f"--view_vertical={camera['vertical']}",
+            f"--view_grid_n={VIEW_SNAP_ORACLE['grid_n']}",
+            f"--view_step_start={step_start}",
+            f"--view_model_view={csv(camera['model_view_matrix'])}",
+            f"--view_projection_matrix={csv(camera['projection_matrix'])}",
+            f"--view_slices={camera['slices']}",
+            f"--view_effective_tlo={camera['effective_tlo']}",
+            f"--view_effective_thi={camera['effective_thi']}",
+            f"--view_point_world_size={camera['point_world_size']}",
+            f"--view_point_scale={camera['point_scale']}",
+            f"--view_point_min_fraction={camera['point_min_fraction']}",
+            f"--view_point_max_fraction={camera['point_max_fraction']}",
+            "--fragment_encoding=u32le_f32depth_u8_channels_v1",
+        ]
+
     def _run_binary(self, args):
         return subprocess.run(args, capture_output=True, text=True)
+
+    def _probe_camera(
+        self,
+        *,
+        model_view,
+        projection,
+        x=0.0,
+        t=0.5,
+        z=0.0,
+        pix=256,
+        slices=0,
+        tlo=0.0,
+        thi=1.0,
+    ):
+        csv = lambda values: ",".join(
+            format(float(value), ".17g") for value in values
+        )
+        result = self._run_binary([
+            str(self._camera_probe),
+            csv(model_view),
+            csv(projection),
+            format(float(x), ".17g"),
+            format(float(t), ".17g"),
+            format(float(z), ".17g"),
+            str(int(pix)),
+            str(int(slices)),
+            format(float(tlo), ".17g"),
+            format(float(thi), ".17g"),
+            "0.016",
+            "0.5",
+            "0.001",
+            "1",
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
 
     def _run_centroid_re_score_bytes(self, root, roots, *, label, extra_args=None):
         degree = 1
@@ -380,6 +511,341 @@ class TestRasterMtParity(unittest.TestCase):
                     for col in range(4)
                 }
                 self.assertEqual(got, expected)
+
+    def test_camera_projection_emits_nearest_float32_depth(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots = [0.0, 1.0, 0.0, -1.0]
+            roots_path = self._write_float_file(root / "camera_roots.bin", roots)
+            server, thread = self._serve_dir(root)
+            try:
+                manifest_path = self._write_single_span_manifest(
+                    root / "camera_manifest.json",
+                    file_name=roots_path.name,
+                    port=server.server_address[1],
+                    row_bytes=2 * 2 * 4,
+                    solve_count=1,
+                )
+                fragment_prefix = root / "camera_fragment"
+                cmd = [
+                    str(self._binary),
+                    str(root / "camera_pix"),
+                    "--pix=8",
+                    *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
+                    "--degree=2",
+                    "--rotation=0",
+                    "--threads=2",
+                    f"--input_manifest={manifest_path}",
+                    "--step_count=1",
+                    *self._single_metric_program_args("centroid_re", -1, 1),
+                    f"--fragment_prefix={fragment_prefix}",
+                    "--retries=1",
+                    *self._camera_view_args(),
+                ]
+                result = self._run_binary(cmd)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                telemetry = json.loads(result.stdout)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+            records = self._read_camera_records(
+                pathlib.Path(f"{fragment_prefix}.frag")
+            )
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0][0], 4 * 8 + 4)
+            self.assertAlmostEqual(records[0][1], 1.875, places=6)
+            self.assertEqual(telemetry["camera_candidate_roots"], 2)
+            self.assertEqual(telemetry["camera_projected_points"], 2)
+            self.assertEqual(telemetry["camera_occupied_pixels"], 1)
+            self.assertEqual(telemetry["camera_fragment_bytes"], 9)
+            self.assertGreaterEqual(telemetry["camera_depth_replacements"], 1)
+
+    def test_camera_projection_matches_shared_threejs_pixel_oracle(self):
+        pix = int(VIEW_SNAP_ORACLE["pix"])
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            server, thread = self._serve_dir(root)
+            try:
+                for idx, point in enumerate(VIEW_SNAP_ORACLE["points"]):
+                    roots_path = self._write_float_file(
+                        root / f"oracle_roots_{idx}.bin",
+                        [point["re"], point["im"]],
+                    )
+                    manifest_path = self._write_single_span_manifest(
+                        root / f"oracle_manifest_{idx}.json",
+                        file_name=roots_path.name,
+                        port=server.server_address[1],
+                        row_bytes=2 * 4,
+                        solve_count=1,
+                    )
+                    fragment_prefix = root / f"oracle_fragment_{idx}"
+                    result = self._run_binary([
+                        str(self._binary),
+                        str(root / f"oracle_pix_{idx}"),
+                        f"--pix={pix}",
+                        *self._bounds_args(pix, pix, 0.0, 0.0, pix / 2.0),
+                        "--degree=1",
+                        "--rotation=0",
+                        "--threads=1",
+                        f"--input_manifest={manifest_path}",
+                        "--step_count=1",
+                        *self._single_metric_program_args("centroid_re", -1, 1),
+                        f"--fragment_prefix={fragment_prefix}",
+                        "--retries=1",
+                        *self._oracle_camera_view_args(
+                            step_start=point["step_start"]
+                        ),
+                    ])
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    records = self._read_camera_records(
+                        pathlib.Path(f"{fragment_prefix}.frag")
+                    )
+                    self.assertEqual(
+                        [record[0] for record in records],
+                        point["pixels"],
+                        f"oracle point {idx}",
+                    )
+                    for _pixel_idx, depth, _score in records:
+                        self.assertAlmostEqual(
+                            depth, point["depth"], places=6,
+                            msg=f"oracle point {idx}",
+                        )
+                    telemetry = json.loads(result.stdout)
+                    self.assertEqual(
+                        telemetry["camera_footprint_pixel_candidates"],
+                        len(point["pixels"]),
+                    )
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+    def test_camera_projection_clip_slice_and_float32_depth_contract(self):
+        camera = VIEW_SNAP_ORACLE["camera"]
+        projection = camera["projection_matrix"]
+        # Keep the test points just inside the clip plane. Three.js emits
+        # projection[0/5] as 1.0000000000000002 for a square 90-degree
+        # camera, so an analytically exact +/-1 NDC boundary is outside
+        # after binary64 rounding.
+        model_view = [
+            3.9, 0, 0, 0,
+            0, 3.9, 0, 0,
+            0, 0, 1, 0,
+            0, 0, -2, 1,
+        ]
+
+        expected = (
+            (-0.5, 0.5, 3.2, 128.0),
+            (0.5, 0.5, 252.8, 128.0),
+            (0.0, 0.0, 128.0, 252.8),
+            (0.0, 1.0, 128.0, 3.2),
+        )
+        for x, t, expected_x, expected_y in expected:
+            with self.subTest(x=x, t=t):
+                result = self._probe_camera(
+                    model_view=model_view,
+                    projection=projection,
+                    x=x,
+                    t=t,
+                )
+                self.assertTrue(result["accepted"])
+                self.assertAlmostEqual(result["px"], expected_x, places=10)
+                self.assertAlmostEqual(result["py"], expected_y, places=10)
+
+        just_inside = self._probe_camera(
+            model_view=model_view,
+            projection=projection,
+            x=0.512,
+        )
+        just_outside = self._probe_camera(
+            model_view=model_view,
+            projection=projection,
+            x=0.513,
+        )
+        self.assertTrue(just_inside["accepted"])
+        self.assertFalse(just_outside["accepted"])
+        self.assertEqual(just_outside["reason"], 3)
+
+        behind = list(model_view)
+        behind[14] = 1.0
+        result = self._probe_camera(
+            model_view=behind,
+            projection=projection,
+        )
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["reason"], 2)
+
+        for depth in (0.05, 101.0):
+            clipped = list(model_view)
+            clipped[14] = -depth
+            with self.subTest(depth=depth):
+                result = self._probe_camera(
+                    model_view=clipped,
+                    projection=projection,
+                )
+                self.assertFalse(result["accepted"])
+                self.assertEqual(result["reason"], 3)
+
+        sliced_out = self._probe_camera(
+            model_view=model_view,
+            projection=projection,
+            t=0.25,
+            slices=3,
+            tlo=0.1,
+            thi=0.3,
+        )
+        self.assertEqual(sliced_out["quantized_t"], 0.0)
+        self.assertFalse(sliced_out["accepted"])
+        self.assertEqual(sliced_out["reason"], 1)
+        sliced_boundary = self._probe_camera(
+            model_view=model_view,
+            projection=projection,
+            t=0.25,
+            slices=3,
+            tlo=0.0,
+            thi=0.0,
+        )
+        self.assertTrue(sliced_boundary["accepted"])
+
+        depths = []
+        for depth in (1.00000001, 1.00000002):
+            collapsed = list(model_view)
+            collapsed[14] = -depth
+            result = self._probe_camera(
+                model_view=collapsed,
+                projection=projection,
+            )
+            self.assertTrue(result["accepted"])
+            depths.append(result["depth"])
+        self.assertEqual(depths[0], depths[1])
+
+    def test_camera_vertical_axis_uses_t1_or_serpentine_t2(self):
+        grid_n = 4
+        # Keep Im/depth constant so this fixture isolates the selected
+        # parameter axis. Re varies only with t1: t1 therefore collapses
+        # each row to one point, while serpentine t2 makes a 4x4 lattice.
+        roots = []
+        for step in range(grid_n * grid_n):
+            row = step // grid_n
+            roots.extend([-0.75 + 0.5 * row, 0.0])
+        near, far = 0.1, 100.0
+        projection = [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, (far + near) / (near - far), -1,
+            0, 0, (2 * far * near) / (near - far), 0,
+        ]
+        model_view = [
+            4, 0, 0, 0,
+            0, 3.5, 0, 0,
+            0, 0, 1, 0,
+            0, 0, -2, 1,
+        ]
+        csv = lambda values: ",".join(
+            format(float(value), ".17g") for value in values
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(root / "axis_roots.bin", roots)
+            server, thread = self._serve_dir(root)
+            try:
+                manifest_path = self._write_single_span_manifest(
+                    root / "axis_manifest.json",
+                    file_name=roots_path.name,
+                    port=server.server_address[1],
+                    row_bytes=2 * 4,
+                    solve_count=grid_n * grid_n,
+                )
+                pixels_by_axis = {}
+                for vertical in ("t1", "t2"):
+                    fragment_prefix = root / f"axis_{vertical}_fragment"
+                    result = self._run_binary([
+                        str(self._binary),
+                        str(root / f"axis_{vertical}_pix"),
+                        "--pix=8",
+                        *self._bounds_args(8, 8, 0.0, 0.0, 4.0),
+                        "--degree=1",
+                        "--rotation=0",
+                        "--threads=2",
+                        f"--input_manifest={manifest_path}",
+                        f"--step_count={grid_n * grid_n}",
+                        *self._single_metric_program_args("centroid_re", -2, 2),
+                        f"--fragment_prefix={fragment_prefix}",
+                        "--retries=1",
+                        "--view_projection=camera",
+                        f"--view_vertical={vertical}",
+                        f"--view_grid_n={grid_n}",
+                        "--view_step_start=0",
+                        f"--view_model_view={csv(model_view)}",
+                        f"--view_projection_matrix={csv(projection)}",
+                        "--view_slices=0",
+                        "--view_effective_tlo=0",
+                        "--view_effective_thi=1",
+                        "--view_point_world_size=0.0004",
+                        "--view_point_scale=0.5",
+                        "--view_point_min_fraction=0.01",
+                        "--view_point_max_fraction=1",
+                        "--fragment_encoding=u32le_f32depth_u8_channels_v1",
+                    ])
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    pixels_by_axis[vertical] = {
+                        pixel
+                        for pixel, _depth, _score in self._read_camera_records(
+                            pathlib.Path(f"{fragment_prefix}.frag")
+                        )
+                    }
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+        self.assertEqual(len(pixels_by_axis["t1"]), 4)
+        self.assertEqual(len(pixels_by_axis["t2"]), 16)
+
+    def test_camera_pass1_only_section_emits_empty_fragment_without_dense_planes(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(root / "pass1_roots.bin", [0.0, 0.0])
+            server, thread = self._serve_dir(root)
+            try:
+                manifest_path = self._write_single_span_manifest(
+                    root / "pass1_manifest.json",
+                    file_name=roots_path.name,
+                    port=server.server_address[1],
+                    row_bytes=2 * 4,
+                    solve_count=1,
+                )
+                fragment_prefix = root / "pass1_fragment"
+                cmd = [
+                    str(self._binary),
+                    str(root / "pass1_pix"),
+                    "--pix=32768",
+                    "--min_re=-1", "--max_re=1",
+                    "--min_im=-1", "--max_im=1",
+                    "--degree=1",
+                    "--rotation=0",
+                    "--threads=1",
+                    f"--input_manifest={manifest_path}",
+                    "--step_count=1",
+                    *self._single_metric_program_args("centroid_re", -1, 1),
+                    f"--fragment_prefix={fragment_prefix}",
+                    "--retries=1",
+                    *self._camera_view_args(grid_n=2, step_start=4),
+                ]
+                result = self._run_binary(cmd)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                telemetry = json.loads(result.stdout)
+                self.assertFalse(telemetry["camera_pass0_overlap"])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+            self.assertEqual(
+                pathlib.Path(f"{fragment_prefix}.frag").read_bytes(),
+                b"",
+            )
 
     def test_view_step_start_offsets_the_section_lattice(self):
         """MT sections pass their global step offset — the SAME contract as

@@ -81,10 +81,18 @@
   #message-box h1 { font-size: 16px; color: #e8eef5; font-weight: normal; }
   #message-box .detail { font-size: 12px; color: #778599; margin-top: 10px;
                          max-width: 60ch; word-break: break-word; }
+  #view-snap-guide { position: fixed; z-index: 4; left: 50%; top: 50%;
+                     width: min(100vw, 100vh); height: min(100vw, 100vh);
+                     transform: translate(-50%, -50%); box-sizing: border-box;
+                     border: 1px solid rgba(233, 69, 96, 0.62);
+                     box-shadow: inset 0 0 0 1px rgba(5, 7, 12, 0.5);
+                     pointer-events: none; display: none; }
+  body.embedded #view-snap-guide { display: block; }
 </style>
 </head>
 <body>
 <div id="gl-root"></div>
+<div id="view-snap-guide" aria-hidden="true"></div>
 <div id="hud">
   <div id="hud-title">PolyPaint sculpture</div>
   <div id="hud-stats">loading…</div>
@@ -195,6 +203,7 @@ function loadImage(url) {
 
 async function bootConfig() {
     const qp = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const embedded = qp.get('embed') === '1';
     if (qp.get('r')) {
         return {
             rootsUrl: qp.get('r') || '',
@@ -206,7 +215,45 @@ async function bootConfig() {
             title: qp.get('t') || 'PolyPaint sculpture',
             format: qp.get('fmt') === 'u16' ? 'u16' : 'f32',
             saved: false,
+            sculptureId: qp.get('sid') || '',
+            embedded,
         };
+    }
+    if (qp.get('meta')) {
+        try {
+            const metaUrl = new URL(qp.get('meta'), location.href);
+            if (metaUrl.protocol !== 'https:' && metaUrl.protocol !== 'http:') return null;
+            const resp = await fetch(metaUrl.href, { cache: 'no-store' });
+            if (!resp.ok) return null;
+            const meta = await resp.json();
+            const vp = meta.viewport || {};
+            const siblingUrl = (value, fallback) => {
+                const key = String(value || fallback);
+                if (/^https?:\/\//i.test(key)) return key;
+                if (key.startsWith('/')) return new URL(key, metaUrl.origin).href;
+                if (key.includes('/')) return new URL('/' + key, metaUrl.origin).href;
+                return new URL(key, metaUrl).href;
+            };
+            return {
+                rootsUrl: siblingUrl(meta.roots_key, 'roots.bin'),
+                paletteUrl: siblingUrl(meta.palette_key, 'palette.png'),
+                gridN: parseInt(meta.grid_n, 10),
+                degree: parseInt(meta.degree, 10),
+                minRe: parseFloat(vp.min_re), maxRe: parseFloat(vp.max_re),
+                minIm: parseFloat(vp.min_im), maxIm: parseFloat(vp.max_im),
+                title: String(meta.title || 'PolyPaint sculpture'),
+                view: (meta.view && typeof meta.view === 'object') ? meta.view : null,
+                format: meta.format === 'u16' ? 'u16' : 'f32',
+                saved: true,
+                sculptureId: String(qp.get('sid') || meta.id || ''),
+                jobId: String(meta.job_id || ''),
+                sourceArtifactId: String(meta.source_artifact_id || ''),
+                kind: String(meta.kind || 'full'),
+                embedded,
+            };
+        } catch (e) {
+            return null;
+        }
     }
     // saved sculpture: the page lives inside its sculptures/{id}/ prefix and
     // reads its sibling meta.json; data keys resolve relative to the prefix
@@ -226,6 +273,11 @@ async function bootConfig() {
             view: (meta.view && typeof meta.view === 'object') ? meta.view : null,
             format: meta.format === 'u16' ? 'u16' : 'f32',
             saved: true,
+            sculptureId: String(meta.id || ''),
+            jobId: String(meta.job_id || ''),
+            sourceArtifactId: String(meta.source_artifact_id || ''),
+            kind: String(meta.kind || 'full'),
+            embedded,
         };
     } catch (e) {
         return null;
@@ -244,7 +296,11 @@ async function boot() {
         menuBtn.style.opacity = on ? '1' : '0.75';
     };
     menuBtn.addEventListener('click', () => setMenu(panel.classList.contains('hidden')));
-    setMenu(!(cfg && cfg.saved));
+    setMenu(!!(cfg && cfg.embedded) || !(cfg && cfg.saved));
+    document.body.classList.toggle(
+        'embedded',
+        !!(cfg && cfg.embedded) || window.parent !== window
+    );
     document.getElementById('hud-title').textContent = title || 'PolyPaint sculpture';
     if (!cfg || !rootsUrl || !paletteUrl || !Number.isFinite(gridN) || !Number.isFinite(degree)
         || !Number.isFinite(minRe) || !Number.isFinite(maxRe)
@@ -1876,6 +1932,163 @@ onmessage = function (ev) {
         else renderer.render(scene, camera);
     });
 
+    const snapshotProtocolVersion = 1;
+    const snapshotUnsupportedState = () => {
+        const unsupported = [];
+        if (!showPointsCtl.checked) unsupported.push('hidden points');
+        if (showRibbonsCtl.checked) unsupported.push('ribbons');
+        if (showThreadsCtl.checked) unsupported.push('threads');
+        if (showCluCtl.checked) unsupported.push('clusters');
+        if (showSplatsCtl.checked) unsupported.push('splats');
+        if (styleCtl.value !== 'solid') unsupported.push(`${styleCtl.value} style`);
+        return unsupported;
+    };
+    const snapshotPayload = () => {
+        const finiteArray = (values, length, label) => {
+            if (!Array.isArray(values) || values.length !== length
+                    || values.some(value => !Number.isFinite(Number(value)))) {
+                throw new Error(`${label} is not a finite ${length}-element array`);
+            }
+            return values.map(Number);
+        };
+        const unsupported = snapshotUnsupportedState();
+        if (unsupported.length) {
+            throw new Error('ViewSnap v1 does not support ' + unsupported.join(', '));
+        }
+
+        camera.updateMatrixWorld(true);
+        sculpt.updateMatrixWorld(true);
+        const squareCamera = camera.clone();
+        const aspect = Number(camera.aspect);
+        if (!(aspect > 0) || !Number.isFinite(aspect)) {
+            throw new Error('viewer camera has an invalid aspect ratio');
+        }
+        if (aspect < 1) {
+            const halfVertical = THREE.MathUtils.degToRad(camera.fov) * 0.5;
+            squareCamera.fov = THREE.MathUtils.radToDeg(
+                2 * Math.atan(Math.tan(halfVertical) * aspect)
+            );
+        }
+        squareCamera.aspect = 1;
+        squareCamera.updateProjectionMatrix();
+        squareCamera.updateMatrixWorld(true);
+
+        const modelView = new THREE.Matrix4().multiplyMatrices(
+            squareCamera.matrixWorldInverse,
+            sculpt.matrixWorld
+        );
+        const drawingBuffer = new THREE.Vector2();
+        renderer.getDrawingBufferSize(drawingBuffer);
+        const cropSide = Math.min(drawingBuffer.x, drawingBuffer.y);
+        if (!(cropSide > 0)) throw new Error('viewer drawing buffer is empty');
+        const gl = renderer.getContext();
+        const pointRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
+        const pointMin = Number(pointRange && pointRange[0]);
+        const pointMax = Number(pointRange && pointRange[1]);
+        if (!(pointMin > 0) || !(pointMax >= pointMin)) {
+            throw new Error('viewer point-size limits are unavailable');
+        }
+
+        const height = Number(sculpt.scale.y);
+        const controlLo = Number(zloCtl.value) / 100;
+        const controlHi = Number(zhiCtl.value) / 100;
+        const effectiveLo = height > 0
+            ? Math.max(0, controlLo - 0.005 / height)
+            : 0;
+        const effectiveHi = height > 0
+            ? Math.min(1, controlHi + 0.005 / height)
+            : 1;
+        const modelViewMatrix = finiteArray(
+            modelView.toArray(),
+            16,
+            'viewer model-view matrix'
+        );
+        const projectionMatrix = finiteArray(
+            squareCamera.projectionMatrix.toArray(),
+            16,
+            'viewer projection matrix'
+        );
+        const pointWorldSize = Number(material.size);
+        const pointScale = 0.5 * drawingBuffer.y / cropSide;
+        const pointMinFraction = pointMin / cropSide;
+        const pointMaxFraction = Math.min(1, pointMax / cropSide);
+        if (!Number.isFinite(effectiveLo) || !Number.isFinite(effectiveHi)
+                || effectiveLo < 0 || effectiveHi > 1 || effectiveLo > effectiveHi) {
+            throw new Error('viewer effective t-window is invalid');
+        }
+        if (!Number.isFinite(pointWorldSize)
+                || pointWorldSize < 0.0004 || pointWorldSize > 0.016
+                || !Number.isFinite(pointScale) || pointScale < 0.5
+                || !Number.isFinite(pointMinFraction) || pointMinFraction <= 0
+                || !Number.isFinite(pointMaxFraction)
+                || pointMaxFraction < pointMinFraction || pointMaxFraction > 1) {
+            throw new Error('viewer point-size contract is invalid');
+        }
+        return {
+            version: snapshotProtocolVersion,
+            projection: 'perspective',
+            matrix_layout: 'column_major',
+            model_view_matrix: modelViewMatrix,
+            projection_matrix: projectionMatrix,
+            vertical: zaxisCtl.value === 't1' ? 't1' : 't2',
+            slices: Math.max(0, parseInt(slicesCtl.value, 10) || 0),
+            effective_tlo: effectiveLo,
+            effective_thi: effectiveHi,
+            point_world_size: pointWorldSize,
+            point_scale: pointScale,
+            point_min_fraction: pointMinFraction,
+            point_max_fraction: pointMaxFraction,
+            style: 'solid',
+            show: {
+                points: true,
+                ribbons: false,
+                threads: false,
+                clu: false,
+                splats: false,
+            },
+            frame: { aspect: 1, crop: 'center_square' },
+            debug: {
+                camera_position: squareCamera.position.toArray(),
+                camera_target: controls.target.toArray(),
+                vertical_fov_degrees: squareCamera.fov,
+                near: squareCamera.near,
+                far: squareCamera.far,
+                height,
+                control_zlo: controlLo,
+                control_zhi: controlHi,
+                point_control: Number(sizeCtl.value),
+            },
+        };
+    };
+
+    const onSnapshotRequest = (event) => {
+        if (window.parent === window || event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.type !== 'polypaint-sculpture-snapshot-request'
+                || message.protocol_version !== snapshotProtocolVersion) return;
+        if (message.sculpture_id !== cfg.sculptureId || Number(message.target_aspect) !== 1) return;
+        const response = {
+            type: 'polypaint-sculpture-snapshot-response',
+            protocol_version: snapshotProtocolVersion,
+            request_id: String(message.request_id || ''),
+            sculpture_id: cfg.sculptureId,
+        };
+        const unsupported = snapshotUnsupportedState();
+        if (unsupported.length) {
+            response.unsupported_state = unsupported;
+            response.error = 'ViewSnap v1 does not support ' + unsupported.join(', ');
+            event.source.postMessage(response, event.origin);
+            return;
+        }
+        try {
+            response.snapshot = snapshotPayload();
+        } catch (error) {
+            response.error = error && error.message ? error.message : String(error);
+        }
+        event.source.postMessage(response, event.origin);
+    };
+    window.addEventListener('message', onSnapshotRequest);
+
     window.__sculptureViewer = {
         scene, camera, renderer, points, ribbons, threads, clu: cluRibbons, sculpt, material, controls,
         flight, tour: { state: tour, tick: tourTick, pose: tourPose, setPlaying: tourSetPlaying },
@@ -1886,7 +2099,19 @@ onmessage = function (ev) {
         lod: { state: lod, set: lodSet, apply: lodApplyAll },
         splats,
         get splatCount() { return splatCount; },
+        snapshotPayload,
     };
+    if (window.parent !== window && cfg.sculptureId) {
+        let targetOrigin = '*';
+        try {
+            if (document.referrer) targetOrigin = new URL(document.referrer).origin;
+        } catch (e) {}
+        window.parent.postMessage({
+            type: 'polypaint-sculpture-ready',
+            protocol_version: snapshotProtocolVersion,
+            sculpture_id: cfg.sculptureId,
+        }, targetOrigin);
+    }
 }
 
 boot();

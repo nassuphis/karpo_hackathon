@@ -1554,6 +1554,10 @@ class TestListViews(unittest.TestCase):
                     "view_id": "view_b_radial_t1", "projection": "radial", "vertical": "t1",
                     "image_key": "renders/compute_j1/views/view_b_radial_t1/image.png",
                     "preview_key": "renders/compute_j1/views/view_b_radial_t1/preview.png",
+                    "source_artifact_id": "color_source_7",
+                    "source_sculpture_id": "scu_source_4",
+                    "camera_snapshot_version": "1",
+                    "view_camera": "{\"version\":1}",
                     "pix": "2000",
                     "created_at": "2026-07-25T10:00:00Z"},
             }
@@ -1578,6 +1582,10 @@ class TestListViews(unittest.TestCase):
         self.assertEqual(first["width"], "2000")
         self.assertEqual(first["height"], "2000")
         self.assertEqual(first["content_type"], "image/png")
+        self.assertEqual(first["source_artifact_id"], "color_source_7")
+        self.assertEqual(first["source_sculpture_id"], "scu_source_4")
+        self.assertEqual(first["camera_snapshot_version"], "1")
+        self.assertEqual(first["view_camera"], "{\"version\":1}")
         self.assertEqual(first["prefix"], "renders/compute_j1/views/view_b_radial_t1/")
         self.assertIn("/renders/compute_j1/views/view_b_radial_t1/image.png", first["image_url"])
         self.assertIn("/renders/compute_j1/views/view_b_radial_t1/preview.png", first["viewer_url"])

@@ -33,6 +33,7 @@ from solve_score_chain import (
     normalize_solve_score_spec_version,
     read_solve_score_metadata,
 )
+from view_camera import CAMERA_FRAGMENT_ENCODING
 
 
 s3 = boto3.client("s3")
@@ -68,7 +69,14 @@ def _coerce_finite_float(value, field_name):
     return number
 
 
-def _validate_fragment_manifest(manifest, *, source_item_count, fragment_prefix, expected_chain_fingerprint):
+def _validate_fragment_manifest(
+    manifest,
+    *,
+    source_item_count,
+    fragment_prefix,
+    expected_chain_fingerprint,
+    expected_projection="plan",
+):
     if not isinstance(manifest, dict):
         raise RuntimeError("FinalizeMT requires fragment_manifest")
     try:
@@ -79,10 +87,29 @@ def _validate_fragment_manifest(manifest, *, source_item_count, fragment_prefix,
         raise RuntimeError(
             f"fragment_manifest.version must be {FRAGMENT_MANIFEST_VERSION}, got {version}"
         )
-    pair_encoding = str(manifest.get("pair_encoding") or manifest.get("fragment_encoding") or "").strip()
-    if pair_encoding not in (FRAGMENT_PAIR_ENCODING, FRAGMENT_MULTI_ENCODING):
+    pair_encoding = str(manifest.get("pair_encoding") or "").strip()
+    fragment_encoding = str(manifest.get("fragment_encoding") or "").strip()
+    if pair_encoding and fragment_encoding and pair_encoding != fragment_encoding:
         raise RuntimeError(
-            f"fragment_manifest.pair_encoding must be {FRAGMENT_PAIR_ENCODING!r} or {FRAGMENT_MULTI_ENCODING!r}, got {pair_encoding!r}"
+            "fragment_manifest encoding aliases disagree: "
+            f"pair_encoding={pair_encoding!r}, fragment_encoding={fragment_encoding!r}"
+        )
+    pair_encoding = pair_encoding or fragment_encoding
+    allowed_encodings = (
+        FRAGMENT_PAIR_ENCODING,
+        FRAGMENT_MULTI_ENCODING,
+        CAMERA_FRAGMENT_ENCODING,
+    )
+    if pair_encoding not in allowed_encodings:
+        raise RuntimeError(
+            "fragment_manifest.pair_encoding must be one of "
+            f"{allowed_encodings!r}, got {pair_encoding!r}"
+        )
+    camera_projection = str(expected_projection or "plan").strip().lower() == "camera"
+    if camera_projection != (pair_encoding == CAMERA_FRAGMENT_ENCODING):
+        raise RuntimeError(
+            "fragment_manifest encoding/projection mismatch: "
+            f"projection={expected_projection!r}, encoding={pair_encoding!r}"
         )
     try:
         channels = int(manifest.get("channels", 1) or 1)
@@ -91,7 +118,12 @@ def _validate_fragment_manifest(manifest, *, source_item_count, fragment_prefix,
     if channels < 1 or channels > 8:
         raise RuntimeError(f"fragment_manifest.channels must be in [1,8], got {channels}")
     record_size_bytes = int(manifest.get("record_size_bytes") or (4 + channels))
-    expected_record_size = 5 if pair_encoding == FRAGMENT_PAIR_ENCODING else 4 + channels
+    if pair_encoding == FRAGMENT_PAIR_ENCODING:
+        expected_record_size = 5
+    elif pair_encoding == CAMERA_FRAGMENT_ENCODING:
+        expected_record_size = 8 + channels
+    else:
+        expected_record_size = 4 + channels
     if record_size_bytes != expected_record_size:
         raise RuntimeError(
             f"fragment_manifest.record_size_bytes mismatch: expected {expected_record_size}, got {record_size_bytes}"
@@ -174,7 +206,19 @@ def _presign_fragment_urls(*, finalize_s3, fragment_prefix, source_item_count):
     return urls
 
 
-def _assemble_greyscale_raw(*, pix, raw_path, hist_path, workers, fragment_urls, manifest_path, channels=1, allow_zero=False, progress_cb=None):
+def _assemble_greyscale_raw(
+    *,
+    pix,
+    raw_path,
+    hist_path,
+    workers,
+    fragment_urls,
+    manifest_path,
+    channels=1,
+    allow_zero=False,
+    fragment_encoding="",
+    progress_cb=None,
+):
     _write_url_manifest(manifest_path, fragment_urls)
     cmd = [
         ASSEMBLE_GREYSCALE,
@@ -186,6 +230,8 @@ def _assemble_greyscale_raw(*, pix, raw_path, hist_path, workers, fragment_urls,
         f"--workers={int(workers)}",
         f"--url-manifest={manifest_path}",
     ]
+    if fragment_encoding:
+        cmd.append(f"--fragment_encoding={fragment_encoding}")
     stop_heartbeat = threading.Event()
     heartbeat_thread = None
     if progress_cb is not None and ASSEMBLE_PROGRESS_INTERVAL_S > 0:
@@ -210,6 +256,21 @@ def _assemble_greyscale_raw(*, pix, raw_path, hist_path, workers, fragment_urls,
             heartbeat_thread.join(timeout=1.0)
     if proc.returncode != 0:
         raise RuntimeError(f"assemble_greyscale failed: {proc.stderr.strip() or 'unknown error'}")
+    assembler_telemetry = {}
+    if str(proc.stdout or "").strip():
+        try:
+            parsed_stdout = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "assemble_greyscale emitted malformed telemetry JSON"
+            ) from exc
+        if not isinstance(parsed_stdout, dict):
+            raise RuntimeError("assemble_greyscale telemetry must be an object")
+        assembler_telemetry = {
+            str(key): int(value)
+            for key, value in parsed_stdout.items()
+            if str(key).startswith("camera_")
+        }
     with open(hist_path, "r", encoding="utf-8") as fh:
         hist = json.load(fh)
     histogram = hist.get("histogram")
@@ -219,6 +280,7 @@ def _assemble_greyscale_raw(*, pix, raw_path, hist_path, workers, fragment_urls,
         "histogram": [int(v) for v in histogram],
         "background_pixels": int(hist.get("background_pixels") or 0),
         "nonzero_pixels": int(hist.get("nonzero_pixels") or 0),
+        "telemetry": assembler_telemetry,
     }
 
 
@@ -660,6 +722,7 @@ def handler(event, context):
         source_item_count=source_item_count,
         fragment_prefix=fragment_prefix,
         expected_chain_fingerprint=expected_chain_fingerprint,
+        expected_projection=metadata.get("view_projection", "plan"),
     )
     if str(metadata.get("color_mode") or "") != "solve_score":
         raise RuntimeError("FinalizeMT currently supports only solve_score color artifacts")
@@ -721,9 +784,15 @@ def handler(event, context):
         fragment_urls=fragment_urls,
         manifest_path=url_manifest_path,
         channels=channels,
-        allow_zero=channels > 1 or bool(clip_info.get("score_output_has_explicit_outputs")),
+        allow_zero=(
+            fragment_info["pair_encoding"] == CAMERA_FRAGMENT_ENCODING
+            or channels > 1
+            or bool(clip_info.get("score_output_has_explicit_outputs"))
+        ),
+        fragment_encoding=fragment_info["pair_encoding"],
     )
     progress["assemble_ms"] = int((time.time() - t_assemble) * 1000)
+    progress.update(hist_meta.get("telemetry") or {})
     report_status(job_id, task_id, "assembled_score_tiles", result_data=progress)
 
     progress["raw_size"] = os.path.getsize(raw_path)
@@ -755,11 +824,13 @@ def handler(event, context):
         step_scores_key = raw_key.rsplit("/", 1)[0] + "/step_scores.raw"
         t_step_scores = time.time()
         with open(step_scores_path, "rb") as scores_fh:
-            finalize_s3.put_object(
-                Bucket=BUCKET,
-                Key=step_scores_key,
-                Body=scores_fh,
-                ContentType="application/octet-stream",
+            # This sidecar can exceed S3's 5 GiB single-PUT ceiling at large
+            # N/times while still fitting the admitted 10 GiB /tmp budget.
+            finalize_s3.upload_fileobj(
+                scores_fh,
+                BUCKET,
+                step_scores_key,
+                ExtraArgs={"ContentType": "application/octet-stream"},
             )
         progress["step_scores_upload_ms"] = int((time.time() - t_step_scores) * 1000)
         progress["step_scores_key"] = step_scores_key

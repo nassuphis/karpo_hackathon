@@ -43,6 +43,7 @@ from shared import (
     parse_boolish,
     report_status,
 )
+from view_camera import validate_fragment_contract, validate_view_camera
 
 s3 = boto3.client("s3")
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
@@ -51,6 +52,14 @@ VALID_RASTER_INPUT_MODES = {"sectioned"}
 _TMP_INPUT_MANIFEST = "/tmp/raster_input_manifest.json"
 _TMP_SCORE_COEFFS_MANIFEST = "/tmp/raster_score_coeffs_manifest.json"
 _TMP_SCORE_PARAMS_MANIFEST = "/tmp/raster_score_params_manifest.json"
+_CAMERA_ESTIMATE_FIELDS = (
+    "candidate_roots",
+    "occupied_pixels_upper",
+    "fragment_bytes_upper",
+    "raster_memory_bytes",
+    "raster_tmp_bytes",
+    "work_units",
+)
 
 
 def _validate_threads(value):
@@ -236,14 +245,27 @@ def _build_cmd(params):
         cmd.append(f"--palette_grid_n={int(params['associated_palette_grid_n'])}")
         cmd.append(f"--palette_step_start={int(params['step_start'])}")
 
+    score_artifact = dict(params.get("solve_score_bins_data") or {})
+    if score_artifact.get("family") != "solve_score":
+        raise RuntimeError(f"solve-score clip artifact missing or wrong family: {score_artifact.get('family')}")
+    if int(score_artifact.get("version", 1) or 1) < 2:
+        raise RuntimeError("fused raster requires v2 solve-score clip metadata")
+    output_channel_count = int(score_artifact.get("score_output_channel_count") or 1)
+    fragment = validate_fragment_contract(
+        params.get("fragment_contract"),
+        projection=params.get("view_projection") or "plan",
+        channels=output_channel_count,
+        has_explicit_outputs=bool(score_artifact.get("score_output_has_explicit_outputs")),
+    )
+
     # Views re-map ONLY the plot pixel. Every section passes its global step
     # offset exactly like the palette path does.
     view_projection = str(params.get("view_projection") or "plan")
     if view_projection != "plan":
-        if view_projection not in ("front", "rear", "left", "right", "radial", "isometric"):
+        if view_projection not in ("front", "rear", "left", "right", "radial", "isometric", "camera"):
             raise RuntimeError(
                 "view_projection must be "
-                f"plan/front/rear/left/right/radial/isometric, got {view_projection!r}"
+                f"plan/front/rear/left/right/radial/isometric/camera, got {view_projection!r}"
             )
         view_grid_n = int(params.get("view_grid_n") or 0)
         if view_grid_n < 2:
@@ -255,19 +277,30 @@ def _build_cmd(params):
         cmd.append(f"--view_vertical={view_vertical}")
         cmd.append(f"--view_grid_n={view_grid_n}")
         cmd.append(f"--view_step_start={int(params['step_start'])}")
+        if view_projection == "camera":
+            camera = validate_view_camera(params.get("view_camera"))
+            matrix_csv = lambda values: ",".join(format(float(value), ".17g") for value in values)
+            cmd.extend([
+                f"--view_model_view={matrix_csv(camera['model_view_matrix'])}",
+                f"--view_projection_matrix={matrix_csv(camera['projection_matrix'])}",
+                f"--view_slices={camera['slices']}",
+                f"--view_effective_tlo={format(camera['effective_tlo'], '.17g')}",
+                f"--view_effective_thi={format(camera['effective_thi'], '.17g')}",
+                f"--view_point_world_size={format(camera['point_world_size'], '.17g')}",
+                f"--view_point_scale={format(camera['point_scale'], '.17g')}",
+                f"--view_point_min_fraction={format(camera['point_min_fraction'], '.17g')}",
+                f"--view_point_max_fraction={format(camera['point_max_fraction'], '.17g')}",
+            ])
+    elif params.get("view_camera") not in (None, {}):
+        raise RuntimeError("view_camera is only valid for view_projection=camera")
+    cmd.append(f"--fragment_encoding={fragment['encoding']}")
 
-    score_artifact = dict(params.get("solve_score_bins_data") or {})
-    if score_artifact.get("family") != "solve_score":
-        raise RuntimeError(f"solve-score clip artifact missing or wrong family: {score_artifact.get('family')}")
-    if int(score_artifact.get("version", 1) or 1) < 2:
-        raise RuntimeError("fused raster requires v2 solve-score clip metadata")
     compiled = params.get("solve_score_compiled")
     chain_fingerprint = str(params.get("solve_score_chain_fingerprint") or "").strip()
     if not score_artifact.get("program") and params.get("solve_score_chain_present") and compiled is not None:
         score_artifact["program"] = compiled["program_spec"]
     if not score_artifact.get("program") or not isinstance(score_artifact.get("metrics"), list) or not score_artifact.get("metrics"):
         raise RuntimeError("fused raster requires clip artifact program + metrics")
-    output_channel_count = int(score_artifact.get("score_output_channel_count") or 1)
     if output_channel_count < 1:
         raise RuntimeError(f"score_output_channel_count must be >= 1, got {output_channel_count}")
     if output_channel_count in (1, 3):
@@ -449,6 +482,75 @@ def _report_handler_entry_error(params, message):
     report_status(job_id, task_id, "error", message, result_data=result_data)
 
 
+def _normalize_camera_estimate(params):
+    projection = str(params.get("view_projection") or "plan").strip().lower()
+    raw = params.get("camera_estimate")
+    if raw in (None, ""):
+        raw = {}
+    if not isinstance(raw, dict):
+        raise RuntimeError("camera_estimate must be an object")
+    if projection != "camera":
+        if raw:
+            raise RuntimeError(
+                "camera_estimate is only valid for view_projection=camera"
+            )
+        return {}
+    missing = [key for key in _CAMERA_ESTIMATE_FIELDS if key not in raw]
+    if missing:
+        raise RuntimeError(
+            "camera render requires the planner admission estimate fields: "
+            + ", ".join(missing)
+        )
+    estimate = {}
+    for key in _CAMERA_ESTIMATE_FIELDS:
+        try:
+            value = int(raw[key])
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"camera_estimate.{key} must be a non-negative integer"
+            ) from exc
+        if value < 0:
+            raise RuntimeError(
+                f"camera_estimate.{key} must be a non-negative integer"
+            )
+        estimate[key] = value
+    return estimate
+
+
+def _validate_camera_actuals(
+    *,
+    estimate,
+    raster_meta,
+    fragment_size,
+    step_scores_size,
+):
+    if not estimate:
+        return
+    observed = {
+        "candidate_roots": int(raster_meta.get("camera_candidate_roots") or 0),
+        "occupied_pixels_upper": int(
+            raster_meta.get("camera_occupied_pixels") or 0
+        ),
+        "fragment_bytes_upper": int(fragment_size),
+        "raster_tmp_bytes": int(fragment_size) + int(step_scores_size),
+    }
+    for estimate_key, actual in observed.items():
+        upper = int(estimate[estimate_key])
+        if actual > upper:
+            raise RuntimeError(
+                "camera runtime exceeded its planner admission bound: "
+                f"{estimate_key} actual={actual}, upper={upper}"
+            )
+    native_fragment_bytes = int(
+        raster_meta.get("camera_fragment_bytes") or 0
+    )
+    if native_fragment_bytes != int(fragment_size):
+        raise RuntimeError(
+            "camera fragment telemetry/file mismatch: "
+            f"native={native_fragment_bytes}, file={int(fragment_size)}"
+        )
+
+
 def _extract_handler_entry_params(event):
     params = {}
     if not isinstance(event, dict):
@@ -583,6 +685,9 @@ def _handle_fused_raster_request(params):
             "section_indices": [int(section_idx)],
             "section_count": 1,
         }, contract_warnings)
+        camera_estimate = _normalize_camera_estimate(params)
+        for estimate_key, estimate_value in camera_estimate.items():
+            perf[f"camera_estimated_{estimate_key}"] = estimate_value
 
         report_status(job_id, task_id, "started", result_data=perf)
         _cleanup_tmp()
@@ -675,17 +780,46 @@ def _handle_fused_raster_request(params):
                 perf[plan_key] = int(raster_meta[plan_key])
         perf["roots_plotted"] += int(raster_meta.get("roots_plotted", 0))
         perf["roots_clipped"] += int(raster_meta.get("roots_clipped", 0))
-
-        t_upload = time.perf_counter()
+        for camera_key in (
+            "camera_candidate_roots",
+            "camera_behind_rejects",
+            "camera_clip_rejects",
+            "camera_range_rejects",
+            "camera_invalid_rejects",
+            "camera_projected_points",
+            "camera_footprint_pixel_candidates",
+            "camera_depth_replacements",
+            "camera_occupied_pixels",
+            "camera_fragment_bytes",
+        ):
+            if camera_key in raster_meta:
+                perf[camera_key] = int(raster_meta[camera_key])
 
         fused_fragment_path = "/tmp/fused_fragment.frag"
+        fused_fragment_size = (
+            os.path.getsize(fused_fragment_path)
+            if os.path.exists(fused_fragment_path)
+            else 0
+        )
+        step_scores_path = "/tmp/step_scores.bin"
+        step_scores_size = (
+            os.path.getsize(step_scores_path)
+            if emit_step_scores and os.path.exists(step_scores_path)
+            else 0
+        )
+        _validate_camera_actuals(
+            estimate=camera_estimate,
+            raster_meta=raster_meta,
+            fragment_size=fused_fragment_size,
+            step_scores_size=step_scores_size,
+        )
+
+        t_upload = time.perf_counter()
         if os.path.exists(fused_fragment_path):
-            fused_fragment_size = os.path.getsize(fused_fragment_path)
             with open(fused_fragment_path, "rb") as fh:
                 s3.upload_fileobj(fh, BUCKET, f"{fragment_prefix}{int(section_idx):04d}.frag")
             os.remove(fused_fragment_path)
         else:
-            fused_fragment_size = 0
             s3.put_object(
                 Bucket=BUCKET,
                 Key=f"{fragment_prefix}{int(section_idx):04d}.frag",
@@ -713,12 +847,9 @@ def _handle_fused_raster_request(params):
                     ContentType="application/octet-stream",
                 )
 
-        step_scores_size = 0
         step_scores_key = f"{fragment_prefix}{int(section_idx):04d}_step_scores.raw"
         if emit_step_scores:
-            step_scores_path = "/tmp/step_scores.bin"
             if os.path.exists(step_scores_path):
-                step_scores_size = os.path.getsize(step_scores_path)
                 with open(step_scores_path, "rb") as fh:
                     s3.upload_fileobj(fh, BUCKET, step_scores_key)
                 os.remove(step_scores_path)
@@ -735,10 +866,31 @@ def _handle_fused_raster_request(params):
         perf["handler_wall_us"] = int((time.perf_counter() - t_handler) * 1e6)
         perf["fragment_files_uploaded"] = 1
         perf["fragment_bytes_uploaded"] = fused_fragment_size
+        if "camera_estimated_fragment_bytes_upper" in perf:
+            perf["camera_fragment_bytes_uploaded"] = fused_fragment_size
         perf["associated_palette_fragment_files_uploaded"] = 1 if emit_associated_palette_bins else 0
         perf["associated_palette_fragment_bytes_uploaded"] = palette_fragment_size
         perf["step_scores_bytes_uploaded"] = step_scores_size
         perf["step_score_channels"] = step_score_channels if emit_step_scores else 0
+        if "camera_estimated_raster_tmp_bytes" in perf:
+            perf["camera_raster_tmp_bytes_actual"] = (
+                fused_fragment_size + step_scores_size
+            )
+        occupancy_upper = perf.get("camera_estimated_occupied_pixels_upper")
+        if occupancy_upper is not None:
+            actual_occupancy = int(perf.get("camera_occupied_pixels", 0))
+            perf["camera_occupancy_fraction_of_upper"] = (
+                float(actual_occupancy) / float(occupancy_upper)
+                if occupancy_upper
+                else (0.0 if actual_occupancy == 0 else None)
+            )
+        fragment_upper = perf.get("camera_estimated_fragment_bytes_upper")
+        if fragment_upper is not None:
+            perf["camera_fragment_fraction_of_upper"] = (
+                float(fused_fragment_size) / float(fragment_upper)
+                if fragment_upper
+                else (0.0 if fused_fragment_size == 0 else None)
+            )
 
         report_status(job_id, task_id, "rasterized_1/1")
         report_status(job_id, task_id, "rasterized")
@@ -775,6 +927,11 @@ def _handle_fused_raster_request(params):
             "roots_deduped": perf["roots_deduped"],
             **{k: perf[k] for k in ("plan_metric_count", "plan_dup_slots", "plan_uses_lag")
                if k in perf},
+            **{
+                key: value
+                for key, value in perf.items()
+                if key.startswith("camera_")
+            },
             **build_identity(),
         })
     except Exception as e:

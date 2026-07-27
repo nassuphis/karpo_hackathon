@@ -1250,6 +1250,7 @@ _syncSolveScoreUi('palette-ss');
 _initJobsRail();
 
 _syncRenderColorInterpretationUi();
+_bindSculptureSnapMessages();
 
 // round-15 finding 4 + round-16 finding 4: resumePersistedCancels at BOOT
 // (not only when the Sheets tab opens) — Compute is the default tab, so a

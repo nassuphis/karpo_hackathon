@@ -70,6 +70,15 @@ def _render_workflow_states(asl: dict) -> dict:
 def _apply_render_workflow_contracts(asl: dict) -> dict:
     states = _render_workflow_states(asl)
     states["ColorClipTask"]["Parameters"]["Payload"] = deepcopy(RENDER_COLOR_CLIP_TASK_PAYLOAD)
+    # CR36-F3: the template holds a SENTINEL, never selector fields — the
+    # deployed selector has exactly one authority (workflow_contracts). A
+    # hand-edited template selector fails loudly here instead of silently
+    # losing to this replacement.
+    _sentinel = {"__generated_from__": "workflow_contracts.RENDER_COLOR_RASTER_ITEM_SELECTOR"}
+    if states["ColorRasterMap"].get("ItemSelector") != _sentinel:
+        raise RuntimeError(
+            "render_workflow template ColorRasterMap.ItemSelector must be the generation "
+            "sentinel; edit workflow_contracts.RENDER_COLOR_RASTER_ITEM_SELECTOR instead")
     states["ColorRasterMap"]["ItemSelector"] = deepcopy(RENDER_COLOR_RASTER_ITEM_SELECTOR)
     states["ColorAssembleEncodeTask"]["Parameters"]["Payload"] = deepcopy(RENDER_FINALIZE_MT_TASK_PAYLOAD)
     states["BilevelRasterMap"]["ItemSelector"] = deepcopy(RENDER_BILEVEL_RASTER_ITEM_SELECTOR)

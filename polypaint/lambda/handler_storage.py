@@ -7050,8 +7050,6 @@ def handle_delete_task(event):
 _DEEPZOOM_EXPORT_PREFIX = re.compile(r"deepzoom/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}/")
 # exactly sculptures/<id>/ — one saved sculpture (same single-item discipline)
 _SCULPTURE_PREFIX = re.compile(r"sculptures/[A-Za-z0-9_-]{1,64}/")
-# exactly renders/<job_id>/views/<view_id>/ — one associated view artifact
-_VIEW_PREFIX = re.compile(r"renders/[A-Za-z0-9_-]{1,64}/views/[A-Za-z0-9_.-]{1,64}/")
 
 
 def handle_delete_prefix(event):
@@ -7062,13 +7060,11 @@ def handle_delete_prefix(event):
     """
     params = parse_body(event)
     prefix = str(params.get("prefix") or "")
-    if not (_DEEPZOOM_EXPORT_PREFIX.fullmatch(prefix) or _SCULPTURE_PREFIX.fullmatch(prefix)
-            or _VIEW_PREFIX.fullmatch(prefix)):
+    if not (_DEEPZOOM_EXPORT_PREFIX.fullmatch(prefix) or _SCULPTURE_PREFIX.fullmatch(prefix)):
         return {
             "statusCode": 400,
             "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"error": "delete-prefix requires exactly deepzoom/<job_id>/<export_id>/, "
-                                         "sculptures/<id>/ or renders/<job_id>/views/<view_id>/"}),
+            "body": json.dumps({"error": "delete-prefix requires exactly deepzoom/<job_id>/<export_id>/ or sculptures/<id>/"}),
         }
 
     objects = []
@@ -7398,11 +7394,27 @@ def handle_list_views(event):
         prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
 
     region = os.environ.get("AWS_REGION", "us-east-1")
+    # CR36-F4 / CR28-F13 taxonomy: only a confirmed 404 is absence. A
+    # throttle/5xx gets one retry, then counts as a read ERROR the response
+    # reports — never a silently shorter inventory.
+    meta_errors = []
 
     def read_meta(prefix):
+        for attempt in (0, 1):
+            try:
+                obj = s3.get_object(Bucket=BUCKET, Key=prefix + "meta.json")
+                raw_body = obj["Body"].read()
+                break
+            except Exception as exc:
+                if is_missing_s3_error(exc):
+                    return None              # a views dir without meta.json
+                if attempt == 0:
+                    continue                 # one retry for transients
+                print(f"list-views: meta read failed for {prefix}: {exc}")
+                meta_errors.append(prefix)
+                return None
         try:
-            obj = s3.get_object(Bucket=BUCKET, Key=prefix + "meta.json")
-            meta = json.loads(obj["Body"].read())
+            meta = json.loads(raw_body)
             view_id = str(meta.get("view_id") or meta.get("artifact_id") or "").strip()
             if not view_id:
                 return None
@@ -7433,14 +7445,20 @@ def handle_list_views(event):
                 )
             meta["viewer_url"] = meta.get("preview_url") or meta["image_url"]
             return meta
-        except Exception:
+        except Exception as exc:
+            # present but unparseable/malformed is an ERROR, not absence
+            print(f"list-views: meta parse failed for {prefix}: {exc}")
+            meta_errors.append(prefix)
             return None
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
         views = [m for m in pool.map(read_meta, prefixes) if m]
 
     views.sort(key=lambda e: e.get("created_at", ""), reverse=True)
-    return ok_response({"views": views, "count": len(views)})
+    resp = {"views": views, "count": len(views)}
+    if meta_errors:
+        resp["metadata_error_count"] = len(meta_errors)
+    return ok_response(resp)
 
 
 def handle_save_sculpture(event):

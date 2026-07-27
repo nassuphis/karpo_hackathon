@@ -189,6 +189,19 @@ class TestWorkflowDefinition(unittest.TestCase):
             "States.StringToJson($.Payload.body)",
         )
 
+    def test_template_color_selector_is_the_generation_sentinel(self):
+        # CR36-F3: the checked-in template must NOT carry selector fields —
+        # workflow_contracts is the only authority; the renderer hard-fails
+        # on anything but the sentinel.
+        raw = json.load(open(os.path.join(
+            os.path.dirname(__file__), "..",
+            "stepfunctions", "render_workflow.asl.json.template")))
+        wrapper = raw["States"]["WorkflowWrapper"]
+        states = wrapper["Branches"][0]["States"]
+        self.assertEqual(
+            states["ColorRasterMap"]["ItemSelector"],
+            {"__generated_from__": "workflow_contracts.RENDER_COLOR_RASTER_ITEM_SELECTOR"})
+
     def test_color_raster_selector_is_fused_only(self):
         color_map = self.states["ColorRasterMap"]
         self.assertEqual(color_map["ItemsPath"], "$.plan.raster.map_items")

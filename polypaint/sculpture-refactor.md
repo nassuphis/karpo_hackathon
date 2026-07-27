@@ -192,8 +192,11 @@ sculpture keeps its pass-0 convention.
    completion hook refreshes and selects the new row; view rows normalize
    onto the shared render-artifact contract, so the standard catalog,
    preview, arrows, Download, Delete, and DeepZoom just work. Isometric
-   projection math is shared between roots2pix_mt and view_raster via
-   lambda/view_projection.h. An earlier build (ac9ca1e) that rendered
+   projection math lives in lambda/view_projection.h. Colliding pixels
+   keep the FIRST root to land: there is no depth rule, and inside an MT
+   section the winner is a scheduler race — equivalent runs can differ
+   per pixel (CR36-F5, accepted as an art/performance tradeoff; a
+   rerender difference is not corruption). An earlier build (ac9ca1e) that rendered
    views through a separate ≤512² lores path with its own storage route,
    C tool, and bespoke pane was rejected and replaced — the recorded
    lesson: a feature that is "the same computation with one changed

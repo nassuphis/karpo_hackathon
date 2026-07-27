@@ -2154,7 +2154,7 @@ function _viewRenderEnsureModal() {
                     <option value="t1">t1 up</option>
                 </select>
             </div>
-            <div style="font-size:11px; color:#666; margin-top:10px">full ColorRender-MT render · output is N×N · elevation modes plot one root coordinate against t1/t2; isometric projects normalized x/y/t1 or x/y/t2 without stretching · viewport, score program, transforms, palette, and format come from the selected Color artifact</div>
+            <div style="font-size:11px; color:#666; margin-top:10px">full ColorRender-MT render · output is N×N · elevation modes plot one root coordinate against t1/t2; isometric projects normalized x/y/t1 or x/y/t2 without stretching · viewport, score program, transforms, palette, and format come from the selected Color artifact · colliding pixels keep the FIRST root to land — no depth rule, and the winner can differ between equivalent runs</div>
             <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
                 <button type="button" class="btn-secondary btn-inline" onclick="_viewRenderClose()">Cancel</button>
                 <button type="button" class="btn-secondary btn-inline" id="view-render-go" onclick="runViewRenderStart()">Render</button>

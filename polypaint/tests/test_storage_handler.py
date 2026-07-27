@@ -1247,7 +1247,9 @@ class TestDeletePrefixNarrowing(unittest.TestCase):
                     "sculptures/", "sculptures/a/extra/", "sculptures/a b/",
                     "sculptures/scu_x",
                     "renders/job1/views/", "renders/job1/views/v1/extra/",
-                    "renders/a b/views/v1/"):
+                    "renders/a b/views/v1/",
+                    # CR36-F6: views delete ONLY via /delete-render-artifact
+                    "renders/compute_j1/views/view_abc_front_t2/"):
             resp = handler_storage.handler(_event("/delete-prefix", {"prefix": bad}), None)
             self.assertEqual(resp["statusCode"], 400, bad)
         mock_s3.delete_objects.assert_not_called()
@@ -1268,15 +1270,6 @@ class TestDeletePrefixNarrowing(unittest.TestCase):
         paginator.paginate.return_value = [{"Contents": []}]
         resp = handler_storage.handler(
             _event("/delete-prefix", {"prefix": "sculptures/scu_mryxyz12/"}), None)
-        self.assertEqual(resp["statusCode"], 200)
-
-    @patch("handler_storage.s3")
-    def test_accepts_exact_view_prefix(self, mock_s3):
-        import handler_storage
-        paginator = mock_s3.get_paginator.return_value
-        paginator.paginate.return_value = [{"Contents": []}]
-        resp = handler_storage.handler(
-            _event("/delete-prefix", {"prefix": "renders/compute_j1/views/view_abc_front_t2/"}), None)
         self.assertEqual(resp["statusCode"], 200)
 
 
@@ -1596,13 +1589,15 @@ class TestListViews(unittest.TestCase):
                 body = MagicMock()
                 body.read.return_value = json.dumps(metas[Key]).encode("utf-8")
                 return {"Body": body}
-            raise RuntimeError("missing meta")
+            # a views dir without meta.json: a GENUINE 404 is absence
+            raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
 
         mock_s3.get_object.side_effect = get_object
         resp = handler_storage.handler(_event("/list-views", {"job_id": "compute_j1"}), None)
         self.assertEqual(resp["statusCode"], 200)
         body = json.loads(resp["body"])
-        self.assertEqual(body["count"], 2)              # broken meta skipped
+        self.assertEqual(body["count"], 2)              # confirmed-missing meta skipped
+        self.assertNotIn("metadata_error_count", body)  # absence is not an error
         self.assertEqual([r["view_id"] for r in body["views"]],
                          ["view_b_radial_t1", "view_a_front_t2"])
         first = body["views"][0]
@@ -1622,6 +1617,54 @@ class TestListViews(unittest.TestCase):
         import handler_storage
         resp = handler_storage.handler(_event("/list-views", {"job_id": "../evil"}), None)
         self.assertEqual(resp["statusCode"], 400)
+
+    @patch("handler_storage.s3")
+    def test_transient_reads_retry_then_count_as_errors(self, mock_s3):
+        # CR36-F4 / CR28-F13: a throttle is NOT absence. One row heals on
+        # retry and lists; one keeps failing and is REPORTED, not silently
+        # dropped from an authoritative-looking inventory.
+        import handler_storage
+        paginator = mock_s3.get_paginator.return_value
+        paginator.paginate.return_value = [{"CommonPrefixes": [
+            {"Prefix": "renders/compute_j1/views/view_heals/"},
+            {"Prefix": "renders/compute_j1/views/view_broken/"},
+        ]}]
+        heal_state = {"failed": False}
+
+        def get_object(Bucket=None, Key=None):
+            if Key == "renders/compute_j1/views/view_heals/meta.json":
+                if not heal_state["failed"]:
+                    heal_state["failed"] = True
+                    raise ClientError({"Error": {"Code": "SlowDown", "Message": "throttle"}}, "GetObject")
+                body = MagicMock()
+                body.read.return_value = json.dumps({
+                    "view_id": "view_heals", "projection": "front", "vertical": "t2",
+                    "image_key": "renders/compute_j1/views/view_heals/image.png",
+                    "created_at": "2026-07-25T10:00:00Z"}).encode("utf-8")
+                return {"Body": body}
+            raise ClientError({"Error": {"Code": "SlowDown", "Message": "throttle"}}, "GetObject")
+
+        mock_s3.get_object.side_effect = get_object
+        resp = handler_storage.handler(_event("/list-views", {"job_id": "compute_j1"}), None)
+        self.assertEqual(resp["statusCode"], 200)
+        body = json.loads(resp["body"])
+        self.assertEqual([r["view_id"] for r in body["views"]], ["view_heals"])
+        self.assertEqual(body["metadata_error_count"], 1)
+
+    @patch("handler_storage.s3")
+    def test_corrupt_meta_counts_as_error_not_absence(self, mock_s3):
+        import handler_storage
+        paginator = mock_s3.get_paginator.return_value
+        paginator.paginate.return_value = [{"CommonPrefixes": [
+            {"Prefix": "renders/compute_j1/views/view_corrupt/"},
+        ]}]
+        body_mock = MagicMock()
+        body_mock.read.return_value = b"not json {"
+        mock_s3.get_object.return_value = {"Body": body_mock}
+        resp = handler_storage.handler(_event("/list-views", {"job_id": "compute_j1"}), None)
+        body = json.loads(resp["body"])
+        self.assertEqual(body["count"], 0)
+        self.assertEqual(body["metadata_error_count"], 1)
 
     @patch("handler_storage.s3")
     def test_generic_render_delete_removes_one_view_prefix(self, mock_s3):

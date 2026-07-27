@@ -49,8 +49,9 @@ from logical_sections import (
 )
 from raw_score_render import histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
 from root_pipeline_programs import root_program_for_run
-from shared import (BUCKET, REF_SIZE, compute_viewport_from_bin, ok_response, parse_body,
-                    parse_boolish, random_b36, report_status, sanitize_sculpture_view)
+from shared import (BUCKET, REF_SIZE, compute_viewport_from_bin, is_missing_s3_error,
+                    ok_response, parse_body, parse_boolish, random_b36, report_status,
+                    sanitize_sculpture_view)
 from solve_score_pipeline_programs import solve_score_program_for_run
 from solve_score_chain import (
     compiled_solve_score_fingerprint,
@@ -1252,7 +1253,8 @@ def _sculpture_save_full(save_spec, *, job_id, export, source):
     except Exception:
         try:
             s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [
-                {"Key": sprefix + k} for k in ("roots.bin", "palette.png", "viewer.html")]})
+                {"Key": sprefix + k}
+                for k in ("roots.bin", "palette.png", "viewer.html", "meta.json")]})
         except Exception:
             pass
         raise
@@ -1281,8 +1283,14 @@ def _mint_sculpture_id():
     sid = f"scu_{_b36_bake_id(int(time.time() * 1000))}{random_b36(6)}"
     try:
         s3.head_object(Bucket=BUCKET, Key=f"sculptures/{sid}/meta.json")
-    except Exception:
-        return sid          # marker absent (or transient — the write path re-raises real errors)
+    except Exception as exc:
+        # CR28-F13 taxonomy: only a CONFIRMED 404 is availability. A
+        # throttle/timeout/AccessDenied must propagate — treating it as
+        # "available" would reopen the overwrite this mint exists to close.
+        if is_missing_s3_error(exc):
+            return sid
+        raise RuntimeError(f"sculpture id mint could not verify {sid} is free "
+                           f"({type(exc).__name__}) — retry the save") from exc
     raise RuntimeError(f"sculpture id collision on {sid} — retry the save")
 
 
@@ -1331,6 +1339,7 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
     # signature covers everything that shapes the output, so a repalette
     # of the SAME artifact_id (new palette metadata) misses and rebuilds.
     cache_sig = json.dumps({
+        "cache_schema": 2,
         "artifact_id": artifact_id,
         "view_n": view_n,
         "format": fmt,

@@ -6,6 +6,8 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from botocore.exceptions import ClientError
+
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
@@ -715,6 +717,26 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         by_key = {call.kwargs["Key"]: call.kwargs for call in mock_s3.put_object.call_args_list}
         cache_json_keys = [k for k in by_key if k.startswith("renders/j/sculpture_cache/") and k.endswith("sculpture.json")]
         self.assertEqual(len(cache_json_keys), 1)   # the reuse index rode along
+        # the cache namespace is SCHEMA-VERSIONED (CR: entries a buggy build
+        # may have poisoned live under the old signatures — v2 orphans them)
+        import hashlib as _hashlib
+        sig2 = json.dumps({
+            "cache_schema": 2,
+            "artifact_id": "color_run_abc",
+            "view_n": 4,
+            "format": "u16",
+            "step_scores_key": "renders/j/step_scores.raw",
+            "grid_n": 4,
+            "channels": 1,
+            "interpretation": "scalar_lut",
+            "palette": "viridis",
+            "background_color": "101010",
+            "rotation": 0.25,
+            "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -2.0, "max_im": 2.0},
+            "root_transforms": [{"fn": 30}],
+        }, sort_keys=True, separators=(",", ":"))
+        expected_prefix = f"renders/j/sculpture_cache/{_hashlib.sha1(sig2.encode('utf-8')).hexdigest()[:16]}/"
+        self.assertEqual(cache_json_keys[0], expected_prefix + "sculpture.json")
         cached_block = json.loads(by_key[cache_json_keys[0]]["Body"])
         self.assertEqual(cached_block["source_artifact_id"], "color_run_abc")
         self.assertNotIn("roots_url", cached_block)   # stamps rebuilt per hit
@@ -957,6 +979,92 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         # nothing was written under the taken prefix
         self.assertFalse([c for c in mock_s3.put_object.call_args_list
                           if c.kwargs["Key"].startswith("sculptures/")])
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_save_failure_sweep_includes_the_publication_marker(self, mock_s3, mock_run, mock_render):
+        # CR: a meta.json PUT that raises AMBIGUOUSLY (timeout) may have
+        # landed server-side — the failure sweep must delete the marker too,
+        # or the listing publishes a row over deleted binaries
+        from handler_render_lores_preview import TMP_XFORMED_ROOTS, handler
+
+        calc, roots_key, roots_bytes = self._artifact_calc(4)
+        mock_s3.get_object.side_effect = self._artifact_get_object(calc, roots_key, roots_bytes, bytes(range(16)))
+        mock_s3.head_object.side_effect = self._artifact_head_router()
+
+        def subprocess_fake(cmd, **kwargs):
+            with open(TMP_XFORMED_ROOTS, "wb") as fh:
+                fh.write(b"T" * (16 * 1 * 2 * 2))
+            return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 16, "roots_clipped": 0}), stderr="")
+
+        def render_fake(**kwargs):
+            with open(kwargs["out_path"], "wb") as fh:
+                fh.write(PNG_1X1)
+            return {"file_size": len(PNG_1X1), "preview_file_size": 0}
+
+        mock_run.side_effect = subprocess_fake
+        mock_render.side_effect = render_fake
+
+        def put_object(Bucket=None, Key=None, **kw):
+            if Key.startswith("sculptures/") and Key.endswith("meta.json"):
+                raise RuntimeError("socket timeout mid-PUT")   # ambiguous
+            return {}
+        mock_s3.put_object.side_effect = put_object
+
+        with patch("handler_render_lores_preview.report_status"):
+            resp = handler(_event(
+                artifact_sculpture={"artifact_id": "color_run_abc"},
+                preview_source_size=4,
+                save_full={"view": {"point": 12}},
+            ), None)
+        self.assertEqual(resp["statusCode"], 500)
+        swept = mock_s3.delete_objects.call_args.kwargs["Delete"]["Objects"]
+        swept_names = {o["Key"].rsplit("/", 1)[-1] for o in swept}
+        self.assertEqual(swept_names, {"roots.bin", "palette.png", "viewer.html", "meta.json"})
+
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_mint_propagates_non_404_head_errors(self, mock_s3, mock_run):
+        # CR28-F13 taxonomy: a throttle during the availability HEAD is NOT
+        # "available" — proceeding would reopen the overwrite window
+        from handler_render_lores_preview import handler
+
+        cached_block = {
+            "format": "u16", "grid_n": 4, "degree": 1, "step_count": 16,
+            "pass_count": 1, "roots_bytes": 64,
+            "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -2.0, "max_im": 2.0},
+            "palette": "viridis", "source_artifact_id": "color_run_abc",
+        }
+        calc, roots_key, roots_bytes = self._artifact_calc(4)
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if "sculpture_cache" in key and key.endswith("sculpture.json"):
+                body = MagicMock()
+                body.read.return_value = json.dumps(cached_block).encode("utf-8")
+                return {"Body": body}
+            return self._artifact_get_object(calc, roots_key, roots_bytes, b"")(**kwargs)
+
+        head = self._artifact_head()
+
+        def head_object(Bucket=None, Key=None, **kw):
+            if str(Key or "").startswith("sculptures/"):
+                raise ClientError({"Error": {"Code": "SlowDown", "Message": "throttle"}}, "HeadObject")
+            return head
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.head_object.side_effect = head_object
+        with patch("handler_render_lores_preview.report_status"):
+            resp = handler(_event(
+                artifact_sculpture={"artifact_id": "color_run_abc"},
+                preview_source_size=4,
+                save_full={"view": {"point": 12}},
+            ), None)
+        self.assertEqual(resp["statusCode"], 500)
+        self.assertIn("could not verify", json.loads(resp["body"])["detail"])
+        self.assertFalse([c for c in mock_s3.put_object.call_args_list
+                          if c.kwargs.get("Key", "").startswith("sculptures/")])
 
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")

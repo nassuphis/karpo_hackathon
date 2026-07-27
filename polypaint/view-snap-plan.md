@@ -854,21 +854,42 @@ Output bytes are still not the whole cost — rasterization WORK is, and
 footprint updates are only PART of that work. Camera plotting is
 pass-0-only, but every section still executes root transforms, solve
 scoring, and sidecar writes for EVERY pass (`times <= 1000` in
-production), and several score metrics do quadratic pair work in
-`degree` — so `times=1` and `times=1000` renders must not receive the
-same estimate. Admission uses ONE combined v1 work unit:
+production), and pair metrics do quadratic work — in the SOURCE row
+width, not just polynomial degree: coeff-source metrics operate on
+`n_coeffs`, and pair work runs independently for solve and coefficient
+sources. "Calibration absorbs it" is not implementable — plan-time code
+needs a number for every request BEFORE calibration exists — so v1 uses
+a deterministic conservative formula. With `D = max(degree, n_coeffs)`:
 
 ```text
-estimated_work_units =
-    all-pass scoring/root work:  times * N^2 * degree_weight
-  + pass-0 footprint updates:    sum over pass-0 sections of R_s * A_max
+work_units_s   (PER SECTION s) =
+    scoring/root work:        steps_s * D^2
+  + pass-0 footprint updates: pass0_R_s * A_max   (zero for sections
+                              with no pass-0 overlap)
 ```
 
-where `degree_weight` absorbs the per-metric degree scaling (linear vs
-quadratic pair metrics) via calibration rather than a formula. With
-screen-space point size the footprint term grows toward `N^4` for a
-near camera on a dense cloud; the scoring term grows with
-`times * degree^2` for pair metrics — both must be priced.
+The refined model derives per-metric cost classes from the shared
+registry/compiler metadata — never from another hardcoded Python metric
+list.
+
+The GATE is per worker, not per fleet: `ColorRasterMap` runs ONE Lambda
+per section, each with its own 600-second subprocess limit, so summing
+work across sections and comparing with one worker's limit would reject
+feasible jobs by roughly the section count. Admission gates
+`max(work_units_s)` against the per-section budget and reports
+`sum(work_units_s)` separately as total cost. The budget equation is
+dimensional and explicit:
+
+```text
+allowed_units_per_section =
+    derated_rate_units_per_second
+  * (600 - startup_headroom_seconds - safety_seconds)
+admit iff max(work_units_s) <= allowed_units_per_section
+```
+
+With screen-space point size the footprint term grows toward `N^4` for
+a near camera on a dense cloud; the scoring term grows with
+`times * D^2` — both are priced, per section.
 
 and rejects when it exceeds a budget calibrated from measured native
 throughput against the 600-second native subprocess limit (the raster
@@ -883,9 +904,14 @@ calibrated from a MATRIX, not a run: scalar and RGB outputs, expensive
 root and solve-score programs, source preludes, `A ~= 1`, a
 collision-heavy footprint, AND the times/degree extremes (times=1 vs
 the largest supported multi-pass; a low-degree and a high-degree
-pair-metric program) so the combined work unit's two terms are both
-exercised — take the MINIMUM measured throughput in work units per
-second, subtract named startup headroom, apply the named deration. The staged
+pair-metric program, including a coeff-source metric so `n_coeffs`
+weighting is exercised). Every cell declares its N, section size, and a
+TARGET DURATION long enough to be steady-state — startup-dominated tiny
+runs must not be averaged against steady-state runs. The deployed
+constant is `derated_rate = min(cell rates) * deration_factor`, and it
+enters admission only through the explicit budget equation above
+(startup headroom is subtracted as SECONDS from the time budget, never
+from a rate). The staged
 calibration in this section and Milestone 4 measure exactly that
 matrix and record every cell's result alongside the chosen constant.
 
@@ -894,17 +920,18 @@ the constant, and the benchmark that measures it must pass admission),
 STAGED because local ARM64 throughput is not a defensible bound for
 Lambda:
 
-1. Seed a PROVISIONAL updates-per-second constant from the local/Docker
-   ARM64 benchmark in Milestone 2, derated by a named factor and marked
-   provisional in the plan output.
-2. The provisional constant may admit ONLY a deliberately small
-   production calibration run — its estimated updates capped at a named
-   small fraction of the provisional budget — never representative
-   full-size work.
-3. Replace the constant with conservatively derated PRODUCTION
-   telemetry from that run, recording both values and the deration in
-   this document.
-4. Only the production-derived constant admits representative full-size
+1. Seed a PROVISIONAL work-units-per-second constant from the
+   local/Docker ARM64 benchmark in Milestone 2, derated by a named
+   factor and marked provisional in the plan output.
+2. The provisional constant admits EVERY deliberately bounded matrix
+   cell — each cell's `max(work_units_s)` capped at a named small
+   fraction of the provisional per-section budget — and NOTHING else.
+   The whole matrix runs under it; no single small run stands in for
+   the matrix.
+3. Only after ALL cells have run is the final constant derived —
+   `min(cell rates) * deration_factor` — with every cell's result and
+   the deration recorded in this document.
+4. Only the matrix-derived constant admits representative full-size
    runs.
 
 There is NO admission override: a payload flag is not "internal" merely
@@ -1076,8 +1103,10 @@ Rules:
   fixed view) could advertise the same raw-sidecar digest. Include
   `view_projection`, `view_vertical`, and a canonical hash of the
   camera's EXECUTION SUBSET whenever the projection is not `plan`: the
-  schema `version` and `matrix_layout` (semantics markers — a future
-  schema with changed meaning must not reuse a v1 sidecar identity),
+  schema `version`, `matrix_layout`, AND the payload's `projection`
+  field (all the semantics markers together — a future schema or a
+  non-perspective projection with changed meaning must not reuse a v1
+  sidecar identity),
   the matrices, vertical, slices, effective t-window, point
   size/scale/clamp fractions, and frame — serialized with sorted keys and the codebase's
   frozen `canonical_number_g17` policy (`.17g` round-trip formatting
@@ -1292,6 +1321,11 @@ Every failure must be explicit and non-destructive:
   fail-closed backend guard;
 - invalid camera schema: plan-time failure before raster fan-out;
 - resource estimate too large: calculated error before fan-out;
+- admission invariants pinned by tests: two individually safe sections
+  admit even when their SUM exceeds one worker's capacity; one oversized
+  section rejects; pass-1-only sections still price their scoring work;
+  doubling `times` scales the estimate; a coeff-source metric prices
+  `n_coeffs` via `D`; work-unit arithmetic overflow fails closed;
 - malformed native matrix/depth record: task fails loudly;
 - partial Views inventory refresh: preserve existing partial/error
   semantics.
@@ -1471,11 +1505,13 @@ The depth prototype has a go/no-go gate before frontend integration:
   subprocess timeout (`handler_finalize_mt` runs the native assembler
   with `timeout=600` — the 900-second Lambda envelope bounds the whole
   handler, downloads and encodes included, but the merge itself has the
-  tighter limit) AND its fragment URLs: Finalize presigns via its own
-  `_presign_fragment_urls` with a fixed 900-second expiry, so a long
-  merge must regenerate URLs or request an expiry sized to the measured
-  merge before it starts. Gate: merge < 600 s, total Finalize < 900 s,
-  both with named headroom.
+  tighter limit). URLs need NO regeneration machinery in v1: Finalize
+  presigns via `_presign_fragment_urls` immediately before invoking an
+  assembler capped at 600 seconds, and the 900-second expiry satisfies
+  the invariant `url_expiry > merge_timeout + setup_margin` — state
+  and test that invariant; add refresh logic only if the merge timeout
+  ever changes. Gate: merge < 600 s, total Finalize < 900 s, both with
+  named headroom.
 
 The pass/fail thresholds are DEFINED AND RECORDED when the benchmark runs
 — wall-time headroom against the 900-second envelope, peak memory against
@@ -1534,9 +1570,10 @@ tests.
 ### Milestone 4: internal production go/no-go
 
 - Invoke the deployed workflow directly (no UI), in calibration order:
-  first the deliberately SMALL production calibration run admitted under
-  the provisional constant, then — with the production-derived constant
-  recorded — the synthetic and the representative full-size Sculpture.
+  first the FULL calibration matrix, every cell deliberately bounded
+  and admitted under the provisional constant; then — with the
+  matrix-derived constant recorded — the representative full-size
+  Sculpture.
 - Record the thresholds defined in section 13 into this document.
 - Record the provisional constant, the production telemetry, the
   deration factor, and the final constant.

@@ -2048,18 +2048,22 @@ function _viewsSelectInventoryArtifact(viewId) {
 }
 
 function _viewsFetchInventory(jobId) {
-    // per-job in-flight dedup (the _dzInventoryPromise pattern): a panel
-    // rebuild kick, a GotoRender jump, and a Refresh press racing on the
-    // same job share ONE /list-views round trip
+    // per-job in-flight dedup (the _dzInventoryPromise pattern, one slot
+    // PER JOB — a single global slot let an A->B->A job hop mint a SECOND
+    // A request whose slow twin could overwrite the newer inventory): every
+    // caller for a job shares the one live fetch; entries self-delete
+    if (!(window._viewsInventoryInflight instanceof Map)) {
+        window._viewsInventoryInflight = new Map();
+    }
     const inflight = window._viewsInventoryInflight;
-    if (inflight && inflight.jobId === jobId) return inflight.promise;
-    const entry = { jobId, promise: null };
-    entry.promise = lambdaPost('storage', { job_id: jobId }, '/list-views')
+    const existing = inflight.get(jobId);
+    if (existing) return existing;
+    const promise = lambdaPost('storage', { job_id: jobId }, '/list-views')
         .finally(() => {
-            if (window._viewsInventoryInflight === entry) window._viewsInventoryInflight = null;
+            if (inflight.get(jobId) === promise) inflight.delete(jobId);
         });
-    window._viewsInventoryInflight = entry;
-    return entry.promise;
+    inflight.set(jobId, promise);
+    return promise;
 }
 
 async function _viewsEnsureInventory(force, options = {}) {
@@ -2069,12 +2073,12 @@ async function _viewsEnsureInventory(force, options = {}) {
     // of narrating success over a miss (CR36 follow-up 2).
     const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
     const wantId = String(options.selectViewId || '').trim();
-    if (!jobId) return { ok: false, selected: false, partial: false };
+    if (!jobId) return { ok: false, selected: false, partial: false, reason: 'no_job' };
     if (window._viewsInventoryJob === jobId && !force) {
-        if (!wantId) return { ok: true, selected: true, partial: false };
+        if (!wantId) return { ok: true, selected: true, partial: false, reason: '' };
         if (_viewsSelectInventoryArtifact(wantId)) {
             _viewsRenderPane({ ensureSelected: true });
-            return { ok: true, selected: true, partial: false };
+            return { ok: true, selected: true, partial: false, reason: '' };
         }
         // cached MISS: the cache may be stale (row minted or deleted since)
         // — fall through and fetch ONCE before reporting failure
@@ -2083,11 +2087,14 @@ async function _viewsEnsureInventory(force, options = {}) {
     let ok = false;
     let selected = !wantId;
     let unreadable = 0;
+    let failReason = '';
     if (btn) { btn.disabled = true; if (force) btn.textContent = 'Refreshing…'; }
     try {
         const data = await _viewsFetchInventory(jobId);
         const currentJobId = document.getElementById('render-results-dir')?.value.trim() || '';
-        if (currentJobId !== jobId) return { ok: false, selected: false, partial: false };
+        if (currentJobId !== jobId) {
+            return { ok: false, selected: false, partial: false, reason: 'job_changed' };
+        }
         window._viewsInventory = (data.views || []).map(_viewAsRenderArtifact);
         window._viewsInventoryJob = jobId;
         _viewsSyncFamilyCount();
@@ -2101,6 +2108,7 @@ async function _viewsEnsureInventory(force, options = {}) {
         if (wantId) selected = _viewsSelectInventoryArtifact(wantId);
         ok = true;
     } catch (e) {
+        failReason = 'fetch_failed';
         log(`View list failed: ${e.message}`, 'err', 'render-log');
     } finally {
         if (btn) btn.disabled = false;
@@ -2122,7 +2130,12 @@ async function _viewsEnsureInventory(force, options = {}) {
             }, 2500);
         }
     }
-    return { ok, selected: ok && selected, partial: unreadable > 0 };
+    // reason distinguishes failure modes a caller must narrate differently:
+    // a network failure is NOT "the view may have been deleted"
+    const reason = !ok
+        ? (failReason || 'fetch_failed')
+        : ((ok && selected) ? '' : (unreadable > 0 ? 'partial' : 'not_found'));
+    return { ok, selected: ok && selected, partial: unreadable > 0, reason };
 }
 
 function _viewsSyncFamilyCount() {

@@ -268,9 +268,14 @@ async function _dzGotoSelectedRender() {
             if (viewSelection && viewSelection.ok && viewSelection.selected) {
                 log(`DeepZoom GoRender: view ${renderRef.artifactId} (${renderRef.jobId})`, 'ok', 'deepzoom-log');
             } else {
-                const why = viewSelection && viewSelection.partial
+                const reason = (viewSelection && viewSelection.reason) || 'fetch_failed';
+                const why = reason === 'partial'
                     ? 'view list incomplete — press Refresh on the Views tab'
-                    : 'it may have been deleted';
+                    : reason === 'not_found'
+                        ? 'it may have been deleted'
+                        : reason === 'job_changed'
+                            ? 'the job changed while loading'
+                            : 'the view list failed to load — press Refresh on the Views tab';
                 const msg = `Opened render job ${renderRef.jobId}, but view ${renderRef.artifactId} was not selected (${why})`;
                 const renderStatusEl = document.getElementById('render-status');
                 if (renderStatusEl) {

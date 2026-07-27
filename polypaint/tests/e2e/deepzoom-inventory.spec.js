@@ -516,6 +516,35 @@ test.describe('DeepZoom Inventory', () => {
     expect(st.selectedKey).toBe('');
   });
 
+  test('GotoRender distinguishes a failed view-list fetch from a deleted view', async ({ page }) => {
+    // CR36 follow-up 3: a network failure must not be narrated as
+    // "it may have been deleted".
+    await page.evaluate(() => {
+      window.populateSelectedRenderArtifact = function () {};
+      window.refreshRenderArtifacts = async function () { return { families: {}, calc: {} }; };
+      const prev = window.lambdaPost;
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-views') throw new Error('lambda 502');
+        return prev(name, body, path);
+      };
+    });
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.evaluate(() => {
+      window._dzInventory = [{
+        job_id: 'compute_v', source_key: 'renders/render_v/views/view_net/image.jpeg',
+        width: 2000, height: 2000, created_at: '2026-07-27T10:00:00',
+        tiles_uploaded: 44, dzi_url: 'https://dz/v.dzi',
+      }];
+      window._dzSelectedIdx = 0;
+      _dzRenderInventory();
+    });
+    await page.click('#btn-dz-goto-render');
+    const dzLog = await page.evaluate(() => document.getElementById('deepzoom-log')?.textContent || '');
+    expect(dzLog).toContain('view view_net was not selected (the view list failed to load');
+    expect(dzLog).not.toContain('may have been deleted');
+  });
+
   test('GotoRender stays disabled for legacy exports without source keys', async ({ page }) => {
     await page.evaluate(() => {
       window.lambdaPost = async function (name, body, path) {

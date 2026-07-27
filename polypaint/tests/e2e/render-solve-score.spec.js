@@ -2187,6 +2187,59 @@ test.describe('Solve Score UI', () => {
     expect(st.warmOk).toBe(true);
   });
 
+  test('A-to-B-to-A job hops share the original in-flight views fetch per job', async ({ page }) => {
+    // CR36 follow-up 3: a single global in-flight slot let the A->B->A hop
+    // mint a SECOND A request whose slow twin could overwrite the newer
+    // inventory. The per-job map makes the returning caller share the one
+    // live A fetch — one request per job, no stale overwrite window.
+    const st = await page.evaluate(async () => {
+      window._viewsInventoryInflight = null;
+      window._viewsInventoryJob = '';
+      window._lvCalls = {};
+      window._lvResolvers = {};
+      window.lambdaPost = function (name, body, path) {
+        if (path === '/list-views') {
+          const job = body.job_id;
+          window._lvCalls[job] = (window._lvCalls[job] || 0) + 1;
+          return new Promise((resolve) => {
+            (window._lvResolvers[job] = window._lvResolvers[job] || []).push(() => resolve({
+              views: [{ view_id: `view_${job}`, job_id: job, projection: 'front', vertical: 't2',
+                        image_key: `renders/${job}/views/view_${job}/image.jpeg`,
+                        prefix: `renders/${job}/views/view_${job}/`,
+                        created_at: '2026-07-28T10:00:00Z' }],
+              count: 1,
+            }));
+          });
+        }
+        return Promise.resolve({});
+      };
+      const dir = document.getElementById('render-results-dir');
+      dir.value = 'job_a';
+      const p1 = _viewsEnsureInventory(true);
+      dir.value = 'job_b';
+      const p2 = _viewsEnsureInventory(true);
+      dir.value = 'job_a';
+      const p3 = _viewsEnsureInventory(true);   // must SHARE p1's fetch
+      window._lvResolvers.job_b.forEach((f) => f());
+      window._lvResolvers.job_a.forEach((f) => f());
+      const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+      return {
+        calls: window._lvCalls,
+        r1: { ok: r1.ok, reason: r1.reason },
+        r2: { ok: r2.ok, reason: r2.reason },
+        r3: { ok: r3.ok, reason: r3.reason },
+        inventoryJob: window._viewsInventoryJob,
+        rows: (window._viewsInventory || []).map((v) => v.view_id),
+      };
+    });
+    expect(st.calls).toEqual({ job_a: 1, job_b: 1 });     // ONE fetch per job
+    expect(st.r1).toEqual({ ok: true, reason: '' });
+    expect(st.r2).toEqual({ ok: false, reason: 'job_changed' });   // B landed after the hop back
+    expect(st.r3).toEqual({ ok: true, reason: '' });
+    expect(st.inventoryJob).toBe('job_a');
+    expect(st.rows).toEqual(['view_job_a']);              // A's data, never clobbered by B
+  });
+
   test('DeepZoom from a view dispatches the image-based export with the exact payload', async ({ page }) => {
     // CR36-F7 truthful-behavior pin: DeepZoom is IMAGE-based by contract.
     // A selected view's image key dispatches deepzoom_export with the

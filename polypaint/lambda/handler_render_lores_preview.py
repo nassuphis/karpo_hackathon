@@ -49,7 +49,8 @@ from logical_sections import (
 )
 from raw_score_render import histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
 from root_pipeline_programs import root_program_for_run
-from shared import BUCKET, REF_SIZE, compute_viewport_from_bin, ok_response, parse_body, parse_boolish, report_status
+from shared import (BUCKET, REF_SIZE, compute_viewport_from_bin, ok_response, parse_body,
+                    parse_boolish, report_status, sanitize_sculpture_view)
 from solve_score_pipeline_programs import solve_score_program_for_run
 from solve_score_chain import (
     compiled_solve_score_fingerprint,
@@ -1176,6 +1177,91 @@ def _sculpture_cache_load(cache_prefix):
     return block
 
 
+def _sculpture_full_viewer_template():
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in (os.path.join(here, "sculpture.html"),
+                 os.path.join(here, "..", "sculpture.html")):
+        if os.path.exists(cand):
+            with open(cand, "rb") as fh:
+                return fh.read()
+    raise RuntimeError("sculpture.html viewer template not packaged with this lambda")
+
+
+def _sculpture_save_full(save_spec, *, job_id, export, source):
+    """Persist a durable full viewer (sculptures/{id}/) INSIDE the generate
+    task, from immutable sources: the local /tmp files on a fresh run, or
+    the content-addressed cache prefix on a hit. Never the job-wide mutable
+    sculpture_* keys — a concurrent same-job generate could swap those
+    between steps (CR: SaveFull silent-corruption race). Runs BEFORE the
+    task reports done, so rail-complete means durable."""
+    sid = "scu_" + _b36_bake_id(int(time.time() * 1000))
+    raw_title = "".join(ch for ch in str((save_spec or {}).get("title") or "").strip() if ch.isprintable())[:80]
+    title = raw_title or sid          # ids name saves (user doctrine)
+    sprefix = f"sculptures/{sid}/"
+    cache_forever = "public, max-age=31536000, immutable"
+    if source["kind"] == "local":
+        with open(source["roots_path"], "rb") as fh:
+            s3.put_object(Bucket=BUCKET, Key=sprefix + "roots.bin", Body=fh.read(),
+                          ContentType="application/octet-stream", CacheControl=cache_forever)
+        with open(source["palette_path"], "rb") as fh:
+            s3.put_object(Bucket=BUCKET, Key=sprefix + "palette.png", Body=fh.read(),
+                          ContentType="image/png", CacheControl=cache_forever)
+    else:
+        s3.copy_object(Bucket=BUCKET, Key=sprefix + "roots.bin",
+                       CopySource={"Bucket": BUCKET, "Key": source["prefix"] + "roots.bin"},
+                       MetadataDirective="REPLACE",
+                       ContentType="application/octet-stream", CacheControl=cache_forever)
+        s3.copy_object(Bucket=BUCKET, Key=sprefix + "palette.png",
+                       CopySource={"Bucket": BUCKET, "Key": source["prefix"] + "palette.png"},
+                       MetadataDirective="REPLACE",
+                       ContentType="image/png", CacheControl=cache_forever)
+    meta = {
+        "version": 1,
+        "id": sid,
+        "title": title,
+        "job_id": job_id,
+        "grid_n": int(export["grid_n"]),
+        "degree": int(export["degree"]),
+        "step_count": int(export["step_count"]),
+        "pass_count": int(export.get("pass_count") or 1),
+        "roots_key": "roots.bin",
+        "palette_key": "palette.png",
+        "format": export.get("format") or "u16",
+        "roots_bytes": int(export.get("roots_bytes") or 0),
+        "viewport": export["viewport"],
+        "palette": "".join(ch for ch in str(export.get("palette") or "") if ch.isprintable())[:64],
+        "score_display": "",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    source_artifact_id = str(export.get("source_artifact_id") or "").strip()
+    if source_artifact_id and _ARTIFACT_ID_RE.fullmatch(source_artifact_id):
+        meta["source_artifact_id"] = source_artifact_id
+    view = sanitize_sculpture_view((save_spec or {}).get("view"))
+    if view:
+        meta["view"] = view
+    s3.put_object(Bucket=BUCKET, Key=sprefix + "meta.json",
+                  Body=json.dumps(meta).encode("utf-8"),
+                  ContentType="application/json", CacheControl="no-cache")
+    s3.put_object(Bucket=BUCKET, Key=sprefix + "viewer.html",
+                  Body=_sculpture_full_viewer_template(),
+                  ContentType="text/html", CacheControl=cache_forever)
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    out = dict(meta)
+    out["prefix"] = sprefix
+    out["share_url"] = f"https://{BUCKET}.s3.{region}.amazonaws.com/{sprefix}viewer.html"
+    return out
+
+
+def _b36_bake_id(v):
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    v = int(v)
+    while v:
+        v, rem = divmod(v, 36)
+        out = digits[rem] + out
+    return out or "0"
+
+
 def _run_artifact_sculpture(params, job_id, spec, t_start):
     """Artifact-sourced sculpture: the ONLY generation path. Everything comes
     from the selected color artifact's recorded provenance — viewport,
@@ -1261,21 +1347,34 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
                 "palette_key": sculpture_palette_key,
                 "palette_url": f"{base_url}/{sculpture_palette_key}?v={stamp}",
             })
+            saved_row = None
+            if params.get("save_full") is not None:
+                # immutable source: the content-addressed cache prefix
+                saved_row = _sculpture_save_full(
+                    params.get("save_full"), job_id=job_id,
+                    export=sculpture_export,
+                    source={"kind": "cache", "prefix": cache_prefix})
             total_ms = int((time.time() - t_start) * 1000)
             if task_id:
-                report_status(job_id, task_id, "done", result_data={
+                done_data = {
                     "sculpture": sculpture_export,
                     "n_solves": int(sculpture_export.get("step_count") or 0),
                     "total_ms": total_ms,
                     "cache_hit": True,
-                })
-            return ok_response({
+                }
+                if saved_row:
+                    done_data["saved_sculpture"] = saved_row
+                report_status(job_id, task_id, "done", result_data=done_data)
+            body = {
                 "sculpture": sculpture_export,
                 "cache": {"hit": True, "prefix": cache_prefix},
                 "n_solves": int(sculpture_export.get("step_count") or 0),
                 "logs": [f"Artifact sculpture cache hit: {cache_prefix}"],
                 "timings_ms": {"total": total_ms},
-            })
+            }
+            if saved_row:
+                body["saved_sculpture"] = saved_row
+            return ok_response(body)
         except Exception:
             # cached binaries missing/unreadable -> fall through to a full run
             pass
@@ -1420,6 +1519,16 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
     except Exception as exc:
         # the cache is an optimization — a failed write must not fail the run
         cache_state = {"hit": False, "prefix": cache_prefix, "write_error": str(exc)}
+    saved_row = None
+    if params.get("save_full") is not None:
+        # immutable source: the bytes this very invocation produced — never
+        # the job-wide ephemeral keys another run could have overwritten
+        saved_row = _sculpture_save_full(
+            params.get("save_full"), job_id=job_id,
+            export=sculpture_export,
+            source={"kind": "local",
+                    "roots_path": TMP_XFORMED_ROOTS,
+                    "palette_path": TMP_PALETTE_IMAGE})
     total_ms = int((time.time() - t_start) * 1000)
     logs = [
         "Artifact sculpture: "
@@ -1434,13 +1543,17 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
         f"scores={scores_ms / 1000.0:.2f}s total={total_ms / 1000.0:.2f}s",
     ]
     if task_id:
-        report_status(job_id, task_id, "done", result_data={
+        done_data = {
             "sculpture": sculpture_export,
             "n_solves": int(step_count),
             "total_ms": total_ms,
-        })
+        }
+        if saved_row:
+            done_data["saved_sculpture"] = saved_row
+        report_status(job_id, task_id, "done", result_data=done_data)
     return ok_response({
         "sculpture": sculpture_export,
+        "saved_sculpture": saved_row,
         "cache": cache_state,
         "source": source_meta,
         "raster": raster_meta,

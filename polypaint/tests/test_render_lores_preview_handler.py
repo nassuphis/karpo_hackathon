@@ -726,6 +726,124 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
+    def test_save_full_persists_from_local_bytes_before_done(self, mock_s3, mock_run, mock_render):
+        # CR: SaveFull must NEVER copy the job-wide mutable sculpture_* keys
+        # — on a fresh run the durable save is uploaded from the bytes THIS
+        # invocation produced, and the task reports done only after.
+        from handler_render_lores_preview import TMP_XFORMED_ROOTS, handler
+
+        calc, roots_key, roots_bytes = self._artifact_calc(4)
+        step_scores = bytes(range(16))
+        mock_s3.get_object.side_effect = self._artifact_get_object(calc, roots_key, roots_bytes, step_scores)
+        mock_s3.head_object.return_value = self._artifact_head()
+        xformed = b"T" * (16 * 1 * 2 * 2)
+
+        def subprocess_fake(cmd, **kwargs):
+            with open(TMP_XFORMED_ROOTS, "wb") as fh:
+                fh.write(xformed)
+            return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 16, "roots_clipped": 0}), stderr="")
+
+        def render_fake(**kwargs):
+            with open(kwargs["out_path"], "wb") as fh:
+                fh.write(PNG_1X1)
+            return {"file_size": len(PNG_1X1), "preview_file_size": 0}
+
+        mock_run.side_effect = subprocess_fake
+        mock_render.side_effect = render_fake
+
+        with patch("handler_render_lores_preview.report_status") as mock_report:
+            resp = handler(_event(
+                artifact_sculpture={"artifact_id": "color_run_abc"},
+                preview_source_size=4,
+                sculpture_task_id="sculpture_artifact_9",
+                save_full={"view": {"point": 20, "style": "ghost", "zaxis": "t1",
+                                    "junk": "x", "show": {"points": True, "clu": True}},
+                           "title": ""},
+            ), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        saved = body["saved_sculpture"]
+        self.assertTrue(saved["id"].startswith("scu_"))
+        self.assertEqual(saved["title"], saved["id"])          # ids name saves
+        self.assertEqual(saved["grid_n"], 4)
+        self.assertEqual(saved["format"], "u16")
+        self.assertEqual(saved["source_artifact_id"], "color_run_abc")
+        self.assertEqual(saved["view"]["point"], 20)
+        self.assertEqual(saved["view"]["style"], "ghost")
+        self.assertEqual(saved["view"]["zaxis"], "t1")
+        self.assertNotIn("junk", saved["view"])                # whitelisted
+        self.assertIn(f"/sculptures/{saved['id']}/viewer.html", saved["share_url"])
+        # the durable objects were UPLOADED (local bytes), not server-copied
+        # from the mutable job keys
+        sprefix = f"sculptures/{saved['id']}/"
+        put_keys = {c.kwargs["Key"]: c.kwargs for c in mock_s3.put_object.call_args_list
+                    if c.kwargs["Key"].startswith(sprefix)}
+        self.assertEqual(set(put_keys), {sprefix + "roots.bin", sprefix + "palette.png",
+                                         sprefix + "meta.json", sprefix + "viewer.html"})
+        self.assertEqual(put_keys[sprefix + "roots.bin"]["Body"], xformed)
+        copy_keys = {c.kwargs["Key"] for c in mock_s3.copy_object.call_args_list}
+        self.assertFalse({k for k in copy_keys if k.startswith("sculptures/")})
+        meta_row = json.loads(put_keys[sprefix + "meta.json"]["Body"])
+        self.assertEqual(meta_row["view"]["show"], {"points": True, "ribbons": False,
+                                                    "threads": False, "clu": True, "splats": False})
+        # done reported AFTER the save, carrying the saved row
+        done = mock_report.call_args_list[-1]
+        self.assertEqual(done.args[2], "done")
+        self.assertEqual(done.kwargs["result_data"]["saved_sculpture"]["id"], saved["id"])
+
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_save_full_on_cache_hit_copies_the_immutable_cache(self, mock_s3, mock_run):
+        # cache hit: no local bytes exist — the save copies from the
+        # content-addressed cache prefix, never the mutable job keys
+        from handler_render_lores_preview import handler
+
+        cached_block = {
+            "format": "u16", "grid_n": 4, "degree": 1, "step_count": 16,
+            "pass_count": 1, "roots_bytes": 64,
+            "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -2.0, "max_im": 2.0},
+            "palette": "viridis", "source_artifact_id": "color_run_abc",
+            "step_scores_key": "renders/j/step_scores.raw",
+        }
+        calc, roots_key, roots_bytes = self._artifact_calc(4)
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key.endswith("sculpture_cache") or "sculpture_cache" in key and key.endswith("sculpture.json"):
+                body = MagicMock()
+                body.read.return_value = json.dumps(cached_block).encode("utf-8")
+                return {"Body": body}
+            return self._artifact_get_object(calc, roots_key, roots_bytes, b"")(**kwargs)
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.head_object.return_value = self._artifact_head()
+        with patch("handler_render_lores_preview.report_status") as mock_report:
+            resp = handler(_event(
+                artifact_sculpture={"artifact_id": "color_run_abc"},
+                preview_source_size=4,
+                sculpture_task_id="sculpture_artifact_10",
+                save_full={"view": {"point": 12}},
+            ), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        self.assertTrue(body["cache"]["hit"])
+        saved = body["saved_sculpture"]
+        sprefix = f"sculptures/{saved['id']}/"
+        copies = {c.kwargs["Key"]: c.kwargs["CopySource"]["Key"]
+                  for c in mock_s3.copy_object.call_args_list
+                  if c.kwargs["Key"].startswith(sprefix)}
+        self.assertEqual(set(copies), {sprefix + "roots.bin", sprefix + "palette.png"})
+        for src in copies.values():
+            self.assertIn("/sculpture_cache/", src)            # immutable source
+            self.assertNotIn("sculpture_roots.bin", src)
+            self.assertNotIn("sculpture_palette.png", src)
+        done = mock_report.call_args_list[-1]
+        self.assertEqual(done.args[2], "done")
+        self.assertEqual(done.kwargs["result_data"]["saved_sculpture"]["id"], saved["id"])
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
     def test_artifact_sculpture_subsamples_scores_on_the_logical_lattice(self, mock_s3, mock_run, mock_render):
         # view 2 over grid 4: the score subsample must pick EXACTLY the
         # solves the roots materializer walks (floor(i*full/view) rows and

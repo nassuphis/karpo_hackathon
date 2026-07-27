@@ -629,6 +629,7 @@ assertNotIncludes("id=\"btn-sculpture-generate\"", 'the Generate-then-Save viewe
 assertNotIncludes("id=\"sculpture-title\"", 'no title input — too early in the workflow to name things, the id is fine');
 assertNotIncludes("id=\"render-sculpture-n\"", 'the pane-level size dropdown is gone — resolution lives in the SaveFull popup');
 assertNotIncludes("_sculptureBakeSaved", 'per-row buttons are gone — selection toolbar only');
+assertNotIncludes("'/save-sculpture'", 'SaveFull is ONE server-side task — the client second step (and its shared-key race) is gone');
 assertIncludes("function _viewRenderParamsFromArtifact(art, projection, vertical) {", 'ViewRender should derive its full render request from the selected Color artifact');
 assertIncludes("function _viewRenderGridN(art) {", 'ViewRender should derive image geometry from calculation N');
 assertIncludes("const pix = _viewRenderGridN(art);", 'ViewRender must use N for both image dimensions');
@@ -665,7 +666,7 @@ assertIncludes("for (const line of (Array.isArray(result.logs) ? result.logs : [
 assertIncludes("const nCoeffs = Number.isFinite(rawNCoeffs) && rawNCoeffs >= 1 ? rawNCoeffs : degree + 1;", 'render lores preview should default missing n_coeffs to degree+1');
 assertIncludes("lores_bin_key: loresKey,", 'render lores preview payload should use the existing lores roots artifact');
 assertIncludes("result = await lambdaPost('render-lores-preview', payload);", 'render lores preview should call the direct preview endpoint on the non-hires path');
-assertIncludes("await lambdaPost('storage', { job_id: jobId, artifact_id: artifactId, n }, '/start-sculpture-artifact');", 'sculptures should start async from the SELECTED color artifact — no live render state in the payload');
+assertIncludes("await lambdaPost('storage', { job_id: jobId, artifact_id: artifactId, n, ...(extra || {}) }, '/start-sculpture-artifact');", 'sculptures should start async from the SELECTED color artifact — no live render state in the payload (extra carries only the sanitized save_full block)');
 assertIncludes("}, '/check-status');", 'sculptures should follow the common task infra, not bespoke polling');
 assertIncludes("id: railId, kind: 'sculpture'", 'sculptures should surface on the jobs rail');
 assertIncludes("const ctx = canvas.getContext('2d');", 'render lores preview should draw the returned image onto the canvas');

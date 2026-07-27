@@ -687,11 +687,12 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("sweep_mt", packaged["handler_render_lores_preview.py"])
         self.assertIn("sweep_cm", packaged["handler_render_lores_preview.py"])
         self.assertIn('deploy_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip"', GEN_TEXT)
-        # the frozen sculpture viewer template ships inside the STORAGE zip
-        # (save-sculpture copies it into each sculptures/{id}/ prefix); the
-        # lores zip stays viewer-free — saving is a storage-side S3 copy
-        self.assertIn('sculpture.html "$STORAGE_DIR/"', DEPLOY_TEXT)
-        self.assertNotIn('sculpture.html "$RENDER_LORES_PREVIEW_DIR/"', DEPLOY_TEXT)
+        # the frozen sculpture viewer template ships inside the LORES zip:
+        # SaveFull persists sculptures/{id}/ INSIDE the generate task (from
+        # its own bytes or the immutable cache — CR: shared-key race), so
+        # the storage zip is viewer-free now
+        self.assertIn('splat_bake_template.html sculpture.html', DEPLOY_TEXT)
+        self.assertNotIn('sculpture.html "$STORAGE_DIR/"', DEPLOY_TEXT)
         self.assertIn('"$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib,PP_GIT_SHA=$PP_GIT_SHA_VAL,PP_BUILD_ID=$PP_BUILD_ID_VAL" "$BINARY_TMP"', GEN_TEXT)
         self.assertIn('ensure_route "POST /render-lores-preview" "$INT"', GEN_TEXT)
         self.assertIn('"render-lores-preview": "%s/render-lores-preview"', DEPLOY_TEXT)

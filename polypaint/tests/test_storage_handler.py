@@ -1458,105 +1458,77 @@ class TestStartSplatBake(unittest.TestCase):
                          "renders/compute_j1/sculpture_cache/0123456789abcdef/")
 
 
-class TestSaveSculpture(unittest.TestCase):
-    def _params(self, **over):
-        p = {
-            "job_id": "compute_j1",
-            "title": "My Piece",
-            "grid_n": 2,
-            "degree": 3,
-            "step_count": 4,
-            "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -1.0, "max_im": 3.0},
-            "palette": "inferno",
-            "source_artifact_id": "color_run_abc",
-            "view": {"point": 12, "order": "angle", "style": "cloud", "glow": 44,
-                     "show": {"points": True, "clu": True, "splats": True},
-                     "splatRes": 128,
-                     "tour": "grand", "tourSpeed": 2, "junk": "x"},
-        }
-        p.update(over)
-        return p
+class TestStartSculptureSaveFull(unittest.TestCase):
+    """SaveFull rides the START route: the save happens INSIDE the lambda
+    task (from its own bytes or the immutable cache), so the route only
+    validates + forwards a sanitized save_full block. /save-sculpture — the
+    old client second step that copied job-wide MUTABLE keys — is gone."""
 
+    @staticmethod
+    def _head_ok(mock_s3):
+        mock_s3.head_object.return_value = {
+            "Metadata": {"step_scores_key": "renders/compute_j1/step_scores.raw",
+                         "step_scores_grid_n": "2000"},
+            "ContentType": "image/png", "ContentLength": 10}
+        mock_s3.get_object.side_effect = ClientError(
+            {"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
+
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
     @patch("handler_storage.s3")
-    def test_copies_ephemeral_objects_and_writes_meta_and_viewer(self, mock_s3):
+    def test_forwards_sanitized_save_full(self, mock_s3, mock_boto3, mock_report):
         import handler_storage
-        mock_s3.head_object.return_value = {"ContentLength": 4 * 3 * 2 * 4}
-        resp = handler_storage.handler(_event("/save-sculpture", self._params()), None)
+        self._head_ok(mock_s3)
+        resp = handler_storage.handler(_event("/start-sculpture-artifact", {
+            "job_id": "compute_j1", "artifact_id": "color_run_abc", "n": 192,
+            "save_full": {
+                "title": "  My\x07Title  ",
+                "view": {"point": 20, "height": 0.4, "style": "ghost",
+                         "zaxis": "t1", "junk_field": "evil", "glow": 999},
+            },
+        }), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
-        body = json.loads(resp["body"])
-        sc = body["sculpture"]
-        self.assertTrue(sc["id"].startswith("scu_"))
-        self.assertEqual(sc["title"], "My Piece")
-        self.assertEqual(sc["job_id"], "compute_j1")
-        self.assertEqual(sc["prefix"], f"sculptures/{sc['id']}/")
-        self.assertTrue(sc["share_url"].endswith(f"/sculptures/{sc['id']}/viewer.html"))
-        # data COPIED from the job's ephemeral objects — never re-solved
-        copies = {c.kwargs["Key"]: c.kwargs for c in mock_s3.copy_object.call_args_list}
-        self.assertEqual(sorted(copies), [
-            f"sculptures/{sc['id']}/palette.png",
-            f"sculptures/{sc['id']}/roots.bin",
-        ])
-        roots_copy = copies[f"sculptures/{sc['id']}/roots.bin"]
-        self.assertEqual(roots_copy["CopySource"],
-                         {"Bucket": handler_storage.BUCKET, "Key": "renders/compute_j1/sculpture_roots.bin"})
-        self.assertEqual(roots_copy["CacheControl"], "public, max-age=31536000, immutable")
-        puts = {c.kwargs["Key"]: c.kwargs for c in mock_s3.put_object.call_args_list}
-        meta = json.loads(puts[f"sculptures/{sc['id']}/meta.json"]["Body"])
-        self.assertEqual(meta["grid_n"], 2)
-        self.assertEqual(meta["degree"], 3)
-        self.assertEqual(meta["pass_count"], 1)
-        self.assertEqual(meta["roots_bytes"], 96)          # server truth via head
-        self.assertEqual(meta["roots_key"], "roots.bin")
-        self.assertEqual(meta["source_artifact_id"], "color_run_abc")   # provenance travels
-        self.assertEqual(meta["view"], {
-            "point": 12, "order": "angle", "style": "cloud", "glow": 44,
-            "show": {"points": True, "ribbons": False, "threads": False, "clu": True, "splats": True},
-            "splatRes": 128,
-            "tour": "grand", "tourSpeed": 2.0,
-        })   # sanitized
-        viewer = puts[f"sculptures/{sc['id']}/viewer.html"]
-        repo_viewer = open(os.path.join(os.path.dirname(__file__), "..", "sculpture.html"), "rb").read()
-        self.assertEqual(viewer["Body"], repo_viewer)
-        self.assertEqual(viewer["ContentType"], "text/html")
+        payload = json.loads(mock_boto3.client.return_value.invoke.call_args.kwargs["Payload"])
+        self.assertEqual(payload["save_full"]["title"], "MyTitle")
+        view = payload["save_full"]["view"]
+        self.assertEqual(view["point"], 20)
+        self.assertEqual(view["height"], 0.4)
+        self.assertEqual(view["style"], "ghost")
+        self.assertEqual(view["zaxis"], "t1")
+        self.assertNotIn("junk_field", view)     # whitelist sanitizer
+        self.assertNotIn("glow", view)           # 999 out of range -> dropped
 
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
     @patch("handler_storage.s3")
-    def test_missing_ephemeral_data_is_a_friendly_error(self, mock_s3):
+    def test_without_save_full_payload_is_unchanged(self, mock_s3, mock_boto3, mock_report):
         import handler_storage
-        mock_s3.head_object.side_effect = RuntimeError("404")
-        resp = handler_storage.handler(_event("/save-sculpture", self._params()), None)
-        self.assertEqual(resp["statusCode"], 400)
-        self.assertIn("press Sculpture first", json.loads(resp["body"])["error"])
-        mock_s3.copy_object.assert_not_called()
-
-    @patch("handler_storage.s3")
-    def test_u16_format_halves_the_expected_size(self, mock_s3):
-        import handler_storage
-        mock_s3.head_object.return_value = {"ContentLength": 4 * 3 * 2 * 2}
-        resp = handler_storage.handler(
-            _event("/save-sculpture", self._params(format="u16")), None)
+        self._head_ok(mock_s3)
+        resp = handler_storage.handler(_event("/start-sculpture-artifact", {
+            "job_id": "compute_j1", "artifact_id": "color_run_abc", "n": 384,
+        }), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
-        body = json.loads(resp["body"])
-        self.assertEqual(body["sculpture"]["format"], "u16")
-        puts = {c.kwargs["Key"]: c.kwargs for c in mock_s3.put_object.call_args_list}
-        meta_key = next(k for k in puts if k.endswith("meta.json"))
-        self.assertEqual(json.loads(puts[meta_key]["Body"])["format"], "u16")
+        payload = json.loads(mock_boto3.client.return_value.invoke.call_args.kwargs["Payload"])
+        self.assertNotIn("save_full", payload)
 
+    @patch("handler_storage.report_status")
+    @patch("handler_storage.boto3")
     @patch("handler_storage.s3")
-    def test_size_mismatch_demands_a_fresh_run(self, mock_s3):
+    def test_rejects_non_object_save_full(self, mock_s3, mock_boto3, mock_report):
         import handler_storage
-        mock_s3.head_object.return_value = {"ContentLength": 17}
-        resp = handler_storage.handler(_event("/save-sculpture", self._params()), None)
+        self._head_ok(mock_s3)
+        resp = handler_storage.handler(_event("/start-sculpture-artifact", {
+            "job_id": "compute_j1", "artifact_id": "color_run_abc", "n": 384,
+            "save_full": "yes",
+        }), None)
         self.assertEqual(resp["statusCode"], 400)
-        self.assertIn("re-run Sculpture", json.loads(resp["body"])["error"])
-        mock_s3.copy_object.assert_not_called()
+        mock_boto3.client.return_value.invoke.assert_not_called()
 
-    @patch("handler_storage.s3")
-    def test_rejects_bad_job_id(self, mock_s3):
+    def test_save_sculpture_route_is_gone(self):
         import handler_storage
-        resp = handler_storage.handler(
-            _event("/save-sculpture", self._params(job_id="../evil")), None)
+        resp = handler_storage.handler(_event("/save-sculpture", {"job_id": "j"}), None)
         self.assertEqual(resp["statusCode"], 400)
-        mock_s3.head_object.assert_not_called()
+        self.assertIn("Unknown route", json.loads(resp["body"])["error"])
 
 
 class TestListViews(unittest.TestCase):

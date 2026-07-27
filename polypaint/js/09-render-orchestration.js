@@ -1425,9 +1425,9 @@ function _clearRenderState() {
 function _invalidateRenderInventory(jobId = null) {
     _renderLoadedJobId = '';
     _renderNeedsRefresh = !!(jobId || (document.getElementById('render-results-dir')?.value.trim() || ''));
-    _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [], views: [] };
-    _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1, views: -1 };
-    _renderSelectedArtifactKey = { color: '', bilevel: '', coeffs: '', palette: '', pdf: '', views: '' };
+    _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [], views: [], sculpture: [] };
+    _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1, views: -1, sculpture: -1 };
+    _renderSelectedArtifactKey = { color: '', bilevel: '', coeffs: '', palette: '', pdf: '', views: '', sculpture: '' };
     window._lastRenderSummary = { families: _renderArtifacts, calc: {} };
     const preview = document.getElementById('render-preview');
     const info = document.getElementById('render-info');

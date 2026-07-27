@@ -156,7 +156,6 @@
     "/delete-prefix",
     "/list-deepzoom",
     "/list-sculptures",
-    "/save-sculpture",
     "/start-sculpture-artifact",
     "/start-splat-bake",
     "/list-views",

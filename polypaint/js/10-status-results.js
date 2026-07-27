@@ -598,14 +598,14 @@ async function runRenderLoresPreview(opts = {}) {
     return !runFailed;
 }
 
-async function _sculptureGenerateAndFollow(jobId, artifactId, n, btnId, phase) {
+async function _sculptureGenerateAndFollow(jobId, artifactId, n, btnId, phase, extra = null) {
     // artifact-sourced sculpture data job: the SELECTED color artifact is
     // the only source — its stored step_scores, transform chain, viewport,
     // rotation, and palette drive the backend; no live render state
     // travels. Async on the common task infra (DDB row + /check-status +
     // jobs rail). Returns the sculpture block; throws on failure. No
     // viewer tab is involved — SaveFull persists straight from the data.
-    const startResp = await lambdaPost('storage', { job_id: jobId, artifact_id: artifactId, n }, '/start-sculpture-artifact');
+    const startResp = await lambdaPost('storage', { job_id: jobId, artifact_id: artifactId, n, ...(extra || {}) }, '/start-sculpture-artifact');
     const taskId = startResp && startResp.task_id;
     if (!taskId) throw new Error('start-sculpture-artifact returned no task_id');
     const railId = 'sculpture:' + taskId;
@@ -639,7 +639,7 @@ async function _sculptureGenerateAndFollow(jobId, artifactId, n, btnId, phase) {
                 _jobsRailUpsert({ id: railId, kind: 'sculpture', label: railLabel,
                                   jobId, tab: 'render', state: 'complete',
                                   detail: `done in ${doneSecs}s` });
-                return row.sculpture;
+                return row;   // {sculpture, saved_sculpture?, ...} — the task's result_data
             }
             await new Promise((r) => setTimeout(r, 3000));
         }

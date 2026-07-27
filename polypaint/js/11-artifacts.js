@@ -1160,7 +1160,9 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     let viewerHtml = '<div style="color:#444; font-size:12px; padding:12px 0; text-align:center">No artifact selected</div>';
     if (activeArt && activeArt.viewer_url) {
         if (activeArt.family === 'sculpture') {
-            viewerHtml = `<iframe src="${activeArt.viewer_url}" style="width:100%; height:100%; border:0; background:#000" title="saved sculpture viewer"></iframe>`;
+            // src is set AFTER a debounce (arrow-scrubbing through 20-36MB
+            // full saves must not download/boot a viewer per keypress)
+            viewerHtml = `<iframe data-viewer-src="${activeArt.viewer_url}" style="width:100%; height:100%; border:0; background:#000" title="saved sculpture viewer"></iframe>`;
         } else if (activeArt.format === 'pdf' || (activeArt.content_type || '') === 'application/pdf') {
             const pdfSrc = `${activeArt.viewer_url}#toolbar=0&navpanes=0&view=FitH`;
             viewerHtml = `<iframe src="${pdfSrc}" style="width:100%; height:100%; border:0; background:#000"></iframe>`;
@@ -1175,8 +1177,12 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     }
     if (_renderActiveFamily === 'sculpture') {
         const hasSculptureSel = !!(activeArt && activeArt.artifact_id);
-        actionButtons.push('<button class="btn-primary" id="btn-sculpture-savefull" onclick="_saveFullOpenModal()" style="padding:4px 12px; font-size:11px" title="Generate from the selected color artifact and save a FULL viewer in one go — a popup sets resolution and every viewer option; no tab opens">SaveFull</button>');
-        actionButtons.push('<button class="btn-secondary" id="btn-sculpture-splatbake" onclick="_saveSplatOpenModal()" style="padding:4px 12px; font-size:11px" title="Bake a self-contained splat viewer from the selected color artifact — a popup sets resolution, splat res, z, height, and point">SaveSplat</button>');
+        const sculptureSource = _sculptureSourceColorArtifact();
+        const hasSource = !!(sculptureSource && sculptureSource.artifact_id);
+        const sfBusy = _sculptureOpState.savefull;
+        const sbBusy = _sculptureOpState.splatbake;
+        actionButtons.push(`<button class="btn-primary" id="btn-sculpture-savefull" onclick="_saveFullOpenModal()" style="padding:4px 12px; font-size:11px" ${sfBusy || !hasSource ? 'disabled' : ''} title="Generate from the selected color artifact and save a FULL viewer in one go — a popup sets resolution and every viewer option; no tab opens">${sfBusy ? _escapeHtml(sfBusy) : 'SaveFull'}</button>`);
+        actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-splatbake" onclick="_saveSplatOpenModal()" style="padding:4px 12px; font-size:11px" ${sbBusy || !hasSource ? 'disabled' : ''} title="Bake a self-contained splat viewer from the selected color artifact — a popup sets resolution, splat res, z, height, and point">${sbBusy ? _escapeHtml(sbBusy) : 'SaveSplat'}</button>`);
         actionButtons.push('<button class="btn-secondary" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)" style="padding:4px 12px; font-size:11px">Refresh</button>');
         actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-open" onclick="_sculptureOpenSelected()" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Open</button>`);
         actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-copy" onclick="_sculptureCopyLinkSelected(this)" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Copy Link</button>`);
@@ -1243,6 +1249,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         _renderCatalogScrollTop[_renderActiveFamily] = 0;
         _restoreRenderCatalogScroll({ family: _renderActiveFamily, ensureSelected: false });
     }
+    if (_renderActiveFamily === 'sculpture') _sculptureArmPreviewFrame();
 
     // Info line
     const parts = ['Job: ' + jobId];
@@ -1682,6 +1689,16 @@ function _sculptureShareUrl(meta) {
     return _publicStorageUrl(prefix + 'viewer.html');
 }
 
+// async-creator state keyed by ACTION, not DOM: panel re-renders replace
+// the buttons, so busy/disabled must be re-derivable (CR: duplicate ops)
+let _sculptureOpState = { savefull: '', splatbake: '' };
+let _sculpturePreviewTimer = null;
+// inventory freshness: a shared in-flight fetch + a mutation generation —
+// a stale /list-sculptures response must never resurrect a deleted row or
+// hide a just-saved one (CR: stale-response race)
+let _sculptureInventoryInflight = null;
+let _sculptureInventoryGen = 0;
+
 function _sculptureRenderPane() {
     // the saved list IS the shared artifact catalog now — re-render the
     // panel in place when the sculpture family is active
@@ -1697,13 +1714,29 @@ function _sculptureAsRenderArtifact(meta) {
     // selection tracks it, and the preview panel embeds its hosted viewer
     const row = meta && typeof meta === 'object' ? meta : {};
     const id = String(row.id || '').trim();
+    const gridN = Number(row.grid_n || 0);
     return {
         ...row,
         family: 'sculpture',
         artifact_id: id,
+        width: row.kind === 'splatbake' ? row.width : (gridN || row.width),
+        height: row.kind === 'splatbake' ? row.height : (gridN || row.height),
         file_size: Number(row.bytes || row.roots_bytes || 0),
         viewer_url: id ? _sculptureShareUrl(row) : '',
     };
+}
+
+function _sculptureArmPreviewFrame() {
+    // the frame's src lands after a debounce: arrow-scrubbing through
+    // 20-36MB full saves must not download + boot a viewer per keypress
+    if (_sculpturePreviewTimer) { clearTimeout(_sculpturePreviewTimer); _sculpturePreviewTimer = null; }
+    const frame = document.querySelector('#render-artifact-viewer iframe[data-viewer-src]');
+    if (!frame) return;
+    _sculpturePreviewTimer = setTimeout(() => {
+        _sculpturePreviewTimer = null;
+        const live = document.querySelector('#render-artifact-viewer iframe[data-viewer-src]');
+        if (live && !live.src) live.src = live.dataset.viewerSrc;
+    }, 250);
 }
 
 function _sculptureSelectedMeta() {
@@ -1733,29 +1766,44 @@ async function _sculptureEnsureInventory(force) {
     // busy + lingering result on the button itself for the explicit press
     // (the silent session-boot load keeps the button label untouched)
     if (btn) { btn.disabled = true; if (force) btn.textContent = 'Refreshing…'; }
+    const genAtStart = _sculptureInventoryGen;
     try {
-        const data = await lambdaPost('storage', {}, '/list-sculptures');
-        window._sculptureInventory = data.sculptures || [];
-        window._sculptureInventoryLoaded = true;
-        _sculptureSyncFamilyCount();
-        ok = true;
+        // overlapping loads share ONE /list-sculptures round trip
+        if (!_sculptureInventoryInflight) {
+            _sculptureInventoryInflight = lambdaPost('storage', {}, '/list-sculptures')
+                .finally(() => { _sculptureInventoryInflight = null; });
+        }
+        const data = await _sculptureInventoryInflight;
+        if (_sculptureInventoryGen !== genAtStart) {
+            // a local mutation (save/bake/delete) landed while this response
+            // was in flight — the local truth is NEWER; keep it
+            ok = true;
+        } else {
+            window._sculptureInventory = data.sculptures || [];
+            window._sculptureInventoryLoaded = true;
+            _sculptureSyncFamilyCount();
+            ok = true;
+        }
     } catch (e) {
         if (!window._sculptureInventoryLoaded) window._sculptureInventory = [];
         log(`Sculpture list failed: ${e.message}`, 'err', 'render-log');
     } finally {
-        if (btn) {
-            btn.disabled = false;
-            if (force) {
-                btn.textContent = ok ? '✓ Refreshed' : '✗ Refresh';
-                setTimeout(() => {
-                    const b = document.getElementById('btn-sculpture-refresh');
-                    if (b && !b.disabled) b.textContent = 'Refresh';
-                }, 2500);
-            }
-        }
+        if (btn) btn.disabled = false;
     }
     _sculptureRenderPane();
     _splatsTabRefresh();
+    if (force) {
+        // feedback on the LIVE button, after the pane re-render (the trap)
+        const live = document.getElementById('btn-sculpture-refresh');
+        if (live) {
+            live.disabled = false;
+            live.textContent = ok ? '✓ Refreshed' : '✗ Refresh';
+            setTimeout(() => {
+                const b = document.getElementById('btn-sculpture-refresh');
+                if (b && !b.disabled) b.textContent = 'Refresh';
+            }, 2500);
+        }
+    }
     return ok;
 }
 
@@ -1806,6 +1854,7 @@ async function _sculptureDelete(id, btn) {
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
         await lambdaPost('storage', { prefix }, '/delete-prefix');
+        _sculptureInventoryGen++;
         window._sculptureInventory = (window._sculptureInventory || []).filter((x) => x.id !== id);
         _sculptureRenderPane();
         _sculptureSyncFamilyCount();
@@ -1864,6 +1913,7 @@ async function _splatBakeStartAndFollow(jobId, source, params, btnId, railLabel)
     const doneSecs = Math.round((Date.now() - startedAt) / 1000);
     _jobsRailUpsert({ id: railId, kind: 'splatbake', label: railLabel,
                       jobId, tab: 'render', state: 'complete', detail: `done in ${doneSecs}s` });
+    _sculptureInventoryGen++;
     window._sculptureInventory = [row, ...(window._sculptureInventory || [])];
     window._sculptureInventoryLoaded = true;
     _sculptureRenderPane();
@@ -2374,12 +2424,17 @@ function _saveFullViewFromModal() {
 }
 
 async function runSaveFull() {
-    // SaveFull = generate + save in ONE flow: the async data job runs on
-    // the rail, then the durable sculptures/{id}/ save is made straight
-    // from the ephemeral data with the popup's view settings. No viewer
-    // tab, no title — the id names it (user spec).
+    // SaveFull = ONE server-side task: the lambda generates from the
+    // selected color artifact and persists sculptures/{id}/ from its OWN
+    // bytes (or the immutable cache prefix) BEFORE reporting done — the
+    // rail's complete means durable, and no job-wide mutable key is ever
+    // copied (CR: silent-corruption race). No viewer tab, no title — the
+    // id names it (user spec).
     const btnId = 'btn-sculpture-savefull';
-    const btn = document.getElementById(btnId);
+    if (_sculptureOpState.savefull) {
+        log('SaveFull already running — wait for the rail card', 'err', 'render-log');
+        return;
+    }
     let ok = false;
     try {
         const jobId = document.getElementById('render-results-dir').value.trim();
@@ -2390,26 +2445,18 @@ async function runSaveFull() {
         const n = parseInt(document.getElementById('save-full-resolution').value, 10) || 384;
         const view = _saveFullViewFromModal();
         _saveFullClose();
-        if (btn) { btn.disabled = true; btn.textContent = 'Generating\u2026'; }
-        const sc = await _sculptureGenerateAndFollow(jobId, artifactId, n, btnId, 'Generating');
-        const liveBtn = document.getElementById(btnId);
-        if (liveBtn) liveBtn.textContent = 'Saving\u2026';
-        const resp = await lambdaPost('storage', {
-            job_id: jobId,
-            grid_n: sc.grid_n,
-            degree: sc.degree,
-            step_count: sc.step_count,
-            viewport: sc.viewport,
-            palette: sc.palette,
-            format: sc.format || 'u16',
-            source_artifact_id: sc.source_artifact_id || artifactId,
-            view,
-        }, '/save-sculpture');
-        const saved = resp && resp.sculpture;
-        if (!saved || !saved.id) throw new Error('save response missing sculpture');
+        _sculptureOpState.savefull = 'Saving\u2026';
+        const busyBtn = document.getElementById(btnId);
+        if (busyBtn) { busyBtn.disabled = true; busyBtn.textContent = 'Saving\u2026'; }
+        const result = await _sculptureGenerateAndFollow(
+            jobId, artifactId, n, btnId, 'Saving', { save_full: { view } });
+        const saved = result && result.saved_sculpture;
+        if (!saved || !saved.id) throw new Error('task completed without a saved sculpture');
+        _sculptureInventoryGen++;
         window._sculptureInventory = [saved, ...(window._sculptureInventory || [])];
         window._sculptureInventoryLoaded = true;
         _renderSelectedArtifactKey.sculpture = `sculpture::${saved.id}`;
+        _sculptureOpState.savefull = '';
         _sculptureSyncFamilyCount();
         _sculptureRenderPane();
         _splatsTabRefresh();
@@ -2418,7 +2465,8 @@ async function runSaveFull() {
     } catch (e) {
         log(`SaveFull failed: ${e.message}`, 'err', 'render-log');
     } finally {
-        const live = document.getElementById(btnId) || btn;
+        _sculptureOpState.savefull = '';
+        const live = document.getElementById(btnId);
         if (live) {
             live.disabled = false;
             live.textContent = ok ? '\u2713 Saved' : '\u2717 SaveFull';
@@ -2510,7 +2558,12 @@ function _saveSplatClose() {
 
 async function runSaveSplat() {
     const btn = document.getElementById('btn-sculpture-splatbake');
+    if (_sculptureOpState.splatbake) {
+        log('SaveSplat already running — wait for the rail card', 'err', 'render-log');
+        return;
+    }
     let ok = false;
+    _sculptureOpState.splatbake = 'Baking\u2026';
     try {
         const jobId = document.getElementById('render-results-dir').value.trim();
         if (!jobId) throw new Error('no job selected');
@@ -2544,6 +2597,7 @@ async function runSaveSplat() {
     } catch (e) {
         log(`SaveSplat failed: ${e.message}`, 'err', 'render-log');
     } finally {
+        _sculptureOpState.splatbake = '';
         // re-query: the bake driver re-renders the panel on completion, so
         // the captured node may be detached (the recorded trap)
         const live = document.getElementById('btn-sculpture-splatbake') || btn;

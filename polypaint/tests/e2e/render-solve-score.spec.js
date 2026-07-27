@@ -1834,7 +1834,7 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#render-log')).toContainText('Autolevels complete: autolevels_done (13.0s)');
   });
 
-  test('Sculpture SaveFull: popup options generate+save with no viewer tab', async ({ page }) => {
+  test('Sculpture SaveFull: one server-side task, popup options, no viewer tab', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page);
     await page.evaluate(() => {
@@ -1842,27 +1842,28 @@ test.describe('Solve Score UI', () => {
       window._storageCalls = [];
       window._openCount = 0;
       window.open = function () { window._openCount++; return { closed: false }; };
+      window._releaseCheck = null;
       const SC = {
-        roots_key: 'renders/job_sc/sculpture_roots.bin',
-        roots_url: 'https://bkt.s3.eu-west-2.amazonaws.com/renders/job_sc/sculpture_roots.bin?v=1',
-        palette_url: 'https://bkt.s3.eu-west-2.amazonaws.com/renders/job_sc/sculpture_palette.png?v=1',
         format: 'u16', grid_n: 192, degree: 5, step_count: 36864, pass_count: 1,
         viewport: { min_re: -2, max_re: 2, min_im: -1.5, max_im: 2.5 },
-        palette: 'inferno',
-        source_artifact_id: 'color_1',
+        palette: 'inferno', source_artifact_id: 'color_1',
+      };
+      const SAVED = {
+        version: 1, id: 'scu_full1', title: 'scu_full1', job_id: 'job_sc',
+        grid_n: 192, degree: 5, palette: 'inferno', roots_bytes: 1474560,
+        format: 'u16', created_at: '2026-07-28T12:00:00Z', prefix: 'sculptures/scu_full1/',
+        share_url: 'https://bkt.s3.r.amazonaws.com/sculptures/scu_full1/viewer.html',
       };
       window.lambdaPost = async function (name, body, path) {
         window._storageCalls.push([path, JSON.parse(JSON.stringify(body))]);
         if (path === '/list-sculptures') return { sculptures: [], count: 0 };
         if (path === '/start-sculpture-artifact') return { task_id: 'sculpture_artifact_777' };
-        if (path === '/check-status') return { done: 1, errors: 0, error_details: [],
-          results: [{ sculpture: SC, total_ms: 30000 }] };
-        if (path === '/save-sculpture') return { sculpture: {
-          version: 1, id: 'scu_full1', title: 'job_sc sculpture', job_id: 'job_sc',
-          grid_n: 192, degree: 5, palette: 'inferno', roots_bytes: 1474560,
-          created_at: '2026-07-28T12:00:00Z', prefix: 'sculptures/scu_full1/',
-          share_url: 'https://bkt.s3.r.amazonaws.com/sculptures/scu_full1/viewer.html',
-        } };
+        if (path === '/check-status') {
+          // hold the task open until the test releases it (busy-state pin)
+          await new Promise((resolve) => { window._releaseCheck = resolve; });
+          return { done: 1, errors: 0, error_details: [],
+                   results: [{ sculpture: SC, saved_sculpture: SAVED, total_ms: 30000 }] };
+        }
         return {};
       };
     });
@@ -1874,7 +1875,6 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#render-sculpture-n')).toHaveCount(0);
     await expect(page.locator('#sculpture-title')).toHaveCount(0);
     await expect(page.locator('#tab-render')).toContainText('SaveFull / SaveSplat source:');
-    await expect(page.locator('#tab-render')).toContainText('color_1');
 
     // the popup carries EVERY viewer option + the resolution
     await page.click('#btn-sculpture-savefull');
@@ -1888,39 +1888,388 @@ test.describe('Solve Score UI', () => {
     await page.locator('#save-full-point').fill('20');
     await page.check('#save-full-show-clu');
     await page.click('#save-full-go');
+
+    // busy state survives a full panel re-render (CR: duplicate ops) —
+    // the op is keyed by action, not by the DOM node that started it
+    await expect(page.locator('#btn-sculpture-savefull')).toBeDisabled();
+    await page.evaluate(() => renderArtifactPanel('job_sc',
+      window._lastRenderSummary || { families: _renderArtifacts, calc: {} }, { preserveScroll: true }));
+    await expect(page.locator('#btn-sculpture-savefull')).toBeDisabled();
+    await expect(page.locator('#btn-sculpture-savefull')).toContainText('Saving');
+    await page.evaluate(() => { window._releaseCheck && window._releaseCheck(); });
     await expect(page.locator('#btn-sculpture-savefull')).toHaveText('✓ Saved');
 
     const st = await page.evaluate(() => ({
       start: window._storageCalls.find((c) => c[0] === '/start-sculpture-artifact')[1],
-      save: window._storageCalls.find((c) => c[0] === '/save-sculpture')[1],
+      saveCalls: window._storageCalls.filter((c) => c[0] === '/save-sculpture').length,
       opens: window._openCount,
       selectedKey: _renderSelectedArtifactKey.sculpture,
       rail: (typeof _jobsRailJobs !== 'undefined' ? _jobsRailJobs : [])
         .filter((j) => j.kind === 'sculpture').map((j) => j.state),
     }));
-    // EXACT start payload: job + artifact + popup resolution
-    expect(st.start).toEqual({ job_id: 'job_sc', artifact_id: 'color_1', n: 192 });
-    // EXACT save payload: the generated block + the popup view — and NO title
-    expect(st.save).toEqual({
-      job_id: 'job_sc', grid_n: 192, degree: 5, step_count: 36864,
-      viewport: { min_re: -2, max_re: 2, min_im: -1.5, max_im: 2.5 },
-      palette: 'inferno', format: 'u16', source_artifact_id: 'color_1',
-      view: {
-        point: 20, height: 0.4, slices: 0,
-        show: { points: true, ribbons: false, threads: false, clu: true, splats: false },
-        splatRes: 96, style: 'ghost', glow: 30, order: 'nearest', lenq: 100,
-        zaxis: 't2', zlo: 0, zhi: 1, tour: 'orbit', tourSpeed: 2,
+    // ONE server-side task: the start payload carries the sanitizable
+    // save_full block with the popup's exact view; there is NO client-side
+    // /save-sculpture second step (that route is gone with its race)
+    expect(st.start).toEqual({
+      job_id: 'job_sc', artifact_id: 'color_1', n: 192,
+      save_full: {
+        view: {
+          point: 20, height: 0.4, slices: 0,
+          show: { points: true, ribbons: false, threads: false, clu: true, splats: false },
+          splatRes: 96, style: 'ghost', glow: 30, order: 'nearest', lenq: 100,
+          zaxis: 't2', zlo: 0, zhi: 1, tour: 'orbit', tourSpeed: 2,
+        },
       },
     });
-    expect(st.save).not.toHaveProperty('title');
+    expect(st.saveCalls).toBe(0);
     expect(st.opens).toBe(0);                       // NO viewer tab, ever
-    expect(st.rail).toEqual(['complete']);
-    // the new save lands in the catalog, selected, and previews in a frame
+    expect(st.rail).toEqual(['complete']);          // complete == durable
     expect(st.selectedKey).toBe('sculpture::scu_full1');
     await expect(page.locator('#render-artifact-catalog')).toContainText('scu_full1');
     await expect(page.locator('#render-artifact-viewer iframe')).toHaveAttribute(
       'src', /sculptures\/scu_full1\/viewer\.html/);
     await expect(page.locator('[data-render-family="sculpture"] .subtab-count').first()).toHaveText('(1)');
+  });
+
+  test('Views tab: Palette-style catalog, N x N render, selected actions, color purity', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await seedRenderPopupState(page);
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      // the seed's panel kick started a views fetch on the REAL lambdaPost;
+      // drop it so the in-flight dedup can't hand its result to these stubs
+      window._viewsInventoryInflight = null;
+      window._viewsInventoryJob = '';
+      window._storageCalls = [];
+      window._viewDispatched = false;
+      window._viewDeleted = false;
+      window.confirm = () => true;
+      const colorRows = [
+        {
+          artifact_id: 'color_1', palette: 'reef', palette_display_name: 'Reef',
+          created_at: '2026-07-26T08:00:00Z', pix: '8192', width: 8192, height: 8192,
+          format: 'jpeg', quality: 87, min_re: -3, max_re: 2, min_im: -1, max_im: 4,
+          quantile: 0.02, shim: 0.04, square_extent: 3, rotation: 0.25,
+          background_color: '101820', color_interpretation: 'scalar_lut',
+          solve_score_program_source_text: 'score = metric(proximity, slv, q=0.1%)',
+          solve_score_normalize: true, root_program_source_text: 'rotate(0.125)',
+          step_scores_grid_n: 2000,
+        },
+        {
+          artifact_id: 'color_2', palette: 'lava', created_at: '2026-07-26T07:00:00Z',
+          pix: '4096', width: 4096, height: 4096,
+        },
+      ];
+      const mkRow = (id, projection, vertical, created) => ({
+        view_id: id, job_id: 'test_job', source_artifact_id: 'color_1',
+        projection, vertical, lattice_n: 2000, pix: 2000, width: 2000, height: 2000,
+        palette: 'reef', format: 'jpeg', content_type: 'image/jpeg',
+        image_key: `renders/test_job/views/${id}/image.jpeg`,
+        preview_key: `renders/test_job/views/${id}/preview.png`,
+        image_url: `https://bucket.example/renders/test_job/views/${id}/image.jpeg`,
+        prefix: `renders/test_job/views/${id}/`, created_at: created,
+      });
+      window.lambdaPost = async function (name, body, path) {
+        window._storageCalls.push([path, JSON.parse(JSON.stringify(body || {})), name]);
+        if (path === '/list-sculptures') return { sculptures: [], count: 0 };
+        if (path === '/list-views') {
+          const views = [mkRow('view_old_front_t2', 'front', 't2', '2026-07-26T09:00:00Z')];
+          if (window._viewDispatched && !window._viewDeleted) {
+            views.unshift(mkRow('view_new_isometric_t1', 'isometric', 't1', '2026-07-26T10:00:00Z'));
+          }
+          return { views, count: views.length };
+        }
+        if (path === '/render-summary') return { families: { color: colorRows }, calc: { N: 2000 } };
+        if (name === 'dispatch') {
+          window._viewDispatched = true;
+          return { fired: 1 };
+        }
+        if (path === '/check-status') {
+          return { complete: true, done: 1, errors: 0, results: [{
+            phase: 'done', family: 'views', artifact_id: 'view_new_isometric_t1',
+            image_key: 'renders/test_job/views/view_new_isometric_t1/image.jpeg',
+          }] };
+        }
+        if (path === '/delete-render-artifact') {
+          window._viewDeleted = true;
+          return { family: body.family, artifact_id: body.artifact_id, deleted: 5 };
+        }
+        return {};
+      };
+      window._downloadCalls = [];
+      window._downloadStorageObject = async (opts) => {
+        window._downloadCalls.push(JSON.parse(JSON.stringify(opts)));
+        return { url: 'https://signed.example/download' };
+      };
+      window._dzCalls = [];
+      window.runDeepZoomExport = async (jobId, sourceKey, btn, options) => {
+        window._dzCalls.push([jobId, sourceKey, options]);
+        return true;
+      };
+      renderArtifactPanel('test_job', { families: { color: colorRows }, calc: { N: 2000 } });
+    });
+
+    // Views uses the same selected-row catalog + preview composition as
+    // Palette. There are no action buttons duplicated into every row.
+    await page.click('[data-render-family="views"]');
+    const catalog = page.locator('#render-artifact-catalog');
+    await expect(catalog).toContainText('front · t2 · color:color_1');
+    await expect(catalog).toContainText('2000x2000');
+    await expect(catalog.locator('button')).toHaveCount(0);
+    await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
+      'src', /renders\/test_job\/views\/view_old_front_t2\/preview\.png/
+    );
+    await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(1)');
+    await expect(page.locator('#tab-render')).toContainText('ViewRender source:');
+    await expect(page.locator('#tab-render')).toContainText('color_1');
+    await expect(page.locator('#tab-render')).toContainText('2000×2000');
+    const listCall = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/list-views')[1]);
+    expect(listCall).toEqual({ job_id: 'test_job' });
+
+    // ViewRender opens the MODAL; the render dispatches the EXACT payload —
+    // source artifact + how to view it, nothing of the live render state
+    await page.click('#btn-view-render');
+    await expect(page.locator('#view-render-modal-overlay')).toBeVisible();
+    await expect(page.locator('#view-render-source')).toHaveText('source: color_1 · N=2000 · output 2000×2000');
+    await expect(page.locator('#view-render-lattice')).toHaveCount(0);
+    await expect(page.locator('#view-render-pix')).toHaveCount(0);
+    await page.selectOption('#view-render-projection', 'isometric');
+    await page.selectOption('#view-render-vertical', 't1');
+    await page.click('#view-render-go');
+    const dispatch = await page.evaluate(() => window._storageCalls.find((c) => c[2] === 'dispatch')[1]);
+    expect(dispatch.target).toBe('render_orchestrator');
+    expect(dispatch.jobs).toHaveLength(1);
+    const viewJob = dispatch.jobs[0];
+    expect(viewJob.job_id).toBe('test_job');
+    expect(viewJob.mode).toBe('color');
+    expect(viewJob.params).toMatchObject({
+      pix: 2000,
+      fmt: 'jpeg',
+      quality: 87,
+      view_mode: 'explicit',
+      min_re: -3,
+      max_re: 2,
+      min_im: -1,
+      max_im: 4,
+      rotation: 0.25,
+      palette: 'reef',
+      palette_display_name: 'Reef',
+      background_color: '101820',
+      solve_score_program_source_text: 'score = metric(proximity, slv, q=0.1%)',
+      solve_score_normalize: true,
+      root_program_source_text: 'rotate(0.125)',
+      view_projection: 'isometric',
+      view_vertical: 't1',
+      source_color_artifact_id: 'color_1',
+    });
+    expect(viewJob.params).not.toHaveProperty('n');
+    // The finished View lands on top, becomes the selected preview, and the
+    // shared Arrow-key navigator moves between View rows.
+    await expect(catalog).toContainText('isometric · t1 · color:color_1');
+    await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(2)');
+    await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
+      'src', /renders\/test_job\/views\/view_new_isometric_t1\/preview\.png/
+    );
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
+      'src', /renders\/test_job\/views\/view_old_front_t2\/preview\.png/
+    );
+    await page.keyboard.press('ArrowUp');
+    await expect(page.locator('#render-artifact-viewer img')).toHaveAttribute(
+      'src', /renders\/test_job\/views\/view_new_isometric_t1\/preview\.png/
+    );
+    const rail = await page.evaluate(() => (typeof _jobsRailJobs !== 'undefined' ? _jobsRailJobs : [])
+      .filter((j) => j.kind === 'render' && j.label.startsWith('view ·')).map((j) => j.state));
+    expect(rail).toEqual(['done']);
+
+    // GoColor is a selected-item toolbar action, not an action cloned into
+    // every row.
+    await page.click('#btn-render-go-color');
+    const sel = await page.evaluate(() => ({
+      family: _renderActiveFamily,
+      key: _renderSelectedArtifactKey.color,
+    }));
+    expect(sel.family).toBe('color');
+    expect(sel.key).toContain('color_1');
+
+    // Back to Views: the shared Download and DeepZoom actions operate on the
+    // selected View image key.
+    await page.click('[data-render-family="views"]');
+    await page.click('#btn-render-download');
+    await page.click('#dl-menu-file');
+    await expect
+      .poll(async () => page.evaluate(() => window._downloadCalls.length))
+      .toBe(1);
+    expect(await page.evaluate(() => window._downloadCalls[0])).toMatchObject({
+      key: 'renders/test_job/views/view_new_isometric_t1/image.jpeg',
+      filename: 'test_job_view_new_isometric_t1.jpeg',
+    });
+    await page.click('#btn-render-deepzoom');
+    await expect
+      .poll(async () => page.evaluate(() => window._dzCalls.length))
+      .toBe(1);
+    expect(await page.evaluate(() => window._dzCalls[0])).toEqual([
+      'test_job',
+      'renders/test_job/views/view_new_isometric_t1/image.jpeg',
+      { skipRenderRefresh: true },
+    ]);
+
+    // Delete uses the generic selected-artifact route and then refreshes the
+    // job-scoped Views inventory.
+    await page.click('#btn-render-delete');
+    await expect(catalog).not.toContainText('isometric · t1');
+    await expect(page.locator('.render-artifact-family-tabs [data-render-family="views"] .subtab-count')).toHaveText('(1)');
+    const del = await page.evaluate(() => window._storageCalls.find((c) => c[0] === '/delete-render-artifact')[1]);
+    expect(del).toEqual({
+      job_id: 'test_job',
+      family: 'views',
+      artifact_id: 'view_new_isometric_t1',
+    });
+
+    // the hard-won clarity of the Color tab: views NEVER appear there
+    await page.click('[data-render-family="color"]');
+    await expect(page.locator('#tab-render')).not.toContainText('isometric · t1');
+    const colorCount = await page.locator('.render-artifact-family-tabs [data-render-family="color"] .subtab-count').first().textContent();
+    expect(colorCount).toBe('(2)');
+  });
+
+  test('Views refresh reports unreadable metadata instead of a silent short list', async ({ page }) => {
+    // CR36 follow-up: partial success is not success — the backend's
+    // metadata_error_count reaches the BUTTON and the log.
+    await page.click('.tab-btn:text("Render")');
+    await seedRenderPopupState(page);
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      // the seed's panel kick started a views fetch on the REAL lambdaPost;
+      // drop it so the in-flight dedup can't hand its result to this stub
+      window._viewsInventoryInflight = null;
+      window._viewsInventoryJob = '';
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-sculptures') return { sculptures: [], count: 0 };
+        if (path === '/list-views') return {
+          views: [{ view_id: 'view_ok', job_id: 'test_job', source_artifact_id: 'color_1',
+                    projection: 'front', vertical: 't2', lattice_n: 2000, pix: 2000,
+                    image_key: 'renders/test_job/views/view_ok/image.jpeg',
+                    prefix: 'renders/test_job/views/view_ok/',
+                    created_at: '2026-07-26T09:00:00Z' }],
+          count: 1,
+          metadata_error_count: 2,
+        };
+        if (path === '/render-summary') return { families: { color: [] }, calc: { N: 2000 } };
+        return {};
+      };
+      renderArtifactPanel('test_job', { families: { color: [] }, calc: { N: 2000 } });
+    });
+    await page.click('[data-render-family="views"]');
+    await expect(page.locator('#views-list, #render-artifact-catalog')).toContainText('front · t2');
+    await page.click('#btn-views-refresh');
+    await expect(page.locator('#btn-views-refresh')).toHaveText('✓ Refreshed (2 unreadable)');
+    const logText = await page.evaluate(() => document.getElementById('render-log')?.textContent || '');
+    expect(logText).toContain('2 meta.json unreadable');
+  });
+
+  test('overlapping views-inventory loads share one /list-views request', async ({ page }) => {
+    // CR36 follow-up: panel kick + GotoRender + Refresh racing on one job
+    // must not fan out duplicate list calls — the in-flight fetch is shared.
+    const st = await page.evaluate(async () => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      window._lvCalls = 0;
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-views') {
+          window._lvCalls += 1;
+          await new Promise((r) => setTimeout(r, 25));
+          return { views: [], count: 0 };
+        }
+        return {};
+      };
+      const results = await Promise.all([
+        _viewsEnsureInventory(true),
+        _viewsEnsureInventory(false),
+        _viewsEnsureInventory(true),
+      ]);
+      const afterWarm = await _viewsEnsureInventory(false);   // cache hit, no fetch
+      return { calls: window._lvCalls, oks: results.map((r) => r.ok), warmOk: afterWarm.ok };
+    });
+    expect(st.calls).toBe(1);
+    expect(st.oks).toEqual([true, true, true]);
+    expect(st.warmOk).toBe(true);
+  });
+
+  test('A-to-B-to-A job hops share the original in-flight views fetch per job', async ({ page }) => {
+    // CR36 follow-up 3: a single global in-flight slot let the A->B->A hop
+    // mint a SECOND A request whose slow twin could overwrite the newer
+    // inventory. The per-job map makes the returning caller share the one
+    // live A fetch — one request per job, no stale overwrite window.
+    const st = await page.evaluate(async () => {
+      window._viewsInventoryInflight = null;
+      window._viewsInventoryJob = '';
+      window._lvCalls = {};
+      window._lvResolvers = {};
+      window.lambdaPost = function (name, body, path) {
+        if (path === '/list-views') {
+          const job = body.job_id;
+          window._lvCalls[job] = (window._lvCalls[job] || 0) + 1;
+          return new Promise((resolve) => {
+            (window._lvResolvers[job] = window._lvResolvers[job] || []).push(() => resolve({
+              views: [{ view_id: `view_${job}`, job_id: job, projection: 'front', vertical: 't2',
+                        image_key: `renders/${job}/views/view_${job}/image.jpeg`,
+                        prefix: `renders/${job}/views/view_${job}/`,
+                        created_at: '2026-07-28T10:00:00Z' }],
+              count: 1,
+            }));
+          });
+        }
+        return Promise.resolve({});
+      };
+      const dir = document.getElementById('render-results-dir');
+      dir.value = 'job_a';
+      const p1 = _viewsEnsureInventory(true);
+      dir.value = 'job_b';
+      const p2 = _viewsEnsureInventory(true);
+      dir.value = 'job_a';
+      const p3 = _viewsEnsureInventory(true);   // must SHARE p1's fetch
+      window._lvResolvers.job_b.forEach((f) => f());
+      window._lvResolvers.job_a.forEach((f) => f());
+      const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+      return {
+        calls: window._lvCalls,
+        r1: { ok: r1.ok, reason: r1.reason },
+        r2: { ok: r2.ok, reason: r2.reason },
+        r3: { ok: r3.ok, reason: r3.reason },
+        inventoryJob: window._viewsInventoryJob,
+        rows: (window._viewsInventory || []).map((v) => v.view_id),
+      };
+    });
+    expect(st.calls).toEqual({ job_a: 1, job_b: 1 });     // ONE fetch per job
+    expect(st.r1).toEqual({ ok: true, reason: '' });
+    expect(st.r2).toEqual({ ok: false, reason: 'job_changed' });   // B landed after the hop back
+    expect(st.r3).toEqual({ ok: true, reason: '' });
+    expect(st.inventoryJob).toBe('job_a');
+    expect(st.rows).toEqual(['view_job_a']);              // A's data, never clobbered by B
+  });
+
+  test('DeepZoom from a view dispatches the image-based export with the exact payload', async ({ page }) => {
+    // CR36-F7 truthful-behavior pin: DeepZoom is IMAGE-based by contract.
+    // A selected view's image key dispatches deepzoom_export with the
+    // four-field job — no raw keys exist anywhere in the payload.
+    const calls = await page.evaluate(async () => {
+      window._calls = [];
+      window.lambdaPost = async (name, body, path) => {
+        window._calls.push([name, path, JSON.parse(JSON.stringify(body || {}))]);
+        if (path === '/check-status') return { complete: true };
+        return {};
+      };
+      await runDeepZoomExport('test_job', 'renders/test_job/views/view_x/image.jpeg', null,
+                              { skipRenderRefresh: true });
+      return window._calls;
+    });
+    const disp = calls.find((c) => c[0] === 'dispatch');
+    expect(disp[2].target).toBe('deepzoom_export');
+    expect(disp[2].jobs).toHaveLength(1);
+    const job = disp[2].jobs[0];
+    expect(job.source_key).toBe('renders/test_job/views/view_x/image.jpeg');
+    expect(Object.keys(job).sort()).toEqual(['export_id', 'job_id', 'source_key', 'task_id']);
+    expect(job.task_id.startsWith('deepzoom_export_')).toBe(true);
   });
 
   test('Sculpture tab: SaveSplat modal — explicit settings, hardwired rest', async ({ page }) => {

@@ -632,6 +632,69 @@ def assert_render_source(key, job_id, artifact_id=None, label="source_key"):
     return str(key)
 
 
+def sanitize_sculpture_view(raw):
+    """Whitelist-sanitize the captured viewer settings for meta.json. The
+    viewer re-validates on boot, but the meta must never carry junk."""
+    if not isinstance(raw, dict):
+        return None
+    view = {}
+
+    def _num(key, lo, hi):
+        try:
+            v = float(raw.get(key))
+        except (TypeError, ValueError):
+            return None
+        return v if lo <= v <= hi else None
+
+    point = _num("point", 1, 40)
+    if point is not None:
+        view["point"] = int(round(point))
+    height = _num("height", 0, 1)
+    if height is not None:
+        view["height"] = round(height, 3)
+    slices = _num("slices", 0, 64)
+    if slices is not None:
+        view["slices"] = int(round(slices))
+    show = raw.get("show")
+    if isinstance(show, dict):
+        view["show"] = {k: bool(show.get(k)) for k in ("points", "ribbons", "threads", "clu", "splats")}
+    if raw.get("style") in ("solid", "ghost", "cloud"):
+        view["style"] = raw["style"]
+    glow = _num("glow", 1, 100)
+    if glow is not None:
+        view["glow"] = int(round(glow))
+    if raw.get("order") in ("nearest", "angle", "file"):
+        view["order"] = raw["order"]
+    if raw.get("tour") in ("off", "orbit", "wave", "grand", "weave"):
+        view["tour"] = raw["tour"]
+    try:
+        speed = float(raw.get("tourSpeed"))
+    except (TypeError, ValueError):
+        speed = None
+    if speed in (0.5, 1.0, 2.0, 4.0):
+        view["tourSpeed"] = speed
+    lenq = _num("lenq", 0, 100)
+    if lenq is not None:
+        view["lenq"] = int(round(lenq))
+    if raw.get("zaxis") in ("t1", "t2"):
+        view["zaxis"] = raw["zaxis"]
+    try:
+        splat_res = int(raw.get("splatRes"))
+    except (TypeError, ValueError):
+        splat_res = None
+    if splat_res in (64, 96, 128, 192):
+        view["splatRes"] = splat_res
+    zlo = _num("zlo", 0, 1)
+    zhi = _num("zhi", 0, 1)
+    if zlo is not None and zhi is not None and zlo > zhi:
+        zlo = zhi
+    if zlo is not None:
+        view["zlo"] = round(zlo, 3)
+    if zhi is not None:
+        view["zhi"] = round(zhi, 3)
+    return view or None
+
+
 def parse_render_key(key):
     """Parse an S3 render key into structured identity components.
 

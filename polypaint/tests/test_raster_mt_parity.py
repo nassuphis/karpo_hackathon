@@ -331,24 +331,26 @@ class TestRasterMtParity(unittest.TestCase):
             # plan (default flags): px = row, py = 7 - col — all 16 pixels
             got = self._run_projection(root, roots, label="plan", view_args=[])
             self.assertEqual(got, {(r, 7 - c) for r in range(4) for c in range(4)})
-            # front/t2: px = row (from re), py from t2=col/4 in {7,6,4,2}
+            # CR36-F9 integer mapping: py = H-1-k*H/N -> {7,5,3,1} at
+            # grid 4 / pix 8 (the old float floor((1-t)*H) gave {7,6,4,2})
+            # front/t2: px = row (from re), py from t2 index in {7,5,3,1}
             got = self._run_projection(root, roots, label="ft2", view_args=view("front", "t2"))
-            self.assertEqual(got, {(r, py) for r in range(4) for py in (7, 6, 4, 2)})
+            self.assertEqual(got, {(r, 7 - 2 * c) for r in range(4) for c in range(4)})
             # front/t1: row drives BOTH axes -> 4 deduped pixels on a diagonal
             got = self._run_projection(root, roots, label="ft1", view_args=view("front", "t1"))
-            self.assertEqual(got, {(0, 7), (1, 6), (2, 4), (3, 2)})
+            self.assertEqual(got, {(0, 7), (1, 5), (2, 3), (3, 1)})
             # rear/t2: horizontal mirrored -> px = 7 - row
             got = self._run_projection(root, roots, label="rt2", view_args=view("rear", "t2"))
-            self.assertEqual(got, {(7 - r, py) for r in range(4) for py in (7, 6, 4, 2)})
+            self.assertEqual(got, {(7 - r, 7 - 2 * c) for r in range(4) for c in range(4)})
             # right/t2: px from im (= col), py from t2 (= col) -> diagonal
             got = self._run_projection(root, roots, label="rit2", view_args=view("right", "t2"))
-            self.assertEqual(got, {(0, 7), (1, 6), (2, 4), (3, 2)})
+            self.assertEqual(got, {(0, 7), (1, 5), (2, 3), (3, 1)})
             # left/t2: px = 7 - col, py from col
             got = self._run_projection(root, roots, label="lt2", view_args=view("left", "t2"))
-            self.assertEqual(got, {(7, 7), (6, 6), (5, 4), (4, 2)})
+            self.assertEqual(got, {(7, 7), (6, 5), (5, 3), (4, 1)})
             # left/t1: px = 7 - col, py from t1 = row -> full 4x4 grid again
             got = self._run_projection(root, roots, label="lt1", view_args=view("left", "t1"))
-            self.assertEqual(got, {(7 - c, py) for c in range(4) for py in (7, 6, 4, 2)})
+            self.assertEqual(got, {(7 - c, 7 - 2 * r) for c in range(4) for r in range(4)})
             # radial/t2: radius from the origin fills [0, farthest viewport
             # corner], while t2 remains vertical.
             got = self._run_projection(root, roots, label="rad2", view_args=view("radial", "t2"))
@@ -358,7 +360,7 @@ class TestRasterMtParity(unittest.TestCase):
                     re = -0.875 + 0.25 * row
                     im = -0.875 + 0.25 * col
                     px = math.floor(math.hypot(re, im) * 8 / math.sqrt(2))
-                    py = 7 if col == 0 else math.floor((1 - col / 4) * 8)
+                    py = 7 - 2 * col                     # H-1 - col*H/N
                     expected.add((px, py))
             self.assertEqual(got, expected)
             # isometric uses all three coordinates. The selected t axis is
@@ -395,8 +397,31 @@ class TestRasterMtParity(unittest.TestCase):
                     "--view_projection=front", "--view_vertical=t1",
                     f"--view_grid_n={grid_n}", "--view_step_start=8",
                 ])
-            # rows 2,3: t1 in {0.5, 0.75} -> py {4, 2}; px = row in {2, 3}
-            self.assertEqual(got, {(2, 4), (3, 2)})
+            # rows 2,3: py = 7 - 2*k -> {3, 1}; px = row in {2, 3}
+            self.assertEqual(got, {(2, 3), (3, 1)})
+
+    def test_view_rows_are_bijective_at_pix_equals_grid(self):
+        """CR36-F9 product shape: the deployed ViewRender runs at pix == N.
+        py = H-1-k*H/N degrades to H-1-k there — every t index owns its own
+        pixel row, the TOP row is reachable, and nothing merges into the
+        bottom row (the old float mapping collapsed t rows 0 and 1 and
+        could never produce row 0; fixtures at pix=2N could not see it)."""
+        grid_n = 8
+        roots = self._projection_fixture_roots(grid_n)
+        view = lambda vert: ["--view_projection=front",
+                             f"--view_vertical={vert}",
+                             f"--view_grid_n={grid_n}"]
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            # front/t2: px = row, py = 7 - col -> ALL 64 pixels, bijective
+            got = self._run_projection(root, roots, label="nft2",
+                                       view_args=view("t2"), step_count=64)
+            self.assertEqual(got, {(r, 7 - c) for r in range(8) for c in range(8)})
+            # front/t1: row drives both axes -> the full anti-diagonal,
+            # including the top row (7, 0)
+            got = self._run_projection(root, roots, label="nft1",
+                                       view_args=view("t1"), step_count=64)
+            self.assertEqual(got, {(k, 7 - k) for k in range(8)})
 
     def test_xformed_roots_output_matches_plot_transforms(self):
         """--xformed_roots_output must capture EXACTLY what the raster plots:

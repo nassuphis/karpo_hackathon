@@ -536,6 +536,7 @@ static void *worker_main(void *arg_) {
          * solve (serpentine step -> (row, col), t2 = col/N, t1 = row/N;
          * pass > 0 folds onto pass 0 like the plan view's overplot) */
         double viewT = 0.0;
+        int viewPy = 0;
         if (arg->viewProjection != 0) {
             long long pass0 = (long long)arg->viewGridN * (long long)arg->viewGridN;
             long long gstep = (arg->viewStepStart + p) % pass0;
@@ -543,9 +544,15 @@ static void *worker_main(void *arg_) {
             int vrow = (int)(gstep / arg->viewGridN);
             int vj = (int)(gstep % arg->viewGridN);
             int vcol = (vrow & 1) ? (arg->viewGridN - 1 - vj) : vj;
-            viewT = (arg->viewVertical == 1)
-                ? (double)vrow / (double)arg->viewGridN
-                : (double)vcol / (double)arg->viewGridN;
+            int vk = (arg->viewVertical == 1) ? vrow : vcol;
+            viewT = (double)vk / (double)arg->viewGridN;
+            /* CR36-F9: the t lattice is discrete — map the INTEGER index,
+             * never floor((1-t)*H). At the product shape (H == N) the old
+             * float mapping merged t rows 0 and 1 onto the bottom row and
+             * left the top row unreachable. py = H-1-floor(k*H/N), which
+             * is exactly H-1-k when H == N; 64-bit product by doctrine. */
+            viewPy = (int)((long long)arg->H - 1
+                           - (long long)vk * (long long)arg->H / (long long)arg->viewGridN);
         }
         for (int r = 0; r < arg->degree; r++) {
             double re = step[r * 2];
@@ -578,23 +585,23 @@ static void *worker_main(void *arg_) {
             switch (arg->viewProjection) {
             case 1:   /* front: Re rightward */
                 pxf = (rotRe - arg->minRe) * arg->xScale;
-                pyf = (1.0 - viewT) * (double)arg->H;
+                pyf = (double)viewPy;
                 break;
             case 2:   /* rear: Re mirrored */
                 pxf = (arg->maxRe - rotRe) * arg->xScale;
-                pyf = (1.0 - viewT) * (double)arg->H;
+                pyf = (double)viewPy;
                 break;
             case 3:   /* left: Im mirrored */
                 pxf = (arg->maxIm - rotIm) * arg->imHScale;
-                pyf = (1.0 - viewT) * (double)arg->H;
+                pyf = (double)viewPy;
                 break;
             case 4:   /* right: Im rightward */
                 pxf = (rotIm - arg->minIm) * arg->imHScale;
-                pyf = (1.0 - viewT) * (double)arg->H;
+                pyf = (double)viewPy;
                 break;
             case 5:   /* radial: distance from origin rightward */
                 pxf = hypot(rotRe, rotIm) * arg->radialScale;
-                pyf = (1.0 - viewT) * (double)arg->H;
+                pyf = (double)viewPy;
                 break;
             case 6:   /* isometric: viewport-normalized (Re, Im, t) */
                 if (!view_project_isometric(
@@ -615,9 +622,6 @@ static void *worker_main(void *arg_) {
             }
             int px = (int)floor(pxf);
             int py = (int)floor(pyf);
-            /* t = 0 (the first parameter column/row) must land ON the
-             * bottom row, not clip off the exclusive edge */
-            if (arg->viewProjection != 0 && py == arg->H && viewT <= 0.0) py = arg->H - 1;
             if (px < 0 || px >= arg->W || py < 0 || py >= arg->H) {
                 arg->rootsClipped++;
                 continue;

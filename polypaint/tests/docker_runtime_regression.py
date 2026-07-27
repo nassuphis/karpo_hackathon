@@ -3898,7 +3898,8 @@ def test_roots2pix_view_projection_runtime():
     for o in range(0, len(frag), 5):
         idx = struct.unpack_from("<I", frag, o)[0]
         pixels.add((idx % 8, idx // 8))
-    expected = {(r2, py) for r2 in range(4) for py in (7, 6, 4, 2)}
+    # CR36-F9 integer mapping: py = H-1-k*H/N -> 7 - 2*col at grid 4/pix 8
+    expected = {(r2, 7 - 2 * c) for r2 in range(4) for c in range(4)}
     assert pixels == expected, (sorted(pixels), sorted(expected))
 
     radial = subprocess.run([
@@ -3924,7 +3925,7 @@ def test_roots2pix_view_projection_runtime():
             re = -0.875 + 0.25 * row
             im = -0.875 + 0.25 * col
             px = math.floor(math.hypot(re, im) * 8 / math.hypot(1.1, 1.1))
-            py = 7 if col == 0 else math.floor((1 - col / 4) * 8)
+            py = 7 - 2 * col                     # CR36-F9: H-1 - col*H/N
             radial_expected.add((px, py))
     assert radial_pixels == radial_expected, (
         sorted(radial_pixels), sorted(radial_expected))
@@ -3961,14 +3962,61 @@ def test_roots2pix_view_projection_runtime():
             isometric_expected.add((px, py))
     assert isometric_pixels == isometric_expected, (
         sorted(isometric_pixels), sorted(isometric_expected))
+    # CR36-F9 product shape: pix == grid N. py = H-1-k -> the full 8x8
+    # bijection including the TOP row (the old float mapping merged t rows
+    # 0/1 and could never reach row 0; pix=2N fixtures could not see it).
+    ngrid = 8
+    nroots = bytearray()
+    for step in range(ngrid * ngrid):
+        row = step // ngrid
+        j = step % ngrid
+        col = (ngrid - 1 - j) if (row & 1) else j
+        nroots += struct.pack("<ff", -0.875 + 0.25 * row, -0.875 + 0.25 * col)
+    with open("/tmp/vp_n_roots.bin", "wb") as fh:
+        fh.write(nroots)
+    nmanifest = {
+        "source_family": "slv",
+        "logical_size": len(nroots),
+        "row_bytes": 8,
+        "solve_start": 0,
+        "solve_count": ngrid * ngrid,
+        "sources": [{"id": 0, "url": "file:///tmp/vp_n_roots.bin", "key": "vp_n_roots.bin"}],
+        "spans": [{"source_id": 0, "logical_byte_start": 0,
+                   "byte_start": 0, "byte_length": len(nroots)}],
+    }
+    with open("/tmp/vp_n_manifest.json", "w") as fh:
+        json.dump(nmanifest, fh)
+    natural = subprocess.run([
+        "/src/roots2pix_mt", "/tmp/vp_n_pix", "--pix=8",
+        "--min_re=-1", "--max_re=1", "--min_im=-1", "--max_im=1",
+        "--degree=1", "--rotation=0", "--threads=2",
+        "--input_manifest=/tmp/vp_n_manifest.json", "--step_count=64",
+        "--score_metrics=centroid_re", "--score_clip_los=-2", "--score_clip_his=2",
+        "--score_program=m0",
+        "--fragment_prefix=/tmp/vp_n_fragment",
+        "--view_projection=front", "--view_vertical=t2", "--view_grid_n=8",
+        "--retries=1",
+    ], capture_output=True, text=True, timeout=30)
+    assert natural.returncode == 0, natural.stderr
+    n_frag = open("/tmp/vp_n_fragment.frag", "rb").read()
+    n_pixels = set()
+    for o in range(0, len(n_frag), 5):
+        idx = struct.unpack_from("<I", n_frag, o)[0]
+        n_pixels.add((idx % 8, idx // 8))
+    n_expected = {(r2, 7 - c) for r2 in range(8) for c in range(8)}
+    assert n_pixels == n_expected, (sorted(n_pixels), sorted(n_expected))
+
     cleanup(
         "/tmp/vp_roots.bin",
         "/tmp/vp_manifest.json",
         "/tmp/vp_fragment.frag",
         "/tmp/vp_radial_fragment.frag",
         "/tmp/vp_isometric_fragment.frag",
+        "/tmp/vp_n_roots.bin",
+        "/tmp/vp_n_manifest.json",
+        "/tmp/vp_n_fragment.frag",
     )
-    print("  front/t2 + radial/t2 + isometric/t2 pixels exact: OK")
+    print("  front/t2 + radial/t2 + isometric/t2 + pix==N bijection exact: OK")
 
 
 if __name__ == "__main__":

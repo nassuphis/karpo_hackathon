@@ -85,14 +85,14 @@
       }
     },
     "roots2pix_mt": {
-      "built_mtime": 1785109331,
-      "sha256": "72ae1c6877883bafb99d116079287e7ce7036159cf6d52f551eab734c7863b97",
+      "built_mtime": 1785111900,
+      "sha256": "486775e300902dbc4a33dd6c68620189ce3796498fb1c11c3a2165e3527c1aa1",
       "size": 207416,
       "source_sha256": {
         "lambda/multispan_reader.c": "f5c167bb53be996dd2c72087bcc2b51026515813ba8de23d652c9e6aec9309a5",
         "lambda/multispan_reader.h": "2bcaccbe8f69025e92b18b0ca585e0c8c8a8e87c2b9e078b15a42e4483fdfead",
         "lambda/root_xforms.h": "3724d40fce728fa63f359e9fa53cd5f42e7b546623bc5adadb6892d4d0fc81b4",
-        "lambda/roots2pix_mt.c": "8c951a7cd40a80f7342d2a1902a0455a5b7657d1e2566a5ee2b0954ce2195091",
+        "lambda/roots2pix_mt.c": "65b7f3bc4f5a862440526eda23ff10b77fcd980ebfa23eb4923d8309ac8d01a9",
         "lambda/solve_score.h": "f579ace48b0a318143c78f728852ec8497ace4e38738e7e99bd7f3f38eec3b0e",
         "lambda/view_projection.h": "7ce7478451bcc5d97d0771cff908d694ad88c9b9de7f39cbc506bd94288563e4"
       }
@@ -307,7 +307,7 @@
       }
     }
   },
-  "generated_at": 1785111659,
+  "generated_at": 1785111907,
   "git_dirty": true,
-  "git_sha": "48398051ca56fda45982f0810f15940431bf26b4"
+  "git_sha": "9ce0382503f83bd03e88e7353b85ae245e069272"
 }

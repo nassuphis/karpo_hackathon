@@ -52,13 +52,13 @@ VALID_RASTER_INPUT_MODES = {"sectioned"}
 _TMP_INPUT_MANIFEST = "/tmp/raster_input_manifest.json"
 _TMP_SCORE_COEFFS_MANIFEST = "/tmp/raster_score_coeffs_manifest.json"
 _TMP_SCORE_PARAMS_MANIFEST = "/tmp/raster_score_params_manifest.json"
+_TMP_STORED_STEP_SCORES = "/tmp/raster_stored_step_scores.raw"
 _CAMERA_ESTIMATE_FIELDS = (
     "candidate_roots",
     "occupied_pixels_upper",
     "fragment_bytes_upper",
     "raster_memory_bytes",
     "raster_tmp_bytes",
-    "work_units",
 )
 
 
@@ -132,6 +132,7 @@ def _cleanup_tmp():
         _TMP_INPUT_MANIFEST,
         _TMP_SCORE_COEFFS_MANIFEST,
         _TMP_SCORE_PARAMS_MANIFEST,
+        _TMP_STORED_STEP_SCORES,
         "/tmp/root_xforms.json",
     ):
         for stale in glob.glob(pattern):
@@ -207,6 +208,98 @@ def _solve_score_artifact_uses_source(score_artifact, source):
     return False
 
 
+def _normalize_score_source(raw):
+    source = dict(raw or {})
+    mode = str(source.get("mode") or "computed").strip().lower()
+    if mode == "computed":
+        return {
+            "mode": "computed",
+            "key": "",
+            "step_count": 0,
+            "grid_n": 0,
+            "channels": 0,
+            "size_bytes": 0,
+            "contract": {},
+        }
+    if mode != "artifact_step_scores":
+        raise RuntimeError(f"unsupported score_source.mode: {mode!r}")
+    key = str(source.get("key") or "").strip()
+    if not key:
+        raise RuntimeError("artifact score source requires key")
+    try:
+        step_count = int(source.get("step_count"))
+        grid_n = int(source.get("grid_n"))
+        channels = int(source.get("channels"))
+        size_bytes = int(source.get("size_bytes"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "artifact score source count/grid/channels/size must be integers"
+        ) from exc
+    if step_count < 1 or grid_n < 2:
+        raise RuntimeError("artifact score source count/grid are invalid")
+    if channels not in (1, 3):
+        raise RuntimeError(
+            f"artifact score source channels must be 1 or 3, got {channels}"
+        )
+    if size_bytes != step_count * channels:
+        raise RuntimeError(
+            "artifact score source byte contract mismatch: "
+            f"size={size_bytes}, expected={step_count * channels}"
+        )
+    contract = dict(source.get("contract") or {})
+    if contract.get("family") != "solve_score" or int(
+        contract.get("version") or 0
+    ) < 2:
+        raise RuntimeError("artifact score source requires a v2 solve-score contract")
+    if int(contract.get("score_output_channel_count") or 0) != channels:
+        raise RuntimeError("artifact score source channel contract mismatch")
+    return {
+        **source,
+        "mode": mode,
+        "key": key,
+        "step_count": step_count,
+        "grid_n": grid_n,
+        "channels": channels,
+        "size_bytes": size_bytes,
+        "contract": contract,
+    }
+
+
+def _download_stored_step_score_range(score_source, *, step_start, step_count):
+    channels = int(score_source["channels"])
+    if step_start < 0 or step_count < 1:
+        raise RuntimeError("stored score range requires a non-empty step range")
+    end_step = step_start + step_count
+    if end_step > int(score_source["step_count"]):
+        raise RuntimeError(
+            "stored score range exceeds source: "
+            f"{step_start}+{step_count}>{score_source['step_count']}"
+        )
+    byte_start = step_start * channels
+    byte_count = step_count * channels
+    byte_end = byte_start + byte_count - 1
+    try:
+        obj = s3.get_object(
+            Bucket=BUCKET,
+            Key=score_source["key"],
+            Range=f"bytes={byte_start}-{byte_end}",
+        )
+        payload = obj["Body"].read()
+    except Exception as exc:
+        raise RuntimeError(
+            "could not read stored score range "
+            f"s3://{BUCKET}/{score_source['key']}[{byte_start}:{byte_end}]"
+        ) from exc
+    if len(payload) != byte_count:
+        raise RuntimeError(
+            "stored score range byte count mismatch: "
+            f"expected {byte_count}, got {len(payload)}"
+        )
+    with open(_TMP_STORED_STEP_SCORES, "wb") as fh:
+        fh.write(payload)
+    return byte_count
+
+
 def _build_cmd(params):
     effective_input_mode = str(params.get("effective_input_mode") or "").strip().lower()
     if effective_input_mode != "multispan_sectioned":
@@ -245,6 +338,8 @@ def _build_cmd(params):
         cmd.append(f"--palette_grid_n={int(params['associated_palette_grid_n'])}")
         cmd.append(f"--palette_step_start={int(params['step_start'])}")
 
+    score_source = _normalize_score_source(params.get("score_source"))
+    reuse_stored_scores = score_source["mode"] == "artifact_step_scores"
     score_artifact = dict(params.get("solve_score_bins_data") or {})
     if score_artifact.get("family") != "solve_score":
         raise RuntimeError(f"solve-score clip artifact missing or wrong family: {score_artifact.get('family')}")
@@ -286,10 +381,6 @@ def _build_cmd(params):
                 f"--view_slices={camera['slices']}",
                 f"--view_effective_tlo={format(camera['effective_tlo'], '.17g')}",
                 f"--view_effective_thi={format(camera['effective_thi'], '.17g')}",
-                f"--view_point_world_size={format(camera['point_world_size'], '.17g')}",
-                f"--view_point_scale={format(camera['point_scale'], '.17g')}",
-                f"--view_point_min_fraction={format(camera['point_min_fraction'], '.17g')}",
-                f"--view_point_max_fraction={format(camera['point_max_fraction'], '.17g')}",
             ])
     elif params.get("view_camera") not in (None, {}):
         raise RuntimeError("view_camera is only valid for view_projection=camera")
@@ -299,55 +390,69 @@ def _build_cmd(params):
     chain_fingerprint = str(params.get("solve_score_chain_fingerprint") or "").strip()
     if not score_artifact.get("program") and params.get("solve_score_chain_present") and compiled is not None:
         score_artifact["program"] = compiled["program_spec"]
-    if not score_artifact.get("program") or not isinstance(score_artifact.get("metrics"), list) or not score_artifact.get("metrics"):
-        raise RuntimeError("fused raster requires clip artifact program + metrics")
     if output_channel_count < 1:
         raise RuntimeError(f"score_output_channel_count must be >= 1, got {output_channel_count}")
-    if output_channel_count in (1, 3):
-        cmd.append("--step_scores_output=/tmp/step_scores.bin")
-
-    if params.get("solve_score_chain_present") and compiled is not None:
-        actual_fingerprint = str(score_artifact.get("chain_fingerprint") or "").strip()
-        if not actual_fingerprint:
-            raise RuntimeError("solve-score clip artifact missing chain_fingerprint")
-        if chain_fingerprint and actual_fingerprint != chain_fingerprint:
+    if reuse_stored_scores:
+        if output_channel_count != score_source["channels"]:
             raise RuntimeError(
-                f"solve-score clip artifact fingerprint mismatch: expected {chain_fingerprint}, got {actual_fingerprint}"
+                "stored score channel count does not match solve-score contract"
             )
-        if not solve_score_program_specs_match(
-            score_artifact.get("program") or "",
-            compiled["program_spec"],
-            version=score_artifact.get("solve_score_spec_version"),
+        cmd.extend([
+            f"--stored_step_scores={_TMP_STORED_STEP_SCORES}",
+            f"--stored_step_score_channels={score_source['channels']}",
+        ])
+    else:
+        if (
+            not score_artifact.get("program")
+            or not isinstance(score_artifact.get("metrics"), list)
+            or not score_artifact.get("metrics")
         ):
-            raise RuntimeError(
-                f"solve-score clip artifact program mismatch: expected {compiled['program_spec']}, got {score_artifact.get('program')!r}"
-            )
-        if len(score_artifact["metrics"]) != compiled["metric_count"]:
-            raise RuntimeError(
-                f"solve-score clip artifact metric slot count mismatch: expected {compiled['metric_count']}, "
-                f"got {len(score_artifact['metrics'])}"
-            )
-        for expected, actual in zip(compiled["metrics"], score_artifact["metrics"]):
-            if str(actual.get("metric") or "") != expected["metric"]:
-                raise RuntimeError(
-                    f"solve-score clip artifact metric slot {expected['slot']} mismatch: "
-                    f"expected {expected['metric']}, got {actual.get('metric')!r}"
-                )
-            if str(actual.get("source", "slv") or "slv") != expected.get("source", "slv"):
-                raise RuntimeError(
-                    f"solve-score clip artifact source slot {expected['slot']} mismatch: "
-                    f"expected {expected.get('source', 'slv')}, got {actual.get('source', 'slv')!r}"
-                )
-            if float(actual.get("quantile", -1)) != float(expected["quantile"]):
-                raise RuntimeError(
-                    f"solve-score clip artifact quantile slot {expected['slot']} mismatch: "
-                    f"expected {expected['quantile']}, got {actual.get('quantile')!r}"
-                )
+            raise RuntimeError("fused raster requires clip artifact program + metrics")
+        if output_channel_count in (1, 3):
+            cmd.append("--step_scores_output=/tmp/step_scores.bin")
 
-    cmd.extend(_solve_score_program_args(score_artifact))
-    cmd.extend(_solve_score_output_args(score_artifact))
+        if params.get("solve_score_chain_present") and compiled is not None:
+            actual_fingerprint = str(score_artifact.get("chain_fingerprint") or "").strip()
+            if not actual_fingerprint:
+                raise RuntimeError("solve-score clip artifact missing chain_fingerprint")
+            if chain_fingerprint and actual_fingerprint != chain_fingerprint:
+                raise RuntimeError(
+                    f"solve-score clip artifact fingerprint mismatch: expected {chain_fingerprint}, got {actual_fingerprint}"
+                )
+            if not solve_score_program_specs_match(
+                score_artifact.get("program") or "",
+                compiled["program_spec"],
+                version=score_artifact.get("solve_score_spec_version"),
+            ):
+                raise RuntimeError(
+                    f"solve-score clip artifact program mismatch: expected {compiled['program_spec']}, got {score_artifact.get('program')!r}"
+                )
+            if len(score_artifact["metrics"]) != compiled["metric_count"]:
+                raise RuntimeError(
+                    f"solve-score clip artifact metric slot count mismatch: expected {compiled['metric_count']}, "
+                    f"got {len(score_artifact['metrics'])}"
+                )
+            for expected, actual in zip(compiled["metrics"], score_artifact["metrics"]):
+                if str(actual.get("metric") or "") != expected["metric"]:
+                    raise RuntimeError(
+                        f"solve-score clip artifact metric slot {expected['slot']} mismatch: "
+                        f"expected {expected['metric']}, got {actual.get('metric')!r}"
+                    )
+                if str(actual.get("source", "slv") or "slv") != expected.get("source", "slv"):
+                    raise RuntimeError(
+                        f"solve-score clip artifact source slot {expected['slot']} mismatch: "
+                        f"expected {expected.get('source', 'slv')}, got {actual.get('source', 'slv')!r}"
+                    )
+                if float(actual.get("quantile", -1)) != float(expected["quantile"]):
+                    raise RuntimeError(
+                        f"solve-score clip artifact quantile slot {expected['slot']} mismatch: "
+                        f"expected {expected['quantile']}, got {actual.get('quantile')!r}"
+                    )
 
-    if _solve_score_artifact_uses_source(score_artifact, "cf"):
+        cmd.extend(_solve_score_program_args(score_artifact))
+        cmd.extend(_solve_score_output_args(score_artifact))
+
+    if not reuse_stored_scores and _solve_score_artifact_uses_source(score_artifact, "cf"):
         n_coeffs = params.get("n_coeffs")
         try:
             n_coeffs = int(n_coeffs)
@@ -363,7 +468,7 @@ def _build_cmd(params):
             f"--score_coeff_degree={n_coeffs}",
         ])
 
-    if _solve_score_artifact_uses_source(score_artifact, "pm"):
+    if not reuse_stored_scores and _solve_score_artifact_uses_source(score_artifact, "pm"):
         params_manifest_path = str(params.get("score_params_manifest_path") or "").strip()
         if not params_manifest_path:
             raise RuntimeError("param-source fused raster requires score_params_manifest_path")
@@ -386,13 +491,27 @@ def _prepare_fused_section_inputs(section_params):
         raise RuntimeError("fused raster requires solve_source_manifest_key")
 
     ss_data = dict(section_params.get("solve_score_bins_data") or {})
+    score_source = _normalize_score_source(section_params.get("score_source"))
+    reuse_stored_scores = score_source["mode"] == "artifact_step_scores"
     step_start = int(section_params.get("step_start") or 0)
     step_count = int(section_params.get("step_count") or 0)
     if step_start < 0 or step_count < 1:
         raise RuntimeError(f"fused raster requires step_start >= 0 and step_count >= 1, got {step_start}/{step_count}")
-    slv_prelude = 1 if int(section_params.get("prelude_rows") or 0) > 0 and step_start > 0 else 0
-    coeff_prelude = 1 if int(section_params.get("score_coeff_prelude_rows") or 0) > 0 and step_start > 0 else 0
-    param_prelude = 1 if int(section_params.get("score_param_prelude_rows") or 0) > 0 and step_start > 0 else 0
+    slv_prelude = (
+        0
+        if reuse_stored_scores
+        else (1 if int(section_params.get("prelude_rows") or 0) > 0 and step_start > 0 else 0)
+    )
+    coeff_prelude = (
+        0
+        if reuse_stored_scores
+        else (1 if int(section_params.get("score_coeff_prelude_rows") or 0) > 0 and step_start > 0 else 0)
+    )
+    param_prelude = (
+        0
+        if reuse_stored_scores
+        else (1 if int(section_params.get("score_param_prelude_rows") or 0) > 0 and step_start > 0 else 0)
+    )
     section_params["prelude_rows"] = slv_prelude
     section_params["score_coeff_prelude_rows"] = coeff_prelude
     section_params["score_param_prelude_rows"] = param_prelude
@@ -417,7 +536,7 @@ def _prepare_fused_section_inputs(section_params):
     section_params["effective_input_mode"] = "multispan_sectioned"
     section_params["sectioned_input_size"] = int(input_manifest["logical_size"])
 
-    if _solve_score_artifact_uses_source(ss_data, "cf"):
+    if not reuse_stored_scores and _solve_score_artifact_uses_source(ss_data, "cf"):
         coeff_spans = build_source_spans(
             solve_source_manifest,
             source_family="cf",
@@ -436,7 +555,7 @@ def _prepare_fused_section_inputs(section_params):
             coeff_manifest,
         )
 
-    if _solve_score_artifact_uses_source(ss_data, "pm"):
+    if not reuse_stored_scores and _solve_score_artifact_uses_source(ss_data, "pm"):
         param_spans = build_source_spans(
             solve_source_manifest,
             source_family="pm",
@@ -654,6 +773,8 @@ def _handle_fused_raster_request(params):
         if params["pix"] <= 0:
             raise RuntimeError(f"fused raster requires pix > 0, got {params['pix']}")
 
+        score_source = _normalize_score_source(params.get("score_source"))
+        reuse_stored_scores = score_source["mode"] == "artifact_step_scores"
         perf = attach_contract_warnings({
             "engine": "mt",
             "threads": threads,
@@ -679,7 +800,11 @@ def _handle_fused_raster_request(params):
             "roots_clipped": 0,
             "emit_raw_score_bins": True,
             "emit_associated_palette_bins": emit_associated_palette_bins,
-            "emit_step_scores": True,
+            "emit_step_scores": not reuse_stored_scores,
+            "score_source_mode": score_source["mode"],
+            "solve_score_evaluated": not reuse_stored_scores,
+            "stored_step_scores_bytes": 0,
+            "stored_step_scores_download_us": 0,
             "rgb_source": "raw_score_bins",
             "group_idx": int(section_idx),
             "section_indices": [int(section_idx)],
@@ -702,6 +827,7 @@ def _handle_fused_raster_request(params):
         section_params["associated_palette_grid_n"] = associated_palette_grid_n
         section_params["associated_palette_fragment_prefix"] = associated_palette_fragment_prefix
         section_params["fragment_prefix"] = fragment_prefix
+        section_params["score_source"] = score_source
 
         rt_chain = contract_param(section_params, "root_transforms", [], contract_warnings)
         section_params["root_xforms_path"] = None
@@ -711,42 +837,79 @@ def _handle_fused_raster_request(params):
                 json.dump(rt_chain, rtf)
             section_params["root_xforms_path"] = rt_path
 
-        ss_clip_key = str(section_params.get("solve_score_clip_key") or "").strip()
-        if not ss_clip_key:
-            raise RuntimeError("fused raster requires solve_score_clip_key")
-        ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_clip_key)
-        section_params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
+        if reuse_stored_scores:
+            contract = dict(score_source["contract"])
+            section_params["solve_score_bins_data"] = {
+                **contract,
+                "program": str(contract.get("score_program") or ""),
+            }
+        else:
+            ss_clip_key = str(section_params.get("solve_score_clip_key") or "").strip()
+            if not ss_clip_key:
+                raise RuntimeError("fused raster requires solve_score_clip_key")
+            ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_clip_key)
+            section_params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
         step_score_channels = int(section_params["solve_score_bins_data"].get("score_output_channel_count") or 1)
-        emit_step_scores = step_score_channels in (1, 3)
+        emit_step_scores = not reuse_stored_scores and step_score_channels in (1, 3)
         perf["emit_step_scores"] = emit_step_scores
-        perf["step_score_channels"] = step_score_channels if emit_step_scores else 0
+        perf["step_score_channels"] = step_score_channels
 
-        raw_chain = section_params.get("solve_score_chain", "")
-        has_source = bool(str(section_params.get("solve_score_program_source_text") or "").strip())
-        has_program = isinstance(section_params.get("solve_score_program"), dict)
-        section_params["solve_score_chain_present"] = raw_chain not in ("", None, []) or has_source or has_program
-        if not section_params["solve_score_chain_present"]:
-            raise RuntimeError("fused raster requires solve_score_chain or solve_score_program_source_text")
-        compiled = solve_score_program_for_run(section_params)
-        section_params["solve_score_chain"] = compiled.get("chain_public") or raw_chain
-        section_params["solve_score_program_source_text"] = compiled.get("source_text", "")
-        section_params["solve_score_compiled"] = compiled
-        section_params["solve_score_chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
-        prelude_by_source = solve_score_lag_prelude_by_source(compiled)
-        for field, source in (
-            ("prelude_rows", "slv"),
-            ("score_coeff_prelude_rows", "cf"),
-            ("score_param_prelude_rows", "pm"),
-        ):
-            if compiled.get("uses_lag") and field not in section_params:
-                raise RuntimeError(f"fused raster lagged solve-score payload missing {field}")
-            actual = int(section_params.get(field, prelude_by_source[source]) or 0)
-            expected = int(prelude_by_source[source])
-            if actual != expected:
-                raise RuntimeError(f"fused raster {field} mismatch: expected {expected}, got {actual}")
-            section_params[field] = expected
+        if reuse_stored_scores:
+            if int(score_source["channels"]) != step_score_channels:
+                raise RuntimeError("stored score channels disagree with score contract")
+            section_params["solve_score_chain_present"] = False
+            section_params["solve_score_compiled"] = None
+            section_params["solve_score_chain_fingerprint"] = str(
+                score_source["contract"].get("chain_fingerprint") or ""
+            )
+            for field in (
+                "prelude_rows",
+                "score_coeff_prelude_rows",
+                "score_param_prelude_rows",
+            ):
+                if int(section_params.get(field) or 0) != 0:
+                    raise RuntimeError(
+                        f"stored-score raster requires {field}=0"
+                    )
+                section_params[field] = 0
+        else:
+            raw_chain = section_params.get("solve_score_chain", "")
+            has_source = bool(str(section_params.get("solve_score_program_source_text") or "").strip())
+            has_program = isinstance(section_params.get("solve_score_program"), dict)
+            section_params["solve_score_chain_present"] = raw_chain not in ("", None, []) or has_source or has_program
+            if not section_params["solve_score_chain_present"]:
+                raise RuntimeError("fused raster requires solve_score_chain or solve_score_program_source_text")
+            compiled = solve_score_program_for_run(section_params)
+            section_params["solve_score_chain"] = compiled.get("chain_public") or raw_chain
+            section_params["solve_score_program_source_text"] = compiled.get("source_text", "")
+            section_params["solve_score_compiled"] = compiled
+            section_params["solve_score_chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
+            prelude_by_source = solve_score_lag_prelude_by_source(compiled)
+            for field, source in (
+                ("prelude_rows", "slv"),
+                ("score_coeff_prelude_rows", "cf"),
+                ("score_param_prelude_rows", "pm"),
+            ):
+                if compiled.get("uses_lag") and field not in section_params:
+                    raise RuntimeError(f"fused raster lagged solve-score payload missing {field}")
+                actual = int(section_params.get(field, prelude_by_source[source]) or 0)
+                expected = int(prelude_by_source[source])
+                if actual != expected:
+                    raise RuntimeError(f"fused raster {field} mismatch: expected {expected}, got {actual}")
+                section_params[field] = expected
 
         section_params = _prepare_fused_section_inputs(section_params)
+        if reuse_stored_scores:
+            t_scores = time.perf_counter()
+            stored_score_bytes = _download_stored_step_score_range(
+                score_source,
+                step_start=int(section_params["step_start"]),
+                step_count=int(section_params["step_count"]),
+            )
+            perf["stored_step_scores_download_us"] = int(
+                (time.perf_counter() - t_scores) * 1e6
+            )
+            perf["stored_step_scores_bytes"] = stored_score_bytes
         report_status(job_id, task_id, "bin_downloaded_1/1")
 
         perf["prep_wall_us"] = int((time.perf_counter() - t_handler) * 1e6)
@@ -787,7 +950,7 @@ def _handle_fused_raster_request(params):
             "camera_range_rejects",
             "camera_invalid_rejects",
             "camera_projected_points",
-            "camera_footprint_pixel_candidates",
+            "camera_pixel_candidates",
             "camera_depth_replacements",
             "camera_occupied_pixels",
             "camera_fragment_bytes",
@@ -811,7 +974,11 @@ def _handle_fused_raster_request(params):
             estimate=camera_estimate,
             raster_meta=raster_meta,
             fragment_size=fused_fragment_size,
-            step_scores_size=step_scores_size,
+            step_scores_size=(
+                int(perf["stored_step_scores_bytes"])
+                if reuse_stored_scores
+                else step_scores_size
+            ),
         )
 
         t_upload = time.perf_counter()
@@ -871,10 +1038,15 @@ def _handle_fused_raster_request(params):
         perf["associated_palette_fragment_files_uploaded"] = 1 if emit_associated_palette_bins else 0
         perf["associated_palette_fragment_bytes_uploaded"] = palette_fragment_size
         perf["step_scores_bytes_uploaded"] = step_scores_size
-        perf["step_score_channels"] = step_score_channels if emit_step_scores else 0
+        perf["step_score_channels"] = step_score_channels
         if "camera_estimated_raster_tmp_bytes" in perf:
             perf["camera_raster_tmp_bytes_actual"] = (
-                fused_fragment_size + step_scores_size
+                fused_fragment_size
+                + (
+                    int(perf["stored_step_scores_bytes"])
+                    if reuse_stored_scores
+                    else step_scores_size
+                )
             )
         occupancy_upper = perf.get("camera_estimated_occupied_pixels_upper")
         if occupancy_upper is not None:
@@ -905,7 +1077,13 @@ def _handle_fused_raster_request(params):
             "associated_palette_fragment_files_uploaded": 1 if emit_associated_palette_bins else 0,
             "associated_palette_fragment_bytes_uploaded": palette_fragment_size,
             "step_scores_bytes_uploaded": step_scores_size,
-            "step_score_channels": step_score_channels if emit_step_scores else 0,
+            "step_score_channels": step_score_channels,
+            "score_source_mode": score_source["mode"],
+            "solve_score_evaluated": not reuse_stored_scores,
+            "stored_step_scores_bytes": int(perf["stored_step_scores_bytes"]),
+            "stored_step_scores_download_us": int(
+                perf["stored_step_scores_download_us"]
+            ),
             "rgb_source": "raw_score_bins",
             "raster_us": perf["native_us"],
             "roots_plotted": perf["roots_plotted"],

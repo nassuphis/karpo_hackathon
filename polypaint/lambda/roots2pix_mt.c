@@ -108,6 +108,8 @@ typedef struct {
     unsigned char *stepScores;
     long stepScoreCount;
     int stepScoreChannels;
+    const unsigned char *storedStepScores;
+    int useStoredStepScores;
     float *xformedRoots;      /* post-xform post-rotation [re,im] per assigned step, or NULL */
     long rootsPlotted;
     long rootsClipped;
@@ -118,7 +120,7 @@ typedef struct {
     long cameraRangeRejects;
     long cameraInvalidRejects;
     long cameraProjectedPoints;
-    long long cameraFootprintPixelCandidates;
+    long long cameraPixelCandidates;
     long cameraDepthReplacements;
     long downloadUs;          /* accumulated per-thread download time (worker sum) */
     long nativeUs;            /* accumulated per-thread native time (worker sum) */
@@ -299,6 +301,44 @@ static int write_suffix_path(char *dst, size_t dstSize, const char *prefix, cons
     return written > 0 && (size_t)written < dstSize;
 }
 
+static unsigned char *read_exact_file(
+        const char *path,
+        size_t expectedSize,
+        char *err,
+        size_t errSize) {
+    if (!path || !*path || expectedSize == 0) {
+        snprintf(err, errSize, "stored step-score path/size is invalid");
+        return NULL;
+    }
+    FILE *fh = fopen(path, "rb");
+    if (!fh) {
+        snprintf(err, errSize, "cannot open stored step scores: %s", path);
+        return NULL;
+    }
+    unsigned char *payload = malloc(expectedSize);
+    if (!payload) {
+        fclose(fh);
+        snprintf(err, errSize, "cannot allocate %zu stored score bytes", expectedSize);
+        return NULL;
+    }
+    size_t got = fread(payload, 1, expectedSize, fh);
+    int trailing = fgetc(fh);
+    fclose(fh);
+    if (got != expectedSize || trailing != EOF) {
+        free(payload);
+        snprintf(
+            err,
+            errSize,
+            "stored step-score byte count mismatch: expected %zu, got %zu%s",
+            expectedSize,
+            got,
+            trailing == EOF ? "" : "+"
+        );
+        return NULL;
+    }
+    return payload;
+}
+
 static void free_worker_storage(WorkerArgs *args, int nWorkers) {
     if (!args) return;
     for (int i = 0; i < nWorkers; i++) {
@@ -368,7 +408,9 @@ static void *worker_main(void *arg_) {
     long sourceRows = 0;
     long coeffRows = 0;
     long paramRows = 0;
-    int usesLag = solve_score_program_uses_lag(&arg->solveScoreProgram);
+    int usesLag = arg->useStoredStepScores
+        ? 0
+        : solve_score_program_uses_lag(&arg->solveScoreProgram);
     SolveScoreLagStream lagStream;
     solve_score_lag_stream_init(&lagStream, &arg->solveScoreProgram);
     long long nativeStartUs = 0;
@@ -500,65 +542,75 @@ static void *worker_main(void *arg_) {
 
         uint8_t solveBin = 255;
 
-        SolveScoreSourceSet sources = {
-            .roots = step,
-            .degree = arg->degree,
-            .coeffRoots = coeffStep,
-            .coeffDegree = arg->scoreCoeffDegree,
-            .paramValues = paramStep,
-            .paramDegree = arg->scoreParamDegree,
-        };
-        int lagFailure = 0;
-        if (!solve_score_lag_stream_eval_current(
-                &lagStream, &sources, p,
-                roots_lag_previous_sources, &lagCtx, &lagFailure)) {
-            worker_fail(arg, lagFailure
-                             ? "solve-score lag metric evaluation failed"
-                             : "solve-score metric evaluation failed");
-            goto cleanup;
-        }
-        int gotOutputs = 0;
-        if (!solve_score_eval_program_outputs_from_buffers(
-                solve_score_lag_stream_current(&lagStream),
-                solve_score_lag_stream_recent_or_null(&lagStream),
-                &arg->solveScoreProgram,
-                outputValues,
-                SOLVE_SCORE_MAX_OUTPUT_CHANNELS,
-                &gotOutputs) ||
-            gotOutputs != arg->outputChannelCount) {
-            worker_fail(arg, "solve-score program evaluation failed");
-            goto cleanup;
-        }
-        if (solve_score_program_has_explicit_outputs(&arg->solveScoreProgram)) {
-            for (int ch = 0; ch < arg->outputChannelCount; ch++) {
-                double u = outputValues[ch];
-                if (solve_score_program_output_is_normalized(&arg->solveScoreProgram, ch)) {
-                    double range = arg->scoreOutputClipHis[ch] - arg->scoreOutputClipLos[ch];
+        if (arg->useStoredStepScores) {
+            size_t base = (size_t)p * (size_t)arg->outputChannelCount;
+            memcpy(
+                outputBytes,
+                arg->storedStepScores + base,
+                (size_t)arg->outputChannelCount
+            );
+            solveBin = outputBytes[0];
+        } else {
+            SolveScoreSourceSet sources = {
+                .roots = step,
+                .degree = arg->degree,
+                .coeffRoots = coeffStep,
+                .coeffDegree = arg->scoreCoeffDegree,
+                .paramValues = paramStep,
+                .paramDegree = arg->scoreParamDegree,
+            };
+            int lagFailure = 0;
+            if (!solve_score_lag_stream_eval_current(
+                    &lagStream, &sources, p,
+                    roots_lag_previous_sources, &lagCtx, &lagFailure)) {
+                worker_fail(arg, lagFailure
+                                 ? "solve-score lag metric evaluation failed"
+                                 : "solve-score metric evaluation failed");
+                goto cleanup;
+            }
+            int gotOutputs = 0;
+            if (!solve_score_eval_program_outputs_from_buffers(
+                    solve_score_lag_stream_current(&lagStream),
+                    solve_score_lag_stream_recent_or_null(&lagStream),
+                    &arg->solveScoreProgram,
+                    outputValues,
+                    SOLVE_SCORE_MAX_OUTPUT_CHANNELS,
+                    &gotOutputs) ||
+                gotOutputs != arg->outputChannelCount) {
+                worker_fail(arg, "solve-score program evaluation failed");
+                goto cleanup;
+            }
+            if (solve_score_program_has_explicit_outputs(&arg->solveScoreProgram)) {
+                for (int ch = 0; ch < arg->outputChannelCount; ch++) {
+                    double u = outputValues[ch];
+                    if (solve_score_program_output_is_normalized(&arg->solveScoreProgram, ch)) {
+                        double range = arg->scoreOutputClipHis[ch] - arg->scoreOutputClipLos[ch];
+                        if (isfinite(range) && range > 1e-12) {
+                            u = (u - arg->scoreOutputClipLos[ch]) / range;
+                        }
+                    }
+                    u = solve_score_clamp_unit(u);
+                    int rawByte = (int)llround(u * 255.0);
+                    if (rawByte < 0) rawByte = 0;
+                    if (rawByte > 255) rawByte = 255;
+                    outputBytes[ch] = (uint8_t)rawByte;
+                }
+                solveBin = outputBytes[0];
+            } else {
+                double u = outputValues[0];
+                if (arg->scoreOutputNormalize) {
+                    double range = arg->scoreOutputClipHi - arg->scoreOutputClipLo;
                     if (isfinite(range) && range > 1e-12) {
-                        u = (u - arg->scoreOutputClipLos[ch]) / range;
+                        u = solve_score_clamp_unit((u - arg->scoreOutputClipLo) / range);
                     }
                 }
                 u = solve_score_clamp_unit(u);
-                int rawByte = (int)llround(u * 255.0);
-                if (rawByte < 0) rawByte = 0;
+                int rawByte = 1 + (int)llround(u * 254.0);
+                if (rawByte < 1) rawByte = 1;
                 if (rawByte > 255) rawByte = 255;
-                outputBytes[ch] = (uint8_t)rawByte;
+                solveBin = (uint8_t)rawByte;
+                outputBytes[0] = solveBin;
             }
-            solveBin = outputBytes[0];
-        } else {
-            double u = outputValues[0];
-            if (arg->scoreOutputNormalize) {
-                double range = arg->scoreOutputClipHi - arg->scoreOutputClipLo;
-                if (isfinite(range) && range > 1e-12) {
-                    u = solve_score_clamp_unit((u - arg->scoreOutputClipLo) / range);
-                }
-            }
-            u = solve_score_clamp_unit(u);
-            int rawByte = 1 + (int)llround(u * 254.0);
-            if (rawByte < 1) rawByte = 1;
-            if (rawByte > 255) rawByte = 255;
-            solveBin = (uint8_t)rawByte;
-            outputBytes[0] = solveBin;
         }
 
         if (arg->emitPaletteBins) {
@@ -600,10 +652,6 @@ static void *worker_main(void *arg_) {
         if (arg->viewProjection != 0) {
             long long pass0 = (long long)arg->viewGridN * (long long)arg->viewGridN;
             long long globalStep = arg->viewStepStart + p;
-            if (arg->viewProjection == 7
-                    && (globalStep < 0 || globalStep >= pass0)) {
-                viewCanPlot = 0;
-            }
             long long gstep = globalStep % pass0;
             if (gstep < 0) gstep += pass0;
             int vrow = (int)(gstep / arg->viewGridN);
@@ -652,7 +700,6 @@ static void *worker_main(void *arg_) {
                 continue;
             }
             float cameraDepth = 0.0f;
-            int cameraPointSide = 1;
             switch (arg->viewProjection) {
             case 1:   /* front: Re rightward */
                 pxf = (rotRe - arg->minRe) * arg->xScale;
@@ -696,7 +743,6 @@ static void *worker_main(void *arg_) {
                             &pxf,
                             &pyf,
                             &cameraDepth,
-                            &cameraPointSide,
                             &cameraRejectReason)) {
                     if (cameraRejectReason == VIEW_CAMERA_REJECT_T_RANGE) {
                         arg->cameraRangeRejects++;
@@ -723,38 +769,25 @@ static void *worker_main(void *arg_) {
                 continue;
             }
             if (arg->viewProjection == 7) {
-                int px0 = (int)floor(pxf - 0.5 * (double)(cameraPointSide - 1));
-                int py0 = (int)floor(pyf - 0.5 * (double)(cameraPointSide - 1));
-                int px1 = px0 + cameraPointSide - 1;
-                int py1 = py0 + cameraPointSide - 1;
-                if (px1 < 0 || py1 < 0 || px0 >= arg->W || py0 >= arg->H) {
+                int px = (int)floor(pxf);
+                int py = (int)floor(pyf);
+                if (px < 0 || px >= arg->W || py < 0 || py >= arg->H) {
                     arg->rootsClipped++;
                     continue;
                 }
-                if (px0 < 0) px0 = 0;
-                if (py0 < 0) py0 = 0;
-                if (px1 >= arg->W) px1 = arg->W - 1;
-                if (py1 >= arg->H) py1 = arg->H - 1;
-                arg->cameraFootprintPixelCandidates +=
-                    (long long)(px1 - px0 + 1) * (long long)(py1 - py0 + 1);
-                int writes = 0;
-                for (int py = py0; py <= py1; py++) {
-                    for (int px = px0; px <= px1; px++) {
-                        uint32_t globalPixIdx =
-                            (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
-                        if (camera_update_pixel(
-                                arg,
-                                globalPixIdx,
-                                cameraDepth,
-                                outputBytes)) {
-                            writes++;
-                            arg->cameraDepthReplacements++;
-                        } else {
-                            arg->rootsDeduped++;
-                        }
-                    }
+                arg->cameraPixelCandidates++;
+                uint32_t globalPixIdx =
+                    (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
+                if (camera_update_pixel(
+                        arg,
+                        globalPixIdx,
+                        cameraDepth,
+                        outputBytes)) {
+                    arg->rootsPlotted++;
+                    arg->cameraDepthReplacements++;
+                } else {
+                    arg->rootsDeduped++;
                 }
-                arg->rootsPlotted += writes;
             } else {
                 int px = (int)floor(pxf);
                 int py = (int)floor(pyf);
@@ -812,14 +845,13 @@ int main(int argc, char **argv) {
                 "--fragment_prefix=/tmp/fused_fragment "
                 "[--associated_palette_fragment_prefix=/tmp/palette_fragment] [--palette_grid_n=N] [--palette_step_start=STEP] "
                 "[--step_scores_output=/tmp/step_scores.bin] "
+                "[--stored_step_scores=/tmp/stored_step_scores.raw --stored_step_score_channels=1|3] "
                 "[--xformed_roots_output=/tmp/xformed_roots.bin] "
                 "[--xformed_roots_format=f32|u16] "
                 "[--view_projection=plan|front|rear|left|right|radial|isometric|camera] [--view_vertical=t2|t1] "
                 "[--view_grid_n=N] [--view_step_start=STEP] "
                 "[--view_model_view=csv16 --view_projection_matrix=csv16 --view_slices=N] "
                 "[--view_effective_tlo=X --view_effective_thi=Y] "
-                "[--view_point_world_size=X --view_point_scale=X "
-                "--view_point_min_fraction=X --view_point_max_fraction=X] "
                 "[--fragment_encoding=name] "
                 "[--root_xforms=file.json]\n");
         return 1;
@@ -830,13 +862,12 @@ int main(int argc, char **argv) {
         "--rotation", "--degree", "--retries", "--threads", "--step_count",
         "--prelude_rows", "--score_coeff_prelude_rows", "--score_param_prelude_rows",
         "--fragment_prefix", "--associated_palette_fragment_prefix", "--step_scores_output",
+        "--stored_step_scores", "--stored_step_score_channels",
         "--xformed_roots_output", "--xformed_roots_format",
         "--palette_grid_n", "--palette_step_start", "--root_xforms",
         "--view_projection", "--view_vertical", "--view_grid_n", "--view_step_start",
         "--view_model_view", "--view_projection_matrix", "--view_slices",
         "--view_effective_tlo", "--view_effective_thi",
-        "--view_point_world_size", "--view_point_scale",
-        "--view_point_min_fraction", "--view_point_max_fraction",
         "--fragment_encoding",
         "--score_metrics", "--score_sources",
         "--score_clip_los", "--score_clip_his", "--score_program",
@@ -871,6 +902,20 @@ int main(int argc, char **argv) {
     const char *fragmentPrefix = getArgStr(argc, argv, "--fragment_prefix", NULL);
     const char *paletteFragmentPrefix = getArgStr(argc, argv, "--associated_palette_fragment_prefix", NULL);
     const char *stepScoresOutputPath = getArgStr(argc, argv, "--step_scores_output", NULL);
+    const char *storedStepScoresPath = getArgStr(
+        argc, argv, "--stored_step_scores", NULL
+    );
+    int storedStepScoreChannels = getArgInt(
+        argc, argv, "--stored_step_score_channels", 0
+    );
+    int useStoredStepScores = storedStepScoresPath && *storedStepScoresPath;
+    if (useStoredStepScores != (storedStepScoreChannels != 0)) {
+        fprintf(
+            stderr,
+            "--stored_step_scores and --stored_step_score_channels must be supplied together\n"
+        );
+        return 1;
+    }
     const char *xformedRootsOutputPath = getArgStr(argc, argv, "--xformed_roots_output", NULL);
     const char *xformedRootsFormat = getArgStr(argc, argv, "--xformed_roots_format", "f32");
     int paletteGridN = getArgInt(argc, argv, "--palette_grid_n", 0);
@@ -913,10 +958,6 @@ int main(int argc, char **argv) {
         cameraProjection.slices = getArgInt(argc, argv, "--view_slices", -1);
         cameraProjection.effective_tlo = getArgDouble(argc, argv, "--view_effective_tlo", NAN);
         cameraProjection.effective_thi = getArgDouble(argc, argv, "--view_effective_thi", NAN);
-        cameraProjection.point_world_size = getArgDouble(argc, argv, "--view_point_world_size", NAN);
-        cameraProjection.point_scale = getArgDouble(argc, argv, "--view_point_scale", NAN);
-        cameraProjection.point_min_fraction = getArgDouble(argc, argv, "--view_point_min_fraction", NAN);
-        cameraProjection.point_max_fraction = getArgDouble(argc, argv, "--view_point_max_fraction", NAN);
         if (!parse_csv_doubles(modelViewArg, cameraProjection.model_view, 16)
                 || !parse_csv_doubles(projectionMatrixArg, cameraProjection.projection, 16)
                 || cameraProjection.slices < 0
@@ -925,14 +966,6 @@ int main(int argc, char **argv) {
                 || cameraProjection.effective_tlo < 0.0
                 || cameraProjection.effective_thi > 1.0
                 || cameraProjection.effective_tlo > cameraProjection.effective_thi
-                || !isfinite(cameraProjection.point_world_size)
-                || !(cameraProjection.point_world_size > 0.0)
-                || !isfinite(cameraProjection.point_scale)
-                || !(cameraProjection.point_scale > 0.0)
-                || !isfinite(cameraProjection.point_min_fraction)
-                || !isfinite(cameraProjection.point_max_fraction)
-                || !(cameraProjection.point_min_fraction > 0.0)
-                || cameraProjection.point_min_fraction > cameraProjection.point_max_fraction
                 || strcmp(fragmentEncoding, CAMERA_FRAGMENT_ENCODING) != 0) {
             fprintf(stderr, "Invalid or incomplete camera projection contract\n");
             return 1;
@@ -1039,9 +1072,20 @@ int main(int argc, char **argv) {
         scoreOutputNormalize = 0;
     }
     SolveScoreProgram solveScoreProgram;
+    memset(&solveScoreProgram, 0, sizeof(solveScoreProgram));
     double scoreOutputClipLos[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
     double scoreOutputClipHis[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
-    {
+    for (int i = 0; i < SOLVE_SCORE_MAX_OUTPUT_CHANNELS; i++) {
+        scoreOutputClipLos[i] = scoreOutputClipLo;
+        scoreOutputClipHis[i] = scoreOutputClipHi;
+    }
+    if (useStoredStepScores) {
+        if (storedStepScoreChannels != 1 && storedStepScoreChannels != 3) {
+            fprintf(stderr, "stored score channels must be 1 or 3\n");
+            return 1;
+        }
+        solveScoreProgram.outputCount = storedStepScoreChannels;
+    } else {
         char scoreErr[256] = {0};
         if (!scoreMetricsCsv || !scoreClipLosCsv || !scoreClipHisCsv || !scoreProgramSpec) {
             fprintf(stderr, "roots2pix_mt requires --score_metrics, --score_clip_los, --score_clip_his, and --score_program\n");
@@ -1056,10 +1100,6 @@ int main(int argc, char **argv) {
         if (solveScoreProgram.metricCount < 1 || solveScoreProgram.tokenCount < 1) {
             fprintf(stderr, "Invalid solve_score program: missing metric slots or program tokens\n");
             return 1;
-        }
-        for (int i = 0; i < SOLVE_SCORE_MAX_OUTPUT_CHANNELS; i++) {
-            scoreOutputClipLos[i] = scoreOutputClipLo;
-            scoreOutputClipHis[i] = scoreOutputClipHi;
         }
         if (scoreOutputClipLosCsv || scoreOutputClipHisCsv) {
             if (!scoreOutputClipLosCsv || !scoreOutputClipHisCsv) {
@@ -1100,12 +1140,6 @@ int main(int argc, char **argv) {
                 }
             }
         }
-    }
-
-    if (scoreMetricsCsv || scoreClipLosCsv || scoreClipHisCsv || scoreProgramSpec) {
-        /* required-and-validated above */
-    } else {
-        return 1;
     }
 
     int stride = degree * 2;
@@ -1167,6 +1201,19 @@ int main(int argc, char **argv) {
     scoreProgramUsesSolveLag = solve_score_program_uses_lag_source(&solveScoreProgram, SOLVE_SCORE_SOURCE_SOLVE);
     scoreProgramUsesCoeffLag = solve_score_program_uses_lag_source(&solveScoreProgram, SOLVE_SCORE_SOURCE_COEFF);
     scoreProgramUsesParamLag = solve_score_program_uses_lag_source(&solveScoreProgram, SOLVE_SCORE_SOURCE_PARAM);
+    if (useStoredStepScores) {
+        if (solvePreludeRows || scoreCoeffPreludeRows || scoreParamPreludeRows) {
+            fprintf(stderr, "stored step scores require zero prelude rows\n");
+            multispan_reader_close(&inputReader);
+            return 1;
+        }
+        scoreProgramUsesCoeffSources = 0;
+        scoreProgramUsesParamSources = 0;
+        scoreProgramUsesLag = 0;
+        scoreProgramUsesSolveLag = 0;
+        scoreProgramUsesCoeffLag = 0;
+        scoreProgramUsesParamLag = 0;
+    }
     if (!scoreProgramUsesLag && (solvePreludeRows || scoreCoeffPreludeRows || scoreParamPreludeRows)) {
         fprintf(stderr, "prelude rows require a lagged solve-score program\n");
         multispan_reader_close(&inputReader);
@@ -1273,6 +1320,29 @@ int main(int argc, char **argv) {
         }
     }
 
+    unsigned char *storedStepScores = NULL;
+    size_t storedStepScoreBytes = 0;
+    if (useStoredStepScores) {
+        if ((size_t)nPoints > SIZE_MAX / (size_t)storedStepScoreChannels) {
+            fprintf(stderr, "stored step-score size overflow\n");
+            multispan_reader_close(&inputReader);
+            return 1;
+        }
+        storedStepScoreBytes =
+            (size_t)nPoints * (size_t)storedStepScoreChannels;
+        storedStepScores = read_exact_file(
+            storedStepScoresPath,
+            storedStepScoreBytes,
+            manifestErr,
+            sizeof(manifestErr)
+        );
+        if (!storedStepScores) {
+            fprintf(stderr, "%s\n", manifestErr);
+            multispan_reader_close(&inputReader);
+            return 1;
+        }
+    }
+
     uint64_t *pixelBits = NULL;
     float *cameraDepth = NULL;
     unsigned char *cameraScores = NULL;
@@ -1296,6 +1366,14 @@ int main(int argc, char **argv) {
         fprintf(stderr, "step_scores_output requires one or three solve-score output channels\n");
         return 1;
     }
+    if (emitStepScores && useStoredStepScores) {
+        fprintf(stderr, "stored score input cannot also emit recomputed step scores\n");
+        free(storedStepScores);
+        multispan_reader_close(&scoreParamReader);
+        multispan_reader_close(&scoreCoeffReader);
+        multispan_reader_close(&inputReader);
+        return 1;
+    }
     int threads = clamp_threads(requestedThreads, nPoints);
     WorkerArgs *args = NULL;
     pthread_t *workers = NULL;
@@ -1313,7 +1391,7 @@ int main(int argc, char **argv) {
     long cameraRangeRejects = 0;
     long cameraInvalidRejects = 0;
     long cameraProjectedPoints = 0;
-    long long cameraFootprintPixelCandidates = 0;
+    long long cameraPixelCandidates = 0;
     long cameraDepthReplacements = 0;
     long totalDownloadUs = 0;
     long long dlWallMinStart = 0, dlWallMaxEnd = 0;   /* CR33: download WALL span */
@@ -1326,22 +1404,13 @@ int main(int argc, char **argv) {
         fprintf(stderr, "pix is too large for u32 pixel indexes: %d\n", pix);
         goto cleanup;
     }
-    int cameraHasPass0Overlap = 1;
-    if (viewProjection == 7) {
-        long long pass0Steps = (long long)viewGridN * (long long)viewGridN;
-        long long sectionStart = viewStepStart;
-        long long sectionEnd = sectionStart + (long long)nPoints;
-        cameraHasPass0Overlap = sectionStart < pass0Steps && sectionEnd > 0;
-    }
-    size_t pixelWordCount = cameraHasPass0Overlap
-        ? (size_t)((totalPixels + 63u) / 64u)
-        : 1u;
+    size_t pixelWordCount = (size_t)((totalPixels + 63u) / 64u);
     pixelBits = calloc(pixelWordCount, sizeof(uint64_t));
     if (!pixelBits) {
         fprintf(stderr, "Cannot allocate pixel bitset\n");
         goto cleanup;
     }
-    if (viewProjection == 7 && cameraHasPass0Overlap) {
+    if (viewProjection == 7) {
         cameraDepth = malloc((size_t)totalPixels * sizeof(float));
         cameraScores = calloc(
             (size_t)totalPixels * (size_t)solveScoreProgram.outputCount,
@@ -1470,6 +1539,8 @@ int main(int argc, char **argv) {
         args[i].cameraDepth = cameraDepth;
         args[i].cameraScores = cameraScores;
         args[i].cameraWriteLocks = cameraWriteLocks;
+        args[i].storedStepScores = storedStepScores;
+        args[i].useStoredStepScores = useStoredStepScores;
         args[i].stepScoreChannels = solveScoreProgram.outputCount;
         args[i].stepScores = emitStepScores
             ? calloc((size_t)(width > 0 ? width : 1) * (size_t)args[i].stepScoreChannels, sizeof(unsigned char))
@@ -1506,7 +1577,7 @@ int main(int argc, char **argv) {
         cameraRangeRejects += args[i].cameraRangeRejects;
         cameraInvalidRejects += args[i].cameraInvalidRejects;
         cameraProjectedPoints += args[i].cameraProjectedPoints;
-        cameraFootprintPixelCandidates += args[i].cameraFootprintPixelCandidates;
+        cameraPixelCandidates += args[i].cameraPixelCandidates;
         cameraDepthReplacements += args[i].cameraDepthReplacements;
         totalDownloadUs += args[i].downloadUs;
         totalNativeUs += args[i].nativeUs;
@@ -1538,7 +1609,7 @@ int main(int argc, char **argv) {
     size_t totalFragmentBytes = 0;
     size_t fragmentRecordSize = (viewProjection == 7 ? 8u : 4u)
         + (size_t)solveScoreProgram.outputCount;
-    if (viewProjection == 7 && cameraHasPass0Overlap) {
+    if (viewProjection == 7) {
         for (size_t wordIdx = 0; wordIdx < pixelWordCount; wordIdx++) {
             totalEntries += (long)__builtin_popcountll(pixelBits[wordIdx]);
         }
@@ -1562,7 +1633,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Cannot create %s\n", pathBuf);
             goto cleanup;
         }
-        if (viewProjection == 7 && cameraHasPass0Overlap) {
+        if (viewProjection == 7) {
             uint8_t record[8 + SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
             for (uint32_t pixelIdx = 0; pixelIdx < (uint32_t)totalPixels; pixelIdx++) {
                 uint64_t bit = 1ULL << (pixelIdx & 63);
@@ -1712,23 +1783,31 @@ int main(int argc, char **argv) {
            totalInputBytes, rootsDeduped);
     /* post-mortem F9: the selected solve plan travels with the worker result
      * (causally attached), instead of an env-gated stderr line only */
-    solve_score_print_plan_fields(stdout, &solveScoreProgram);
-    printf(",\"solve_score\":true");
+    if (!useStoredStepScores) {
+        solve_score_print_plan_fields(stdout, &solveScoreProgram);
+    }
+    printf(",\"solve_score\":%s", useStoredStepScores ? "false" : "true");
+    printf(
+        ",\"score_source_mode\":\"%s\",\"solve_score_evaluated\":%s",
+        useStoredStepScores ? "artifact_step_scores" : "computed",
+        useStoredStepScores ? "false" : "true"
+    );
+    if (useStoredStepScores) {
+        printf(",\"stored_step_scores_bytes\":%zu", storedStepScoreBytes);
+    }
     printf(",\"fragment_encoding\":\"%s\"",
            viewProjection == 7 ? CAMERA_FRAGMENT_ENCODING
                                : (fragmentEncoding && *fragmentEncoding
                                    ? fragmentEncoding
                                    : "legacy"));
     if (viewProjection == 7) {
-        printf(",\"camera_pass0_overlap\":%s",
-               cameraHasPass0Overlap ? "true" : "false");
         printf(",\"camera_candidate_roots\":%ld"
                ",\"camera_behind_rejects\":%ld"
                ",\"camera_clip_rejects\":%ld"
                ",\"camera_range_rejects\":%ld"
                ",\"camera_invalid_rejects\":%ld"
                ",\"camera_projected_points\":%ld"
-               ",\"camera_footprint_pixel_candidates\":%lld"
+               ",\"camera_pixel_candidates\":%lld"
                ",\"camera_depth_replacements\":%ld"
                ",\"camera_occupied_pixels\":%ld"
                ",\"camera_fragment_bytes\":%zu",
@@ -1738,7 +1817,7 @@ int main(int argc, char **argv) {
                cameraRangeRejects,
                cameraInvalidRejects,
                cameraProjectedPoints,
-               cameraFootprintPixelCandidates,
+               cameraPixelCandidates,
                cameraDepthReplacements,
                totalEntries,
                totalFragmentBytes);
@@ -1760,6 +1839,7 @@ cleanup:
     free(cameraWriteLocks);
     free(cameraScores);
     free(cameraDepth);
+    free(storedStepScores);
     free(pixelBits);
     free(workers);
     free(args);

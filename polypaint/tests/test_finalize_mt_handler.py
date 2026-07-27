@@ -233,6 +233,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
                     fh.write(bytes([0, 1, 2, 3]))
                 with open(hist_path, "w", encoding="utf-8") as fh:
                     json.dump({"version": 1, "background_pixels": 1, "nonzero_pixels": 3, "histogram": [1, 1, 1, 1] + [0] * 252}, fh)
+                time.sleep(0.03)
                 return MagicMock(returncode=0, stdout="", stderr="")
             if exe == "score_raw_render":
                 out_path = cmd[2]
@@ -248,7 +249,8 @@ class TestFinalizeMTHandler(unittest.TestCase):
         mock_run.side_effect = run_side_effect
         mock_raw_render_run.side_effect = run_side_effect
 
-        result = mod.handler(_event(), None)
+        with patch.object(mod, "ASSEMBLE_PROGRESS_INTERVAL_S", 0.005):
+            result = mod.handler(_event(), None)
         body = json.loads(result["body"])
 
         self.assertEqual(body["image_key"], TEST_IMAGE_KEY)
@@ -289,8 +291,9 @@ class TestFinalizeMTHandler(unittest.TestCase):
         self.assertEqual(overlay_meta["score_output_normalize"], "false")
         self.assertEqual(overlay_meta["repalette_capable"], "true")
         statuses = [call.args[2] for call in mock_report.call_args_list]
+        self.assertIn("assembling_score_tiles", statuses)
         self.assertEqual(
-            statuses,
+            [status for status in statuses if status != "assembling_score_tiles"],
             ["started", "assembled_score_tiles", "wrote_greyscale_raw", "rendered_rgb_tiles", "encoded", "done"],
         )
         # post-mortem F7 contract: the fake encode_ms=0 is GONE everywhere;
@@ -406,6 +409,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
         }
         mod.handler(_event(
             pix=2000,
+            finalize_workers=16,
             image_key=camera_prefix + "image.jpeg",
             preview_key=camera_prefix + "preview.png",
             meta_key=camera_meta_key,
@@ -430,6 +434,9 @@ class TestFinalizeMTHandler(unittest.TestCase):
             mod._metadata_size_bytes(camera_headers),
             mod.S3_USER_METADATA_LIMIT_BYTES,
         )
+        camera_progress = mock_report.call_args.kwargs["result_data"]
+        self.assertEqual(camera_progress["workers"], 1)
+        self.assertEqual(camera_progress["configured_workers"], 16)
 
     @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
     @patch("handler_finalize_mt.report_status")
@@ -792,6 +799,139 @@ class TestFinalizeMTHandler(unittest.TestCase):
             statuses,
             ["started", "assembled_score_tiles", "wrote_greyscale_raw", "wrote_step_scores", "rendered_rgb_tiles", "encoded", "done"],
         )
+
+    @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
+    @patch("handler_finalize_mt.report_status")
+    @patch("raw_score_render.subprocess.run")
+    @patch("handler_finalize_mt.subprocess.run")
+    @patch("handler_finalize_mt._finalize_s3_client")
+    def test_finalize_mt_reuses_source_step_scores_without_copying_them(
+        self,
+        mock_client_factory,
+        mock_run,
+        mock_raw_render_run,
+        mock_report,
+        mock_overlay,
+    ):
+        import handler_finalize_mt as mod
+
+        uploads = {}
+        fake_s3 = MagicMock()
+        source_scores_key = (
+            "renders/source_job/color/color_source/step_scores.raw"
+        )
+
+        def put_object(**kwargs):
+            body = kwargs["Body"]
+            data = body.read() if hasattr(body, "read") else body
+            uploads[kwargs["Key"]] = {
+                "data": data,
+                "content_type": kwargs.get("ContentType"),
+                "metadata": kwargs.get("Metadata"),
+                "cache_control": kwargs.get("CacheControl"),
+            }
+
+        fake_s3.get_object.side_effect = AssertionError(
+            "stored scores must not be downloaded or concatenated in Finalize"
+        )
+        fake_s3.generate_presigned_url.side_effect = (
+            lambda _op, Params, ExpiresIn=900:
+            f"https://example.invalid/{Params['Key']}"
+        )
+        fake_s3.put_object.side_effect = put_object
+        _capture_managed_uploads(fake_s3, uploads)
+        mock_client_factory.return_value = fake_s3
+
+        def run_side_effect(
+            cmd,
+            capture_output=False,
+            text=False,
+            timeout=None,
+            env=None,
+        ):
+            exe = os.path.basename(cmd[0])
+            if exe == "assemble_greyscale":
+                out_path = next(
+                    arg.split("=", 1)[1]
+                    for arg in cmd
+                    if arg.startswith("--output=")
+                )
+                hist_path = next(
+                    arg.split("=", 1)[1]
+                    for arg in cmd
+                    if arg.startswith("--hist-output=")
+                )
+                with open(out_path, "wb") as fh:
+                    fh.write(bytes([0, 1, 2, 3]))
+                with open(hist_path, "w", encoding="utf-8") as fh:
+                    json.dump({
+                        "version": 1,
+                        "background_pixels": 1,
+                        "nonzero_pixels": 3,
+                        "histogram": [1, 1, 1, 1] + [0] * 252,
+                    }, fh)
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if exe == "score_raw_render":
+                out_path = cmd[2]
+                preview_path = next(
+                    arg.split("=", 1)[1]
+                    for arg in cmd
+                    if arg.startswith("--preview=")
+                )
+                with open(out_path, "wb") as fh:
+                    fh.write(b"JPEGDATA")
+                with open(preview_path, "wb") as fh:
+                    fh.write(b"PREVIEWPNG")
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({
+                        "file_size": 8,
+                        "preview_file_size": 10,
+                    }),
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected executable {exe}")
+
+        mock_run.side_effect = run_side_effect
+        mock_raw_render_run.side_effect = run_side_effect
+
+        result = mod.handler(
+            _event(
+                associated_palette_times=1,
+                score_source={
+                    "mode": "artifact_step_scores",
+                    "key": source_scores_key,
+                    "step_count": 4,
+                    "grid_n": 2,
+                    "channels": 1,
+                    "size_bytes": 4,
+                    "source_artifact_id": "color_source",
+                    "source_raw_meta_key": (
+                        "renders/source_job/color/color_source/"
+                        "greyscale.meta.json"
+                    ),
+                },
+            ),
+            None,
+        )
+        body = json.loads(result["body"])
+
+        destination_scores_key = (
+            f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/step_scores.raw"
+        )
+        self.assertEqual(body["score_source_mode"], "artifact_step_scores")
+        self.assertEqual(body["step_scores_key"], source_scores_key)
+        self.assertEqual(body["step_count"], 4)
+        self.assertNotIn(source_scores_key, uploads)
+        self.assertNotIn(destination_scores_key, uploads)
+        raw_meta = json.loads(
+            uploads[TEST_RAW_META_KEY]["data"].decode("utf-8")
+        )
+        self.assertEqual(raw_meta["step_scores_key"], source_scores_key)
+        self.assertEqual(raw_meta["step_count"], 4)
+        statuses = [call.args[2] for call in mock_report.call_args_list]
+        self.assertIn("reused_step_scores", statuses)
+        self.assertNotIn("wrote_step_scores", statuses)
 
     @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
     @patch("handler_finalize_mt.report_status")

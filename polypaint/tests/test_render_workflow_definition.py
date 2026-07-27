@@ -159,10 +159,22 @@ class TestWorkflowDefinition(unittest.TestCase):
         ]:
             self.assertNotIn(name, self.states)
 
-    def test_mode_choice_routes_color_to_fused_clip(self):
+    def test_color_mode_selects_computed_or_artifact_score_contract(self):
         choice = self.states["ModeChoice"]
         color_choice = next(item for item in choice["Choices"] if item["StringEquals"] == "color")
-        self.assertEqual(color_choice["Next"], "ColorClipPhase")
+        self.assertEqual(color_choice["Next"], "ColorScoreSourceChoice")
+        source_choice = self.states["ColorScoreSourceChoice"]
+        self.assertEqual(source_choice["Default"], "ColorClipPhase")
+        artifact_choice = source_choice["Choices"][0]
+        self.assertEqual(artifact_choice["Variable"], "$.plan.score_source.mode")
+        self.assertEqual(artifact_choice["StringEquals"], "artifact_step_scores")
+        self.assertEqual(artifact_choice["Next"], "ColorUseArtifactScoreContract")
+        artifact_contract = self.states["ColorUseArtifactScoreContract"]
+        self.assertEqual(
+            artifact_contract["Parameters"],
+            {"parsed.$": "$.plan.score_source.contract"},
+        )
+        self.assertEqual(artifact_contract["Next"], "ColorRasterPhase")
 
     def test_map_states_have_expected_concurrency(self):
         self.assertEqual(self.states["ColorRasterMap"]["Type"], "Map")

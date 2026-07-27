@@ -1873,15 +1873,21 @@ def _run_splat_bake(params, job_id, spec, t_start):
         raise RuntimeError(f"splat_bake returned invalid JSON: {(proc.stdout or '')[:200]!r}") from exc
     tool_ms = int((time.time() - t_tool) * 1000)
 
+    sid_new = _mint_sculpture_id()
     title = p["title"] or title_default
     header = {
         "v": 1,
+        "sculptureId": sid_new,
         "count": int(tool["count"]),
         "cmin": tool["cmin"],
         "cmax": tool["cmax"],
         "amax": tool["amax"],
         "mode": p["mode"],
         "intensity": p["intensity"],
+        "zaxis": p["zaxis"],
+        "slices": p["slices"],
+        "yscale": p["yscale"],
+        "pointWorldSize": 0.004,
         "cam": p["cam"],
         "target": p["target"],
         "tour": p["tour"],
@@ -1899,7 +1905,6 @@ def _run_splat_bake(params, job_id, spec, t_start):
             .replace("__B64__", base64.b64encode(pack).decode("ascii")))
     html_bytes = html.encode("utf-8")
 
-    sid_new = _mint_sculpture_id()
     sprefix = f"sculptures/{sid_new}/"
     s3.put_object(
         Bucket=BUCKET, Key=sprefix + "viewer.html",
@@ -1913,7 +1918,19 @@ def _run_splat_bake(params, job_id, spec, t_start):
         "job_id": job_id,
         "splat_count": int(tool["count"]),
         "bytes": len(html_bytes),
-        "bake_params": {k: p[k] for k in ("res", "zaxis", "slices", "mode", "tour")},
+        "bake_params": {
+            k: p[k]
+            for k in (
+                "res",
+                "zaxis",
+                "slices",
+                "mode",
+                "intensity",
+                "yscale",
+                "scalemul",
+                "tour",
+            )
+        },
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     row.update(source_ids)

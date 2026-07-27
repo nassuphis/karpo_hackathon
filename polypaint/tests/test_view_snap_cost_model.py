@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "lambda"))
 
 from view_camera import validate_view_camera  # noqa: E402
 from view_snap_cost_model import (  # noqa: E402
-    camera_footprint_bound,
+    camera_projection_bound,
     enforce_hard_resource_limits,
     estimate_camera_sections,
 )
@@ -41,18 +41,6 @@ def _camera():
         "slices": 0,
         "effective_tlo": 0.0,
         "effective_thi": 1.0,
-        "point_world_size": 0.004,
-        "point_scale": 0.5,
-        "point_min_fraction": 1.0 / 1024.0,
-        "point_max_fraction": 1.0,
-        "style": "solid",
-        "show": {
-            "points": True,
-            "ribbons": False,
-            "threads": False,
-            "clu": False,
-            "splats": False,
-        },
         "frame": {"aspect": 1.0, "crop": "center_square"},
     })
 
@@ -69,7 +57,6 @@ def _estimate(**overrides):
     params = {
         "pix": 100,
         "degree": 3,
-        "n_coeffs": 4,
         "channels": 1,
         "times": 2,
         "source_row_bytes": 40,
@@ -92,13 +79,12 @@ def test_cost_model_has_no_behavioral_imports():
     assert imported <= {"__future__", "math"}
 
 
-def test_camera_footprint_uses_prism_nearest_depth_and_native_ceil():
-    bound = camera_footprint_bound(_camera(), 1_000)
+def test_camera_projection_prices_exactly_one_pixel_per_root():
+    bound = camera_projection_bound(_camera(), 1_000)
     assert bound["near"] == pytest.approx(0.01)
     assert bound["min_prism_depth"] == pytest.approx(1.5)
     assert bound["pricing_depth"] == pytest.approx(1.5)
-    assert bound["max_point_side"] == 2
-    assert bound["max_point_area"] == 4
+    assert bound["pixels_per_root_upper"] == 1
 
 
 @pytest.mark.parametrize(("axis", "translation"), (("left", 100.0), ("far", -100.0)))
@@ -106,17 +92,19 @@ def test_empty_camera_prism_is_rejected(axis, translation):
     camera = _camera()
     camera["model_view_matrix"][12 if axis == "left" else 14] = translation
     with pytest.raises(RuntimeError, match="empty camera frustum"):
-        camera_footprint_bound(camera, 100)
+        camera_projection_bound(camera, 100)
 
 
-def test_pass1_only_section_has_no_camera_planes_or_fragment_but_keeps_scoring_work():
+def test_every_pass_is_projected_from_stored_scores():
     estimate = _estimate()
     pass1 = estimate["sections"][2]
-    assert pass1["pass0_steps"] == 0
-    assert pass1["candidate_roots"] == 0
-    assert pass1["fragment_bytes_upper"] == 0
-    assert pass1["work_units"] == 5_000 * 4 * 4
-    assert pass1["raster_memory_bytes"] < estimate["sections"][0]["raster_memory_bytes"]
+    assert pass1["candidate_roots"] == pass1["step_count"] * 3
+    assert pass1["fragment_bytes_upper"] > 0
+    assert estimate["final_tmp_bytes"] < (
+        estimate["raw_bytes"]
+        + estimate["step_scores_bytes"]
+        + estimate["encoded_output_bytes_upper"]
+    )
 
 
 def test_resource_estimate_counts_fragment_and_step_score_tmp_together():
@@ -127,21 +115,16 @@ def test_resource_estimate_counts_fragment_and_step_score_tmp_together():
         )
     assert estimate["step_scores_bytes"] == 100 * 100 * 2
     assert estimate["final_tmp_bytes"] > (
-        estimate["raw_bytes"] + estimate["step_scores_bytes"]
+        estimate["raw_bytes"]
     )
-    assert estimate["total_work_units"] > estimate["max_work_units"]
+    assert estimate["total_candidate_roots"] > estimate["max_candidate_roots"]
 
 
-def test_section_resource_estimate_includes_the_actual_prelude_row():
-    estimate = _estimate(prelude_row_bytes=24)
+def test_section_resource_estimate_counts_only_current_root_rows():
+    estimate = _estimate()
     first, second = estimate["sections"][:2]
-    assert first["prelude_steps"] == 0
-    assert second["prelude_steps"] == 1
-    assert second["source_bytes"] == 10_000 * 40 + 24
-    assert second["work_units"] == (
-        (10_000 + 1) * 4 * 4
-        + second["candidate_roots"] * estimate["footprint"]["max_point_area"]
-    )
+    assert first["source_bytes"] == 5_000 * 40
+    assert second["source_bytes"] == 10_000 * 40
 
 
 def test_hard_resource_limits_name_the_binding_stage():
@@ -171,7 +154,6 @@ def test_work_unit_and_pixel_arithmetic_fail_closed_on_overflow():
             [{"section_idx": 0, "step_start": 0, "step_count": 1}],
             pix=4_000_000_000,
             degree=3,
-            n_coeffs=4,
             channels=1,
             times=1,
             source_row_bytes=40,

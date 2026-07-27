@@ -19,6 +19,8 @@ LEGACY_SCALAR_FRAGMENT_ENCODING = "u32le_u8_v1"
 LEGACY_MULTI_FRAGMENT_ENCODING = "u32le_pixel_idx_plus_u8_channels_v1"
 CAMERA_FRAGMENT_ENCODING = "u32le_f32depth_u8_channels_v1"
 
+# Point and appearance keys are accepted only because immutable pre-v2 viewer
+# pages still send them. They are deliberately absent from normalized output.
 _TOP_LEVEL_KEYS = frozenset((
     "version",
     "projection",
@@ -38,7 +40,6 @@ _TOP_LEVEL_KEYS = frozenset((
     "frame",
     "debug",
 ))
-_SHOW_KEYS = frozenset(("points", "ribbons", "threads", "clu", "splats"))
 _DEBUG_KEYS = frozenset((
     "camera_position",
     "camera_target",
@@ -133,7 +134,6 @@ def _validate_optional_debug(raw):
         "height",
         "control_zlo",
         "control_zhi",
-        "point_control",
     ):
         if key in raw:
             out[key] = _finite_number(raw[key], f"view_camera.debug.{key}")
@@ -175,38 +175,6 @@ def validate_view_camera(raw):
     if not (0.0 <= tlo <= thi <= 1.0):
         raise RuntimeError("view_camera effective t bounds must satisfy 0 <= lo <= hi <= 1")
 
-    point_world_size = _finite_number(raw.get("point_world_size"), "view_camera.point_world_size")
-    point_scale = _finite_number(raw.get("point_scale"), "view_camera.point_scale")
-    point_min_fraction = _finite_number(
-        raw.get("point_min_fraction"), "view_camera.point_min_fraction"
-    )
-    point_max_fraction = _finite_number(
-        raw.get("point_max_fraction"), "view_camera.point_max_fraction"
-    )
-    if not (0.0004 <= point_world_size <= 0.016):
-        raise RuntimeError("view_camera.point_world_size must be in [0.0004, 0.016]")
-    if point_scale < 0.5:
-        raise RuntimeError("view_camera.point_scale must be >= 0.5")
-    if not (0.0 < point_min_fraction <= point_max_fraction <= 1.0):
-        raise RuntimeError(
-            "view_camera point fractions must satisfy 0 < min <= max <= 1"
-        )
-
-    if raw.get("style") != "solid":
-        raise RuntimeError("ViewSnap v1 requires view_camera.style=solid")
-    show = raw.get("show")
-    if not isinstance(show, dict) or set(show) != _SHOW_KEYS:
-        raise RuntimeError("view_camera.show must contain exactly points/ribbons/threads/clu/splats")
-    if any(not isinstance(show[key], bool) for key in _SHOW_KEYS):
-        raise RuntimeError("view_camera.show values must be booleans")
-    if not show["points"]:
-        raise RuntimeError("ViewSnap requires visible points")
-    unsupported = [key for key in ("ribbons", "threads", "clu", "splats") if show[key]]
-    if unsupported:
-        raise RuntimeError(
-            "ViewSnap v1 does not support visible " + ", ".join(unsupported)
-        )
-
     frame = raw.get("frame")
     if not isinstance(frame, dict) or set(frame) != {"aspect", "crop"}:
         raise RuntimeError("view_camera.frame must contain exactly aspect and crop")
@@ -224,12 +192,6 @@ def validate_view_camera(raw):
         "slices": slices,
         "effective_tlo": tlo,
         "effective_thi": thi,
-        "point_world_size": point_world_size,
-        "point_scale": point_scale,
-        "point_min_fraction": point_min_fraction,
-        "point_max_fraction": point_max_fraction,
-        "style": "solid",
-        "show": {key: show[key] for key in ("points", "ribbons", "threads", "clu", "splats")},
         "frame": {"aspect": 1.0, "crop": "center_square"},
     }
     debug = _validate_optional_debug(raw.get("debug"))
@@ -240,7 +202,21 @@ def validate_view_camera(raw):
 
 def camera_execution_subset(camera):
     normalized = validate_view_camera(camera)
-    return {key: value for key, value in normalized.items() if key not in ("debug", "show", "style")}
+    return {
+        key: normalized[key]
+        for key in (
+            "version",
+            "projection",
+            "matrix_layout",
+            "model_view_matrix",
+            "projection_matrix",
+            "vertical",
+            "slices",
+            "effective_tlo",
+            "effective_thi",
+            "frame",
+        )
+    }
 
 
 def _canonical_digest_value(value):

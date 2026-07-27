@@ -25,19 +25,25 @@ from logical_sections import (
     MAX_LOGICAL_SECTIONS,
     build_logical_section_items,
     build_solve_source_manifest,
-    coeff_row_bytes,
     compute_safe_sectioning,
     normalize_section_mode,
-    param_row_bytes,
     root_row_bytes,
-    section_source_row_bytes,
     summarize_chunk_items,
     validate_section_count,
     write_solve_source_manifest,
 )
+from color_artifact_meta import load_color_artifact_head, parse_root_transforms
 from palette_names import is_valid_palette_name, normalize_palette_display_name
 from color_render_contract import DEFAULT_BACKGROUND_COLOR, normalize_background_color, validate_color_output_contract
-from shared import BUCKET, BILEVEL_SPARSE_PIPELINE, REF_SIZE, parse_body, ok_response
+from raw_sidecar import RAW_SIDECAR_VERSION, validate_raw_sidecar
+from shared import (
+    BUCKET,
+    BILEVEL_SPARSE_PIPELINE,
+    REF_SIZE,
+    ok_response,
+    parse_body,
+    parse_boolish,
+)
 from solve_score_chain import (
     compile_solve_score_chain,
     emit_solve_score_metadata,
@@ -49,22 +55,14 @@ from solve_score_chain import (
 )
 from pipeline_programs import root_program_for_run, solve_score_program_for_run
 from view_camera import (
-    camera_execution_subset,
     camera_execution_hash,
     fragment_contract,
     validate_view_camera,
 )
-from view_snap_calibration import (
-    calibration_artifact_mode,
-    fixture_admission_digest,
-    load_calibration_artifact,
-)
 from view_snap_cost_model import (
     MIB,
     enforce_hard_resource_limits,
-    enforce_wall_time_limits,
     estimate_camera_sections,
-    estimate_camera_wall_times,
 )
 
 s3 = boto3.client("s3")
@@ -99,8 +97,9 @@ def _view_snap_execution_config():
         if value <= 0:
             raise RuntimeError(f"{env_name} must be a positive integer")
         values[key] = value
-    # Solve-score execution is inside Raster and uses the same calibrated
-    # native thread shape; it is not an independently tunable camera input.
+    # View reprojection does no score evaluation. Keep the legacy field
+    # coherent for render-execution metadata while the worker uses only the
+    # raster thread count.
     values["solve_score_threads"] = values["raster_mt_threads"]
     return values
 
@@ -137,151 +136,157 @@ def _view_snap_deployed_limits():
     }
 
 
-def _view_snap_fixture_source_identity(solve_source_manifest):
-    """Bind a calibration fixture to every object the native reader consumes."""
+def _read_s3_json(key, label):
+    key = str(key or "").strip()
+    if not key:
+        raise RuntimeError(f"{label} key is missing")
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+        payload = json.loads(obj["Body"].read())
+    except Exception as exc:
+        raise RuntimeError(f"could not read {label} from s3://{BUCKET}/{key}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label} must be a JSON object")
+    return payload
 
-    manifest = dict(solve_source_manifest or {})
-    identity_manifest = {
-        key: value
-        for key, value in manifest.items()
-        if key not in {"j", "job_id"}
+
+def _metadata_number(meta, key, *, default=None):
+    value = (meta or {}).get(key)
+    if value in ("", None):
+        if default is not None:
+            return default
+        raise RuntimeError(f"source Color metadata is missing {key}")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"source Color metadata {key} must be numeric") from exc
+    if not math.isfinite(number):
+        raise RuntimeError(f"source Color metadata {key} must be finite")
+    return number
+
+
+def _score_program_has_explicit_outputs(program):
+    body = str(program or "").strip()
+    if body.startswith("v2;"):
+        body = body[3:]
+    return any(
+        token.strip() in ("emit", "emit_norm", "emit_none")
+        for token in body.split(";")
+    )
+
+
+def _load_view_score_source(job_id, artifact_id, *, full_n, expected_steps):
+    """Resolve one immutable Color artifact as the complete View score source."""
+
+    head = load_color_artifact_head(s3, BUCKET, job_id, artifact_id)
+    meta = dict(head.get("metadata") or {})
+    if str(meta.get("artifact_id") or artifact_id).strip() != artifact_id:
+        raise RuntimeError("source Color artifact metadata identity mismatch")
+
+    raw_key = str(meta.get("raw_key") or "").strip()
+    raw_meta_key = str(meta.get("raw_meta_key") or "").strip()
+    if not raw_key or not raw_meta_key:
+        raise RuntimeError(
+            f"Color artifact {artifact_id} has no reusable raw sidecar; re-render it"
+        )
+    sidecar = validate_raw_sidecar(
+        _read_s3_json(raw_meta_key, "source Color raw sidecar"),
+        expected_raw_key=raw_key,
+        expected_artifact_family="color",
+        feature="ViewRender",
+    )
+    if sidecar["version"] < RAW_SIDECAR_VERSION:
+        raise RuntimeError(
+            f"Color artifact {artifact_id} has no stored per-step scores; re-render it"
+        )
+    if sidecar["artifact_id"] != artifact_id:
+        raise RuntimeError(
+            "source Color raw sidecar identity mismatch: "
+            f"expected {artifact_id!r}, got {sidecar['artifact_id']!r}"
+        )
+    if sidecar["step_scores_grid_n"] != int(full_n):
+        raise RuntimeError(
+            "source Color step-score grid mismatch: "
+            f"artifact={sidecar['step_scores_grid_n']}, calculation={int(full_n)}"
+        )
+    if sidecar["step_count"] != int(expected_steps):
+        raise RuntimeError(
+            "source Color step-score count mismatch: "
+            f"artifact={sidecar['step_count']}, calculation={int(expected_steps)}"
+        )
+    channels = int(sidecar["channels"])
+    if channels not in (1, 3):
+        raise RuntimeError(
+            f"ViewRender supports stored score channels 1 or 3, got {channels}"
+        )
+    expected_bytes = int(sidecar["step_count"]) * channels
+    try:
+        score_head = s3.head_object(
+            Bucket=BUCKET,
+            Key=sidecar["step_scores_key"],
+        )
+        actual_bytes = int(score_head.get("ContentLength") or 0)
+    except Exception as exc:
+        raise RuntimeError(
+            "source Color per-step score object is unreadable: "
+            f"s3://{BUCKET}/{sidecar['step_scores_key']}"
+        ) from exc
+    if actual_bytes != expected_bytes:
+        raise RuntimeError(
+            "source Color per-step score object has the wrong size: "
+            f"expected {expected_bytes} bytes, got {actual_bytes}"
+        )
+
+    viewport = {
+        "min_re": _metadata_number(meta, "min_re"),
+        "max_re": _metadata_number(meta, "max_re"),
+        "min_im": _metadata_number(meta, "min_im"),
+        "max_im": _metadata_number(meta, "max_im"),
     }
-    required_by_key = {}
-    sources = dict(manifest.get("s") or manifest.get("sources") or {})
-    for family in ("slv", "cf", "pm"):
-        source = dict(sources.get(family) or {})
-        row_bytes = int(source.get("r") or source.get("row_bytes") or 0)
-        keys = list(source.get("k") or source.get("keys") or [])
-        segments = list(source.get("g") or source.get("segments") or [])
-        if row_bytes <= 0:
-            continue
-        for segment in segments:
-            if isinstance(segment, dict):
-                key = str(segment.get("key") or "").strip()
-                source_start = int(segment.get("source_solve_start") or 0)
-                source_count = int(segment.get("solve_count") or 0)
-            else:
-                try:
-                    key_idx, _solve_start, source_count, source_start = segment[:4]
-                    key = str(keys[int(key_idx)] or "").strip()
-                except (IndexError, TypeError, ValueError) as exc:
-                    raise RuntimeError(
-                        f"invalid ViewSnap fixture {family} source segment: {segment!r}"
-                    ) from exc
-            if not key or source_start < 0 or source_count <= 0:
-                raise RuntimeError(
-                    f"invalid ViewSnap fixture {family} source segment: {segment!r}"
-                )
-            required = (source_start + source_count) * row_bytes
-            required_by_key[key] = max(required_by_key.get(key, 0), required)
+    if not (
+        viewport["max_re"] > viewport["min_re"]
+        and viewport["max_im"] > viewport["min_im"]
+    ):
+        raise RuntimeError("source Color artifact has invalid viewport bounds")
 
-    if not required_by_key:
-        raise RuntimeError("ViewSnap calibration fixture has no source objects")
-
-    objects = []
-    for key in sorted(required_by_key):
-        try:
-            head = s3.head_object(Bucket=BUCKET, Key=key)
-        except Exception as exc:
-            raise RuntimeError(
-                f"ViewSnap calibration fixture source is unreadable: s3://{BUCKET}/{key}"
-            ) from exc
-        size = int(head.get("ContentLength") or 0)
-        required = int(required_by_key[key])
-        if size < required:
-            raise RuntimeError(
-                "ViewSnap calibration fixture source is truncated: "
-                f"s3://{BUCKET}/{key} has {size} bytes, requires {required}"
-            )
-        etag = str(head.get("ETag") or "").strip().strip('"')
-        version_id = str(head.get("VersionId") or "").strip()
-        checksum = str(head.get("ChecksumSHA256") or "").strip()
-        if not (checksum or version_id or etag):
-            raise RuntimeError(
-                "ViewSnap calibration fixture source has no immutable content identity: "
-                f"s3://{BUCKET}/{key}"
-            )
-        row = {
-            "key": key,
-            "size_bytes": size,
-            "required_bytes": required,
-        }
-        if checksum:
-            row["checksum_sha256"] = checksum
-        if version_id:
-            row["version_id"] = version_id
-        if etag:
-            row["etag"] = etag
-        objects.append(row)
-
-    descriptor = {
-        "schema_version": 1,
-        "manifest_sha256": fixture_admission_digest(identity_manifest),
-        "objects": objects,
+    has_explicit_outputs = parse_boolish(
+        meta.get(
+            "score_output_has_explicit_outputs",
+            _score_program_has_explicit_outputs(sidecar["score_program"]),
+        ),
+        False,
+    )
+    contract = {
+        "family": "solve_score",
+        "version": 2,
+        "metrics": [dict(row) for row in sidecar["clip_slots"]],
+        "clip_slots": [dict(row) for row in sidecar["clip_slots"]],
+        "score_program": sidecar["score_program"],
+        "score_output_normalize": bool(sidecar["score_output_normalize"]),
+        "score_output_clip_lo": float(sidecar["score_output_clip_lo"]),
+        "score_output_clip_hi": float(sidecar["score_output_clip_hi"]),
+        "score_output_channel_count": channels,
+        "score_output_has_explicit_outputs": bool(has_explicit_outputs),
+        "score_output_channels": list(sidecar["output_channels"]),
+        "chain_fingerprint": sidecar["chain_fingerprint"],
+        "solve_score_spec_version": int(sidecar["solve_score_spec_version"]),
     }
     return {
-        "descriptor_sha256": fixture_admission_digest(descriptor),
-        "descriptor": descriptor,
-    }
-
-
-def _view_snap_fixture_payload(
-    *,
-    pix,
-    times,
-    degree,
-    n_coeffs,
-    channels,
-    camera,
-    fmt,
-    quality,
-    root_program_fingerprint,
-    solve_score_fingerprint,
-    solve_score_prelude,
-    section_items,
-    fused_params,
-    palette,
-    background_color,
-    source_identity,
-):
-    return {
-        "N": int(pix),
-        "times": int(times),
-        "degree": int(degree),
-        "n_coeffs": int(n_coeffs),
-        "channels": int(channels),
-        "view_projection": "camera",
-        "view_camera": camera_execution_subset(camera),
-        "format": str(fmt),
-        "quality": int(quality),
-        "root_program_fingerprint": str(root_program_fingerprint or ""),
-        "solve_score_program_fingerprint": str(solve_score_fingerprint or ""),
-        "prelude": {
-            "slv": int(solve_score_prelude.get("slv") or 0),
-            "cf": int(solve_score_prelude.get("cf") or 0),
-            "pm": int(solve_score_prelude.get("pm") or 0),
+        "head": head,
+        "metadata": meta,
+        "sidecar": sidecar,
+        "viewport": viewport,
+        "score_source": {
+            "mode": "artifact_step_scores",
+            "key": sidecar["step_scores_key"],
+            "step_count": int(sidecar["step_count"]),
+            "grid_n": int(sidecar["step_scores_grid_n"]),
+            "channels": channels,
+            "size_bytes": expected_bytes,
+            "source_artifact_id": artifact_id,
+            "source_raw_meta_key": raw_meta_key,
+            "contract": contract,
         },
-        "sections": [
-            {
-                "section_idx": int(item.get("section_idx") or 0),
-                "step_start": int(item.get("step_start") or 0),
-                "step_count": int(item.get("step_count") or 0),
-            }
-            for item in section_items
-        ],
-        "execution": {
-            "raster_mt_threads": int(fused_params["raster_mt_threads"]),
-            "solve_score_threads": int(fused_params["solve_score_threads"]),
-            "raster_workers": int(fused_params["raster_workers"]),
-            "finalize_workers": int(fused_params["finalize_workers"]),
-        },
-        "output": {
-            "color_interpretation": str(fused_params["color_interpretation"]),
-            "solve_score_normalize": bool(fused_params["solve_score_normalize"]),
-            "palette": str(palette),
-            "background_color": str(background_color),
-        },
-        "source_identity": source_identity,
     }
 
 
@@ -391,7 +396,6 @@ def _compact_section_ranges(section_items, *, include_camera_estimate=False):
                     "fragment_bytes_upper",
                     "raster_memory_bytes",
                     "raster_tmp_bytes",
-                    "work_units",
                 )
                 if key in camera_estimate
             }
@@ -676,17 +680,27 @@ def _build_fused_color_plan(
     }
     for key, default in defaults.items():
         fused_params[key] = rp.get(key, default)
-    # Views re-map only the plot pixel; validate here so a bad
-    # request dies at plan time, not inside a raster section
+    # Views re-map only the plot pixel; validate here so a bad request dies
+    # at plan time, not inside one of many raster sections.
     fused_params["view_projection"] = str(fused_params.get("view_projection") or "plan").strip().lower()
     if fused_params["view_projection"] not in (
-        "plan", "front", "rear", "left", "right", "radial", "isometric", "camera"
+        "plan",
+        "front",
+        "rear",
+        "left",
+        "right",
+        "radial",
+        "isometric",
+        "camera",
     ):
         raise RuntimeError(
             "view_projection must be "
-            f"plan/front/rear/left/right/radial/isometric/camera, got {fused_params['view_projection']!r}")
+            "plan/front/rear/left/right/radial/isometric/camera, "
+            f"got {fused_params['view_projection']!r}"
+        )
+    is_camera_view = fused_params["view_projection"] == "camera"
     camera = fused_params.get("view_camera")
-    if fused_params["view_projection"] == "camera":
+    if is_camera_view:
         camera = validate_view_camera(camera)
         requested_vertical = str(fused_params.get("view_vertical") or "").strip().lower()
         if view_vertical_supplied and requested_vertical != camera["vertical"]:
@@ -698,7 +712,9 @@ def _build_fused_color_plan(
         fused_params["view_camera"] = camera
     else:
         if camera not in (None, {}):
-            raise RuntimeError("view_camera is only valid for view_projection=camera")
+            raise RuntimeError(
+                "view_camera is only valid for view_projection=camera"
+            )
         fused_params["view_camera"] = {}
         fused_params["view_vertical"] = str(fused_params.get("view_vertical") or "t2").strip().lower()
     if fused_params["view_vertical"] not in ("t1", "t2"):
@@ -715,14 +731,85 @@ def _build_fused_color_plan(
         raise RuntimeError("source_color_artifact_id is only valid for ViewRender")
     fused_params["source_color_artifact_id"] = source_color_artifact_id
     source_sculpture_id = str(fused_params.get("source_sculpture_id") or "").strip()
-    if fused_params["view_projection"] == "camera":
+    if is_camera_view:
         if not source_sculpture_id:
-            raise RuntimeError("ViewSnap requires source_sculpture_id")
+            raise RuntimeError("SnapRender requires source_sculpture_id")
         if not COLOR_ARTIFACT_ID_RE.fullmatch(source_sculpture_id):
             raise RuntimeError(f"invalid source_sculpture_id: {source_sculpture_id!r}")
     elif source_sculpture_id:
-        raise RuntimeError("source_sculpture_id is only valid for view_projection=camera")
+        raise RuntimeError(
+            "source_sculpture_id is only valid for "
+            "view_projection=camera"
+        )
     fused_params["source_sculpture_id"] = source_sculpture_id
+
+    view_source = None
+    if is_view:
+        if not full_n or int(full_n) < 2:
+            raise RuntimeError(f"ViewRender requires calc N >= 2, got {full_n}")
+        expected_view_steps = int(full_n) * int(full_n) * int(times)
+        if int(chunk_summary["total_solves"]) != expected_view_steps:
+            raise RuntimeError(
+                "ViewRender requires complete source steps: "
+                f"chunks describe {int(chunk_summary['total_solves'])}, "
+                f"expected N*N*times={expected_view_steps}"
+            )
+        view_source = _load_view_score_source(
+            job_id,
+            source_color_artifact_id,
+            full_n=full_n,
+            expected_steps=expected_view_steps,
+        )
+        source_meta = view_source["metadata"]
+        source_sidecar = view_source["sidecar"]
+        viewport = dict(view_source["viewport"])
+        fused_params.update({
+            "view_mode": "explicit",
+            "min_re": viewport["min_re"],
+            "max_re": viewport["max_re"],
+            "min_im": viewport["min_im"],
+            "max_im": viewport["max_im"],
+            "quantile": _metadata_number(
+                source_meta,
+                "quantile",
+                default=float(fused_params.get("quantile") or 0.0),
+            ),
+            "shim": _metadata_number(
+                source_meta,
+                "shim",
+                default=float(fused_params.get("shim") or 0.05),
+            ),
+            "square_extent": _metadata_number(
+                source_meta,
+                "square_extent",
+                default=float(fused_params.get("square_extent") or 2.0),
+            ),
+            "rotation": _metadata_number(source_meta, "rotation", default=0.0),
+            "palette": str(source_meta.get("palette") or "inferno"),
+            "palette_display_name": str(
+                source_meta.get("palette_display_name") or ""
+            ),
+            "background_color": str(
+                source_meta.get("background_color") or DEFAULT_BACKGROUND_COLOR
+            ),
+            "fmt": str(source_meta.get("format") or "jpeg"),
+            "quality": source_meta.get("quality", 90),
+            "color_interpretation": source_sidecar["interpretation"],
+            "solve_score_chain": source_sidecar["score_chain"],
+            "solve_score_program_source_text": source_sidecar["score_source_text"],
+            "solve_score_normalize": bool(
+                source_sidecar["score_output_normalize"]
+            ),
+            "root_program_source_text": str(
+                source_meta.get("root_program_source_text") or ""
+            ),
+            "root_program": None,
+            "root_transforms": parse_root_transforms(
+                source_meta.get("root_transforms")
+            ),
+            "save_associated_palette": False,
+        })
+
     root_program_payload = _apply_root_program_to_params(fused_params)
 
     fused_params["color_mode"] = str(fused_params.get("color_mode") or "solve_score").strip().lower()
@@ -786,9 +873,9 @@ def _build_fused_color_plan(
         fused_params.get("finalize_workers", 16),
         "finalize_workers",
     )
-    if fused_params["view_projection"] == "camera":
-        # ViewSnap admission and telemetry are calibrated for one fixed
-        # execution shape; request values are not competing authorities.
+    if is_camera_view:
+        # SnapRender uses one stable execution shape. Runtime measurements are
+        # telemetry only and never decide whether a request may run.
         fused_params.update(_view_snap_execution_config())
     fused_params["save_associated_palette"] = _validate_boolish(
         fused_params.get("save_associated_palette", False),
@@ -796,12 +883,12 @@ def _build_fused_color_plan(
         False,
     )
     if (
-        fused_params["view_projection"] == "camera"
+        is_view
         and fused_params["save_associated_palette"]
     ):
         raise RuntimeError(
-            "ViewSnap does not support save_associated_palette; "
-            "camera admission prices only the Views artifact"
+            "ViewRender does not support save_associated_palette; "
+            "it reuses the selected Color artifact's stored scores"
         )
 
     fused_input_mode = _validate_raster_input_mode(fused_params.get("raster_input_mode", "sectioned"))
@@ -827,8 +914,6 @@ def _build_fused_color_plan(
             "for ExtractPalette and associated-palette parity"
         )
     if is_view:
-        if full_n < 2:
-            raise RuntimeError(f"ViewRender requires calc N >= 2, got {full_n}")
         if full_n > MAX_PIX:
             raise RuntimeError(
                 f"ViewRender calc N={full_n} exceeds the renderer limit {MAX_PIX}"
@@ -843,31 +928,103 @@ def _build_fused_color_plan(
             "and step_scores.raw are well-defined"
         )
 
-    if fused_params.get("solve_score_chain") in ("", None, []) and not str(fused_params.get("solve_score_program_source_text") or "").strip() and not isinstance(fused_params.get("solve_score_program"), dict):
-        raise RuntimeError("fused color requires solve_score_chain or solve_score_program_source_text")
-    solve_score_compiled = solve_score_program_for_run(fused_params)
-    solve_score_chain_internal = solve_score_compiled["chain"]
-    solve_score_chain_public = solve_score_compiled.get("chain_public") or public_solve_score_chain(solve_score_chain_internal)
-    solve_metric = solve_score_compiled["metric"]
-    solve_score_quantile = solve_score_compiled["quantile"]
-    solve_score_omega = solve_score_compiled["omega"]
-    solve_score_omega_enabled = solve_score_compiled["omega_enabled"]
-    solve_score_uses_coeff = bool(solve_score_uses_source(solve_score_compiled, "cf"))
-    solve_score_uses_param = bool(solve_score_uses_source(solve_score_compiled, "pm"))
-    solve_score_prelude = solve_score_lag_prelude_by_source(solve_score_compiled)
-    solve_score_output_channel_count = int(solve_score_compiled.get("output_channel_count") or 1)
+    if view_source:
+        source_contract = view_source["score_source"]["contract"]
+        source_sidecar = view_source["sidecar"]
+        solve_score_chain_internal = list(source_sidecar["score_chain"])
+        solve_score_chain_public = list(source_sidecar["score_chain"])
+        first_slot = source_sidecar["clip_slots"][0]
+        solve_metric = str(first_slot["metric"])
+        solve_score_quantile = source_meta.get("solve_score_quantile", "")
+        solve_score_omega = source_meta.get("solve_score_omega", "")
+        solve_score_omega_enabled = parse_boolish(
+            source_meta.get("solve_score_omega_enabled"),
+            True,
+        )
+        solve_score_output_channel_count = int(source_contract[
+            "score_output_channel_count"
+        ])
+        solve_score_compiled = {
+            "chain": solve_score_chain_internal,
+            "chain_public": solve_score_chain_public,
+            "metric": solve_metric,
+            "quantile": solve_score_quantile,
+            "omega": solve_score_omega,
+            "omega_enabled": solve_score_omega_enabled,
+            "source_text": source_sidecar["score_source_text"],
+            "program_spec": source_sidecar["score_program"],
+            "has_explicit_outputs": bool(
+                source_contract["score_output_has_explicit_outputs"]
+            ),
+            "output_channel_count": solve_score_output_channel_count,
+            "output_channels": list(source_sidecar["output_channels"]),
+            "uses_lag": False,
+            "max_lag": 0,
+        }
+        solve_score_uses_coeff = False
+        solve_score_uses_param = False
+        solve_score_prelude = {"slv": 0, "cf": 0, "pm": 0}
+        requested_interpretation = source_sidecar["interpretation"]
+        requested_output_channels = source_sidecar["output_channels"]
+        source_normalize = bool(source_sidecar["score_output_normalize"])
+    else:
+        if (
+            fused_params.get("solve_score_chain") in ("", None, [])
+            and not str(
+                fused_params.get("solve_score_program_source_text") or ""
+            ).strip()
+            and not isinstance(fused_params.get("solve_score_program"), dict)
+        ):
+            raise RuntimeError(
+                "fused color requires solve_score_chain or "
+                "solve_score_program_source_text"
+            )
+        solve_score_compiled = solve_score_program_for_run(fused_params)
+        solve_score_chain_internal = solve_score_compiled["chain"]
+        solve_score_chain_public = (
+            solve_score_compiled.get("chain_public")
+            or public_solve_score_chain(solve_score_chain_internal)
+        )
+        solve_metric = solve_score_compiled["metric"]
+        solve_score_quantile = solve_score_compiled["quantile"]
+        solve_score_omega = solve_score_compiled["omega"]
+        solve_score_omega_enabled = solve_score_compiled["omega_enabled"]
+        solve_score_uses_coeff = bool(
+            solve_score_uses_source(solve_score_compiled, "cf")
+        )
+        solve_score_uses_param = bool(
+            solve_score_uses_source(solve_score_compiled, "pm")
+        )
+        solve_score_prelude = solve_score_lag_prelude_by_source(
+            solve_score_compiled
+        )
+        solve_score_output_channel_count = int(
+            solve_score_compiled.get("output_channel_count") or 1
+        )
+        requested_interpretation = fused_params.get(
+            "color_interpretation",
+            fused_params.get("score_output_interpretation", "scalar_lut"),
+        )
+        requested_output_channels = (
+            solve_score_compiled.get("output_channels") or []
+        )
+        source_normalize = None
     color_contract = validate_color_output_contract(
-        interpretation=fused_params.get("color_interpretation", fused_params.get("score_output_interpretation", "scalar_lut")),
+        interpretation=requested_interpretation,
         output_channel_count=solve_score_output_channel_count,
-        output_channels=solve_score_compiled.get("output_channels") or [],
+        output_channels=requested_output_channels,
     )
     solve_score_output_interpretation = color_contract["interpretation"]
     solve_score_output_channels = color_contract["channels"]
     render_warnings = list(color_contract.get("warnings") or [])
-    solve_score_normalize = _validate_boolish(
-        fused_params.get("solve_score_normalize", False),
-        "solve_score_normalize",
-        False,
+    solve_score_normalize = (
+        source_normalize
+        if source_normalize is not None
+        else _validate_boolish(
+            fused_params.get("solve_score_normalize", False),
+            "solve_score_normalize",
+            False,
+        )
     )
     if solve_score_compiled.get("has_explicit_outputs") and solve_score_normalize:
         raise RuntimeError("score normalization checkbox is legacy-only; explicit emit/emit_norm programs own normalization")
@@ -878,8 +1035,22 @@ def _build_fused_color_plan(
     render_fragment_contract = fragment_contract(
         fused_params["view_projection"],
         solve_score_output_channel_count,
-        has_explicit_outputs=bool(solve_score_compiled.get("has_explicit_outputs")),
+        has_explicit_outputs=bool(
+            view_source["score_source"]["contract"][
+                "score_output_has_explicit_outputs"
+            ]
+            if view_source
+            else solve_score_compiled.get("has_explicit_outputs")
+        ),
     )
+    if view_source:
+        view_source["score_source"]["contract"].update({
+            "fragment_pair_encoding": render_fragment_contract["encoding"],
+            "fragment_encoding": render_fragment_contract["encoding"],
+            "fragment_record_size_bytes": render_fragment_contract[
+                "record_size_bytes"
+            ],
+        })
     solve_source_manifest = build_solve_source_manifest(
         chunk_items,
         job_id=job_id,
@@ -891,67 +1062,26 @@ def _build_fused_color_plan(
 
     pix = fused_params["pix"]
     camera_admission = {}
-    if fused_params["view_projection"] == "camera":
-        expected_camera_steps = int(full_n) * int(full_n) * int(times)
-        if int(chunk_summary["total_solves"]) != expected_camera_steps:
-            raise RuntimeError(
-                "ViewSnap requires complete source steps: "
-                f"chunks describe {int(chunk_summary['total_solves'])}, "
-                f"expected N*N*times={expected_camera_steps}"
-            )
-        source_row_bytes = section_source_row_bytes(
-            degree,
-            calc_n_coeffs,
-            include_coeff=solve_score_uses_coeff,
-            include_param=solve_score_uses_param,
-        )
-        prelude_row_bytes = (
-            (root_row_bytes(degree) if int(solve_score_prelude["slv"]) > 0 else 0)
-            + (
-                coeff_row_bytes(calc_n_coeffs)
-                if solve_score_uses_coeff and int(solve_score_prelude["cf"]) > 0
-                else 0
-            )
-            + (
-                param_row_bytes()
-                if solve_score_uses_param and int(solve_score_prelude["pm"]) > 0
-                else 0
-            )
-        )
+    if is_camera_view:
+        source_row_bytes = root_row_bytes(degree)
         deployed_limits = _view_snap_deployed_limits()
-        calibration_mode = calibration_artifact_mode()
-        timing_admission_enabled = calibration_mode in ("calibration", "production")
-        production_calibration = None
-        fixture_source_identity = {}
-        if calibration_mode == "production":
-            production_calibration = load_calibration_artifact()
-        elif calibration_mode == "calibration":
-            if fused_params["raster_section_mode"] == "logical_sections_auto":
-                raise RuntimeError(
-                    "ViewSnap calibration fixtures require an explicit raster_section_count"
-                )
-            fixture_source_identity = _view_snap_fixture_source_identity(
-                solve_source_manifest
-            )
 
-        def evaluate_camera_sections(section_count, *, raster_only=False):
+        def evaluate_camera_sections(section_count):
             items = build_logical_section_items(
                 chunk_items,
                 section_count=section_count,
                 degree=degree,
                 n_coeffs=calc_n_coeffs,
-                include_coeff=solve_score_uses_coeff,
-                include_param=solve_score_uses_param,
+                include_coeff=False,
+                include_param=False,
             )
             estimate = estimate_camera_sections(
                 items,
                 pix=pix,
                 degree=degree,
-                n_coeffs=calc_n_coeffs,
                 channels=solve_score_output_channel_count,
                 times=times,
                 source_row_bytes=source_row_bytes,
-                prelude_row_bytes=prelude_row_bytes,
                 camera=camera,
             )
             limits = enforce_hard_resource_limits(
@@ -961,58 +1091,7 @@ def _build_fused_color_plan(
                 finalize_memory_bytes=deployed_limits["finalize_memory_bytes"],
                 finalize_tmp_bytes=deployed_limits["finalize_tmp_bytes"],
             )
-            fixture_digest = ""
-            calibration = None
-            wall = {}
-            gates = {}
-            if timing_admission_enabled:
-                fixture_payload = _view_snap_fixture_payload(
-                    pix=pix,
-                    times=times,
-                    degree=degree,
-                    n_coeffs=calc_n_coeffs,
-                    channels=solve_score_output_channel_count,
-                    camera=camera,
-                    fmt=fused_params["fmt"],
-                    quality=fused_params["quality"],
-                    root_program_fingerprint=root_program_payload.get("fingerprint", ""),
-                    solve_score_fingerprint=solve_score_compiled.get("fingerprint", ""),
-                    solve_score_prelude=solve_score_prelude,
-                    section_items=items,
-                    fused_params=fused_params,
-                    palette=palette,
-                    background_color=background_color,
-                    source_identity=fixture_source_identity,
-                )
-                fixture_digest = fixture_admission_digest(fixture_payload)
-                calibration = production_calibration or load_calibration_artifact(
-                    fixture_admission_digest=fixture_digest
-                )
-                wall = estimate_camera_wall_times(
-                    estimate,
-                    section_count=len(items),
-                    fmt=fused_params["fmt"],
-                    quality=fused_params["quality"],
-                    calibration=calibration,
-                )
-                gates = enforce_wall_time_limits(
-                    wall,
-                    calibration=calibration,
-                    stages=(
-                        ("raster_native", "raster_handler")
-                        if raster_only
-                        else None
-                    ),
-                )
-            return (
-                items,
-                estimate,
-                limits,
-                wall,
-                gates,
-                fixture_digest,
-                calibration,
-            )
+            return items, estimate, limits
 
         if fused_params["raster_section_mode"] == "logical_sections_auto":
             high = min(
@@ -1020,75 +1099,43 @@ def _build_fused_color_plan(
                 MAX_LOGICAL_SECTIONS,
             )
             # Resource-only admission must still use the Step Functions Map.
-            # Preserve at least the source chunk fan-out and fill the configured
-            # worker pool; resource or optional timing gates may raise it further.
+            # Fill the configured worker pool; hard per-section byte limits may
+            # raise it further. Source chunks are input spans, not required
+            # output partitions: multispan_sectioned workers can consume several
+            # chunks, and forcing one section per chunk multiplies full-frame
+            # camera fragments that Finalize must merge.
             baseline_sections = min(
                 high,
                 max(
                     1,
-                    len(chunk_items),
                     int(fused_params["raster_workers"]),
                 ),
             )
-            # Prove the most finely sectioned legal plan fits before binary
-            # searching for the smallest safe fan-out. If this fails, no
-            # larger section count exists to rescue the request.
-            (
-                best_items,
-                best_estimate,
-                best_limits,
-                best_wall,
-                _best_raster_gates,
-                best_fixture_digest,
-                best_calibration,
-            ) = evaluate_camera_sections(high, raster_only=True)
+            best_items, best_estimate, best_limits = evaluate_camera_sections(
+                high
+            )
             low = baseline_sections
             best_count = len(best_items)
             while low <= high:
                 mid = (low + high) // 2
                 try:
-                    (
-                        items,
-                        estimate,
-                        limits,
-                        wall,
-                        _raster_gates,
-                        candidate_digest,
-                        candidate_calibration,
-                    ) = evaluate_camera_sections(mid, raster_only=True)
+                    items, estimate, limits = evaluate_camera_sections(mid)
                 except RuntimeError:
                     low = mid + 1
                     continue
                 best_count = len(items)
                 best_items, best_estimate, best_limits = items, estimate, limits
-                best_wall = wall
-                best_fixture_digest = candidate_digest
-                best_calibration = candidate_calibration
                 high = mid - 1
             raster_section_items = best_items
             selected_raster_sections = best_count
-            best_gates = (
-                enforce_wall_time_limits(
-                    best_wall,
-                    calibration=best_calibration,
-                )
-                if best_calibration is not None
-                else {}
-            )
         else:
             baseline_sections = None
             selected_raster_sections = fused_params["raster_section_count"]
             if selected_raster_sections in ("", None):
                 selected_raster_sections = 1
-            (
-                raster_section_items,
-                best_estimate,
-                best_limits,
-                best_wall,
-                best_gates,
-                best_fixture_digest,
-                best_calibration,
-            ) = evaluate_camera_sections(int(selected_raster_sections))
+            raster_section_items, best_estimate, best_limits = (
+                evaluate_camera_sections(int(selected_raster_sections))
+            )
             selected_raster_sections = len(raster_section_items)
 
         fused_params["raster_section_count_auto"] = int(selected_raster_sections)
@@ -1100,7 +1147,6 @@ def _build_fused_color_plan(
             "memory_mb": deployed_limits["raster_memory_mb"],
             "fixed_bytes": best_estimate["fixed_raster_bytes"],
             "row_bytes": source_row_bytes + solve_score_output_channel_count,
-            "prelude_row_bytes": prelude_row_bytes,
         }
         if baseline_sections is not None:
             raster_section_auto["baseline_section_count"] = int(
@@ -1108,20 +1154,10 @@ def _build_fused_color_plan(
             )
         camera_admission = {
             "model_version": 1,
-            "calibration_schema_version": (
-                best_calibration["schema_version"]
-                if best_calibration is not None
-                else None
-            ),
-            "calibration_mode": calibration_mode,
-            "calibration_cost_model_version": (
-                best_calibration["cost_model_version"]
-                if best_calibration is not None
-                else None
-            ),
-            "timing_admission_enforced": best_calibration is not None,
-            "fixture_admission_digest": best_fixture_digest,
+            "admission_basis": "deterministic_resources_only",
+            "score_source": "artifact_step_scores",
             "section_count": int(selected_raster_sections),
+            "source_chunk_count": len(chunk_items),
             "baseline_section_count": (
                 int(baseline_sections)
                 if baseline_sections is not None
@@ -1129,9 +1165,10 @@ def _build_fused_color_plan(
             ),
             "pixel_count": best_estimate["pixel_count"],
             "record_size_bytes": best_estimate["record_size_bytes"],
-            "max_point_side": best_estimate["footprint"]["max_point_side"],
-            "max_point_area": best_estimate["footprint"]["max_point_area"],
-            "pricing_depth": best_estimate["footprint"]["pricing_depth"],
+            "pixels_per_root_upper": best_estimate["projection"][
+                "pixels_per_root_upper"
+            ],
+            "pricing_depth": best_estimate["projection"]["pricing_depth"],
             "max_fragment_bytes": best_estimate["max_fragment_bytes"],
             "total_fragment_bytes": best_estimate["total_fragment_bytes"],
             "max_raster_memory_bytes": best_estimate["max_raster_memory_bytes"],
@@ -1139,14 +1176,8 @@ def _build_fused_color_plan(
             "finalize_memory_bytes": best_estimate["final_memory_bytes"],
             "finalize_tmp_bytes": best_estimate["final_tmp_bytes"],
             "step_scores_bytes": best_estimate["step_scores_bytes"],
-            "max_work_units": best_estimate["max_work_units"],
-            "total_work_units": best_estimate["total_work_units"],
-            "wall_seconds": {
-                key: value
-                for key, value in best_wall.items()
-                if key != "raster_sections"
-            },
-            "wall_gates": best_gates,
+            "max_candidate_roots": best_estimate["max_candidate_roots"],
+            "total_candidate_roots": best_estimate["total_candidate_roots"],
             "limits": {
                 **best_limits,
                 "memory_headroom_mb": deployed_limits["memory_headroom_mb"],
@@ -1196,15 +1227,22 @@ def _build_fused_color_plan(
         include_camera_estimate=True,
     )
 
-    solve_score_clip_key = _solve_score_scratch_key(
-        job_id,
-        solve_score_compiled,
-        fused_params.get("root_transforms", []),
-        score_normalize=solve_score_normalize,
-        root_program_fingerprint=root_program_payload.get("fingerprint", ""),
+    solve_score_clip_key = (
+        ""
+        if view_source
+        else _solve_score_scratch_key(
+            job_id,
+            solve_score_compiled,
+            fused_params.get("root_transforms", []),
+            score_normalize=solve_score_normalize,
+            root_program_fingerprint=root_program_payload.get(
+                "fingerprint",
+                "",
+            ),
+        )
     )
     solve_score = {
-        "enabled": True,
+        "enabled": not bool(view_source),
         "threads": fused_params["solve_score_threads"],
         "chain": solve_score_chain_public,
         "source_text": solve_score_compiled.get("source_text", ""),
@@ -1214,6 +1252,21 @@ def _build_fused_color_plan(
         "prelude_by_source": solve_score_prelude,
         "normalize": solve_score_normalize,
     }
+    score_source = (
+        dict(view_source["score_source"])
+        if view_source
+        else {
+            "mode": "computed",
+            "key": "",
+            "step_count": 0,
+            "grid_n": 0,
+            "channels": solve_score_output_channel_count,
+            "size_bytes": 0,
+            "source_artifact_id": "",
+            "source_raw_meta_key": "",
+            "contract": {},
+        }
+    )
 
     finalize = {
         "workers": fused_params["finalize_workers"],
@@ -1250,7 +1303,11 @@ def _build_fused_color_plan(
         "function_name": RASTER_MT_FUNCTION,
         "emit_raw_score_bins": True,
         "eligible": True,
-        "reason": "fused_solve_score",
+        "reason": (
+            "artifact_score_reprojection"
+            if view_source
+            else "fused_solve_score"
+        ),
     }
     if camera_admission:
         raster["camera_admission"] = camera_admission
@@ -1353,6 +1410,17 @@ def _build_fused_color_plan(
         "color_mode": "solve_score",
         "solve_score_normalize": "true" if solve_score_normalize else "false",
         "score_output_channel_count": str(solve_score_output_channel_count),
+        "score_output_has_explicit_outputs": (
+            "true"
+            if (
+                view_source["score_source"]["contract"][
+                    "score_output_has_explicit_outputs"
+                ]
+                if view_source
+                else solve_score_compiled.get("has_explicit_outputs")
+            )
+            else "false"
+        ),
         "score_output_interpretation": solve_score_output_interpretation,
         "raw_channels": str(solve_score_output_channel_count),
         "raw_layout": "u8_scalar_row_major" if solve_score_output_channel_count == 1 else "u8_packed_channels_row_major",
@@ -1385,26 +1453,44 @@ def _build_fused_color_plan(
             "image_key": artifact_prefix + f"image.{ext}",
             "preview_key": artifact_prefix + "preview.png",
             "prefix": artifact_prefix,
+            "score_source_mode": "artifact_step_scores",
+            "source_step_scores_key": score_source["key"],
+            "source_raw_meta_key": score_source["source_raw_meta_key"],
         })
-        if fused_params["view_projection"] == "camera":
+        if is_camera_view:
             artifact_meta.update({
                 "source_sculpture_id": source_sculpture_id,
                 "camera_snapshot_version": str(camera["version"]),
                 "view_camera": json.dumps(camera, sort_keys=True, separators=(",", ":")),
-                "view_style": "solid_points",
+                "camera_rasterization": "one_root_one_pixel_nearest_depth",
             })
     artifact_meta.update(_root_program_metadata(root_program_payload))
-    artifact_meta.update(
-        emit_solve_score_metadata(
-            "solve",
-            metric=solve_metric,
-            quantile=solve_score_quantile,
-            omega=solve_score_omega,
-            omega_enabled=solve_score_omega_enabled,
-            chain=solve_score_chain_internal,
-            include_legacy_scalars=False,
+    if view_source:
+        artifact_meta.update({
+            "solve_score_chain": json.dumps(
+                solve_score_chain_internal,
+                separators=(",", ":"),
+            ),
+            "solve_score_chain_fingerprint": source_sidecar[
+                "chain_fingerprint"
+            ],
+            "solve_score_spec_version": str(
+                source_sidecar["solve_score_spec_version"]
+            ),
+            "solve_score_quantile": str(solve_score_quantile or ""),
+        })
+    else:
+        artifact_meta.update(
+            emit_solve_score_metadata(
+                "solve",
+                metric=solve_metric,
+                quantile=solve_score_quantile,
+                omega=solve_score_omega,
+                omega_enabled=solve_score_omega_enabled,
+                chain=solve_score_chain_internal,
+                include_legacy_scalars=False,
+            )
         )
-    )
     artifact_meta["score_program"] = solve_score_compiled["program_spec"]
     artifact_meta["solve_score_program_source_text"] = solve_score_compiled.get("source_text", "")
     artifact_meta["score_output_channels"] = json.dumps(
@@ -1486,6 +1572,7 @@ def _build_fused_color_plan(
         "solve_source_manifest_bytes": solve_source_manifest_ref["bytes"],
         "physical_source_items": [],
         "solve_score": solve_score,
+        "score_source": score_source,
         "finalize": finalize,
         "raster": raster,
         "fragment_contract": render_fragment_contract,

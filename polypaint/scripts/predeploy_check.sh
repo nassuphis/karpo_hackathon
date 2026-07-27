@@ -46,10 +46,6 @@ echo "Running predeploy contract gate..."
 bash scripts/test-tsan-races.sh
 "${TEST_PYTHON[@]}" api_manifest.py --check
 "${TEST_PYTHON[@]}" deploy_manifest.py --check
-"${TEST_PYTHON[@]}" scripts/view_snap_calibration.py validate \
-    --artifact lambda/view_snap_calibration.json \
-    --allow-unconfigured \
-    --schema-only
 "${TEST_PYTHON[@]}" lambda/gen_program_profiles.py --check
 "${TEST_PYTHON[@]}" lambda/gen_merged_opcodes.py --check
 "${TEST_PYTHON[@]}" lambda/gen_param_vocab.py --check
@@ -186,9 +182,8 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
 	    tests/test_s3_error_taxonomy.py \
 	    tests/test_render_key_identity.py \
 	    tests/test_attach_palette_to_color_handler.py \
-	    tests/test_assemble_greyscale.py \
+    tests/test_assemble_greyscale.py \
     tests/test_view_camera.py \
-    tests/test_view_snap_calibration.py \
     tests/test_view_snap_cost_model.py \
 	    tests/test_autolevels_handler.py \
 	    tests/test_repair_preview_metadata.py \

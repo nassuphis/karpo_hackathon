@@ -45,6 +45,7 @@
       "re": 0,
       "im": 0,
       "pixel_center": [128, 128],
+      "raster_pixel": 32896,
       "depth": 2,
       "point_side": 2,
       "pixels": [32639, 32640, 32895, 32896]
@@ -54,6 +55,7 @@
       "re": 1,
       "im": 1,
       "pixel_center": [153.6, 115.2],
+      "raster_pixel": 29593,
       "depth": 2.5,
       "point_side": 1,
       "pixels": [29593]
@@ -63,6 +65,7 @@
       "re": -1,
       "im": -1,
       "pixel_center": [85.33333333333333, 85.33333333333334],
+      "raster_pixel": 21845,
       "depth": 1.5,
       "point_side": 2,
       "pixels": [21588, 21589, 21844, 21845]
@@ -72,6 +75,7 @@
       "re": 0.5,
       "im": 0,
       "pixel_center": [144, 80],
+      "raster_pixel": 20368,
       "depth": 2,
       "point_side": 2,
       "pixels": [20367, 20368, 20623, 20624]

@@ -369,32 +369,29 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("root_program_source.py", packaged["handler_render_plan.py"])
         self.assertIn("program_source_core.py", packaged["handler_render_plan.py"])
         self.assertIn("calc_chunks.py", packaged["handler_render_plan.py"])
+        self.assertIn("color_artifact_meta.py", packaged["handler_render_plan.py"])
+        self.assertIn("raw_sidecar.py", packaged["handler_render_plan.py"])
         self.assertIn("view_camera.py", packaged["handler_render_plan.py"])
-        self.assertIn("view_snap_calibration.py", packaged["handler_render_plan.py"])
-        self.assertIn("view_snap_calibration.json", packaged["handler_render_plan.py"])
         self.assertIn("view_snap_cost_model.py", packaged["handler_render_plan.py"])
-        self.assertIn(
-            'scripts/view_snap_calibration.py" validate',
-            DEPLOY_TEXT,
-        )
-        self.assertIn("--allow-unconfigured", DEPLOY_TEXT)
-        self.assertIn("--schema-only", PREDEPLOY_TEXT)
-        self.assertIn("verify_view_snap_deployment", DEPLOY_TEXT)
-        self.assertIn('"prepare-view-snap"', DEPLOY_TEXT)
-        self.assertIn('"promote-view-snap"', DEPLOY_TEXT)
-        self.assertIn('view_snap_calibration.py" prepare', DEPLOY_TEXT)
-        self.assertIn('view_snap_calibration.py" promote', DEPLOY_TEXT)
-        self.assertIn('"$RASTER_MT_NAME"', DEPLOY_TEXT)
-        self.assertIn('"$FINALIZE_MT_NAME"', DEPLOY_TEXT)
-        self.assertIn('"$RENDER_PLAN_NAME"', DEPLOY_TEXT)
+        self.assertNotIn("view_snap_calibration.py", DEPLOY_TEXT)
+        self.assertNotIn("view_snap_calibration.json", DEPLOY_TEXT)
+        self.assertNotIn("prepare-view-snap", DEPLOY_TEXT)
+        self.assertNotIn("promote-view-snap", DEPLOY_TEXT)
+        self.assertNotIn("verify_view_snap_deployment", DEPLOY_TEXT)
         self.assertIn("info.external_attr >> 16", DEPLOY_TEXT)
         for identity_var in (
             "VIEW_SNAP_RASTER_MEMORY_MB",
             "VIEW_SNAP_FINALIZE_MEMORY_MB",
             "VIEW_SNAP_RASTER_TMP_MB",
             "VIEW_SNAP_FINALIZE_TMP_MB",
+            "VIEW_SNAP_RASTER_THREADS",
+            "VIEW_SNAP_RASTER_WORKERS",
+            "VIEW_SNAP_FINALIZE_WORKERS",
         ):
-            self.assertIn(f'{identity_var}="', DEPLOY_TEXT)
+            self.assertRegex(
+                DEPLOY_TEXT,
+                rf"(?m)^{identity_var}=(?:\"[^\"]*\"|[^\s]+)$",
+            )
             self.assertRegex(
                 DEPLOY_TEXT,
                 rf"export [^\n]*\b{identity_var}\b|"

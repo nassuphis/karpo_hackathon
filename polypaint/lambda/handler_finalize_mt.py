@@ -47,6 +47,50 @@ FRAGMENT_PAIR_ENCODING = "u32le_u8_v1"
 FRAGMENT_MULTI_ENCODING = "u32le_pixel_idx_plus_u8_channels_v1"
 
 
+def _normalize_score_source(raw):
+    source = dict(raw or {})
+    mode = str(source.get("mode") or "computed").strip().lower()
+    if mode == "computed":
+        return {
+            "mode": "computed",
+            "key": "",
+            "step_count": 0,
+            "grid_n": 0,
+            "channels": 0,
+            "size_bytes": 0,
+        }
+    if mode != "artifact_step_scores":
+        raise RuntimeError(f"unsupported score_source.mode: {mode!r}")
+    key = str(source.get("key") or "").strip()
+    if not key:
+        raise RuntimeError("artifact score source requires key")
+    try:
+        step_count = int(source.get("step_count"))
+        grid_n = int(source.get("grid_n"))
+        channels = int(source.get("channels"))
+        size_bytes = int(source.get("size_bytes"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "artifact score source count/grid/channels/size must be integers"
+        ) from exc
+    if step_count < 1 or grid_n < 2 or channels not in (1, 3):
+        raise RuntimeError("artifact score source count/grid/channels are invalid")
+    if size_bytes != step_count * channels:
+        raise RuntimeError(
+            "artifact score source byte contract mismatch: "
+            f"size={size_bytes}, expected={step_count * channels}"
+        )
+    return {
+        **source,
+        "mode": mode,
+        "key": key,
+        "step_count": step_count,
+        "grid_n": grid_n,
+        "channels": channels,
+        "size_bytes": size_bytes,
+    }
+
+
 def _validate_finalize_workers(value):
     if value in (None, ""):
         value = os.environ.get("FINALIZE_MT_WORKERS", DEFAULT_FINALIZE_WORKERS)
@@ -709,6 +753,8 @@ def handler(event, context):
     associated_palette_degree = int(params.get("associated_palette_degree") or 0)
     render_execution = dict(params.get("render_execution") or {})
     metadata = dict(params.get("metadata") or {})
+    score_source = _normalize_score_source(params.get("score_source"))
+    reuse_stored_scores = score_source["mode"] == "artifact_step_scores"
     workers = _validate_finalize_workers(params.get("finalize_workers", DEFAULT_FINALIZE_WORKERS))
     if str(render_execution.get("raster_engine") or "") != "mt":
         raise RuntimeError(
@@ -737,6 +783,10 @@ def handler(event, context):
         )
     if channels not in (1, 3):
         raise RuntimeError(f"FinalizeMT v1 supports channels=1 or channels=3, got {channels}")
+    if reuse_stored_scores and int(score_source["channels"]) != channels:
+        raise RuntimeError(
+            "FinalizeMT stored-score channels disagree with fragment channels"
+        )
     color_contract = validate_color_output_contract(
         interpretation=clip_info["score_output_interpretation"],
         output_channel_count=channels,
@@ -745,6 +795,11 @@ def handler(event, context):
     clip_info["score_output_interpretation"] = color_contract["interpretation"]
     clip_info["score_output_channels"] = color_contract["channels"]
     render_warnings = list(color_contract.get("warnings") or [])
+    assemble_workers = (
+        1
+        if fragment_info["pair_encoding"] == CAMERA_FRAGMENT_ENCODING
+        else workers
+    )
     progress = {
         "phase": "finalize_mt",
         "source_item_count": source_item_count,
@@ -753,7 +808,10 @@ def handler(event, context):
         "height": height,
         "channels": channels,
         "interpretation": clip_info["score_output_interpretation"],
-        "workers": workers,
+        "workers": assemble_workers,
+        "configured_workers": workers,
+        "score_source_mode": score_source["mode"],
+        "solve_score_evaluated": not reuse_stored_scores,
     }
     if render_warnings:
         progress["warnings"] = render_warnings
@@ -776,11 +834,23 @@ def handler(event, context):
     )
     progress["presign_ms"] = int((time.time() - t_presign) * 1000)
     t_assemble = time.time()
+
+    def _report_assemble_progress(elapsed_ms):
+        heartbeat = dict(progress)
+        heartbeat["assemble_ms"] = int(elapsed_ms)
+        heartbeat["finalize_stage"] = "assemble"
+        report_status(
+            job_id,
+            task_id,
+            "assembling_score_tiles",
+            result_data=heartbeat,
+        )
+
     hist_meta = _assemble_greyscale_raw(
         pix=width,
         raw_path=raw_path,
         hist_path=hist_path,
-        workers=workers,
+        workers=assemble_workers,
         fragment_urls=fragment_urls,
         manifest_path=url_manifest_path,
         channels=channels,
@@ -790,6 +860,7 @@ def handler(event, context):
             or bool(clip_info.get("score_output_has_explicit_outputs"))
         ),
         fragment_encoding=fragment_info["pair_encoding"],
+        progress_cb=_report_assemble_progress,
     )
     progress["assemble_ms"] = int((time.time() - t_assemble) * 1000)
     progress.update(hist_meta.get("telemetry") or {})
@@ -800,11 +871,40 @@ def handler(event, context):
     progress["background_pixels"] = hist_meta["background_pixels"]
     report_status(job_id, task_id, "wrote_greyscale_raw", result_data=progress)
 
-    step_scores_grid_n = associated_palette_grid_n
+    step_scores_grid_n = (
+        int(score_source["grid_n"])
+        if reuse_stored_scores
+        else associated_palette_grid_n
+    )
     step_scores_pass_count = associated_palette_times
     step_scores_key = ""
     step_scores_count = 0
-    if step_scores_grid_n > 0 and step_scores_pass_count > 0:
+    if reuse_stored_scores:
+        step_scores_key = str(score_source["key"])
+        step_scores_count = int(score_source["step_count"])
+        expected_step_score_count = (
+            int(step_scores_grid_n)
+            * int(step_scores_grid_n)
+            * int(step_scores_pass_count)
+        )
+        if step_scores_pass_count < 1 or step_scores_count != expected_step_score_count:
+            raise RuntimeError(
+                "FinalizeMT stored-score count mismatch: "
+                f"source={step_scores_count}, expected={expected_step_score_count}"
+            )
+        progress.update({
+            "step_scores_reused": True,
+            "step_scores_key": step_scores_key,
+            "step_scores_count": step_scores_count,
+            "step_scores_bytes": int(score_source["size_bytes"]),
+            "step_scores_grid_n": step_scores_grid_n,
+            "step_scores_fetch_concat_ms": 0,
+            "step_scores_download_ms": 0,
+            "step_scores_concat_ms": 0,
+            "step_scores_upload_ms": 0,
+        })
+        report_status(job_id, task_id, "reused_step_scores", result_data=progress)
+    elif step_scores_grid_n > 0 and step_scores_pass_count > 0:
         step_scores_count = int(step_scores_grid_n) * int(step_scores_grid_n) * int(step_scores_pass_count)
         expected_step_score_bytes = step_scores_count * int(channels)
         t_step_scores = time.time()
@@ -967,6 +1067,12 @@ def handler(event, context):
     final_metadata["step_scores_key"] = step_scores_key
     final_metadata["step_count"] = step_scores_count if step_scores_key else ""
     final_metadata["step_scores_grid_n"] = step_scores_grid_n if step_scores_key else ""
+    final_metadata["score_source_mode"] = score_source["mode"]
+    if reuse_stored_scores:
+        final_metadata["source_step_scores_key"] = step_scores_key
+        final_metadata["source_raw_meta_key"] = str(
+            score_source.get("source_raw_meta_key") or ""
+        )
     final_metadata["score_output_normalize"] = "true" if clip_info["score_output_normalize"] else "false"
     final_metadata["score_output_clip_lo"] = str(clip_info["score_output_clip_lo"])
     final_metadata["score_output_clip_hi"] = str(clip_info["score_output_clip_hi"])
@@ -1082,6 +1188,7 @@ def handler(event, context):
         "step_scores_key": step_scores_key,
         "step_count": step_scores_count if step_scores_key else 0,
         "step_scores_grid_n": step_scores_grid_n if step_scores_key else 0,
+        "score_source_mode": score_source["mode"],
         "file_size": int(encode_meta["file_size"]),
         "timings": {
             "assemble_ms": progress["assemble_ms"],

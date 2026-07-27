@@ -1,7 +1,6 @@
 #!/bin/bash
 # Deploy the polypaint stack (Lambdas, Step Functions, API Gateway, frontend).
 # Usage: ./deploy.sh [create|update|show-build]
-#        ./deploy.sh [prepare-view-snap|promote-view-snap] input.json [--write]
 #
 # Phases, in execution order (create and update share every helper; the
 # branches differ only in IAM/DynamoDB bootstrap):
@@ -65,8 +64,6 @@ else
     TEST_PYTHON=(python3)
 fi
 ACTION="${1:-create}"
-VIEW_SNAP_CALIBRATION_INPUT="${2:-}"
-VIEW_SNAP_CALIBRATION_WRITE="${3:-}"
 
 # --- Fleet data: names, memories, specs, routes (deploy_manifest.json) ---
 # The manifest is the single source of truth for the Lambda fleet;
@@ -158,17 +155,6 @@ frontend_asset_content_type() {
 
 print_usage() {
     echo "Usage: $0 [create|update|show-build]"
-    echo "       $0 prepare-view-snap calibration-input.json [--write]"
-    echo "       $0 promote-view-snap matrix-results.json [--write]"
-}
-
-verify_view_snap_deployment() {
-    "${TEST_PYTHON[@]}" "$SCRIPT_DIR/scripts/view_snap_calibration.py" verify-live \
-        --artifact "$SCRIPT_DIR/lambda/view_snap_calibration.json" \
-        --raster-function "$RASTER_MT_NAME" \
-        --finalize-function "$FINALIZE_MT_NAME" \
-        --plan-function "$RENDER_PLAN_NAME" \
-        --region "$REGION"
 }
 
 # --- S3 website bucket setup (idempotent) ---
@@ -424,8 +410,9 @@ package_render_plan_zip() {
        lambda/coeff_program_chain.py lambda/cp437_font.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json lambda/structural_chips.json \
        lambda/root_legacy_registry.json \
        lambda/color_render_contract.py \
+       lambda/color_artifact_meta.py \
+       lambda/raw_sidecar.py \
        lambda/view_camera.py \
-       lambda/view_snap_calibration.py lambda/view_snap_calibration.json \
        lambda/view_snap_cost_model.py \
        lambda/solve_score_chain.py \
        lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"
@@ -706,18 +693,7 @@ if [ "$ACTION" = "show-build" ]; then
     exit $?
 fi
 
-if [ "$ACTION" != "create" ] && [ "$ACTION" != "update" ] && \
-   [ "$ACTION" != "prepare-view-snap" ] && [ "$ACTION" != "promote-view-snap" ]; then
-    print_usage
-    exit 1
-fi
-if { [ "$ACTION" = "prepare-view-snap" ] || [ "$ACTION" = "promote-view-snap" ]; } && \
-   [ -z "$VIEW_SNAP_CALIBRATION_INPUT" ]; then
-    print_usage
-    exit 1
-fi
-if [ -n "$VIEW_SNAP_CALIBRATION_WRITE" ] && \
-   [ "$VIEW_SNAP_CALIBRATION_WRITE" != "--write" ]; then
+if [ "$ACTION" != "create" ] && [ "$ACTION" != "update" ]; then
     print_usage
     exit 1
 fi
@@ -1308,70 +1284,18 @@ chmod +x "$FINALIZE_MT_DIR"/assemble_greyscale "$FINALIZE_MT_DIR"/score_raw_rend
 cd "$FINALIZE_MT_DIR" && zip -FS -r9 /tmp/polypaint-finalize-mt.zip . -q && cd "$SCRIPT_DIR"
 echo "  FnlzMT:   $(du -h /tmp/polypaint-finalize-mt.zip | cut -f1)  (fused assemble + encode)"
 
-# ViewSnap's measured rates are valid only for this exact worker build and
-# execution shape. These values expand into the Render Plan environment when
-# deploy_all_lambdas runs later; the packaged artifact must match all of them.
-VIEW_SNAP_RASTER_BINARY_SHA256=$(shasum -a 256 lambda/roots2pix_mt | cut -d' ' -f1)
-VIEW_SNAP_ASSEMBLER_BINARY_SHA256=$(shasum -a 256 lambda/assemble_greyscale | cut -d' ' -f1)
-VIEW_SNAP_ENCODER_BINARY_SHA256=$(shasum -a 256 lambda/score_raw_render | cut -d' ' -f1)
-VIEW_SNAP_RASTER_PACKAGE_HASH=$(zip_content_hash /tmp/polypaint-raster-mt.zip)
-VIEW_SNAP_FINALIZE_PACKAGE_HASH=$(zip_content_hash /tmp/polypaint-finalize-mt.zip)
-VIEW_SNAP_LIBVIPS_LAYER_ARN="$LIBVIPS_LAYER"
-VIEW_SNAP_RUNTIME="$RUNTIME"
-VIEW_SNAP_ARCHITECTURE="$ARCH"
+# ViewSnap uses deterministic byte admission only. Runtime durations are
+# reported as telemetry and never gate a render.
 VIEW_SNAP_RASTER_MEMORY_MB="$RASTER_MT_MEMORY"
 VIEW_SNAP_FINALIZE_MEMORY_MB="$FINALIZE_MT_MEMORY"
 VIEW_SNAP_RASTER_TMP_MB="$BINARY_TMP"
 VIEW_SNAP_FINALIZE_TMP_MB="$BINARY_TMP"
-VIEW_SNAP_RASTER_TIMEOUT_SECONDS="$TIMEOUT"
-VIEW_SNAP_FINALIZE_TIMEOUT_SECONDS="$TIMEOUT"
 VIEW_SNAP_RASTER_THREADS="$RASTER_MT_THREADS"
 VIEW_SNAP_RASTER_WORKERS=10
 VIEW_SNAP_FINALIZE_WORKERS=16
-export VIEW_SNAP_RASTER_BINARY_SHA256 VIEW_SNAP_ASSEMBLER_BINARY_SHA256
-export VIEW_SNAP_ENCODER_BINARY_SHA256 VIEW_SNAP_RASTER_PACKAGE_HASH
-export VIEW_SNAP_FINALIZE_PACKAGE_HASH VIEW_SNAP_LIBVIPS_LAYER_ARN
-export VIEW_SNAP_RUNTIME VIEW_SNAP_ARCHITECTURE
 export VIEW_SNAP_RASTER_MEMORY_MB VIEW_SNAP_FINALIZE_MEMORY_MB
 export VIEW_SNAP_RASTER_TMP_MB VIEW_SNAP_FINALIZE_TMP_MB
-export VIEW_SNAP_RASTER_TIMEOUT_SECONDS VIEW_SNAP_FINALIZE_TIMEOUT_SECONDS
 export VIEW_SNAP_RASTER_THREADS VIEW_SNAP_RASTER_WORKERS VIEW_SNAP_FINALIZE_WORKERS
-
-if [ "$ACTION" = "prepare-view-snap" ]; then
-    VIEW_SNAP_WRITE_ARGS=()
-    if [ "$VIEW_SNAP_CALIBRATION_WRITE" = "--write" ]; then
-        VIEW_SNAP_WRITE_ARGS=(--write)
-    fi
-    "${TEST_PYTHON[@]}" "$SCRIPT_DIR/scripts/view_snap_calibration.py" prepare \
-        --artifact "$SCRIPT_DIR/lambda/view_snap_calibration.json" \
-        --input "$VIEW_SNAP_CALIBRATION_INPUT" \
-        "${VIEW_SNAP_WRITE_ARGS[@]}"
-    if [ "$VIEW_SNAP_CALIBRATION_WRITE" = "--write" ]; then
-        echo "ViewSnap calibration artifact prepared; review and commit it before ./deploy.sh update"
-    fi
-    exit 0
-fi
-if [ "$ACTION" = "promote-view-snap" ]; then
-    VIEW_SNAP_WRITE_ARGS=()
-    if [ "$VIEW_SNAP_CALIBRATION_WRITE" = "--write" ]; then
-        VIEW_SNAP_WRITE_ARGS=(--write)
-    fi
-    "${TEST_PYTHON[@]}" "$SCRIPT_DIR/scripts/view_snap_calibration.py" promote \
-        --artifact "$SCRIPT_DIR/lambda/view_snap_calibration.json" \
-        --input "$VIEW_SNAP_CALIBRATION_INPUT" \
-        "${VIEW_SNAP_WRITE_ARGS[@]}"
-    if [ "$VIEW_SNAP_CALIBRATION_WRITE" = "--write" ]; then
-        echo "ViewSnap production artifact promoted; review and commit it before ./deploy.sh update"
-    fi
-    exit 0
-fi
-
-# A deliberately unconfigured artifact deploys only a disabled, fail-closed
-# feature. Once identities/rates are prepared, stale or incomplete calibration
-# blocks the deploy here rather than surprising the first camera request.
-"${TEST_PYTHON[@]}" "$SCRIPT_DIR/scripts/view_snap_calibration.py" validate \
-    --artifact "$SCRIPT_DIR/lambda/view_snap_calibration.json" \
-    --allow-unconfigured
 
 # Preview: handler_preview.py + shared.py (pure Python, PNG via zlib)
 PREVIEW_DIR=/tmp/polypaint-preview
@@ -2298,7 +2222,6 @@ if [ "$ACTION" = "create" ]; then
 
     # --- Lambdas (single spec list shared with the update path) ---
     deploy_all_lambdas
-    verify_view_snap_deployment
     deploy_book_pdf_image
     ensure_poly_sheet_gc_event_source
 
@@ -2356,7 +2279,6 @@ elif [ "$ACTION" = "update" ]; then
 
     # --- Lambdas (single spec list shared with the create path) ---
     deploy_all_lambdas
-    verify_view_snap_deployment
     deploy_book_pdf_image
     ensure_poly_sheet_gc_event_source
 

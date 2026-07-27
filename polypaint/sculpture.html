@@ -1933,16 +1933,6 @@ onmessage = function (ev) {
     });
 
     const snapshotProtocolVersion = 1;
-    const snapshotUnsupportedState = () => {
-        const unsupported = [];
-        if (!showPointsCtl.checked) unsupported.push('hidden points');
-        if (showRibbonsCtl.checked) unsupported.push('ribbons');
-        if (showThreadsCtl.checked) unsupported.push('threads');
-        if (showCluCtl.checked) unsupported.push('clusters');
-        if (showSplatsCtl.checked) unsupported.push('splats');
-        if (styleCtl.value !== 'solid') unsupported.push(`${styleCtl.value} style`);
-        return unsupported;
-    };
     const snapshotPayload = () => {
         const finiteArray = (values, length, label) => {
             if (!Array.isArray(values) || values.length !== length
@@ -1951,10 +1941,6 @@ onmessage = function (ev) {
             }
             return values.map(Number);
         };
-        const unsupported = snapshotUnsupportedState();
-        if (unsupported.length) {
-            throw new Error('ViewSnap v1 does not support ' + unsupported.join(', '));
-        }
 
         camera.updateMatrixWorld(true);
         sculpt.updateMatrixWorld(true);
@@ -1981,13 +1967,6 @@ onmessage = function (ev) {
         renderer.getDrawingBufferSize(drawingBuffer);
         const cropSide = Math.min(drawingBuffer.x, drawingBuffer.y);
         if (!(cropSide > 0)) throw new Error('viewer drawing buffer is empty');
-        const gl = renderer.getContext();
-        const pointRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
-        const pointMin = Number(pointRange && pointRange[0]);
-        const pointMax = Number(pointRange && pointRange[1]);
-        if (!(pointMin > 0) || !(pointMax >= pointMin)) {
-            throw new Error('viewer point-size limits are unavailable');
-        }
 
         const height = Number(sculpt.scale.y);
         const controlLo = Number(zloCtl.value) / 100;
@@ -2008,21 +1987,9 @@ onmessage = function (ev) {
             16,
             'viewer projection matrix'
         );
-        const pointWorldSize = Number(material.size);
-        const pointScale = 0.5 * drawingBuffer.y / cropSide;
-        const pointMinFraction = pointMin / cropSide;
-        const pointMaxFraction = Math.min(1, pointMax / cropSide);
         if (!Number.isFinite(effectiveLo) || !Number.isFinite(effectiveHi)
                 || effectiveLo < 0 || effectiveHi > 1 || effectiveLo > effectiveHi) {
             throw new Error('viewer effective t-window is invalid');
-        }
-        if (!Number.isFinite(pointWorldSize)
-                || pointWorldSize < 0.0004 || pointWorldSize > 0.016
-                || !Number.isFinite(pointScale) || pointScale < 0.5
-                || !Number.isFinite(pointMinFraction) || pointMinFraction <= 0
-                || !Number.isFinite(pointMaxFraction)
-                || pointMaxFraction < pointMinFraction || pointMaxFraction > 1) {
-            throw new Error('viewer point-size contract is invalid');
         }
         return {
             version: snapshotProtocolVersion,
@@ -2034,18 +2001,6 @@ onmessage = function (ev) {
             slices: Math.max(0, parseInt(slicesCtl.value, 10) || 0),
             effective_tlo: effectiveLo,
             effective_thi: effectiveHi,
-            point_world_size: pointWorldSize,
-            point_scale: pointScale,
-            point_min_fraction: pointMinFraction,
-            point_max_fraction: pointMaxFraction,
-            style: 'solid',
-            show: {
-                points: true,
-                ribbons: false,
-                threads: false,
-                clu: false,
-                splats: false,
-            },
             frame: { aspect: 1, crop: 'center_square' },
             debug: {
                 camera_position: squareCamera.position.toArray(),
@@ -2056,7 +2011,6 @@ onmessage = function (ev) {
                 height,
                 control_zlo: controlLo,
                 control_zhi: controlHi,
-                point_control: Number(sizeCtl.value),
             },
         };
     };
@@ -2073,13 +2027,6 @@ onmessage = function (ev) {
             request_id: String(message.request_id || ''),
             sculpture_id: cfg.sculptureId,
         };
-        const unsupported = snapshotUnsupportedState();
-        if (unsupported.length) {
-            response.unsupported_state = unsupported;
-            response.error = 'ViewSnap v1 does not support ' + unsupported.join(', ');
-            event.source.postMessage(response, event.origin);
-            return;
-        }
         try {
             response.snapshot = snapshotPayload();
         } catch (error) {

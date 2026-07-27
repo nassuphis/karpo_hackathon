@@ -1,5 +1,6 @@
 import json
 import os
+import struct
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -159,19 +160,38 @@ def _camera_payload():
         "slices": 0,
         "effective_tlo": 0,
         "effective_thi": 1,
-        "point_world_size": 0.0004,
-        "point_scale": 1000,
-        "point_min_fraction": 0.0004,
-        "point_max_fraction": 0.016,
-        "style": "solid",
-        "show": {
-            "points": True,
-            "ribbons": False,
-            "threads": False,
-            "clu": False,
-            "splats": False,
-        },
         "frame": {"aspect": 1, "crop": "center_square"},
+    }
+
+
+def _stored_score_source(*, key="renders/j/color/source/step_scores.raw",
+                         step_count=4, grid_n=2, channels=1):
+    clip = _clip_artifact(
+        chain=[["crowding", "1"], ["omega_cosine", "4"]],
+        metric="crowding",
+        quantile=0.01,
+        omega=4.0,
+        omega_enabled=True,
+        clip_lo=-1.0,
+        clip_hi=2.0,
+    )
+    return {
+        "mode": "artifact_step_scores",
+        "key": key,
+        "step_count": step_count,
+        "grid_n": grid_n,
+        "channels": channels,
+        "size_bytes": step_count * channels,
+        "source_artifact_id": "color_source",
+        "source_raw_meta_key": "renders/j/color/source/greyscale.meta.json",
+        "contract": {
+            **clip,
+            "score_program": clip["program"],
+            "score_output_channel_count": channels,
+            "score_output_has_explicit_outputs": channels != 1,
+            "score_output_channels": [],
+            "solve_score_spec_version": 2,
+        },
     }
 
 
@@ -510,6 +530,107 @@ class TestRasterMT(unittest.TestCase):
     @patch("handler_raster_mt.report_status")
     @patch("handler_raster_mt.subprocess.run")
     @patch("handler_raster_mt.s3")
+    def test_view_raster_downloads_matching_stored_scores_without_recomputing(
+        self,
+        mock_s3,
+        mock_run,
+        mock_report,
+    ):
+        import handler_raster_mt as mod
+
+        uploads = {}
+        score_source = _stored_score_source()
+
+        def get_object(**kwargs):
+            self.assertEqual(kwargs["Key"], score_source["key"])
+            self.assertEqual(kwargs["Range"], "bytes=2-3")
+            return {"Body": MagicMock(read=lambda: bytes([41, 99]))}
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.generate_presigned_url.side_effect = (
+            lambda _op, Params=None, ExpiresIn=None:
+            f"https://example.com/{Params['Key']}?sig=1"
+        )
+        mock_s3.upload_fileobj.side_effect = (
+            lambda fileobj, bucket, key:
+            uploads.__setitem__(key, fileobj.read())
+        )
+        mock_s3.put_object.side_effect = (
+            lambda **kwargs:
+            uploads.__setitem__(kwargs["Key"], kwargs["Body"])
+        )
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn(
+                "--stored_step_scores=/tmp/raster_stored_step_scores.raw",
+                cmd,
+            )
+            self.assertIn("--stored_step_score_channels=1", cmd)
+            self.assertNotIn("--step_scores_output=/tmp/step_scores.bin", cmd)
+            self.assertFalse(
+                [arg for arg in cmd if arg.startswith("--score_program=")]
+            )
+            self.assertFalse(
+                [arg for arg in cmd if arg.startswith("--score_metrics=")]
+            )
+            self.assertFalse(
+                [arg for arg in cmd if arg.startswith("--score_coeff_manifest=")]
+            )
+            self.assertFalse(
+                [arg for arg in cmd if arg.startswith("--score_params_manifest=")]
+            )
+            with open("/tmp/raster_stored_step_scores.raw", "rb") as fh:
+                self.assertEqual(fh.read(), bytes([41, 99]))
+            with open("/tmp/fused_fragment.frag", "wb") as fh:
+                fh.write(_encode_fragment_pairs([(0, 41), (1, 99)]))
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "threads": 2,
+                    "roots_plotted": 2,
+                    "roots_clipped": 0,
+                    "score_source_mode": "artifact_step_scores",
+                    "solve_score_evaluated": False,
+                    "stored_step_scores_bytes": 2,
+                }),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+        result = mod.handler(
+            _fused_event(
+                view_projection="front",
+                view_vertical="t2",
+                view_grid_n=2,
+                step_start=2,
+                step_count=2,
+                score_source=score_source,
+                solve_score_clip_key="",
+                prelude_rows=0,
+                score_coeff_prelude_rows=0,
+                score_param_prelude_rows=0,
+            ),
+            None,
+        )
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["score_source_mode"], "artifact_step_scores")
+        self.assertFalse(body["solve_score_evaluated"])
+        self.assertEqual(body["stored_step_scores_bytes"], 2)
+        self.assertEqual(body["step_scores_bytes_uploaded"], 0)
+        self.assertNotIn(
+            "renders/j/color/color_1/fragments/section_0000_step_scores.raw",
+            uploads,
+        )
+        self.assertEqual(
+            uploads["renders/j/color/color_1/fragments/section_0000.frag"],
+            _encode_fragment_pairs([(0, 41), (1, 99)]),
+        )
+
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
     def test_fused_associated_palette_emits_inline_palette_fragment(self, mock_s3, mock_run, mock_report):
         import handler_raster_mt as mod
 
@@ -804,7 +925,6 @@ class TestRasterMT(unittest.TestCase):
                 "fragment_bytes_upper": 72,
                 "raster_memory_bytes": 4096,
                 "raster_tmp_bytes": 128,
-                "work_units": 1000,
             },
         ), None)
         body = json.loads(result["body"])
@@ -845,7 +965,6 @@ class TestRasterMT(unittest.TestCase):
                     "fragment_bytes_upper": 17,
                     "raster_memory_bytes": 4096,
                     "raster_tmp_bytes": 128,
-                    "work_units": 1000,
                 },
             ), None)
         mock_s3.upload_fileobj.assert_not_called()

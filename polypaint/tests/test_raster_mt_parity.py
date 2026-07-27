@@ -293,10 +293,6 @@ class TestRasterMtParity(unittest.TestCase):
             "--view_slices=0",
             "--view_effective_tlo=0",
             "--view_effective_thi=1",
-            "--view_point_world_size=0.0004",
-            "--view_point_scale=0.5",
-            "--view_point_min_fraction=0.125",
-            "--view_point_max_fraction=1",
             "--fragment_encoding=u32le_f32depth_u8_channels_v1",
         ]
 
@@ -315,10 +311,6 @@ class TestRasterMtParity(unittest.TestCase):
             f"--view_slices={camera['slices']}",
             f"--view_effective_tlo={camera['effective_tlo']}",
             f"--view_effective_thi={camera['effective_thi']}",
-            f"--view_point_world_size={camera['point_world_size']}",
-            f"--view_point_scale={camera['point_scale']}",
-            f"--view_point_min_fraction={camera['point_min_fraction']}",
-            f"--view_point_max_fraction={camera['point_max_fraction']}",
             "--fragment_encoding=u32le_f32depth_u8_channels_v1",
         ]
 
@@ -561,7 +553,7 @@ class TestRasterMtParity(unittest.TestCase):
             self.assertEqual(telemetry["camera_fragment_bytes"], 9)
             self.assertGreaterEqual(telemetry["camera_depth_replacements"], 1)
 
-    def test_camera_projection_matches_shared_threejs_pixel_oracle(self):
+    def test_camera_projection_uses_captured_transform_for_one_pixel_per_root(self):
         pix = int(VIEW_SNAP_ORACLE["pix"])
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
@@ -603,7 +595,7 @@ class TestRasterMtParity(unittest.TestCase):
                     )
                     self.assertEqual(
                         [record[0] for record in records],
-                        point["pixels"],
+                        [point["raster_pixel"]],
                         f"oracle point {idx}",
                     )
                     for _pixel_idx, depth, _score in records:
@@ -613,8 +605,8 @@ class TestRasterMtParity(unittest.TestCase):
                         )
                     telemetry = json.loads(result.stdout)
                     self.assertEqual(
-                        telemetry["camera_footprint_pixel_candidates"],
-                        len(point["pixels"]),
+                        telemetry["camera_pixel_candidates"],
+                        1,
                     )
             finally:
                 server.shutdown()
@@ -783,10 +775,6 @@ class TestRasterMtParity(unittest.TestCase):
                         "--view_slices=0",
                         "--view_effective_tlo=0",
                         "--view_effective_thi=1",
-                        "--view_point_world_size=0.0004",
-                        "--view_point_scale=0.5",
-                        "--view_point_min_fraction=0.01",
-                        "--view_point_max_fraction=1",
                         "--fragment_encoding=u32le_f32depth_u8_channels_v1",
                     ])
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -804,10 +792,12 @@ class TestRasterMtParity(unittest.TestCase):
         self.assertEqual(len(pixels_by_axis["t1"]), 4)
         self.assertEqual(len(pixels_by_axis["t2"]), 16)
 
-    def test_camera_pass1_only_section_emits_empty_fragment_without_dense_planes(self):
+    def test_camera_later_pass_section_projects_one_pixel_per_root(self):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
             roots_path = self._write_float_file(root / "pass1_roots.bin", [0.0, 0.0])
+            scores_path = root / "pass1_scores.raw"
+            scores_path.write_bytes(bytes([173]))
             server, thread = self._serve_dir(root)
             try:
                 manifest_path = self._write_single_span_manifest(
@@ -821,7 +811,7 @@ class TestRasterMtParity(unittest.TestCase):
                 cmd = [
                     str(self._binary),
                     str(root / "pass1_pix"),
-                    "--pix=32768",
+                    "--pix=8",
                     "--min_re=-1", "--max_re=1",
                     "--min_im=-1", "--max_im=1",
                     "--degree=1",
@@ -829,7 +819,8 @@ class TestRasterMtParity(unittest.TestCase):
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
                     "--step_count=1",
-                    *self._single_metric_program_args("centroid_re", -1, 1),
+                    f"--stored_step_scores={scores_path}",
+                    "--stored_step_score_channels=1",
                     f"--fragment_prefix={fragment_prefix}",
                     "--retries=1",
                     *self._camera_view_args(grid_n=2, step_start=4),
@@ -837,15 +828,26 @@ class TestRasterMtParity(unittest.TestCase):
                 result = self._run_binary(cmd)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 telemetry = json.loads(result.stdout)
-                self.assertFalse(telemetry["camera_pass0_overlap"])
+                self.assertEqual(telemetry["camera_candidate_roots"], 1)
+                self.assertEqual(telemetry["camera_projected_points"], 1)
+                self.assertEqual(
+                    telemetry["camera_pixel_candidates"],
+                    1,
+                )
+                self.assertEqual(
+                    telemetry["score_source_mode"],
+                    "artifact_step_scores",
+                )
+                self.assertFalse(telemetry["solve_score_evaluated"])
             finally:
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=5)
-            self.assertEqual(
-                pathlib.Path(f"{fragment_prefix}.frag").read_bytes(),
-                b"",
+            records = self._read_camera_records(
+                pathlib.Path(f"{fragment_prefix}.frag")
             )
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0][2], (173,))
 
     def test_view_step_start_offsets_the_section_lattice(self):
         """MT sections pass their global step offset — the SAME contract as

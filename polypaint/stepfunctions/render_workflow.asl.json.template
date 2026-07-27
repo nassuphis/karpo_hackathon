@@ -86,7 +86,7 @@
                 {
                   "Variable": "$.mode",
                   "StringEquals": "color",
-                  "Next": "ColorClipPhase"
+                  "Next": "ColorScoreSourceChoice"
                 },
                 {
                   "Variable": "$.mode",
@@ -100,6 +100,25 @@
                 }
               ],
               "Default": "InnerFail"
+            },
+            "ColorScoreSourceChoice": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.plan.score_source.mode",
+                  "StringEquals": "artifact_step_scores",
+                  "Next": "ColorUseArtifactScoreContract"
+                }
+              ],
+              "Default": "ColorClipPhase"
+            },
+            "ColorUseArtifactScoreContract": {
+              "Type": "Pass",
+              "Parameters": {
+                "parsed.$": "$.plan.score_source.contract"
+              },
+              "ResultPath": "$.solve_score_clip",
+              "Next": "ColorRasterPhase"
             },
             "ColorClipPhase": {
               "Type": "Task",

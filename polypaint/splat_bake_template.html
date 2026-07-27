@@ -22,6 +22,9 @@
 var H = __HEADER_JSON__;
 var B64 = "__B64__";
 (function () {
+    var snapshotProtocolVersion = 1;
+    var hashParams = new URLSearchParams(location.hash.slice(1));
+    var sculptureId = String(H.sculptureId || hashParams.get("sid") || "");
     var raw = atob(B64);
     var bytes = new Uint8Array(raw.length);
     for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
@@ -170,6 +173,7 @@ var B64 = "__B64__";
         pitch = Math.asin(Math.max(-1, Math.min(1, ddy / radius)));
     }
     var cam = [H.cam[0], H.cam[1], H.cam[2]];
+    var currentTarget = target.slice();
     var pointers = new Map();
     var pinchD = 0;
     canvas.addEventListener("pointerdown", function (ev) {
@@ -204,6 +208,93 @@ var B64 = "__B64__";
         ev.preventDefault();
         radius = Math.max(0.05, Math.min(20, radius * Math.exp(ev.deltaY * 0.001)));
     }, { passive: false });
+    function bakedVerticalScale() {
+        var declared = Number(H.yscale);
+        if (Number.isFinite(declared) && declared >= 0 && declared <= 1) return declared;
+        // Legacy baked viewers did not persist yscale. Their packed center
+        // bounds still carry the fold; this estimate is used only by the
+        // app-side legacy bridge, but keep the template fail-soft as well.
+        var lo = Number(H.cmin && H.cmin[1]);
+        var hi = Number(H.cmax && H.cmax[1]);
+        var bound = Math.max(Math.abs(lo || 0), Math.abs(hi || 0));
+        return Math.max(0.01, Math.min(1, 2 * bound || 0.1));
+    }
+    function snapshotPayload() {
+        var width = canvas.width;
+        var height = canvas.height;
+        var cropSide = Math.min(width, height);
+        if (!(cropSide > 0)) throw new Error("viewer drawing buffer is empty");
+        var aspect = width / height;
+        var fovy = 50 * Math.PI / 180;
+        if (aspect < 1) fovy = 2 * Math.atan(Math.tan(fovy / 2) * aspect);
+        var squareProjection = new Float32Array(16);
+        perspective(squareProjection, fovy, 1, 0.01, 50);
+
+        // The baked centers use the canonical root coordinates with yscale
+        // folded into Y. ViewRender starts from the unfurled root lattice,
+        // so compose that one model transform into the captured view.
+        var modelView = Array.from(view);
+        var yscale = bakedVerticalScale();
+        for (var mi = 4; mi < 8; mi++) modelView[mi] *= yscale;
+
+        return {
+            version: snapshotProtocolVersion,
+            projection: "perspective",
+            matrix_layout: "column_major",
+            model_view_matrix: modelView,
+            projection_matrix: Array.from(squareProjection),
+            vertical: H.zaxis === "t1" ? "t1" : "t2",
+            slices: Math.max(0, parseInt(H.slices, 10) || 0),
+            effective_tlo: 0,
+            effective_thi: 1,
+            frame: { aspect: 1, crop: "center_square" },
+            debug: {
+                camera_position: cam.slice(),
+                camera_target: currentTarget.slice(),
+                vertical_fov_degrees: fovy * 180 / Math.PI,
+                near: 0.01,
+                far: 50,
+                height: yscale,
+                control_zlo: 0,
+                control_zhi: 1
+            }
+        };
+    }
+    function onSnapshotRequest(event) {
+        if (window.parent === window || event.source !== window.parent) return;
+        var message = event.data;
+        if (!message || message.type !== "polypaint-sculpture-snapshot-request"
+                || message.protocol_version !== snapshotProtocolVersion
+                || message.sculpture_id !== sculptureId
+                || Number(message.target_aspect) !== 1) return;
+        var response = {
+            type: "polypaint-sculpture-snapshot-response",
+            protocol_version: snapshotProtocolVersion,
+            request_id: String(message.request_id || ""),
+            sculpture_id: sculptureId
+        };
+        try {
+            response.snapshot = snapshotPayload();
+        } catch (error) {
+            response.error = error && error.message ? error.message : String(error);
+        }
+        event.source.postMessage(response, event.origin);
+    }
+    window.addEventListener("message", onSnapshotRequest);
+    var readySent = false;
+    function announceReady() {
+        if (readySent || window.parent === window || !sculptureId) return;
+        readySent = true;
+        var targetOrigin = "*";
+        try {
+            if (document.referrer) targetOrigin = new URL(document.referrer).origin;
+        } catch (e) {}
+        window.parent.postMessage({
+            type: "polypaint-sculpture-ready",
+            protocol_version: snapshotProtocolVersion,
+            sculpture_id: sculptureId
+        }, targetOrigin);
+    }
     var last = performance.now();
     var frames = 0;
     function frame(now) {
@@ -217,12 +308,14 @@ var B64 = "__B64__";
             tour.t += dt * (H.tourSpeed || 1);
             var pz = tourPose(tour.t);
             cam = [pz[0], pz[1], pz[2]];
+            currentTarget = [pz[3], pz[4], pz[5]];
             lookAt(view, cam[0], cam[1], cam[2], pz[3], pz[4], pz[5]);
         } else {
             var cp = Math.cos(pitch);
             cam = [target[0] + radius * cp * Math.cos(yaw),
                    target[1] + radius * Math.sin(pitch),
                    target[2] + radius * cp * Math.sin(yaw)];
+            currentTarget = target.slice();
             lookAt(view, cam[0], cam[1], cam[2], target[0], target[1], target[2]);
         }
         perspective(proj, 50 * Math.PI / 180, w / (h || 1), 0.01, 50);
@@ -243,7 +336,15 @@ var B64 = "__B64__";
         }
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n);
         frames++;
-        window.__bakedSplatViewer = { count: n, frames: frames, mode: H.mode, tour: tour.mode, playing: tour.playing };
+        window.__bakedSplatViewer = {
+            count: n,
+            frames: frames,
+            mode: H.mode,
+            tour: tour.mode,
+            playing: tour.playing,
+            snapshotPayload: snapshotPayload
+        };
+        announceReady();
         requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);

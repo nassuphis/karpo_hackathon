@@ -1458,11 +1458,17 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         html = puts[viewer_key]["Body"].decode("utf-8")
         self.assertIn("My &lt;Bake> &amp; Co", html)          # title entity-escaped
         self.assertIn('"tour": "orbit"'.replace(" ", ""), html.replace(" ", ""))
+        self.assertIn(f'"sculptureId": "{row["id"]}"'.replace(" ", ""), html.replace(" ", ""))
+        self.assertIn('"yscale": 0.5'.replace(" ", ""), html.replace(" ", ""))
+        self.assertIn("polypaint-sculpture-snapshot-request", html)
         self.assertIn('var B64 = "' + ("UFBQ"[0:2]), html)     # pack embedded
         self.assertNotIn("__HEADER_JSON__", html)
         meta = json.loads(puts[f"sculptures/{row['id']}/meta.json"]["Body"])
         self.assertEqual(meta["kind"], "splatbake")
         self.assertEqual(meta["bake_params"]["res"], 64)
+        self.assertEqual(meta["bake_params"]["yscale"], 0.5)
+        self.assertEqual(meta["bake_params"]["scalemul"], 2.0)
+        self.assertEqual(meta["bake_params"]["intensity"], 2.0)
         calls = mock_report.call_args_list
         self.assertEqual(calls[0].args, ("j", "splat_bake_7", "running"))
         self.assertEqual(calls[-1].args, ("j", "splat_bake_7", "done"))

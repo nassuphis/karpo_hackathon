@@ -2501,17 +2501,79 @@ test.describe('Solve Score UI', () => {
                 slices: 4,
                 effective_tlo: 0.2,
                 effective_thi: 0.8,
-                point_world_size: 0.004,
-                point_scale: 0.5,
-                point_min_fraction: 0.001,
-                point_max_fraction: 0.1,
-                style: 'solid',
-                show: { points: true, ribbons: false, threads: false, clu: false, splats: false },
                 frame: { aspect: 1, crop: 'center_square' },
               },
             }, location.origin);
           }, 60);
         });
+      </script>`,
+    }));
+    await page.route('**/sculptures/scu_baked/viewer.html*', (route) => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: `<!doctype html><script>
+        const sid = new URLSearchParams(location.hash.slice(1)).get('sid') || '';
+        parent.postMessage({
+          type: 'polypaint-sculpture-ready',
+          protocol_version: 1,
+          sculpture_id: sid,
+        }, location.origin);
+        addEventListener('message', (event) => {
+          const req = event.data || {};
+          if (req.type !== 'polypaint-sculpture-snapshot-request') return;
+          parent.postMessage({
+            type: 'polypaint-sculpture-snapshot-response',
+            protocol_version: 1,
+            sculpture_id: sid,
+            request_id: req.request_id,
+            snapshot: {
+              version: 1,
+              projection: 'perspective',
+              matrix_layout: 'column_major',
+              model_view_matrix: [1,0,0,0, 0,0.1,0,0, 0,0,1,0, 0,0,-2,1],
+              projection_matrix: [2,0,0,0, 0,2,0,0, 0,0,-1.0004,-1, 0,0,-0.020004,0],
+              vertical: 't2',
+              slices: 0,
+              effective_tlo: 0,
+              effective_thi: 1,
+              frame: { aspect: 1, crop: 'center_square' },
+            },
+          }, location.origin);
+        });
+      </script>`,
+    }));
+    await page.route('**/sculptures/scu_baked_legacy/viewer.html*', (route) => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: `<!doctype html><canvas id="c" width="360" height="640"></canvas><script>
+        var H = {
+          cmin: [-0.5, -0.2, -0.5],
+          cmax: [0.5, 0.19, 0.5],
+          mode: 2,
+          zaxis: 't1',
+          slices: 0,
+        };
+        const currentProgram = {};
+        const uniforms = {
+          uView: new Float32Array(
+            [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,-2,1]),
+          uProj: new Float32Array(
+            [3,0,0,0, 0,2,0,0, 0,0,-1.0004,-1, 0,0,-0.020004,0]),
+        };
+        const gl = {
+          CURRENT_PROGRAM: 1,
+          getParameter(key) {
+            if (key === this.CURRENT_PROGRAM) return currentProgram;
+            return null;
+          },
+          getUniformLocation(program, name) {
+            return program === currentProgram && uniforms[name] ? name : null;
+          },
+          getUniform(program, location) {
+            return program === currentProgram ? uniforms[location] : null;
+          },
+        };
+        document.getElementById('c').getContext = (kind) => kind === 'webgl2' ? gl : null;
       </script>`,
     }));
     await page.click('.tab-btn:text("Render")');
@@ -2543,6 +2605,16 @@ test.describe('Solve Score UI', () => {
           prefix: 'sculptures/scu_baked/',
         },
         {
+          id: 'scu_baked_legacy',
+          kind: 'splatbake',
+          title: 'Older baked viewer',
+          job_id: 'source_job',
+          source_artifact_id: 'color_source',
+          bake_params: { zaxis: 't1', slices: 0, mode: 2 },
+          created_at: '2026-07-28T08:30:00Z',
+          prefix: 'sculptures/scu_baked_legacy/',
+        },
+        {
           id: 'scu_legacy',
           title: 'Older full save',
           job_id: 'source_job',
@@ -2556,7 +2628,7 @@ test.describe('Solve Score UI', () => {
       window._snapSourceMode = 'ok';
       window.lambdaPost = async function (name, body, path) {
         if (path === '/list-sculptures') {
-          return { sculptures: window._sculptureInventory, count: 3 };
+          return { sculptures: window._sculptureInventory, count: 4 };
         }
         if (path === '/render-summary') {
           if (body.job_id !== 'source_job') throw new Error('wrong source job');
@@ -2607,6 +2679,20 @@ test.describe('Solve Score UI', () => {
         calc: { exists: true, N: 777, degree: 4 },
       });
     });
+    const legacyBakedCamera = await page.evaluate(() => _bakedSnapshotFromState(
+      { bake_params: { zaxis: 't1', slices: 0, mode: 2 } },
+      { cmin: [-0.5, -0.2, -0.5], cmax: [0.5, 0.19, 0.5], mode: 2 },
+      [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,-2,1],
+      [3,0,0,0, 0,2,0,0, 0,0,-1.0004,-1, 0,0,-0.020004,0],
+      360,
+      640,
+    ));
+    expect(legacyBakedCamera.model_view_matrix[5]).toBeCloseTo(0.4, 12);
+    expect(legacyBakedCamera.projection_matrix[0]).toBe(3);
+    expect(legacyBakedCamera.projection_matrix[5]).toBe(3);
+    expect(legacyBakedCamera.vertical).toBe('t1');
+    expect(legacyBakedCamera.show).toBeUndefined();
+    expect(legacyBakedCamera.style).toBeUndefined();
 
     await page.click('[data-render-family="sculpture"]');
     await expect(page.locator('#btn-sculpture-snap')).toBeDisabled();
@@ -2692,10 +2778,46 @@ test.describe('Solve Score UI', () => {
 
     await page.keyboard.press('ArrowDown');
     await expect(page.locator('#btn-sculpture-snap')).toBeDisabled();
-    await expect(page.locator('#btn-sculpture-snap')).toHaveAttribute(
-      'title',
-      'Baked splat snapshots are not supported in v1',
-    );
+    await expect(page.locator('#btn-sculpture-snap')).toBeEnabled();
+    await page.evaluate(() => { window._snapDispatches = []; });
+    await page.click('#btn-sculpture-snap');
+    await expect.poll(() => page.evaluate(() => window._snapDispatches.length)).toBe(1);
+    const bakedDispatch = await page.evaluate(() => window._snapDispatches[0]);
+    expect(bakedDispatch.payload.params).toMatchObject({
+      pix: 1234,
+      view_projection: 'camera',
+      view_vertical: 't2',
+      source_color_artifact_id: 'color_source',
+      source_sculpture_id: 'scu_baked',
+    });
+    expect(bakedDispatch.payload.params.view_camera).not.toHaveProperty('style');
+    expect(bakedDispatch.payload.params.view_camera).not.toHaveProperty('show');
+
+    // Existing immutable baked viewers have no postMessage protocol. The
+    // same-origin compatibility bridge reads their live WebGL uniforms and
+    // composes the old bake's folded vertical scale.
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#btn-sculpture-snap')).toBeDisabled();
+    await expect(page.locator('#btn-sculpture-snap')).toBeEnabled();
+    await page.evaluate(() => { window._snapDispatches = []; });
+    await page.click('#btn-sculpture-snap');
+    await expect.poll(() => page.evaluate(() => window._snapDispatches.length)).toBe(1);
+    const oldBakedDispatch = await page.evaluate(() => window._snapDispatches[0]);
+    expect(oldBakedDispatch.payload.params).toMatchObject({
+      pix: 1234,
+      view_projection: 'camera',
+      view_vertical: 't1',
+      source_color_artifact_id: 'color_source',
+      source_sculpture_id: 'scu_baked_legacy',
+    });
+    expect(oldBakedDispatch.payload.params.view_camera).not.toHaveProperty('style');
+    expect(oldBakedDispatch.payload.params.view_camera).not.toHaveProperty('show');
+    expect(oldBakedDispatch.payload.params.view_camera.model_view_matrix[5])
+      .toBeCloseTo(0.4, 6);
+    expect(oldBakedDispatch.payload.params.view_camera.projection_matrix[0])
+      .toBeCloseTo(3, 6);
+    expect(oldBakedDispatch.payload.params.view_camera.projection_matrix[5])
+      .toBeCloseTo(3, 6);
 
     // Full saves created before source_artifact_id remain snappable. The
     // Color selection retained for this job supplies their missing lineage.

@@ -419,13 +419,11 @@ function _renderArtifactSummary(art) {
     if (art.family === 'views') {
         const isCamera = (art.projection || art.view_projection) === 'camera';
         return [
-            isCamera ? 'camera snap' : (art.projection || art.view_projection || ''),
+            isCamera ? 'camera snap · one-pixel depth' : (art.projection || art.view_projection || ''),
             art.vertical || art.view_vertical || '',
             isCamera && art.source_sculpture_id ? `sculpture:${art.source_sculpture_id}` : '',
             art.source_artifact_id ? `color:${art.source_artifact_id}` : '',
-            isCamera && _artifactColorInterpretation(art) === 'scalar_lut'
-                ? 'colors equalized from snap output'
-                : '',
+            art.score_source_mode === 'artifact_step_scores' ? 'stored scores' : '',
         ].filter(Boolean).join(' · ');
     }
     if (art.family === 'pdf') {
@@ -1200,7 +1198,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         actionButtons.push(`<button class="btn-primary" id="btn-sculpture-savefull" onclick="_saveFullOpenModal()" style="padding:4px 12px; font-size:11px" ${sfBusy || !hasSource ? 'disabled' : ''} title="Generate from the selected color artifact and save a FULL viewer in one go — a popup sets resolution and every viewer option; no tab opens">${sfBusy ? _escapeHtml(sfBusy) : 'SaveFull'}</button>`);
         actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-splatbake" onclick="_saveSplatOpenModal()" style="padding:4px 12px; font-size:11px" ${sbBusy || !hasSource ? 'disabled' : ''} title="Bake a self-contained splat viewer from the selected color artifact — a popup sets resolution, splat res, z, height, and point">${sbBusy ? _escapeHtml(sbBusy) : 'SaveSplat'}</button>`);
         actionButtons.push('<button class="btn-secondary" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)" style="padding:4px 12px; font-size:11px">Refresh</button>');
-        actionButtons.push('<button class="btn-primary" id="btn-sculpture-snap" onclick="runSculptureSnap()" style="padding:4px 12px; font-size:11px" disabled>Snap</button>');
+        actionButtons.push('<button class="btn-primary" id="btn-sculpture-snap" onclick="runSculptureSnap()" style="padding:4px 12px; font-size:11px" disabled>SnapRender</button>');
         actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-open" onclick="_sculptureOpenSelected()" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Open</button>`);
         actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-copy" onclick="_sculptureCopyLinkSelected(this)" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Copy Link</button>`);
         actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-delete" onclick="_sculptureDeleteSelected(this)" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Delete</button>`);
@@ -1708,9 +1706,17 @@ function _sculptureShareUrl(meta) {
 
 function _sculptureCatalogViewerUrl(meta) {
     const row = meta && typeof meta === 'object' ? meta : {};
-    if (row.kind === 'splatbake') return _sculptureShareUrl(row);
     const id = String(row.id || '').trim();
     const prefix = row.prefix || `sculptures/${id}/`;
+    if (row.kind === 'splatbake') {
+        // Catalogue previews use the app origin so pre-protocol immutable
+        // baked viewers can expose their live WebGL camera through the
+        // same-origin compatibility bridge. Open/Copy still use the frozen
+        // public share URL.
+        const viewer = new URL(prefix + 'viewer.html', window.location.origin + '/');
+        viewer.hash = new URLSearchParams({ sid: id, embed: '1' }).toString();
+        return viewer.href;
+    }
     const viewer = new URL('sculpture.html', window.location.href);
     viewer.hash = new URLSearchParams({
         meta: _publicStorageUrl(prefix + 'meta.json'),
@@ -1731,6 +1737,8 @@ const _sculptureSnapState = {
     sculptureId: '',
     frame: null,
     ready: false,
+    snapshotMode: '',
+    legacyProbeTimer: null,
     inFlight: false,
     pending: null,
 };
@@ -1773,6 +1781,11 @@ function _sculptureSnapReset(reason) {
     _sculptureSnapState.sculptureId = '';
     _sculptureSnapState.frame = null;
     _sculptureSnapState.ready = false;
+    _sculptureSnapState.snapshotMode = '';
+    if (_sculptureSnapState.legacyProbeTimer) {
+        clearTimeout(_sculptureSnapState.legacyProbeTimer);
+        _sculptureSnapState.legacyProbeTimer = null;
+    }
     _sculptureSnapState.inFlight = false;
     const pending = _sculptureSnapState.pending;
     _sculptureSnapState.pending = null;
@@ -1784,10 +1797,7 @@ function _sculptureSnapReset(reason) {
 }
 
 function _sculptureSnapAvailability(meta) {
-    if (!meta || !meta.id) return { enabled: false, title: 'Select a full Sculpture first' };
-    if (meta.kind === 'splatbake') {
-        return { enabled: false, title: 'Baked splat snapshots are not supported in v1' };
-    }
+    if (!meta || !meta.id) return { enabled: false, title: 'Select a Sculpture first' };
     if (_activeRenderRun) return { enabled: false, title: 'Wait for the active render to finish' };
     if (_sculptureSnapState.inFlight) return { enabled: false, title: 'Snapshot is already in progress' };
     if (!_sculptureSnapState.ready
@@ -1797,6 +1807,113 @@ function _sculptureSnapAvailability(meta) {
         return { enabled: false, title: 'Viewer is still loading' };
     }
     return { enabled: true, title: 'Render this camera pose at the source calculation N×N resolution' };
+}
+
+function _bakedSnapshotVerticalScale(header) {
+    const declared = Number((header || {}).yscale);
+    if (Number.isFinite(declared) && declared >= 0 && declared <= 1) return declared;
+    const cmin = Array.isArray((header || {}).cmin) ? header.cmin : [];
+    const cmax = Array.isArray((header || {}).cmax) ? header.cmax : [];
+    const bound = Math.max(
+        Math.abs(Number(cmin[1]) || 0),
+        Math.abs(Number(cmax[1]) || 0)
+    );
+    // Old baked pages folded height into their packed center bounds but did
+    // not retain the input scalar. Occupied edge layers make 2*bound the
+    // exact value; sparse edge layers make it the closest recoverable pose.
+    return Math.max(0.01, Math.min(1, 2 * bound || 0.1));
+}
+
+function _bakedSnapshotFromState(meta, header, viewValues, projectionValues,
+        drawingWidth, drawingHeight) {
+    const finiteMatrix = (values, label) => {
+        const out = Array.from(values || [], Number);
+        if (out.length !== 16 || out.some((value) => !Number.isFinite(value))) {
+            throw new Error(`legacy baked viewer ${label} is unavailable`);
+        }
+        return out;
+    };
+    const view = finiteMatrix(viewValues, 'view matrix');
+    const projection = finiteMatrix(projectionValues, 'projection matrix');
+    const width = Number(drawingWidth);
+    const height = Number(drawingHeight);
+    const cropSide = Math.min(width, height);
+    if (!(width > 0) || !(height > 0) || !(cropSide > 0)) {
+        throw new Error('legacy baked viewer drawing buffer is empty');
+    }
+    const squareScale = Math.max(projection[0], projection[5]);
+    if (!(squareScale > 0)) throw new Error('legacy baked viewer projection is invalid');
+    projection[0] = squareScale;
+    projection[5] = squareScale;
+
+    const yscale = _bakedSnapshotVerticalScale(header);
+    for (let idx = 4; idx < 8; idx++) view[idx] *= yscale;
+
+    const bake = (meta && meta.bake_params) || {};
+    const vertical = (header || {}).zaxis === 't1' || bake.zaxis === 't1' ? 't1' : 't2';
+    const rawSlices = (header || {}).slices != null ? header.slices : bake.slices;
+    const slices = Math.max(0, parseInt(rawSlices, 10) || 0);
+    return {
+        version: SCULPTURE_SNAPSHOT_PROTOCOL_VERSION,
+        projection: 'perspective',
+        matrix_layout: 'column_major',
+        model_view_matrix: view,
+        projection_matrix: projection,
+        vertical,
+        slices,
+        effective_tlo: 0,
+        effective_thi: 1,
+        frame: { aspect: 1, crop: 'center_square' },
+    };
+}
+
+function _legacyBakedSnapshot(meta, frame) {
+    const viewerWindow = frame && frame.contentWindow;
+    const viewerDocument = viewerWindow && viewerWindow.document;
+    const canvas = viewerDocument && viewerDocument.getElementById('c');
+    const gl = canvas && canvas.getContext('webgl2');
+    const program = gl && gl.getParameter(gl.CURRENT_PROGRAM);
+    if (!viewerWindow || !canvas || !gl || !program) {
+        throw new Error('legacy baked viewer camera is not ready');
+    }
+    const viewLocation = gl.getUniformLocation(program, 'uView');
+    const projectionLocation = gl.getUniformLocation(program, 'uProj');
+    const view = viewLocation && gl.getUniform(program, viewLocation);
+    const projection = projectionLocation && gl.getUniform(program, projectionLocation);
+    return _bakedSnapshotFromState(
+        meta,
+        viewerWindow.H || {},
+        view,
+        projection,
+        canvas.width,
+        canvas.height
+    );
+}
+
+function _sculptureProbeLegacyBakedFrame(frame, generation, attempt = 0) {
+    if (generation !== _sculptureSnapState.generation
+            || frame !== _sculptureSnapState.frame
+            || !frame.isConnected
+            || _sculptureSnapState.snapshotMode === 'protocol') return;
+    const meta = _sculptureSelectedMeta();
+    if (!meta || meta.kind !== 'splatbake'
+            || String(meta.id) !== _sculptureSnapState.sculptureId) return;
+    try {
+        _legacyBakedSnapshot(meta, frame);
+        _sculptureSnapState.ready = true;
+        _sculptureSnapState.snapshotMode = 'legacy-baked';
+        _sculptureSnapState.legacyProbeTimer = null;
+        _sculptureUpdateSnapButton();
+    } catch (error) {
+        if (attempt >= 49) {
+            _sculptureSnapState.legacyProbeTimer = null;
+            return;
+        }
+        _sculptureSnapState.legacyProbeTimer = setTimeout(
+            () => _sculptureProbeLegacyBakedFrame(frame, generation, attempt + 1),
+            100
+        );
+    }
 }
 
 function _sculptureUpdateSnapButton() {
@@ -1819,6 +1936,12 @@ function _sculptureArmPreviewFrame() {
     frame.dataset.snapGeneration = String(generation);
     _sculptureSnapState.frame = frame;
     _sculptureSnapState.sculptureId = sculptureId;
+    frame.addEventListener('load', () => {
+        if (frame === _sculptureSnapState.frame
+                && generation === _sculptureSnapState.generation) {
+            _sculptureProbeLegacyBakedFrame(frame, generation);
+        }
+    }, { once: true });
     _sculpturePreviewTimer = setTimeout(() => {
         _sculpturePreviewTimer = null;
         const live = document.querySelector('#render-artifact-viewer iframe[data-viewer-src]');
@@ -1849,6 +1972,11 @@ function _sculptureSnapReceiveMessage(event) {
 
     if (message.type === 'polypaint-sculpture-ready') {
         _sculptureSnapState.ready = true;
+        _sculptureSnapState.snapshotMode = 'protocol';
+        if (_sculptureSnapState.legacyProbeTimer) {
+            clearTimeout(_sculptureSnapState.legacyProbeTimer);
+            _sculptureSnapState.legacyProbeTimer = null;
+        }
         _sculptureUpdateSnapButton();
         return;
     }
@@ -1878,6 +2006,14 @@ function _requestSculptureSnapshot(meta) {
     const availability = _sculptureSnapAvailability(meta);
     if (!availability.enabled) return Promise.reject(new Error(availability.title));
     const frame = _sculptureSnapState.frame;
+    if (meta.kind === 'splatbake'
+            && _sculptureSnapState.snapshotMode === 'legacy-baked') {
+        try {
+            return Promise.resolve(_legacyBakedSnapshot(meta, frame));
+        } catch (error) {
+            return Promise.reject(error);
+        }
+    }
     const generation = _sculptureSnapState.generation;
     const sculptureId = String(meta.id);
     const requestId = `snap_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
@@ -2039,7 +2175,7 @@ async function runSculptureSnap() {
         log(
             `ViewSnap: camera from ${selectedId}, source ${source.artifact.artifact_id}, `
             + `${params.pix}x${params.pix} (${source.sourceOrigin}) — `
-            + 'dispatching full ColorRender-MT…',
+            + 'dispatching one-pixel depth reprojection from stored scores…',
             'ok',
             'render-log'
         );
@@ -2055,10 +2191,10 @@ async function runSculptureSnap() {
         _sculptureSnapState.inFlight = false;
         const live = document.getElementById('btn-sculpture-snap') || btn;
         if (live) {
-            live.textContent = ok ? '✓ Snap' : '✗ Snap';
+            live.textContent = ok ? '✓ SnapRender' : '✗ SnapRender';
             setTimeout(() => {
                 const current = document.getElementById('btn-sculpture-snap');
-                if (current) current.textContent = 'Snap';
+                if (current) current.textContent = 'SnapRender';
             }, 2500);
         }
         _sculptureUpdateSnapButton();
@@ -2452,7 +2588,7 @@ function _viewRenderEnsureModal() {
                     <option value="t1">t1 up</option>
                 </select>
             </div>
-            <div style="font-size:11px; color:#666; margin-top:10px">full ColorRender-MT render · output is N×N · elevation modes plot one root coordinate against t1/t2; isometric projects normalized x/y/t1 or x/y/t2 without stretching · viewport, score program, transforms, palette, and format come from the selected Color artifact · colliding pixels keep the FIRST root to land — no depth rule, and the winner can differ between equivalent runs</div>
+            <div style="font-size:11px; color:#666; margin-top:10px">output is N×N · elevation modes plot one root coordinate against t1/t2; isometric projects normalized x/y/t1 or x/y/t2 without stretching · roots, stored score bytes, transforms, palette, and format come from the selected Color artifact · no solve-score program is rerun</div>
             <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
                 <button type="button" class="btn-secondary btn-inline" onclick="_viewRenderClose()">Cancel</button>
                 <button type="button" class="btn-secondary btn-inline" id="view-render-go" onclick="runViewRenderStart()">Render</button>
@@ -2504,7 +2640,7 @@ async function runViewRenderStart() {
         if (btn) { btn.disabled = true; btn.textContent = 'Dispatching…'; }
         log(
             `ViewRender: ${projection}/${vertical} from ${art.artifact_id} `
-            + `at ${params.pix}x${params.pix} — dispatching full ColorRender-MT…`,
+            + `at ${params.pix}x${params.pix} — dispatching stored-score reprojection…`,
             'ok',
             'render-log'
         );
@@ -2571,9 +2707,6 @@ function _viewRenderParamsFromArtifact(art, projection, vertical, calcOverride) 
         throw new Error('selected color artifact has no valid saved viewport');
     }
     const solveSource = _artifactSolveScoreSourceText(art);
-    if (!solveSource.trim()) {
-        throw new Error('selected color artifact has no saved solve-score source text');
-    }
     const fmtRaw = String(art.format || '').trim().toLowerCase();
     const fmt = fmtRaw === 'png' ? 'png' : 'jpeg';
     const qualityRaw = Math.round(Number(art.quality));
@@ -2594,7 +2727,6 @@ function _viewRenderParamsFromArtifact(art, projection, vertical, calcOverride) 
         color_mode: 'solve_score',
         color_interpretation: _artifactColorInterpretation(art),
         background_color: String(art.background_color || '000000'),
-        solve_score_program_source_text: solveSource,
         solve_score_normalize: art.solve_score_normalize != null
             ? _boolish(art.solve_score_normalize, false)
             : _boolish(art.score_output_normalize, false),
@@ -2613,6 +2745,9 @@ function _viewRenderParamsFromArtifact(art, projection, vertical, calcOverride) 
         view_vertical: vertical,
         source_color_artifact_id: String(art.artifact_id),
     };
+    if (solveSource.trim()) {
+        params.solve_score_program_source_text = solveSource;
+    }
     if (rootSource.trim()) {
         params.root_program_source_text = rootSource;
     } else if (Array.isArray(art.root_transforms) && art.root_transforms.length) {

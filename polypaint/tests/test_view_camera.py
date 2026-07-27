@@ -41,18 +41,6 @@ def _camera():
         "slices": 0,
         "effective_tlo": 0.0,
         "effective_thi": 1.0,
-        "point_world_size": 0.004,
-        "point_scale": 0.5,
-        "point_min_fraction": 1.0 / 1024.0,
-        "point_max_fraction": 1.0,
-        "style": "solid",
-        "show": {
-            "points": True,
-            "ribbons": False,
-            "threads": False,
-            "clu": False,
-            "splats": False,
-        },
         "frame": {"aspect": 1.0, "crop": "center_square"},
         "debug": {
             "camera_position": [0.0, 0.0, 2.0],
@@ -63,7 +51,6 @@ def _camera():
             "height": 1.0,
             "control_zlo": 0.0,
             "control_zhi": 1.0,
-            "point_control": 10.0,
         },
     }
 
@@ -79,9 +66,6 @@ def test_valid_camera_normalizes_and_preserves_execution_fields():
     ("field", "value", "message"),
     [
         ("slices", 7, "slices"),
-        ("style", "ghost", "style=solid"),
-        ("point_world_size", 0.0, "point_world_size"),
-        ("point_scale", 0.49, "point_scale"),
         ("effective_tlo", 1.1, "effective t bounds"),
     ],
 )
@@ -100,16 +84,23 @@ def test_fractional_integer_fields_fail_closed(field):
         validate_view_camera(camera)
 
 
-def test_hidden_points_and_visible_unsupported_primitives_are_rejected():
-    hidden = _camera()
-    hidden["show"]["points"] = False
-    with pytest.raises(RuntimeError, match="visible points"):
-        validate_view_camera(hidden)
-
-    ribbons = _camera()
-    ribbons["show"]["ribbons"] = True
-    with pytest.raises(RuntimeError, match="ribbons"):
-        validate_view_camera(ribbons)
+def test_legacy_webgl_appearance_fields_are_ignored():
+    left = _camera()
+    right = _camera()
+    right["point_world_size"] = -999
+    right["point_scale"] = 0
+    right["point_min_fraction"] = -1
+    right["point_max_fraction"] = 999
+    right["style"] = {"not": "a camera field"}
+    right["show"] = "also ignored"
+    right["debug"]["point_control"] = -999
+    normalized = validate_view_camera(right)
+    assert "point_world_size" not in normalized
+    assert "point_scale" not in normalized
+    assert "style" not in normalized
+    assert "show" not in normalized
+    assert "point_control" not in normalized["debug"]
+    assert camera_execution_hash(left) == camera_execution_hash(right)
 
 
 def test_camera_execution_hash_ignores_debug_and_folds_signed_zero():

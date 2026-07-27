@@ -39,15 +39,13 @@ int main(int argc, char **argv) {
     camera.slices = atoi(argv[7]);
     camera.effective_tlo = strtod(argv[8], NULL);
     camera.effective_thi = strtod(argv[9], NULL);
-    camera.point_world_size = strtod(argv[10], NULL);
-    camera.point_scale = strtod(argv[11], NULL);
-    camera.point_min_fraction = strtod(argv[12], NULL);
-    camera.point_max_fraction = strtod(argv[13], NULL);
+    /* argv[10..13] are retained by the probe CLI for fixture compatibility.
+     * Native ViewRender no longer consumes WebGL point-size state. */
 
     double px = 0.0;
     double py = 0.0;
     float depth = 0.0f;
-    int point_side = 0;
+    int point_side = 1;
     int reason = VIEW_CAMERA_REJECT_INVALID;
     int accepted = view_camera_project(
         &camera,
@@ -58,7 +56,6 @@ int main(int argc, char **argv) {
         &px,
         &py,
         &depth,
-        &point_side,
         &reason
     );
     printf(

@@ -10,10 +10,6 @@ typedef struct {
     int slices;
     double effective_tlo;
     double effective_thi;
-    double point_world_size;
-    double point_scale;
-    double point_min_fraction;
-    double point_max_fraction;
 } ViewCameraProjection;
 
 enum {
@@ -55,10 +51,9 @@ static inline int view_camera_project(
         double *px,
         double *py,
         float *depth,
-        int *point_side,
         int *reject_reason) {
     if (reject_reason) *reject_reason = VIEW_CAMERA_REJECT_INVALID;
-    if (!camera || !px || !py || !depth || !point_side || pix < 1) return 0;
+    if (!camera || !px || !py || !depth || pix < 1) return 0;
     double t = view_camera_quantize_t(local_t, camera->slices);
     if (!isfinite(t)
             || t < camera->effective_tlo
@@ -96,14 +91,6 @@ static inline int view_camera_project(
     *py = (0.5 - ndc_y * 0.5) * (double)pix;
     *depth = camera_depth_f32;
 
-    double fraction = camera->point_world_size * camera->point_scale / camera_depth;
-    if (fraction < camera->point_min_fraction) fraction = camera->point_min_fraction;
-    if (fraction > camera->point_max_fraction) fraction = camera->point_max_fraction;
-    if (!isfinite(fraction) || !(fraction > 0.0)) return 0;
-    int side = (int)ceil((double)pix * fraction);
-    if (side < 1) side = 1;
-    if (side > pix) side = pix;
-    *point_side = side;
     if (reject_reason) *reject_reason = VIEW_CAMERA_ACCEPTED;
     return 1;
 }

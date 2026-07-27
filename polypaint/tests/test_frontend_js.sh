@@ -643,6 +643,11 @@ assertIncludes("async function _resolveViewSnapSource(meta, sourceRef) {", 'View
 assertIncludes("'/render-summary'", 'ViewSnap source resolution must use a fresh source-job render summary');
 assertIncludes("params.source_sculpture_id = String(meta.id);", 'ViewSnap dispatch must preserve the source Sculpture identity');
 assertIncludes("window.addEventListener('message', _sculptureSnapReceiveMessage);", 'ViewSnap must use an identity-scoped postMessage protocol');
+assertIncludes("function _legacyBakedSnapshot(meta, frame) {", 'pre-protocol baked viewers must expose their live WebGL camera without rebaking');
+assertIncludes("gl.getUniformLocation(program, 'uView')", 'legacy baked camera fallback must read the live view uniform, not the initial camera');
+assertIncludes("gl.getUniformLocation(program, 'uProj')", 'legacy baked camera fallback must read the live projection uniform');
+assertIncludes("new URL(prefix + 'viewer.html', window.location.origin + '/')", 'baked catalogue previews must be same-origin for the immutable-viewer fallback');
+assertNotIncludes("Baked splat snapshots are not supported", 'baked viewers are valid camera controls and must not be permanently disabled');
 assertIncludes('<option value="isometric">isometric (x, y, t)</option>', 'ViewRender must expose the shared isometric x/y/t projection');
 assertNotIncludes("id=\"view-render-lattice\"", 'ViewRender must not expose the interactive sculpture lattice cap');
 assertNotIncludes("id=\"view-render-pix\"", 'ViewRender must derive N x N geometry instead of exposing a size selector');

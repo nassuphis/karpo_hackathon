@@ -4063,18 +4063,14 @@ def test_roots2pix_view_projection_runtime():
             "--view_slices=%d" % camera["slices"],
             "--view_effective_tlo=%s" % camera["effective_tlo"],
             "--view_effective_thi=%s" % camera["effective_thi"],
-            "--view_point_world_size=%s" % camera["point_world_size"],
-            "--view_point_scale=%s" % camera["point_scale"],
-            "--view_point_min_fraction=%s" % camera["point_min_fraction"],
-            "--view_point_max_fraction=%s" % camera["point_max_fraction"],
             "--fragment_encoding=u32le_f32depth_u8_channels_v1",
             "--retries=1",
         ], capture_output=True, text=True, timeout=30)
         assert camera_run.returncode == 0, camera_run.stderr
         camera_meta = json.loads(camera_run.stdout)
-        assert camera_meta["camera_footprint_pixel_candidates"] == len(point["pixels"])
+        assert camera_meta["camera_pixel_candidates"] == 1
         payload = open(fragment_path, "rb").read()
-        assert len(payload) == 9 * len(point["pixels"])
+        assert len(payload) == 9
         got_pixels = []
         for offset in range(0, len(payload), 9):
             pixel, depth = struct.unpack_from("<If", payload, offset)
@@ -4082,7 +4078,8 @@ def test_roots2pix_view_projection_runtime():
             got_pixels.append(pixel)
             assert abs(depth - point["depth"]) < 1e-6, (idx, depth, point["depth"])
             expected_camera_raw[pixel] = score
-        assert got_pixels == point["pixels"], (idx, got_pixels, point["pixels"])
+        expected_pixel = point["raster_pixel"]
+        assert got_pixels == [expected_pixel], (idx, got_pixels, expected_pixel)
         camera_fragments.append(fragment_path)
 
     camera_raw_path = "/tmp/vp_camera.raw"
@@ -4102,7 +4099,7 @@ def test_roots2pix_view_projection_runtime():
     camera_merge_meta = json.loads(camera_merge.stdout)
     assert camera_merge_meta["camera_fragments_processed"] == len(camera_fragments)
     assert camera_merge_meta["camera_fragment_records_seen"] == sum(
-        len(point["pixels"]) for point in oracle["points"]
+        1 for _point in oracle["points"]
     )
     camera_raw = open(camera_raw_path, "rb").read()
     for pixel, score in expected_camera_raw.items():
@@ -4129,7 +4126,7 @@ def test_roots2pix_view_projection_runtime():
             )
         ],
     )
-    print("  front/radial/isometric + shared Three.js camera oracle exact: OK")
+    print("  front/radial/isometric + captured camera one-pixel projection: OK")
 
 
 if __name__ == "__main__":

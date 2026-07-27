@@ -237,7 +237,11 @@ V1 reproduces:
   palette, output format, quality, background, and viewport;
 - pass 0 only, exactly the solves the viewer displays (later passes are
   never plotted in camera mode);
-- nearest-depth occlusion.
+- nearest-depth occlusion;
+- COLOR PARITY BY POPULATION: the camera equalization LUT is built from
+  the pass-0 step-score histogram — the same population the Sculpture's
+  palette was generated from — not from the projected/occluded output
+  pixels (see section 9.5a).
 
 V1 does not reproduce:
 
@@ -257,8 +261,10 @@ unsupported primitives would disable Snap permanently. They are
 deliberately omitted from the output and never block a snap.
 
 If any unsupported DATA primitive is visible (ribbons, threads, cluster
-lines, splats), or the style is not `solid`, the viewer must not silently
-dispatch a different-looking image. The Snap response should carry a
+lines, splats), or the style is not `solid`, or `show.points` is FALSE
+(the viewer permits hiding the points layer — snapping points the user
+was not seeing is the same silent-surprise class), the viewer must not
+silently dispatch a different-looking image. The Snap response should carry a
 structured unsupported-state list and the parent should refuse with a
 concise explanation. A later version can deliberately add those render
 contracts.
@@ -605,6 +611,17 @@ assembler receives the selected encoding explicitly on its command line
 and hard-fails on a record-size mismatch. One authority, two readers,
 zero inference.
 
+Precedence trap, verified in code: `handler_finalize_mt` resolves
+`pair_encoding OR fragment_encoding` — the PAIR field wins — and
+validates it against the two legacy encodings only. Rewiring
+`fragment_encoding` alone therefore changes nothing: a camera manifest
+still carrying the clip-sourced `pair_encoding` is rejected (or worse,
+misparsed) before the new field is ever read. `pair_encoding`,
+`fragment_encoding`, `channels`, and `record_size_bytes` must ALL be
+populated from `fragment_contract` — the competing solve-score-sourced
+fields are removed, not merely outranked — and the validator's accepted
+set gains the camera encoding.
+
 ### 7.2 Section-local ownership
 
 Inside each `roots2pix_mt` invocation, the current claim bitset is
@@ -614,6 +631,12 @@ score bytes per occupied output pixel.
 Use one shared section-local depth/score store across native threads:
 
 - initialize depth to infinity;
+- convert each candidate depth to a validated positive FLOAT32 exactly
+  once, and use that same f32 value for the section-local comparison AND
+  the serialized record — projection math runs in doubles, and comparing
+  doubles locally while serializing floats lets two locally distinct
+  depths collapse to an equal cross-section depth and flip the winner.
+  Pin a fixture where two doubles collapse to one float32;
 - compare/update depth and score under striped locks or an equivalent
   race-free primitive;
 - mark occupancy in the existing claim BITSET only — do NOT keep a
@@ -627,6 +650,14 @@ Camera mode must not retain fragment records in memory: the existing
 per-worker `fragmentByteVec` accumulation is explicitly prohibited for
 the camera encoding — the depth/score planes already hold the state, and
 the fragment is produced once, sequentially, at emit time.
+
+Pass-1-only sections get an explicit cheap path. Every section still
+SCORES its steps for the sidecar, but a section whose step range has no
+overlap with `[0, N*N)` plots nothing in camera mode: define
+`pass0_overlap` per section, allocate the depth/score/occupancy planes
+ONLY when it is nonzero, restrict the footprint-work estimate to
+`pass0_overlap` roots, and emit a valid EMPTY camera fragment alongside
+the normal step-score file.
 
 Do not allocate a dense source-ordinal plane. It costs another `4 * P`
 bytes solely for the exact-equal-depth boundary case. In v1, a strictly
@@ -675,11 +706,21 @@ total fragment bytes     = sum(section fragment bytes)
 plus encoded-output and native-reader overhead
 ```
 
-For the estimate, derive the clip-near depth from the validated standard
-perspective projection matrix, not from the debug block:
+For the estimate, do NOT price every point at the clip-near plane: with
+the viewer's `near = 0.01`, `N = 1000` and `point_world_size = 0.004`
+that prices a 200x200 footprint for points that actually render at
+roughly 1x1 — safe but unusable, rejecting ordinary snaps. Derive a
+conservative-but-realistic minimum depth instead: transform the local
+bounding prism's eight corners (`x, z` in `[-0.5, 0.5]`, `y` in
+`[effective_tlo - 0.5, effective_thi - 0.5]`) by the validated
+model-view matrix and take the smallest positive camera depth; fall back
+to clip-near only when the camera is inside the prism:
 
 ```text
-max_point_side = ceil(N * point_world_size / (2 * clip_near_depth))
+min_depth      = max(clip_near_depth,
+                     min positive -view.z over the 8 prism corners;
+                     clip_near_depth when the camera is inside the prism)
+max_point_side = ceil(N * point_world_size / (2 * min_depth))
 A_max = min(P, max_point_side * max_point_side)
 ```
 
@@ -690,6 +731,13 @@ backstop even when the occupancy estimate is smaller.
 Raster-MT and Finalize-MT are currently 10,240 MiB Lambdas with 10 GiB
 ephemeral storage. Admission must use an explicit safety budget tied to
 those deployed resources and pinned against `deploy_manifest.json`.
+
+Sectioning must know about the camera planes: `compute_safe_sectioning`
+budgets ONLY source-row bytes today. For camera runs it must subtract
+the fixed per-section camera allocations (depth + score + occupancy
+planes and the step-score buffer) from the source-row budget before
+choosing section sizes, or a section that fits its rows can still blow
+the Lambda on the planes.
 
 The two stages have different constraints:
 
@@ -712,10 +760,15 @@ PHASE's peak RSS and `/tmp` explicitly:
 ```text
 Raster peak RSS   = section source buffers (logical materialization)
                   + 4P depth + C*P score + P/8 occupancy
+                  + C * section_steps worker step-score bytes (the
+                    sections still SCORE every step for the sidecar)
                   + native reader + streaming emit buffer
-Raster /tmp       = fragment file <= (8 + C) * occupied  (hard: fits the
-                    10 GiB budget with named headroom; 11 * N^2 at
-                    N=32768 is 11.0 GiB and REJECTS)
+Raster /tmp       = fragment file <= (8 + C) * occupied
+                  + /tmp/step_scores.bin (C * section_steps) — BOTH
+                    files coexist until the handler's sequential uploads
+                    complete  (hard: their SUM fits the 10 GiB budget
+                    with named headroom; 11 * N^2 at N=32768 is
+                    11.0 GiB and REJECTS on the fragment alone)
 Finalize peak RSS = 4P depth + C*P score/raw (one allocation)
                   + bounded stream carry buffer
 Finalize /tmp     = C*P raw + step-scores sidecar (C * P * times —
@@ -738,9 +791,16 @@ estimated_footprint_updates = sum over sections of R_s * A_max
 
 and rejects when it exceeds a budget calibrated from measured native
 throughput against the 600-second native subprocess limit (the raster
-handler's hard `timeout=600`), with named headroom. The benchmark
-supplies the updates-per-second constant; until it exists, camera
-admission is not enabled.
+handler's hard `timeout=600`), with named headroom.
+
+Calibration bootstrap (the deadlock is otherwise real: admission needs
+the constant, and the benchmark that measures it must pass admission):
+seed a PROVISIONAL updates-per-second constant from the local/Docker
+ARM64 benchmark in Milestone 2, marked provisional in the plan output;
+Milestone 4's internal production runs replace it with the measured
+value and record both in this document. An internal-only benchmark
+override (never reachable from the UI, logged in the plan output) may
+bypass the work limit for exactly those calibration runs.
 - `total_fragment_bytes` is primarily a transfer and wall-time constraint,
   not resident memory once streaming is implemented. Report it and enforce
   a benchmark-derived wall-time policy rather than pretending it is free.
@@ -851,8 +911,19 @@ current packaged viewer.
 2. call the existing `/render-summary`;
 3. locate the exact Color artifact by `source_artifact_id`;
 4. reject missing, unreadable, or ambiguous matches;
-5. derive normal ViewRender provenance through the existing helper;
-6. add the camera snapshot and source Sculpture id.
+5. return `{jobId, calc, artifact}` — the summary's OWN calc, not a
+   global;
+6. derive ViewRender provenance with N taken EXPLICITLY from that
+   returned `calc.N`;
+7. add the camera snapshot and source Sculpture id.
+
+`_viewRenderGridN` is NOT usable here: it reads
+`window._lastRenderSummary.calc` before the artifact — the currently
+loaded Results job — so a Snap of Sculpture job B while job A is on
+screen would render at job A's N. `_viewSnapParamsFromArtifact` takes
+the resolved calc as an argument and never consults the global summary.
+Pin it: an E2E case with current job A and Sculpture source job B
+having DIFFERENT N asserts the dispatch carries B's N.
 
 This allows Snap to work even when another Color row is selected, and
 prevents the classic stale-selection regression.
@@ -872,6 +943,12 @@ Rules:
 - Camera mode remains family `views` and forces `pix=calc.N`.
 - Camera mode plots pass 0 only (`global_step < N*N`), matching the
   viewer; the step-scores sidecar keeps its standard full semantics.
+- `plan_params_digest` gains canonical projection identity: the digest
+  today covers viewport/pix/transforms/score settings but no projection,
+  vertical, or camera — two different camera outputs (or a camera and a
+  fixed view) could advertise the same raw-sidecar digest. Include
+  `view_projection`, `view_vertical`, and a canonical hash of the camera
+  payload whenever the projection is not `plan`.
 - Validate matrices, enums, effective t-window, style, and point size.
 - Calculate camera depth-buffer resource requirements.
 - Store compact canonical camera JSON and `source_sculpture_id` in the
@@ -894,9 +971,15 @@ RENDER_COLOR_RASTER_ITEM_SELECTOR:
   "fragment_contract.$": "$.plan.fragment_contract"
 
 RENDER_FINALIZE_MT_FRAGMENT_MANIFEST:
+  "pair_encoding.$": "$.plan.fragment_contract.encoding"
   "fragment_encoding.$": "$.plan.fragment_contract.encoding"
+  "channels.$": "$.plan.fragment_contract.channels"
   "record_size_bytes.$": "$.plan.fragment_contract.record_size_bytes"
 ```
+
+Both encoding aliases come from the ONE contract (finalize gives
+`pair_encoding` precedence — leaving it on the clip contract would
+override the rewired field), and `channels` moves with them.
 
 The plan emits `fragment_contract` for EVERY run (ASL `.$` selectors
 hard-fail on absent fields): existing projections emit their current
@@ -946,6 +1029,29 @@ projection header staling `assemble_greyscale` (or the record header
 missing from either binary's inputs) is false coupling that either
 forces pointless rebuilds or, worse, ships a stale assembler after a
 record change. Rebuild through the normal Docker ARM64 path.
+
+### 9.5a Color parity contract
+
+This is a contract decision, not an implementation nit. The saved
+Sculpture's per-point colors come from a histogram of pass-0 step
+scores (the lores generation equalizes the SCORE population); normal
+Finalize builds its LUT from the histogram of the projected, occluded
+OUTPUT pixels. Those distributions differ — occlusion and framing
+remove scores from the output histogram — so a geometrically exact Snap
+under the normal path can be visibly differently colored than the
+viewer the user just framed.
+
+Decision: camera Finalize derives its equalization LUT from the pass-0
+slice of the step-scores sidecar (the first `N*N` records it already
+produces), exactly the population the Sculpture generation histograms.
+This gives DISTRIBUTION parity: the full-N pass-0 population densely
+samples the same distribution the saved lattice sampled, so colors
+match the viewer up to sampling density — it is deliberately NOT a
+bit-identical replay of the frozen saved-lattice LUT, and the plan says
+so. Fixture: a synthetic where the pass-0 histogram and the output
+histogram differ sharply (heavy occlusion) pins that the camera LUT
+follows the pass-0 population; a second fixture pins camera-vs-fixed
+ViewRender divergence as INTENDED.
 
 ### 9.5 Metadata and Views display
 

@@ -252,17 +252,34 @@ async function _dzGotoSelectedRender() {
         const isViewSource = renderRef.family === 'views';
         _setRenderResultsJob(renderRef.jobId);
         const refreshOptions = renderRef.family && renderRef.artifactId
-            ? { selectFamily: renderRef.family, selectArtifactId: renderRef.artifactId }
-            : {};
+            ? { selectFamily: renderRef.family, selectArtifactId: renderRef.artifactId, throwOnError: true }
+            : { throwOnError: true };
         await refreshRenderArtifacts(renderRef.jobId, refreshOptions);
+        let viewSelection = null;
         if (isViewSource && typeof _viewsEnsureInventory === 'function') {
             // views live in their own job-scoped inventory, not the render
             // summary — fetch (or reuse) it and select the row (CR36 follow-up)
-            await _viewsEnsureInventory(false, { selectViewId: renderRef.artifactId });
+            viewSelection = await _viewsEnsureInventory(false, { selectViewId: renderRef.artifactId });
         }
         switchTab('render');
         if (isViewSource) {
-            log(`DeepZoom GoRender: view ${renderRef.artifactId} (${renderRef.jobId})`, 'ok', 'deepzoom-log');
+            // success is only success if the REQUESTED view is selected —
+            // a stale cache or a deleted view must not be narrated over
+            if (viewSelection && viewSelection.ok && viewSelection.selected) {
+                log(`DeepZoom GoRender: view ${renderRef.artifactId} (${renderRef.jobId})`, 'ok', 'deepzoom-log');
+            } else {
+                const why = viewSelection && viewSelection.partial
+                    ? 'view list incomplete — press Refresh on the Views tab'
+                    : 'it may have been deleted';
+                const msg = `Opened render job ${renderRef.jobId}, but view ${renderRef.artifactId} was not selected (${why})`;
+                const renderStatusEl = document.getElementById('render-status');
+                if (renderStatusEl) {
+                    renderStatusEl.textContent = msg;
+                    renderStatusEl.className = 'status';
+                }
+                log(msg, 'err', 'deepzoom-log');
+                log(msg, 'err', 'render-log');
+            }
         } else if (canPopulate) {
             populateSelectedRenderArtifact();
             const visible = _dzViewportReadoutState.visibleBounds;

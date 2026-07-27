@@ -1928,6 +1928,10 @@ test.describe('Solve Score UI', () => {
     await seedRenderPopupState(page);
     await page.evaluate(() => {
       document.getElementById('render-results-dir').value = 'test_job';
+      // the seed's panel kick started a views fetch on the REAL lambdaPost;
+      // drop it so the in-flight dedup can't hand its result to these stubs
+      window._viewsInventoryInflight = null;
+      window._viewsInventoryJob = '';
       window._storageCalls = [];
       window._viewDispatched = false;
       window._viewDeleted = false;
@@ -2128,6 +2132,10 @@ test.describe('Solve Score UI', () => {
     await seedRenderPopupState(page);
     await page.evaluate(() => {
       document.getElementById('render-results-dir').value = 'test_job';
+      // the seed's panel kick started a views fetch on the REAL lambdaPost;
+      // drop it so the in-flight dedup can't hand its result to this stub
+      window._viewsInventoryInflight = null;
+      window._viewsInventoryJob = '';
       window.lambdaPost = async function (name, body, path) {
         if (path === '/list-sculptures') return { sculptures: [], count: 0 };
         if (path === '/list-views') return {
@@ -2150,6 +2158,33 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#btn-views-refresh')).toHaveText('✓ Refreshed (2 unreadable)');
     const logText = await page.evaluate(() => document.getElementById('render-log')?.textContent || '');
     expect(logText).toContain('2 meta.json unreadable');
+  });
+
+  test('overlapping views-inventory loads share one /list-views request', async ({ page }) => {
+    // CR36 follow-up: panel kick + GotoRender + Refresh racing on one job
+    // must not fan out duplicate list calls — the in-flight fetch is shared.
+    const st = await page.evaluate(async () => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      window._lvCalls = 0;
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-views') {
+          window._lvCalls += 1;
+          await new Promise((r) => setTimeout(r, 25));
+          return { views: [], count: 0 };
+        }
+        return {};
+      };
+      const results = await Promise.all([
+        _viewsEnsureInventory(true),
+        _viewsEnsureInventory(false),
+        _viewsEnsureInventory(true),
+      ]);
+      const afterWarm = await _viewsEnsureInventory(false);   // cache hit, no fetch
+      return { calls: window._lvCalls, oks: results.map((r) => r.ok), warmOk: afterWarm.ok };
+    });
+    expect(st.calls).toBe(1);
+    expect(st.oks).toEqual([true, true, true]);
+    expect(st.warmOk).toBe(true);
   });
 
   test('DeepZoom from a view dispatches the image-based export with the exact payload', async ({ page }) => {

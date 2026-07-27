@@ -378,7 +378,7 @@ test.describe('DeepZoom Inventory', () => {
     const jumps = await page.evaluate(() => window._dzRenderJumps);
     expect(jumps).toContainEqual({
       jobId: 'render_new',
-      opts: { selectFamily: 'color', selectArtifactId: 'color_new' },
+      opts: { selectFamily: 'color', selectArtifactId: 'color_new', throwOnError: true },
     });
     await expect.poll(async () => page.evaluate(() => window._dzPopulateCalls)).toBe(1);
     await expect.poll(async () => page.evaluate(() => window._dzSelectedViewMode)).toBe('explicit');
@@ -425,21 +425,30 @@ test.describe('DeepZoom Inventory', () => {
   });
 
   test('GotoRender selects a View source through the views inventory', async ({ page }) => {
-    // CR36 follow-up: views are a first-class source family. A views-source
-    // export must jump to the views family, select the row via the
-    // job-scoped views inventory, and never run the color populate flow.
+    // CR36 follow-up: the REAL _viewsEnsureInventory runs here (only the
+    // network is mocked) — the pin is the actual selection outcome plus the
+    // verified success log, not merely that a helper was called.
     await page.evaluate(() => {
       window._dzRenderJumps = [];
       window._dzPopulateCalls = 0;
-      window._viewsEnsureCalls = [];
+      window._lvCalls = 0;
       window.populateSelectedRenderArtifact = function () { window._dzPopulateCalls += 1; };
       window.refreshRenderArtifacts = async function (jobId, opts) {
         window._dzRenderJumps.push({ jobId, opts: opts || null });
         return { families: {}, calc: {} };
       };
-      window._viewsEnsureInventory = async function (force, options) {
-        window._viewsEnsureCalls.push([!!force, JSON.parse(JSON.stringify(options || {}))]);
-        return true;
+      const prev = window.lambdaPost;
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-views') {
+          window._lvCalls += 1;
+          return { views: [{
+            view_id: 'view_iso_9', job_id: 'render_v', source_artifact_id: 'color_1',
+            projection: 'isometric', vertical: 't1', lattice_n: 2000, pix: 2000,
+            image_key: 'renders/render_v/views/view_iso_9/image.jpeg',
+            prefix: 'renders/render_v/views/view_iso_9/',
+            created_at: '2026-07-27T10:00:00Z' }], count: 1 };
+        }
+        return prev(name, body, path);
       };
     });
     await page.click('.tab-btn:text("DeepZoom")');
@@ -457,17 +466,54 @@ test.describe('DeepZoom Inventory', () => {
     await expect(page.locator('#render-results-dir')).toHaveValue('render_v');
     const st = await page.evaluate(() => ({
       jumps: window._dzRenderJumps,
-      ensure: window._viewsEnsureCalls,
+      selectedKey: _renderSelectedArtifactKey.views,
+      inventoryJob: window._viewsInventoryJob,
       populates: window._dzPopulateCalls,
+      dzLog: document.getElementById('deepzoom-log')?.textContent || '',
     }));
     expect(st.jumps).toContainEqual({
       jobId: 'render_v',
-      opts: { selectFamily: 'views', selectArtifactId: 'view_iso_9' },
+      opts: { selectFamily: 'views', selectArtifactId: 'view_iso_9', throwOnError: true },
     });
-    // the render-tab switch fires the panel's own inventory kick too —
-    // the SELECTION call is what matters
-    expect(st.ensure).toContainEqual([false, { selectViewId: 'view_iso_9' }]);
+    // the REQUESTED view is actually selected, and only then success logs
+    expect(st.selectedKey).toBe('views::view_iso_9');
+    expect(st.inventoryJob).toBe('render_v');
+    expect(st.dzLog).toContain('GoRender: view view_iso_9');
     expect(st.populates).toBe(0);
+  });
+
+  test('GotoRender reports a missing View instead of narrating success', async ({ page }) => {
+    // stale cache / deleted view: the jump opens the job but must SAY the
+    // view was not selected — no success line over a miss.
+    await page.evaluate(() => {
+      window.populateSelectedRenderArtifact = function () {};
+      window.refreshRenderArtifacts = async function () { return { families: {}, calc: {} }; };
+      const prev = window.lambdaPost;
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-views') return { views: [], count: 0 };
+        return prev(name, body, path);
+      };
+    });
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.evaluate(() => {
+      window._dzInventory = [{
+        job_id: 'compute_v', source_key: 'renders/render_v/views/view_gone/image.jpeg',
+        width: 2000, height: 2000, created_at: '2026-07-27T10:00:00',
+        tiles_uploaded: 44, dzi_url: 'https://dz/v.dzi',
+      }];
+      window._dzSelectedIdx = 0;
+      _dzRenderInventory();
+    });
+    await page.click('#btn-dz-goto-render');
+    await expect(page.locator('#render-results-dir')).toHaveValue('render_v');
+    const st = await page.evaluate(() => ({
+      dzLog: document.getElementById('deepzoom-log')?.textContent || '',
+      selectedKey: _renderSelectedArtifactKey.views,
+    }));
+    expect(st.dzLog).toContain('view view_gone was not selected');
+    expect(st.dzLog).not.toContain('GoRender: view view_gone (');
+    expect(st.selectedKey).toBe('');
   });
 
   test('GotoRender stays disabled for legacy exports without source keys', async ({ page }) => {
@@ -532,7 +578,7 @@ test.describe('DeepZoom Inventory', () => {
     const jumps = await page.evaluate(() => window._dzRenderJumps);
     expect(jumps).toContainEqual({
       jobId: 'render_flat',
-      opts: {},
+      opts: { throwOnError: true },
     });
     await expect.poll(async () => page.evaluate(() => window._dzPopulateCalls)).toBe(0);
     await expect(page.locator('#render-status')).toContainText('without populate');

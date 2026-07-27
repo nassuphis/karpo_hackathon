@@ -2047,24 +2047,47 @@ function _viewsSelectInventoryArtifact(viewId) {
     return true;
 }
 
+function _viewsFetchInventory(jobId) {
+    // per-job in-flight dedup (the _dzInventoryPromise pattern): a panel
+    // rebuild kick, a GotoRender jump, and a Refresh press racing on the
+    // same job share ONE /list-views round trip
+    const inflight = window._viewsInventoryInflight;
+    if (inflight && inflight.jobId === jobId) return inflight.promise;
+    const entry = { jobId, promise: null };
+    entry.promise = lambdaPost('storage', { job_id: jobId }, '/list-views')
+        .finally(() => {
+            if (window._viewsInventoryInflight === entry) window._viewsInventoryInflight = null;
+        });
+    window._viewsInventoryInflight = entry;
+    return entry.promise;
+}
+
 async function _viewsEnsureInventory(force, options = {}) {
-    // job-scoped (unlike the global sculpture list): renders/{job}/views/
+    // job-scoped (unlike the global sculpture list): renders/{job}/views/.
+    // Returns a STRUCTURED result — {ok, selected, partial} — so callers
+    // that requested a selection can verify it actually happened instead
+    // of narrating success over a miss (CR36 follow-up 2).
     const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
-    if (!jobId) return false;
+    const wantId = String(options.selectViewId || '').trim();
+    if (!jobId) return { ok: false, selected: false, partial: false };
     if (window._viewsInventoryJob === jobId && !force) {
-        if (options.selectViewId && _viewsSelectInventoryArtifact(options.selectViewId)) {
+        if (!wantId) return { ok: true, selected: true, partial: false };
+        if (_viewsSelectInventoryArtifact(wantId)) {
             _viewsRenderPane({ ensureSelected: true });
+            return { ok: true, selected: true, partial: false };
         }
-        return true;
+        // cached MISS: the cache may be stale (row minted or deleted since)
+        // — fall through and fetch ONCE before reporting failure
     }
     const btn = document.getElementById('btn-views-refresh');
     let ok = false;
+    let selected = !wantId;
     let unreadable = 0;
     if (btn) { btn.disabled = true; if (force) btn.textContent = 'Refreshing…'; }
     try {
-        const data = await lambdaPost('storage', { job_id: jobId }, '/list-views');
+        const data = await _viewsFetchInventory(jobId);
         const currentJobId = document.getElementById('render-results-dir')?.value.trim() || '';
-        if (currentJobId !== jobId) return false;
+        if (currentJobId !== jobId) return { ok: false, selected: false, partial: false };
         window._viewsInventory = (data.views || []).map(_viewAsRenderArtifact);
         window._viewsInventoryJob = jobId;
         _viewsSyncFamilyCount();
@@ -2075,14 +2098,14 @@ async function _viewsEnsureInventory(force, options = {}) {
         if (unreadable > 0) {
             log(`View list: ${unreadable} meta.json unreadable — the list may be incomplete (Refresh to retry)`, 'err', 'render-log');
         }
-        if (options.selectViewId) _viewsSelectInventoryArtifact(options.selectViewId);
+        if (wantId) selected = _viewsSelectInventoryArtifact(wantId);
         ok = true;
     } catch (e) {
         log(`View list failed: ${e.message}`, 'err', 'render-log');
     } finally {
         if (btn) btn.disabled = false;
     }
-    if (ok) _viewsRenderPane({ ensureSelected: !!options.selectViewId });
+    if (ok) _viewsRenderPane({ ensureSelected: !!wantId && selected });
     if (force) {
         // feedback AFTER the pane re-render, on the LIVE button — the
         // re-render replaces the node the try block captured (the recorded
@@ -2099,7 +2122,7 @@ async function _viewsEnsureInventory(force, options = {}) {
             }, 2500);
         }
     }
-    return ok;
+    return { ok, selected: ok && selected, partial: unreadable > 0 };
 }
 
 function _viewsSyncFamilyCount() {

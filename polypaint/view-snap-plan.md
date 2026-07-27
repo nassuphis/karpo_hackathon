@@ -924,24 +924,46 @@ maximum-token solve-score program, the maximum root-program complexity,
 a pair-family metric on the solve source, a pair-family metric on the
 coefficient source, and a combined solve-PLUS-coefficient pair-source
 case — checked into the repo alongside their language/spec versions.
-The calibration identity records those versions; a language change that
-raises the limits stales the calibration exactly like a binary change. The deployed
+Maximality is MECHANICAL, not a label: each fixture ships with a test
+that asserts its compiled token count, source mix, pairwise work class,
+`degree`/`n_coeffs`, and feature plan EQUAL the current compiler
+limits, so a registry or compiler change that raises a limit fails the
+fixture test loudly instead of silently demoting the fixture to
+mid-cost. The calibration identity records those versions; a language
+change that raises the limits stales the calibration exactly like a
+binary change. The deployed
 constant is `derated_rate = min(cell rates) * deration_factor`, and it
-enters admission only through the explicit budget equation above
+enters admission only through the explicit budget equation above.
+Encode cost is FORMAT-DEPENDENT (rendering and encoding are coupled in
+`raw_score_render`): the camera output inherits the source artifact's
+format, so `encode_seconds` is keyed by `{format, quality}` and each
+key is calibrated with a WORST-CASE poorly-compressible (noisy)
+fixture — PNG and JPEG measured separately, never one standing in for
+the other
 (startup headroom is subtracted as SECONDS from the time budget, never
 from a rate).
 
 The rate is BOUND to the execution configuration it was measured on. A
 rate measured at four raster threads underprices a one-thread request
-(the plan accepts 1..16), and finalize throughput depends on
-`finalize_workers`. v1 therefore FORCES the calibrated values
-server-side for camera mode — the plan pins `raster_mt_threads` and
+(the plan accepts 1..16), and finalize throughput depends on its
+workers. v1 therefore FORCES the calibrated values server-side for
+camera mode — the plan pins `raster_mt_threads`, `raster_workers`, and
 `finalize_workers` to the calibration configuration regardless of the
-request — and the calibration identity records, and admission verifies:
-Lambda memory size and architecture, the calibrated thread/worker
-values, and the raster binary's `RASTER_BINARY_SHA256` from the binary
-manifest. A deploy that changes any of them invalidates the rate:
-admission refuses camera runs with "calibration stale for this
+request — and the calibration identity records, and admission verifies,
+EVERY rate-affecting component (the binary manifest already carries the
+hashes):
+
+- `roots2pix_mt`, `assemble_greyscale`, and `score_raw_render` binary
+  sha256s;
+- the Finalize Python code identity (the deployment build id /
+  `PP_GIT_SHA` its zip was built from);
+- the libvips layer version;
+- Lambda memory size and architecture for BOTH raster and finalize;
+- the calibrated thread/worker values above.
+
+A deploy that changes ANY of them invalidates the rate — an encoder or
+finalizer change must not inherit an optimistic raster-era calibration —
+and admission refuses camera runs with "calibration stale for this
 deployment" until the matrix reruns. The staged
 calibration in this section and Milestone 4 measure exactly that
 matrix and record every cell's result alongside the chosen constant.
@@ -982,15 +1004,23 @@ request field.
 
   ```text
   finalize_wall ~= fragment_merge_seconds        (gated < 600 - headroom)
+                 + n_sections * per_object_seconds * 2
+                       [one serial S3 GET per section for the score
+                        sidecar AND one object per section for the
+                        fragment — request latency, not just bytes]
                  + (sidecar_bytes_down + sidecar_bytes_up)
                        / calibrated_transfer_rate     [C * N^2 * times each way]
-                 + encode_seconds(N, C, format)
+                 + encode_seconds(N, C, format, quality)
                  + publication_seconds
   admit iff finalize_wall < 900 - named_headroom
   ```
 
-  with the transfer and encode rates coming from the same calibration
-  matrix (they are per-deployment quantities like the raster rate).
+  with the transfer rate, the PER-OBJECT constant, and the encode rates
+  all coming from the same calibration matrix (per-deployment
+  quantities like the raster rate). The per-object term is what stops
+  the joint search from "fixing" raster time with thousands of sections
+  that quietly push Finalize past its envelope — the matrix includes a
+  HIGH-SECTION-COUNT cell to measure it.
 
 For scale: a fully occupied RGB camera fragment is `11 * N * N` bytes. At
 `N=32768` that is exactly 11 GiB, already larger than the Raster Lambda's
@@ -1450,6 +1480,14 @@ Pin:
   sha changed) refuses camera runs;
 - digest semantics markers: changing `version`, `matrix_layout`, or
   `projection` each changes the digest;
+- joint sectioning search: a job infeasible at the default count ADMITS
+  at a higher count (the search raises it); a job no allowed count can
+  satisfy rejects naming the binding constraint; the search observes
+  the 200 KB plan-size cap; the high-section-count Finalize per-object
+  overhead is modeled (raising sections is NOT free);
+- calibration identity: changing ANY recorded component — assembler,
+  encoder, finalizer code identity, libvips layer, Lambda sizing, or
+  the forced thread/worker values — refuses camera runs as stale;
 - metadata survives to the Views row;
 - camera JSON is present in the Views `meta.json`, absent from the image
   PUT's user-metadata, and the image metadata stays below the 2 KiB limit;

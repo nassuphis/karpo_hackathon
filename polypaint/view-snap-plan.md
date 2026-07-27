@@ -444,8 +444,20 @@ point_max_fraction = ALIASED_POINT_SIZE_RANGE[1] / crop_side
 using the DRAWING BUFFER dimensions (the renderer applies
 `setPixelRatio(min(devicePixelRatio, 2))`, so CSS pixels are the wrong
 basis) and the WebGL implementation's actual point-size clamp range.
-Validate `point_scale > 0`,
-`0 <= point_min_fraction <= point_max_fraction`, all finite.
+
+Validation matches the REAL viewer ranges — zero-sized footprints must
+not slip through and zero out `A_max`, silently bypassing footprint
+admission while the raster still does substantial work:
+
+- `0.0004 <= point_world_size <= 0.016` (the point control is 1..40
+  at `0.0004` per step in `sculpture.html`);
+- `point_scale >= 0.5` (crop side = min of the buffer dimensions, so
+  `0.5 * height / crop` cannot be smaller);
+- `0 < point_min_fraction <= point_max_fraction`, all finite (WebGL
+  guarantees a positive minimum point size).
+
+Pin rejection tests for each bound, and assert every ACCEPTED payload
+yields `A_max >= 1`.
 
 Finite floats are not enough: the backend derives the near plane from the
 projection matrix and prices admission with it, so both validators must
@@ -769,8 +781,10 @@ max_point_side = ceil(N * clamp(point_world_size * point_scale
 A_max = min(P, max_point_side * max_point_side)
 ```
 
-Admission and rasterization share the section 6.2 footprint expression —
-including the captured clamp — so the priced work is the performed work.
+Admission and rasterization use the SAME footprint law — including the
+captured clamp; admission prices a conservative UPPER BOUND on it (the
+bounding-prism depth makes `A_max` an over-estimate by construction,
+never an under-estimate).
 
 Clamp all integer arithmetic before multiplication and reject overflow.
 The absolute `(8 + C) * P` per-fragment bound remains the admission
@@ -842,14 +856,16 @@ throughput against the 600-second native subprocess limit (the raster
 handler's hard `timeout=600`), with named headroom. That limit spans
 the WHOLE subprocess — startup, manifest downloads, root transforms,
 solve-score execution, projection, and serialization — not only
-footprint writes, so a single updates-per-second constant from one
-friendly program is not a safe budget. Use either a
-baseline-plus-footprint model (measured non-footprint wall for the
-section's program + priced footprint work) or a constant calibrated
-from the SLOWEST supported combination: scalar and RGB outputs,
-expensive score/root programs, source preludes, and a collision-heavy
-footprint. The calibration runs must say which policy they used and
-record its inputs.
+footprint writes, so a constant from one friendly program is not a safe
+budget. v1 COMMITS to one policy: a SINGLE conservative
+effective-throughput constant (baseline-plus-footprint accounting is
+the recorded v2 refinement, not an open fork). The constant is
+calibrated from a MATRIX, not a run: scalar and RGB outputs, expensive
+root and solve-score programs, source preludes, `A ~= 1`, and a
+collision-heavy footprint — take the MINIMUM measured throughput,
+subtract named startup headroom, apply the named deration. The staged
+calibration in this section and Milestone 4 measure exactly that
+matrix and record every cell's result alongside the chosen constant.
 
 Calibration bootstrap (the deadlock is otherwise real: admission needs
 the constant, and the benchmark that measures it must pass admission),

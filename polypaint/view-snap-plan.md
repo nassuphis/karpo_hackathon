@@ -968,7 +968,14 @@ hashes):
   stale the calibration);
 - the exact libvips `LayerVersionArn`;
 - Lambda memory size and architecture for BOTH raster and finalize;
-- the calibrated thread/worker values above.
+- the calibrated thread/worker values above;
+- the COST MODEL itself: `cost_model_version`, a constant declared in
+  the plan code and recorded in the calibration artifact, bumped with
+  ANY change to `work_units_s`, footprint estimation, the section
+  search, or the phase equations — measured rates are only meaningful
+  under the model that interpreted them, and neither worker package
+  hash changes when the plan-side model does. A test asserts the code
+  constant equals the artifact's value.
 
 A deploy that changes ANY of them invalidates the rate — an encoder or
 finalizer change must not inherit an optimistic raster-era calibration —
@@ -1001,15 +1008,46 @@ Lambda:
    view_projection and the camera execution subset, format and quality,
    the solve-score and root program fingerprints, prelude
    configuration, the section configuration (count and step ranges),
-   and the forced thread/worker values — excluding only volatile
-   identifiers (job id, task ids, URLs, timestamps). Tests mutate each
-   field individually and prove allowlist rejection. The whole matrix
+   the forced thread/worker values, AND the fixture's output-content
+   controls (color interpretation, normalization, palette, background —
+   anything that changes the bytes rendered or encoded). Volatile
+   identifiers (job id, task ids, presigned URLs, timestamps) are
+   excluded but REPLACED by an immutable content identity for the
+   source data: the authoritative source manifests bound by content
+   SHA-256, S3 VersionId, or immutable key plus validated ETag —
+   different root data with identical N/degree/programs has radically
+   different collision, occupancy, and compression behavior, so a
+   digest that ignores the data does not identify the fixture. Tests
+   mutate each field individually — including the source content
+   identity — and prove allowlist rejection. The whole matrix
    runs under it; no single small run stands in for the matrix.
 3. Only after ALL cells have run is the final constant derived —
    `min(cell rates) * deration_factor` — with every cell's result and
-   the deration recorded in this document.
+   the deration recorded in this document AND in the runtime artifact
+   below.
 4. Only the matrix-derived constant admits representative full-size
    runs.
+
+Calibration is a RUNTIME CONTRACT, not prose. The deployed values live
+in a packaged, versioned artifact — `view_snap_calibration.json`,
+shipped in the render-plan bundle — containing:
+
+```text
+schema_version, cost_model_version, mode (calibration | production),
+fixture_allowlist        [fixture-admission digests],
+rates_and_latencies      [every constant and coefficient the phase
+                          estimators use, per path/direction/format],
+derations, headrooms     [named, as recorded],
+identities               [every component of the calibration identity],
+provenance               [per-cell matrix results, dates, recorded
+                          thresholds]
+```
+
+The planner LOADS AND VALIDATES it fail-closed: a missing artifact, a
+schema mismatch, a cost-model version mismatch, or an identity
+mismatch with the live deployment refuses camera runs as
+calibration-stale. "Recorded in this document" is provenance for
+humans; the artifact is the authority the code reads.
 
 There is NO admission override: a payload flag is not "internal" merely
 because the UI does not send it, and a case the budget rejects is
@@ -1056,6 +1094,28 @@ request field.
                        + publication_seconds
   gate: total_finalize_wall < 900 - named_headroom
   ```
+
+  Every named term is an IMPLEMENTABLE ESTIMATOR, not a label: each
+  has a defined conservative equation whose coefficients live in the
+  calibration artifact, built from per-path minimum rates and maximum
+  setup costs (a matrix supplies observations; the equations are the
+  safe extrapolation). The pattern, applied to every term:
+
+  ```text
+  presign_seconds(n)          = n * max_presign_setup
+  prep_seconds                = max_observed_prep          [constant]
+  merge_processing_seconds(r) = r / min_merge_records_rate
+  sidecar_phase_seconds(n, b) = n * max_get_setup
+                              + b / min_download_rate
+                              + b / min_tmp_write_rate
+                              + max_upload_setup
+                              + b / min_upload_rate
+  encode_seconds(N, C, f, q)  = N*N*C / min_encode_rate[f, q]
+  publication_seconds(k, b)   = k * max_put_setup + b / min_upload_rate
+  ```
+
+  with piecewise upper envelopes where a single linear fit under-prices
+  an observed regime.
 
   Each term appears in exactly one place — the fragment work lives in
   `assembler_wall` and is added to the total ONCE. The transfer rate,
@@ -1702,9 +1762,15 @@ feature. That would be a separately designed v2.
 - Add snapshot-schema validation tests.
 - Add camera matrix and square-crop math tests.
 - Pin effective t-window and Height-zero behavior.
-- Pin memory, `/tmp`, fragment-byte, per-section work-unit, and
-  total-Finalize wall admission formulae, including the six admission
-  invariants and the digest semantics-marker tests.
+- Pin memory, `/tmp`, fragment-byte, per-section work-unit, and ALL
+  FIVE wall-gate formulae (raster native, raster handler, assembler,
+  encoder, total Finalize), including the admission invariants and the
+  digest semantics-marker tests.
+- Freeze the calibration artifact schema and its fail-closed loader
+  (missing/invalid/version-mismatch/identity-mismatch all refuse).
+- Freeze the exact fixture-admission digest and the identity-comparison
+  logic.
+- Freeze the phase-estimator equations with coefficient-loading tests.
 - Add depth-fragment assembler tests before changing the producer.
 
 ### Milestone 1: viewer protocol

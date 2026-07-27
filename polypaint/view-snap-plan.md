@@ -744,14 +744,18 @@ slice it, with all corners far while interior points graze near):
 
 ```text
 depths     = { -view.z over the 8 prism corners }
-if max(depths) < near:      no visible prism -> REJECT at plan time as
-                            "empty camera frustum: nothing visible from
-                            this pose". Zero footprint does NOT mean
-                            zero cost — the run would still score every
-                            step for the sidecar, allocate and upload
-                            the full C*P raw, and encode a blank image.
-                            A snap of nothing is a user error deserving
-                            a message, not a full-price blank render.
+frustum cull: transform the 8 corners to CLIP space; if all 8 violate
+            any ONE of the six frustum half-spaces (left, right, top,
+            bottom, near, far — the standard conservative convex cull),
+            REJECT at plan time as "empty camera frustum: nothing
+            visible from this pose". Near-only detection misses a prism
+            panned off-screen or beyond the far plane, and zero
+            footprint does NOT mean zero cost — the run would still
+            score every step for the sidecar, allocate and upload the
+            full C*P raw, and encode a blank image. A snap of nothing
+            is a user error deserving a message, not a full-price blank
+            render. Admission tests include an off-left pose and a
+            beyond-far pose, not just behind-camera.
 elif min(depths) >= near:   pricing_depth = min(depths)
 else:                       the prism straddles the near plane ->
                             pricing_depth = near
@@ -1001,12 +1005,23 @@ Rules:
 - Camera mode remains family `views` and forces `pix=calc.N`.
 - Camera mode plots pass 0 only (`global_step < N*N`), matching the
   viewer; the step-scores sidecar keeps its standard full semantics.
+- `view_camera.vertical` is the ONLY vertical authority in camera mode:
+  the plan derives the workflow's normalized `view_vertical` from it
+  server-side (the raster handler keeps consuming `view_vertical`
+  unchanged), and a request that carries BOTH with different values is
+  rejected — two authorities rendering t1 while metadata says t2 is the
+  exact mismatch class this plan exists to prevent.
 - `plan_params_digest` gains canonical projection identity: the digest
   today covers viewport/pix/transforms/score settings but no projection,
   vertical, or camera — two different camera outputs (or a camera and a
   fixed view) could advertise the same raw-sidecar digest. Include
-  `view_projection`, `view_vertical`, and a canonical hash of the camera
-  payload whenever the projection is not `plan`.
+  `view_projection`, `view_vertical`, and a canonical hash of the
+  camera's EXECUTION SUBSET whenever the projection is not `plan`: the
+  matrices, vertical, slices, effective t-window, point size/scale/clamp
+  fractions, and frame — serialized with sorted keys and fixed float
+  formatting, and EXCLUDING `debug` (it is declared non-authoritative;
+  hashing it would give equivalent renders different sidecar
+  identities).
 - Validate matrices, enums, effective t-window, style, and point size.
 - Calculate camera depth-buffer resource requirements.
 - Store compact canonical camera JSON and `source_sculpture_id` in the
@@ -1074,7 +1089,16 @@ Pass:
 --view_effective_tlo=<double>
 --view_effective_thi=<double>
 --view_point_world_size=<double>
+--view_point_scale=<double>
+--view_point_min_fraction=<double>
+--view_point_max_fraction=<double>
 ```
+
+The three captured point-scale values MUST reach the native CLI —
+without them the renderer cannot reproduce portrait scaling or GPU
+clamping, and admission would price work the raster cannot perform.
+Pin the exact handler-to-native propagation: a raster handler test
+asserts all three flags appear in the argv with the schema's values.
 
 ### 9.4 Native and finalizer
 

@@ -238,10 +238,10 @@ V1 reproduces:
 - pass 0 only, exactly the solves the viewer displays (later passes are
   never plotted in camera mode);
 - nearest-depth occlusion;
-- COLOR PARITY BY POPULATION: the camera equalization LUT is built from
-  the pass-0 step-score histogram — the same population the Sculpture's
-  palette was generated from — not from the projected/occluded output
-  pixels (see section 9.5a).
+- the source artifact's palette and score mapping, equalized over the
+  SNAP OUTPUT like every other render — deliberately NOT a replay of the
+  viewer's exact color transfer (see section 9.5a for the disclaimer and
+  the recorded v2 path to exact parity).
 
 V1 does not reproduce:
 
@@ -709,18 +709,23 @@ plus encoded-output and native-reader overhead
 For the estimate, do NOT price every point at the clip-near plane: with
 the viewer's `near = 0.01`, `N = 1000` and `point_world_size = 0.004`
 that prices a 200x200 footprint for points that actually render at
-roughly 1x1 — safe but unusable, rejecting ordinary snaps. Derive a
-conservative-but-realistic minimum depth instead: transform the local
-bounding prism's eight corners (`x, z` in `[-0.5, 0.5]`, `y` in
+roughly 1x1 — safe but unusable, rejecting ordinary snaps. Use the
+affine DEPTH INTERVAL of the local bounding prism instead: transform its
+eight corners (`x, z` in `[-0.5, 0.5]`, `y` in
 `[effective_tlo - 0.5, effective_thi - 0.5]`) by the validated
-model-view matrix and take the smallest positive camera depth; fall back
-to clip-near only when the camera is inside the prism:
+model-view matrix. Depth is affine in the corners, so the prism's depth
+extrema ARE corner depths — and the camera being inside or outside is
+irrelevant (a camera OUTSIDE the prism can still have the near plane
+slice it, with all corners far while interior points graze near):
 
 ```text
-min_depth      = max(clip_near_depth,
-                     min positive -view.z over the 8 prism corners;
-                     clip_near_depth when the camera is inside the prism)
-max_point_side = ceil(N * point_world_size / (2 * min_depth))
+depths     = { -view.z over the 8 prism corners }
+if max(depths) < near:      no visible prism -> zero footprint work,
+                            admit trivially (the output is empty)
+elif min(depths) >= near:   pricing_depth = min(depths)
+else:                       the prism straddles the near plane ->
+                            pricing_depth = near
+max_point_side = ceil(N * point_world_size / (2 * pricing_depth))
 A_max = min(P, max_point_side * max_point_side)
 ```
 
@@ -796,11 +801,15 @@ handler's hard `timeout=600`), with named headroom.
 Calibration bootstrap (the deadlock is otherwise real: admission needs
 the constant, and the benchmark that measures it must pass admission):
 seed a PROVISIONAL updates-per-second constant from the local/Docker
-ARM64 benchmark in Milestone 2, marked provisional in the plan output;
-Milestone 4's internal production runs replace it with the measured
-value and record both in this document. An internal-only benchmark
-override (never reachable from the UI, logged in the plan output) may
-bypass the work limit for exactly those calibration runs.
+ARM64 benchmark in Milestone 2 — a real measurement, derated by a named
+factor, marked provisional in the plan output. Milestone 4's internal
+production runs replace it with the measured value and record both in
+this document. There is NO admission override: a payload flag is not
+"internal" merely because the UI does not send it, and a benchmark case
+the provisional budget rejects is itself a result (it was genuinely at
+risk of the 600-second cap) — record it as such. If a bypass ever
+becomes unavoidable it must be a deployment-level environment gate or a
+separate unrouted alias, never a request field.
 - `total_fragment_bytes` is primarily a transfer and wall-time constraint,
   not resident memory once streaming is implemented. Report it and enforce
   a benchmark-derived wall-time policy rather than pretending it is free.
@@ -882,9 +891,11 @@ Required helpers:
 - `_requestSculptureSnapshot(meta, iframe)` returns a bounded Promise.
 - `_resolveViewSnapSource(meta)` fetches `/render-summary` for
   `meta.job_id` and finds the exact `meta.source_artifact_id`.
-- `_viewSnapParamsFromArtifact(artifact, snapshot, sculptureMeta)` extends
-  the existing `_viewRenderParamsFromArtifact` contract without reading
-  current Color selection.
+- `_viewSnapParamsFromArtifact({jobId, calc, artifact}, snapshot,
+  sculptureMeta)` extends the existing `_viewRenderParamsFromArtifact`
+  contract without reading current Color selection — the resolved calc
+  travels IN the signature so the implementation cannot fall back to
+  `_viewRenderGridN`'s global-summary lookup.
 - `_dispatchViewSnap(meta, snapshot)` is a data-parameterized command.
 
 On selection change, iframe replacement, family change, deletion, or
@@ -1032,26 +1043,41 @@ record change. Rebuild through the normal Docker ARM64 path.
 
 ### 9.5a Color parity contract
 
-This is a contract decision, not an implementation nit. The saved
-Sculpture's per-point colors come from a histogram of pass-0 step
-scores (the lores generation equalizes the SCORE population); normal
-Finalize builds its LUT from the histogram of the projected, occluded
-OUTPUT pixels. Those distributions differ — occlusion and framing
-remove scores from the output histogram — so a geometrically exact Snap
-under the normal path can be visibly differently colored than the
-viewer the user just framed.
+This is a contract decision, not an implementation nit — and the v1
+decision is the LEAN one: camera Finalize keeps the NORMAL
+projected-output equalization, and the product honestly disclaims exact
+viewer-color parity (the Views summary and modal hint say colors are
+equalized over the snap's own output).
 
-Decision: camera Finalize derives its equalization LUT from the pass-0
-slice of the step-scores sidecar (the first `N*N` records it already
-produces), exactly the population the Sculpture generation histograms.
-This gives DISTRIBUTION parity: the full-N pass-0 population densely
-samples the same distribution the saved lattice sampled, so colors
-match the viewer up to sampling density — it is deliberately NOT a
-bit-identical replay of the frozen saved-lattice LUT, and the plan says
-so. Fixture: a synthetic where the pass-0 histogram and the output
-histogram differ sharply (heavy occlusion) pins that the camera LUT
-follows the pass-0 population; a second fixture pins camera-vs-fixed
-ViewRender divergence as INTENDED.
+Why the tempting alternative is rejected for v1, in full:
+
+- "Equalize over full-N pass-0 scores" is NOT the viewer's population:
+  Sculpture generation deterministically SUBSAMPLES to the saved
+  `grid_n` lattice before histogramming
+  (`_subsample_step_scores_pass0` -> `histogram_from_raw_path_channel0`
+  over `view_n^2`). Full-N similarity to that subsample is an
+  assumption that structured or chaotic score fields can break — close
+  is not exact, and the plan must not claim otherwise.
+- It silently breaks recolor/repalette consistency: the raw sidecar
+  records the PROJECTED-OUTPUT histogram (`build_raw_sidecar` in
+  Finalize), and recolor consumes exactly that sidecar histogram
+  (`color_recolor_raw._histogram_for_sidecar`). Rendering with one
+  histogram while the sidecar advertises another means the first
+  repalette CHANGES the artifact's transfer function.
+- Scope note: this applies to scalar-LUT output only; direct
+  three-channel modes never use the equalization LUT and are unaffected.
+
+Exact parity is the recorded v2 extension, not a v1 compromise:
+reproduce the saved `grid_n` subsample's histogram, carry an explicit
+`equalization_histogram` + source contract in the sidecar, and extend
+recolor to honor it — the render and every later repalette then share
+one declared transfer function. Until that contract exists end to end,
+the lean path is the only one that is both honest and
+infrastructure-neutral.
+
+Fixture for v1: a heavy-occlusion synthetic pins that the camera LUT
+follows the projected-output histogram (identical to fixed-view
+behavior), and the disclaimer text is asserted in the UI.
 
 ### 9.5 Metadata and Views display
 
@@ -1190,6 +1216,12 @@ Pin:
 - camera projection without source identity rejection;
 - `pix` remains calc N;
 - ASL selector carries the camera object;
+- the fragment contract is the ONLY encoding authority: `pair_encoding`,
+  `fragment_encoding`, `channels`, and `record_size_bytes` all resolve
+  from `$.plan.fragment_contract.*`, NO encoding field remains sourced
+  from `$.solve_score_clip.parsed.*`, and both raster and finalize
+  reject a contract inconsistent with the projection or the score
+  channel count;
 - metadata survives to the Views row;
 - camera JSON is present in the Views `meta.json`, absent from the image
   PUT's user-metadata, and the image metadata stays below the 2 KiB limit;

@@ -947,17 +947,24 @@ The rate is BOUND to the execution configuration it was measured on. A
 rate measured at four raster threads underprices a one-thread request
 (the plan accepts 1..16), and finalize throughput depends on its
 workers. v1 therefore FORCES the calibrated values server-side for
-camera mode — the plan pins `raster_mt_threads`, `raster_workers`, and
-`finalize_workers` to the calibration configuration regardless of the
-request — and the calibration identity records, and admission verifies,
+camera mode — the plan pins `raster_mt_threads` and `raster_workers` to
+the calibration configuration regardless of the request, and the camera
+MERGE is single-stream BY CONTRACT (section 7.3 processes one fragment
+stream at a time), so `finalize_workers` is NOT a camera performance
+variable: it is pinned for identity completeness but the merge ignores
+it. Bounded parallel downloading with deterministic ordinal processing
+is the recorded v2 refinement — and the calibration identity records, and admission verifies,
 EVERY rate-affecting component (the binary manifest already carries the
 hashes):
 
 - `roots2pix_mt`, `assemble_greyscale`, and `score_raw_render` binary
   sha256s;
-- the Finalize Python code identity (the deployment build id /
-  `PP_GIT_SHA` its zip was built from);
-- the libvips layer version;
+- the Finalize Python code identity as the deployed Lambda's
+  `CodeSha256` (equivalently the actual ZIP SHA-256) — NOT
+  `PP_GIT_SHA` (blind to dirty trees and packaging differences) and NOT
+  `PP_BUILD_ID` (timestamped, so an identical redeploy would falsely
+  stale the calibration);
+- the exact libvips `LayerVersionArn`;
 - Lambda memory size and architecture for BOTH raster and finalize;
 - the calibrated thread/worker values above.
 
@@ -977,10 +984,13 @@ Lambda:
    local/Docker ARM64 benchmark in Milestone 2, derated by a named
    factor and marked provisional in the plan output.
 2. The provisional constant admits EVERY deliberately bounded matrix
-   cell — each cell's `max(work_units_s)` capped at a named small
-   fraction of the provisional per-section budget — and NOTHING else.
-   The whole matrix runs under it; no single small run stands in for
-   the matrix.
+   cell and NOTHING else — enforced by MECHANISM, not by a work
+   threshold (a threshold cannot tell a calibration fixture from an
+   arbitrary similarly sized request): a deployment-level calibration
+   mode (environment gate, never a request field) under which admission
+   accepts ONLY requests whose canonical execution digest is on the
+   checked-in allowlist of matrix-fixture digests. The whole matrix
+   runs under it; no single small run stands in for the matrix.
 3. Only after ALL cells have run is the final constant derived —
    `min(cell rates) * deration_factor` — with every cell's result and
    the deration recorded in this document.
@@ -1002,25 +1012,57 @@ request field.
   900-second envelope while the camera merge fits its 600. Admission
   computes an explicit TOTAL-Finalize wall estimate:
 
+  Finalize has THREE gates, because two independent 600-second
+  subprocess ceilings live inside the 900-second envelope — the native
+  assembler (`timeout=600`) and `score_raw_render`'s encoder
+  (`timeout=600`) — and the fragment downloads happen INSIDE the
+  assembler subprocess (pricing them outside `fragment_merge_seconds`
+  either double-counts or under-gates them):
+
   ```text
-  finalize_wall ~= fragment_merge_seconds        (gated < 600 - headroom)
-                 + n_sections * per_object_seconds * 2
-                       [one serial S3 GET per section for the score
-                        sidecar AND one object per section for the
-                        fragment — request latency, not just bytes]
-                 + (sidecar_bytes_down + sidecar_bytes_up)
-                       / calibrated_transfer_rate     [C * N^2 * times each way]
-                 + encode_seconds(N, C, format, quality)
-                 + publication_seconds
-  admit iff finalize_wall < 900 - named_headroom
+  assembler_wall ~= n_sections * per_object_seconds
+                        [fragment request setup, INSIDE the subprocess]
+                  + fragment_bytes / calibrated_transfer_rate
+                  + merge_processing_seconds
+  gate: assembler_wall < 600 - headroom
+
+  encode_wall   ~= encode_seconds(N, C, format, quality)
+  gate: encode_wall < 600 - headroom
+
+  total_finalize_wall ~= presign_seconds
+                       + assembler_wall
+                       + n_sections * per_object_seconds
+                             [serial sidecar GETs, handler-side]
+                       + (sidecar_bytes_down + sidecar_bytes_up)
+                             / calibrated_transfer_rate
+                       + encode_wall
+                       + publication_seconds
+  gate: total_finalize_wall < 900 - named_headroom
   ```
 
-  with the transfer rate, the PER-OBJECT constant, and the encode rates
-  all coming from the same calibration matrix (per-deployment
-  quantities like the raster rate). The per-object term is what stops
-  the joint search from "fixing" raster time with thousands of sections
-  that quietly push Finalize past its envelope — the matrix includes a
-  HIGH-SECTION-COUNT cell to measure it.
+  Each term appears in exactly one place — the fragment work lives in
+  `assembler_wall` and is added to the total ONCE. The transfer rate,
+  per-object constant, and per-{format, quality} encode rates all come
+  from the same calibration matrix, which includes a HIGH-SECTION-COUNT
+  cell — the per-object terms are what stop the joint search from
+  "fixing" raster time with thousands of sections that push Finalize
+  past its ceilings.
+
+  Raster has the same two-layer structure: the 600-second gate covers
+  only the NATIVE subprocess, but after it exits the handler
+  sequentially uploads the fragment and the step-score file inside its
+  own 900-second envelope. Joint sectioning enforces BOTH:
+
+  ```text
+  raster_native_wall  ~= work_units_s / derated_rate
+  gate: raster_native_wall < 600 - headroom      (per section)
+
+  raster_handler_wall ~= prep_seconds + raster_native_wall
+                       + (fragment_bytes + step_score_bytes)
+                             / calibrated_transfer_rate
+                       + per_object_seconds * uploads
+  gate: raster_handler_wall < 900 - named_headroom   (per section)
+  ```
 
 For scale: a fully occupied RGB camera fragment is `11 * N * N` bytes. At
 `N=32768` that is exactly 11 GiB, already larger than the Raster Lambda's

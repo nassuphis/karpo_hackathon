@@ -360,6 +360,9 @@ The authoritative payload is:
   "effective_tlo": 0.0,
   "effective_thi": 1.0,
   "point_world_size": 0.004,
+  "point_scale": 1.0,
+  "point_min_fraction": 0.0009765625,
+  "point_max_fraction": 1.0,
   "style": "solid",
   "show": {
     "points": true,
@@ -428,6 +431,21 @@ sculpt.updateMatrixWorld(true)
 Reject NaN, infinity, wrong lengths, unexpected keys, wrong enums,
 `effective_tlo > effective_thi`, bounds outside `[0,1]`, or a non-square
 target aspect at both the frontend and render plan.
+
+`point_scale` and the clamp fractions are CAPTURED, never reconstructed:
+
+```text
+crop_side          = min(buffer_width, buffer_height)
+point_scale        = 0.5 * buffer_height / crop_side
+point_min_fraction = ALIASED_POINT_SIZE_RANGE[0] / crop_side
+point_max_fraction = ALIASED_POINT_SIZE_RANGE[1] / crop_side
+```
+
+using the DRAWING BUFFER dimensions (the renderer applies
+`setPixelRatio(min(devicePixelRatio, 2))`, so CSS pixels are the wrong
+basis) and the WebGL implementation's actual point-size clamp range.
+Validate `point_scale > 0`,
+`0 <= point_min_fraction <= point_max_fraction`, all finite.
 
 Finite floats are not enough: the backend derives the near plane from the
 projection matrix and prices admission with it, so both validators must
@@ -557,22 +575,28 @@ but not the current solid point appearance. Mirror Three.js point-size
 attenuation for `PointsMaterial` using the captured
 `point_world_size = point_control * 0.0004`.
 
-Derive the pixel footprint from camera-space depth and target height using
-the Three.js shader convention:
+Derive the pixel footprint from camera-space depth using the CAPTURED
+scale and clamp values — the naive "buffer height cancels" form is wrong
+in portrait (the center-square crop side is the buffer WIDTH there, so
+the height/crop ratio survives) and ignores WebGL's
+implementation-dependent point-size clamp entirely:
 
 ```text
-gl_PointSize = point_world_size * (0.5 * drawing_buffer_height) / depth
-frame_fraction = point_world_size / (2 * depth)
-native_point_side_pixels = N * point_world_size / (2 * depth)
+frame_fraction = clamp(point_world_size * point_scale / depth,
+                       point_min_fraction, point_max_fraction)
+native_point_side_pixels = N * frame_fraction
 ```
 
-`drawing_buffer_height` and device-pixel ratio cancel when the footprint is
-expressed as a fraction of the frame. They must not be carried into the
-backend schema or native calculation. Round the side length with one pinned
-edge convention, clip the covered square to the output, and update every
-covered pixel through the depth rule. Pin this formula against a
-browser-generated oracle at near, middle, and far depths rather than relying
-only on a handwritten formula.
+`point_scale` is `0.5 * buffer_height / crop_side` captured in the
+viewer (1/2 exactly only in landscape), and the clamp fractions are the
+GPU's `ALIASED_POINT_SIZE_RANGE` normalized by the crop side — a huge
+near point clamps at the max, a distant point clamps at the min, and
+both clamps are part of what the user is LOOKING at. Rasterization and
+admission use this same expression. Round the side length with one
+pinned edge convention, clip the covered square to the output, and
+update every covered pixel through the depth rule. Pin against
+browser-generated oracles for LANDSCAPE, PORTRAIT, a minimum-clamped
+far point, and a maximum-clamped near point — not just depth sweeps.
 
 V1 may use the solid square point footprint used by `PointsMaterial`.
 Antialiasing differences at the boundary are acceptable, but the
@@ -720,14 +744,25 @@ slice it, with all corners far while interior points graze near):
 
 ```text
 depths     = { -view.z over the 8 prism corners }
-if max(depths) < near:      no visible prism -> zero footprint work,
-                            admit trivially (the output is empty)
+if max(depths) < near:      no visible prism -> REJECT at plan time as
+                            "empty camera frustum: nothing visible from
+                            this pose". Zero footprint does NOT mean
+                            zero cost — the run would still score every
+                            step for the sidecar, allocate and upload
+                            the full C*P raw, and encode a blank image.
+                            A snap of nothing is a user error deserving
+                            a message, not a full-price blank render.
 elif min(depths) >= near:   pricing_depth = min(depths)
 else:                       the prism straddles the near plane ->
                             pricing_depth = near
-max_point_side = ceil(N * point_world_size / (2 * pricing_depth))
+max_point_side = ceil(N * clamp(point_world_size * point_scale
+                                 / pricing_depth,
+                                 point_min_fraction, point_max_fraction))
 A_max = min(P, max_point_side * max_point_side)
 ```
+
+Admission and rasterization share the section 6.2 footprint expression —
+including the captured clamp — so the priced work is the performed work.
 
 Clamp all integer arithmetic before multiplication and reject overflow.
 The absolute `(8 + C) * P` per-fragment bound remains the admission
@@ -799,17 +834,29 @@ throughput against the 600-second native subprocess limit (the raster
 handler's hard `timeout=600`), with named headroom.
 
 Calibration bootstrap (the deadlock is otherwise real: admission needs
-the constant, and the benchmark that measures it must pass admission):
-seed a PROVISIONAL updates-per-second constant from the local/Docker
-ARM64 benchmark in Milestone 2 — a real measurement, derated by a named
-factor, marked provisional in the plan output. Milestone 4's internal
-production runs replace it with the measured value and record both in
-this document. There is NO admission override: a payload flag is not
-"internal" merely because the UI does not send it, and a benchmark case
-the provisional budget rejects is itself a result (it was genuinely at
-risk of the 600-second cap) — record it as such. If a bypass ever
-becomes unavoidable it must be a deployment-level environment gate or a
-separate unrouted alias, never a request field.
+the constant, and the benchmark that measures it must pass admission),
+STAGED because local ARM64 throughput is not a defensible bound for
+Lambda:
+
+1. Seed a PROVISIONAL updates-per-second constant from the local/Docker
+   ARM64 benchmark in Milestone 2, derated by a named factor and marked
+   provisional in the plan output.
+2. The provisional constant may admit ONLY a deliberately small
+   production calibration run — its estimated updates capped at a named
+   small fraction of the provisional budget — never representative
+   full-size work.
+3. Replace the constant with conservatively derated PRODUCTION
+   telemetry from that run, recording both values and the deration in
+   this document.
+4. Only the production-derived constant admits representative full-size
+   runs.
+
+There is NO admission override: a payload flag is not "internal" merely
+because the UI does not send it, and a case the budget rejects is
+itself a result (it was genuinely at risk of the 600-second cap) —
+record it as such. If a bypass ever becomes unavoidable it must be a
+deployment-level environment gate or a separate unrouted alias, never a
+request field.
 - `total_fragment_bytes` is primarily a transfer and wall-time constraint,
   not resident memory once streaming is implemented. Report it and enforce
   a benchmark-derived wall-time policy rather than pretending it is free.
@@ -1002,7 +1049,13 @@ state-machine template selector; `workflow_contracts.py` is authoritative.
 
 ### 9.3 `handler_raster_mt.py`
 
-Validate the camera object again at the Lambda boundary.
+Validate the camera object again at the Lambda boundary, and validate
+`fragment_contract` there too, BEFORE invoking native code: the encoding
+must match the projection kind (camera <-> the depth encoding, fixed
+projections <-> the legacy encodings), `channels` must equal the
+solve-score channel count, and `record_size_bytes` must equal the
+encoding's computed size. A mismatch is a hard request failure, not a
+native-side surprise.
 
 Convert its two matrices and scalar fields into explicit native argv
 values. Since `subprocess.run` already receives an argv array, comma-
@@ -1382,10 +1435,13 @@ tests.
 
 ### Milestone 4: internal production go/no-go
 
-- Invoke the deployed workflow directly (no UI) on the synthetic and the
-  representative production Sculpture.
+- Invoke the deployed workflow directly (no UI), in calibration order:
+  first the deliberately SMALL production calibration run admitted under
+  the provisional constant, then — with the production-derived constant
+  recorded — the synthetic and the representative full-size Sculpture.
 - Record the thresholds defined in section 13 into this document.
-- Calibrate `estimated_footprint_updates` throughput from these runs.
+- Record the provisional constant, the production telemetry, the
+  deration factor, and the final constant.
 - STOP here if the recorded thresholds fail — frontend work does not
   start on a backend that cannot meet them.
 

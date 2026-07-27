@@ -980,18 +980,33 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertFalse([c for c in mock_s3.put_object.call_args_list
                           if c.kwargs["Key"].startswith("sculptures/")])
 
-    @patch("handler_render_lores_preview.render_score_raw")
-    @patch("handler_render_lores_preview.subprocess.run")
-    @patch("handler_render_lores_preview.s3")
-    def test_save_failure_sweep_includes_the_publication_marker(self, mock_s3, mock_run, mock_render):
-        # CR: a meta.json PUT that raises AMBIGUOUSLY (timeout) may have
-        # landed server-side — the failure sweep must delete the marker too,
-        # or the listing publishes a row over deleted binaries
+    def _ambiguous_meta_put_scenario(self, mock_s3, mock_run, mock_render, *,
+                                     marker_read, delete_errors=None):
+        # shared harness: SaveFull where the marker PUT raises AMBIGUOUSLY;
+        # marker_read decides what the resolving read-back sees
         from handler_render_lores_preview import TMP_XFORMED_ROOTS, handler
 
         calc, roots_key, roots_bytes = self._artifact_calc(4)
-        mock_s3.get_object.side_effect = self._artifact_get_object(calc, roots_key, roots_bytes, bytes(range(16)))
-        mock_s3.head_object.side_effect = self._artifact_head_router()
+        base_get = self._artifact_get_object(calc, roots_key, roots_bytes, bytes(range(16)))
+        written = {}
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if str(key).startswith("sculptures/") and str(key).endswith("meta.json"):
+                if marker_read == "landed":
+                    body = MagicMock()
+                    body.read.return_value = written.get(key, b"")
+                    return {"Body": body}
+                if marker_read == "absent":
+                    raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "gone"}}, "GetObject")
+                raise ClientError({"Error": {"Code": "SlowDown", "Message": "throttle"}}, "GetObject")
+            return base_get(**kwargs)
+
+        def put_object(Bucket=None, Key=None, Body=b"", **kw):
+            if str(Key).startswith("sculptures/") and str(Key).endswith("meta.json"):
+                written[Key] = Body        # the PUT "fails" but may have landed
+                raise RuntimeError("socket timeout mid-PUT")
+            return {}
 
         def subprocess_fake(cmd, **kwargs):
             with open(TMP_XFORMED_ROOTS, "wb") as fh:
@@ -1003,25 +1018,72 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
                 fh.write(PNG_1X1)
             return {"file_size": len(PNG_1X1), "preview_file_size": 0}
 
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.head_object.side_effect = self._artifact_head_router()
+        mock_s3.put_object.side_effect = put_object
+        mock_s3.delete_objects.return_value = {"Errors": delete_errors or []}
         mock_run.side_effect = subprocess_fake
         mock_render.side_effect = render_fake
-
-        def put_object(Bucket=None, Key=None, **kw):
-            if Key.startswith("sculptures/") and Key.endswith("meta.json"):
-                raise RuntimeError("socket timeout mid-PUT")   # ambiguous
-            return {}
-        mock_s3.put_object.side_effect = put_object
-
         with patch("handler_render_lores_preview.report_status"):
-            resp = handler(_event(
+            return handler(_event(
                 artifact_sculpture={"artifact_id": "color_run_abc"},
                 preview_source_size=4,
                 save_full={"view": {"point": 12}},
             ), None)
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_ambiguous_marker_put_that_landed_is_a_success(self, mock_s3, mock_run, mock_render):
+        # CR: resolve an ambiguous marker PUT by reading it back — the exact
+        # bytes present means the publication COMPLETED; report success and
+        # delete nothing
+        resp = self._ambiguous_meta_put_scenario(mock_s3, mock_run, mock_render,
+                                                 marker_read="landed")
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        self.assertTrue(body["saved_sculpture"]["id"].startswith("scu_"))
+        mock_s3.delete_objects.assert_not_called()
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_confirmed_absent_marker_cleans_marker_first_then_payload(self, mock_s3, mock_run, mock_render):
+        # CR: ordered cleanup — the marker key is deleted (and checked)
+        # BEFORE the payload, so no interleaving leaves a marker over
+        # deleted files
+        resp = self._ambiguous_meta_put_scenario(mock_s3, mock_run, mock_render,
+                                                 marker_read="absent")
         self.assertEqual(resp["statusCode"], 500)
-        swept = mock_s3.delete_objects.call_args.kwargs["Delete"]["Objects"]
-        swept_names = {o["Key"].rsplit("/", 1)[-1] for o in swept}
-        self.assertEqual(swept_names, {"roots.bin", "palette.png", "viewer.html", "meta.json"})
+        calls = [ [o["Key"].rsplit("/", 1)[-1] for o in c.kwargs["Delete"]["Objects"]]
+                  for c in mock_s3.delete_objects.call_args_list ]
+        self.assertEqual(calls, [["meta.json"], ["roots.bin", "palette.png", "viewer.html"]])
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_unknown_marker_state_preserves_everything(self, mock_s3, mock_run, mock_render):
+        # CR: when the resolving read fails non-404 the marker state is
+        # UNKNOWN — deleting payload could orphan a live marker; preserve
+        resp = self._ambiguous_meta_put_scenario(mock_s3, mock_run, mock_render,
+                                                 marker_read="unknown")
+        self.assertEqual(resp["statusCode"], 500)
+        self.assertIn("PRESERVED", json.loads(resp["body"])["detail"])
+        mock_s3.delete_objects.assert_not_called()
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_marker_delete_errors_block_payload_deletion(self, mock_s3, mock_run, mock_render):
+        # CR: DeleteObjects reports per-key failures WITHOUT raising — a
+        # failed marker delete must abort the cleanup before the payload
+        # goes, or the broken row survives
+        resp = self._ambiguous_meta_put_scenario(
+            mock_s3, mock_run, mock_render, marker_read="absent",
+            delete_errors=[{"Key": "meta.json", "Code": "InternalError"}])
+        self.assertEqual(resp["statusCode"], 500)
+        self.assertIn("could not delete", json.loads(resp["body"])["detail"])
+        self.assertEqual(len(mock_s3.delete_objects.call_args_list), 1)   # payload delete never issued
 
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")

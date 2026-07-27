@@ -1241,23 +1241,57 @@ def _sculpture_save_full(save_spec, *, job_id, export, source):
     if view:
         meta["view"] = view
     # meta.json is the PUBLICATION MARKER the listing trusts — it goes
-    # LAST, after the viewer, so a failed upload can never expose a broken
-    # catalog row (CR); on failure the partial prefix is swept best-effort
+    # LAST, after the viewer. On failure the cleanup is state-resolving,
+    # ordered, and checked (CR: DeleteObjects reports per-key failures
+    # without raising, and an ambiguous marker PUT may have landed):
+    #   1. if the marker PUT was attempted, READ IT BACK — the exact bytes
+    #      present means the publication actually completed: succeed;
+    #   2. confirmed-absent marker: delete-and-check the marker key FIRST,
+    #      only then the payload, so no interleaving can leave a marker
+    #      over deleted files;
+    #   3. unknown marker state (read failed non-404): PRESERVE everything
+    #      — orphaned bytes are recoverable, a broken catalog row is not.
+    meta_bytes = json.dumps(meta).encode("utf-8")
+    marker_key = sprefix + "meta.json"
+
+    def _delete_checked(keys, phase):
+        resp = s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [{"Key": k} for k in keys]})
+        errs = (resp or {}).get("Errors") or []
+        if errs:
+            failed = ", ".join(str(e.get("Key")) for e in errs)
+            raise RuntimeError(f"save cleanup ({phase}) could not delete: {failed}")
+
+    marker_attempted = False
     try:
         s3.put_object(Bucket=BUCKET, Key=sprefix + "viewer.html",
                       Body=_sculpture_full_viewer_template(),
                       ContentType="text/html", CacheControl=cache_forever)
-        s3.put_object(Bucket=BUCKET, Key=sprefix + "meta.json",
-                      Body=json.dumps(meta).encode("utf-8"),
+        marker_attempted = True
+        s3.put_object(Bucket=BUCKET, Key=marker_key,
+                      Body=meta_bytes,
                       ContentType="application/json", CacheControl="no-cache")
-    except Exception:
-        try:
-            s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [
-                {"Key": sprefix + k}
-                for k in ("roots.bin", "palette.png", "viewer.html", "meta.json")]})
-        except Exception:
+    except Exception as publish_exc:
+        marker_state = "absent"
+        if marker_attempted:
+            try:
+                got = s3.get_object(Bucket=BUCKET, Key=marker_key)
+                marker_state = "published" if got["Body"].read() == meta_bytes else "foreign"
+            except Exception as read_exc:
+                marker_state = "absent" if is_missing_s3_error(read_exc) else "unknown"
+        if marker_state == "published":
+            # the "failed" PUT landed: payload + viewer + marker all exist —
+            # this publication is complete and reports as SUCCESS
             pass
-        raise
+        elif marker_state == "absent":
+            _delete_checked([marker_key], "marker")
+            _delete_checked([sprefix + k for k in ("roots.bin", "palette.png", "viewer.html")],
+                            "payload")
+            raise
+        else:
+            raise RuntimeError(
+                f"save publication state for {sprefix} is {marker_state} after a failed "
+                f"marker write — objects PRESERVED for manual inspection "
+                f"({type(publish_exc).__name__}: {publish_exc})") from publish_exc
     region = os.environ.get("AWS_REGION", "us-east-1")
     out = dict(meta)
     out["prefix"] = sprefix

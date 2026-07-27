@@ -959,8 +959,10 @@ hashes):
 
 - `roots2pix_mt`, `assemble_greyscale`, and `score_raw_render` binary
   sha256s;
-- the Finalize Python code identity as the deployed Lambda's
-  `CodeSha256` (equivalently the actual ZIP SHA-256) — NOT
+- BOTH stage package identities as the deployed Lambdas' `CodeSha256`
+  (equivalently the actual ZIP SHA-256s): the Raster handler package
+  (its Python prep, boto configuration, and helpers set the handler
+  wall the rates were measured under) AND the Finalize package — NOT
   `PP_GIT_SHA` (blind to dirty trees and packaging differences) and NOT
   `PP_BUILD_ID` (timestamped, so an identical redeploy would falsely
   stale the calibration);
@@ -988,8 +990,20 @@ Lambda:
    threshold (a threshold cannot tell a calibration fixture from an
    arbitrary similarly sized request): a deployment-level calibration
    mode (environment gate, never a request field) under which admission
-   accepts ONLY requests whose canonical execution digest is on the
-   checked-in allowlist of matrix-fixture digests. The whole matrix
+   accepts ONLY requests whose FIXTURE-ADMISSION DIGEST is on the
+   checked-in allowlist. That digest is defined here, because no
+   existing digest is safe to reuse — `plan_params_digest` omits
+   cost-critical inputs (times, degree/n_coeffs, solve-score program
+   identity, format/quality, section configuration). The
+   fixture-admission digest is the sha256 of a canonically serialized
+   (`canonical_number_g17`, sorted keys) dict of EVERY normalized
+   cost-affecting field: N, times, degree, n_coeffs, channels,
+   view_projection and the camera execution subset, format and quality,
+   the solve-score and root program fingerprints, prelude
+   configuration, the section configuration (count and step ranges),
+   and the forced thread/worker values — excluding only volatile
+   identifiers (job id, task ids, URLs, timestamps). Tests mutate each
+   field individually and prove allowlist rejection. The whole matrix
    runs under it; no single small run stands in for the matrix.
 3. Only after ALL cells have run is the final constant derived —
    `min(cell rates) * deration_factor` — with every cell's result and
@@ -1031,10 +1045,13 @@ request field.
 
   total_finalize_wall ~= presign_seconds
                        + assembler_wall
-                       + n_sections * per_object_seconds
-                             [serial sidecar GETs, handler-side]
-                       + (sidecar_bytes_down + sidecar_bytes_up)
-                             / calibrated_transfer_rate
+                       + sidecar_phase_seconds
+                             [calibrated END-TO-END: the serial
+                              per-section GETs, the local /tmp write of
+                              the combined C * N^2 * times object
+                              (_concat_step_scores measures download
+                              and concatenation separately — both are
+                              real), and the upload]
                        + encode_wall
                        + publication_seconds
   gate: total_finalize_wall < 900 - named_headroom
@@ -1047,6 +1064,16 @@ request field.
   cell — the per-object terms are what stop the joint search from
   "fixing" raster time with thousands of sections that push Finalize
   past its ceilings.
+
+  The shared constants span DIFFERENT transfer paths — libcurl fragment
+  downloads inside the assembler, boto3 `get_object` sidecar downloads,
+  `upload_fileobj`/`put_object` uploads — so a single pair of constants
+  is valid ONLY under this definition: `calibrated_transfer_rate` is
+  the MINIMUM observed throughput across every applicable path and
+  direction, and `per_object_seconds` is the MAXIMUM observed setup
+  cost across them. If the matrix shows the paths diverging materially,
+  split into per-path constants instead of hiding the spread in the
+  minimum.
 
   Raster has the same two-layer structure: the 600-second gate covers
   only the NATIVE subprocess, but after it exits the handler
@@ -1528,8 +1555,16 @@ Pin:
   the 200 KB plan-size cap; the high-section-count Finalize per-object
   overhead is modeled (raising sections is NOT free);
 - calibration identity: changing ANY recorded component — assembler,
-  encoder, finalizer code identity, libvips layer, Lambda sizing, or
-  the forced thread/worker values — refuses camera runs as stale;
+  encoder, RASTER or Finalize package CodeSha256, libvips layer, Lambda
+  sizing, or the forced thread/worker values — refuses camera runs as
+  stale;
+- all FIVE wall gates exercised individually: a fixture that violates
+  exactly one of {raster native, raster handler, assembler, encoder,
+  total Finalize} is rejected naming that gate;
+- calibration-mode allowlist: each cost-affecting field of the
+  fixture-admission digest mutated individually -> rejected;
+- the sidecar phase estimate includes the local concatenation write,
+  not just network bytes;
 - metadata survives to the Views row;
 - camera JSON is present in the Views `meta.json`, absent from the image
   PUT's user-metadata, and the image metadata stays below the 2 KiB limit;
@@ -1629,22 +1664,22 @@ The depth prototype has a go/no-go gate before frontend integration:
   collision-heavy footprint} x {times=1, max supported times} x
   {low degree, high-degree pair metric} — recording each cell's work
   units, wall time, and implied throughput, with the deployed constant
-  = min(cells) minus startup headroom, derated by the named factor;
+  `derated_rate = min(cell rates) * deration_factor` (headroom is NOT
+  subtracted here — it enters as SECONDS in the section 7 budget
+  equations; this gate section defers to section 7 as the single
+  authority for all admission arithmetic);
 - run one representative production Sculpture at its actual N;
-- confirm the native raster fits the 600-second SUBPROCESS limit
-  (`handler_raster_mt` runs the binary with `timeout=600` — that, not
-  the 900-second Lambda envelope, is the raster ceiling);
-- confirm the Finalize MERGE fits the assembler's OWN 600-second
-  subprocess timeout (`handler_finalize_mt` runs the native assembler
-  with `timeout=600` — the 900-second Lambda envelope bounds the whole
-  handler, downloads and encodes included, but the merge itself has the
-  tighter limit). URLs need NO regeneration machinery in v1: Finalize
-  presigns via `_presign_fragment_urls` immediately before invoking an
-  assembler capped at 600 seconds, and the 900-second expiry satisfies
-  the invariant `url_expiry > merge_timeout + setup_margin` — state
-  and test that invariant; add refresh logic only if the merge timeout
-  ever changes. Gate: merge < 600 s, total Finalize < 900 s, both with
-  named headroom.
+- confirm ALL FIVE deployed gates from section 7, with named headroom:
+  raster native subprocess < 600 s and raster handler (native +
+  sequential uploads) < 900 s, per section; Finalize assembler
+  subprocess (fragment requests + transfer + merge) < 600 s, encoder
+  subprocess < 600 s, and total Finalize < 900 s. URLs need NO
+  regeneration machinery in v1: Finalize presigns via
+  `_presign_fragment_urls` immediately before invoking an assembler
+  capped at 600 seconds, and the 900-second expiry satisfies the
+  invariant `url_expiry > merge_timeout + setup_margin` — state and
+  test that invariant; add refresh logic only if the merge timeout ever
+  changes.
 
 The pass/fail thresholds are DEFINED AND RECORDED when the benchmark runs
 — wall-time headroom against the 900-second envelope, peak memory against

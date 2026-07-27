@@ -810,6 +810,16 @@ planes and the step-score buffer) from the source-row budget before
 choosing section sizes, or a section that fits its rows can still blow
 the Lambda on the planes.
 
+Sectioning is also the TIME lever, and the planner must use it: more
+sections mean less per-section work and `/tmp`, at the cost of more
+fragments, more Finalize transfer, and a bigger plan. The planner
+therefore JOINTLY searches section counts — smallest count satisfying
+per-section memory, Raster `/tmp`, per-section `work_units_s`,
+total-Finalize wall, and the 200 KB plan-size limit simultaneously —
+instead of gating a fixed count and rejecting. A job is rejected only
+when NO allowed section count satisfies every constraint, and the error
+names the binding constraint at the best count tried.
+
 The two stages have different constraints:
 
 - Raster currently writes the complete section fragment to
@@ -907,11 +917,32 @@ the largest supported multi-pass; a low-degree and a high-degree
 pair-metric program, including a coeff-source metric so `n_coeffs`
 weighting is exercised). Every cell declares its N, section size, and a
 TARGET DURATION long enough to be steady-state — startup-dominated tiny
-runs must not be averaged against steady-state runs. The deployed
+runs must not be averaged against steady-state runs. "Expensive
+program" is not a calibration contract: the matrix's cost-extreme cells
+are EXACT fixtures constructed from the current language limits — the
+maximum-token solve-score program, the maximum root-program complexity,
+a pair-family metric on the solve source, a pair-family metric on the
+coefficient source, and a combined solve-PLUS-coefficient pair-source
+case — checked into the repo alongside their language/spec versions.
+The calibration identity records those versions; a language change that
+raises the limits stales the calibration exactly like a binary change. The deployed
 constant is `derated_rate = min(cell rates) * deration_factor`, and it
 enters admission only through the explicit budget equation above
 (startup headroom is subtracted as SECONDS from the time budget, never
-from a rate). The staged
+from a rate).
+
+The rate is BOUND to the execution configuration it was measured on. A
+rate measured at four raster threads underprices a one-thread request
+(the plan accepts 1..16), and finalize throughput depends on
+`finalize_workers`. v1 therefore FORCES the calibrated values
+server-side for camera mode — the plan pins `raster_mt_threads` and
+`finalize_workers` to the calibration configuration regardless of the
+request — and the calibration identity records, and admission verifies:
+Lambda memory size and architecture, the calibrated thread/worker
+values, and the raster binary's `RASTER_BINARY_SHA256` from the binary
+manifest. A deploy that changes any of them invalidates the rate:
+admission refuses camera runs with "calibration stale for this
+deployment" until the matrix reruns. The staged
 calibration in this section and Milestone 4 measure exactly that
 matrix and record every cell's result alongside the chosen constant.
 
@@ -940,9 +971,26 @@ itself a result (it was genuinely at risk of the 600-second cap) —
 record it as such. If a bypass ever becomes unavoidable it must be a
 deployment-level environment gate or a separate unrouted alias, never a
 request field.
-- `total_fragment_bytes` is primarily a transfer and wall-time constraint,
-  not resident memory once streaming is implemented. Report it and enforce
-  a benchmark-derived wall-time policy rather than pretending it is free.
+- `total_fragment_bytes` is primarily a transfer and wall-time
+  constraint, not resident memory once streaming is implemented — but
+  camera fragments are NOT Finalize's only serial transfer. Finalize
+  also downloads every section's step-score sidecar serially,
+  concatenates, and uploads the combined `C * N^2 * times` object, then
+  encodes and publishes. At large `times` that alone can consume the
+  900-second envelope while the camera merge fits its 600. Admission
+  computes an explicit TOTAL-Finalize wall estimate:
+
+  ```text
+  finalize_wall ~= fragment_merge_seconds        (gated < 600 - headroom)
+                 + (sidecar_bytes_down + sidecar_bytes_up)
+                       / calibrated_transfer_rate     [C * N^2 * times each way]
+                 + encode_seconds(N, C, format)
+                 + publication_seconds
+  admit iff finalize_wall < 900 - named_headroom
+  ```
+
+  with the transfer and encode rates coming from the same calibration
+  matrix (they are per-deployment quantities like the raster rate).
 
 For scale: a fully occupied RGB camera fragment is `11 * N * N` bytes. At
 `N=32768` that is exactly 11 GiB, already larger than the Raster Lambda's
@@ -1320,12 +1368,8 @@ Every failure must be explicit and non-destructive:
 - active render: Snap disabled; the orchestrator's 409 remains the
   fail-closed backend guard;
 - invalid camera schema: plan-time failure before raster fan-out;
-- resource estimate too large: calculated error before fan-out;
-- admission invariants pinned by tests: two individually safe sections
-  admit even when their SUM exceeds one worker's capacity; one oversized
-  section rejects; pass-1-only sections still price their scoring work;
-  doubling `times` scales the estimate; a coeff-source metric prices
-  `n_coeffs` via `D`; work-unit arithmetic overflow fails closed;
+- resource estimate too large: calculated error before fan-out (the
+  admission-invariant TESTS live in section 12.3 and Milestone 0);
 - malformed native matrix/depth record: task fails loudly;
 - partial Views inventory refresh: preserve existing partial/error
   semantics.
@@ -1397,6 +1441,15 @@ Pin:
   from `$.solve_score_clip.parsed.*`, and both raster and finalize
   reject a contract inconsistent with the projection or the score
   channel count;
+- admission invariants: two individually safe sections admit even when
+  their SUM exceeds one worker's capacity; one oversized section
+  rejects; pass-1-only sections still price their scoring work;
+  doubling `times` scales the estimate; a coeff-source metric prices
+  `n_coeffs` via `D`; work-unit arithmetic overflow fails closed; a
+  calibration-stale deployment (thread count, memory, or raster binary
+  sha changed) refuses camera runs;
+- digest semantics markers: changing `version`, `matrix_layout`, or
+  `projection` each changes the digest;
 - metadata survives to the Views row;
 - camera JSON is present in the Views `meta.json`, absent from the image
   PUT's user-metadata, and the image metadata stays below the 2 KiB limit;
@@ -1534,7 +1587,9 @@ feature. That would be a separately designed v2.
 - Add snapshot-schema validation tests.
 - Add camera matrix and square-crop math tests.
 - Pin effective t-window and Height-zero behavior.
-- Pin memory, `/tmp`, and fragment-byte admission formulae.
+- Pin memory, `/tmp`, fragment-byte, per-section work-unit, and
+  total-Finalize wall admission formulae, including the six admission
+  invariants and the digest semantics-marker tests.
 - Add depth-fragment assembler tests before changing the producer.
 
 ### Milestone 1: viewer protocol

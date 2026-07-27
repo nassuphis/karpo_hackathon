@@ -959,23 +959,29 @@ hashes):
 
 - `roots2pix_mt`, `assemble_greyscale`, and `score_raw_render` binary
   sha256s;
-- BOTH stage package identities as the deployed Lambdas' `CodeSha256`
-  (equivalently the actual ZIP SHA-256s): the Raster handler package
-  (its Python prep, boto configuration, and helpers set the handler
-  wall the rates were measured under) AND the Finalize package — NOT
-  `PP_GIT_SHA` (blind to dirty trees and packaging differences) and NOT
-  `PP_BUILD_ID` (timestamped, so an identical redeploy would falsely
-  stale the calibration);
+- BOTH stage package identities as CANONICAL CONTENT HASHES — the
+  repo's existing `zip_content_hash()` (sorted paths + file contents,
+  ZIP metadata ignored): the Raster handler package (its Python prep,
+  boto configuration, and helpers set the handler wall the rates were
+  measured under) AND the Finalize package. Raw AWS `CodeSha256` is NOT
+  the validity key — packaging stages files into fresh directories, so
+  an identical rebuild produces different archive bytes and would
+  falsely stale the calibration; keep `CodeSha256` as deployment
+  provenance only. (`PP_GIT_SHA` remains rejected as blind to dirty
+  trees; `PP_BUILD_ID` as timestamped.);
 - the exact libvips `LayerVersionArn`;
 - Lambda memory size and architecture for BOTH raster and finalize;
 - the calibrated thread/worker values above;
-- the COST MODEL itself: `cost_model_version`, a constant declared in
-  the plan code and recorded in the calibration artifact, bumped with
-  ANY change to `work_units_s`, footprint estimation, the section
-  search, or the phase equations — measured rates are only meaningful
-  under the model that interpreted them, and neither worker package
-  hash changes when the plan-side model does. A test asserts the code
-  constant equals the artifact's value.
+- the COST MODEL itself, verified MECHANICALLY, not by an honesty
+  check: the entire admission model (`work_units_s`, footprint
+  estimation, the section search, the phase estimators) lives in ONE
+  isolated module (e.g. `view_snap_cost_model.py`), and the calibration
+  artifact stores the GENERATED canonical SHA-256 of that module's
+  content alongside a human-readable `cost_model_version`. The loader
+  recomputes the module hash and refuses on mismatch — an estimator
+  change that forgets to bump the version CANNOT stay green, because
+  the hash moves by construction. The version string exists for humans
+  and provenance; the hash is the authority.
 
 A deploy that changes ANY of them invalidates the rate — an encoder or
 finalizer change must not inherit an optimistic raster-era calibration —
@@ -996,7 +1002,12 @@ Lambda:
    cell and NOTHING else — enforced by MECHANISM, not by a work
    threshold (a threshold cannot tell a calibration fixture from an
    arbitrary similarly sized request): a deployment-level calibration
-   mode (environment gate, never a request field) under which admission
+   mode whose SINGLE authority is the packaged artifact's `mode` field
+   (changing mode is a deploy — auditable, never a request field, and
+   no environment variable is consulted: two authorities would need
+   agreement rules, and permissive `env || artifact` logic is exactly
+   the bypass shape this section exists to prevent) under which
+   admission
    accepts ONLY requests whose FIXTURE-ADMISSION DIGEST is on the
    checked-in allowlist. That digest is defined here, because no
    existing digest is safe to reuse — `plan_params_digest` omits
@@ -1013,11 +1024,15 @@ Lambda:
    anything that changes the bytes rendered or encoded). Volatile
    identifiers (job id, task ids, presigned URLs, timestamps) are
    excluded but REPLACED by an immutable content identity for the
-   source data: the authoritative source manifests bound by content
-   SHA-256, S3 VersionId, or immutable key plus validated ETag —
-   different root data with identical N/degree/programs has radically
-   different collision, occupancy, and compression behavior, so a
-   digest that ignores the data does not identify the fixture. Tests
+   source data, and that identity is TRANSITIVE: a server-owned
+   immutable fixture descriptor enumerates EVERY consumed object —
+   the manifests AND the root/coeff objects they reference — each
+   bound by content SHA-256, S3 VersionId, or immutable key plus
+   validated ETag; the digest binds the descriptor's hash. Binding
+   only a top-level manifest identifies nothing if a referenced
+   object can be replaced underneath it — and different root data
+   with identical N/degree/programs has radically different
+   collision, occupancy, and compression behavior. Tests
    mutate each field individually — including the source content
    identity — and prove allowlist rejection. The whole matrix
    runs under it; no single small run stands in for the matrix.
@@ -1044,10 +1059,28 @@ provenance               [per-cell matrix results, dates, recorded
 ```
 
 The planner LOADS AND VALIDATES it fail-closed: a missing artifact, a
-schema mismatch, a cost-model version mismatch, or an identity
-mismatch with the live deployment refuses camera runs as
-calibration-stale. "Recorded in this document" is provenance for
-humans; the artifact is the authority the code reads.
+schema mismatch, a cost-model hash mismatch, or an identity mismatch
+with the live deployment refuses camera runs as calibration-stale.
+"Recorded in this document" is provenance for humans; the artifact is
+the authority the code reads.
+
+Deployment plumbing is explicit, ordered, and tested —
+`package_render_plan_zip()` uses an explicit file list, so the artifact
+must be ADDED there, and identities must exist before it is packaged:
+
+```text
+1. build worker binaries and the libvips layer;
+2. compute canonical identities (zip_content_hash for both worker
+   packages, binary sha256s, LayerVersionArn, Lambda sizing);
+3. validate view_snap_calibration.json against those identities —
+   fail the DEPLOY on mismatch, not the first camera request;
+4. package the validated artifact into the Render Plan zip;
+5. deploy, then verify the live deployment's identities equal the
+   artifact's (post-deploy check).
+```
+
+Packaging tests pin the artifact's presence in the plan zip and the
+deploy-time validation step.
 
 There is NO admission override: a payload flag is not "internal" merely
 because the UI does not send it, and a case the budget rejects is

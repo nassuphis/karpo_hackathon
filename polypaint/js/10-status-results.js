@@ -598,120 +598,57 @@ async function runRenderLoresPreview(opts = {}) {
     return !runFailed;
 }
 
-async function runSculptureGenerate() {
-    // artifact-sourced sculpture: the SELECTED color artifact is the only
-    // source — its stored step_scores, transform chain, viewport, rotation,
-    // and palette drive the backend; no live render state travels. Always
-    // async on the common task infra (DDB row + /check-status + jobs rail).
-    const statusEl = document.getElementById('render-status');
-    let win = null;
-    let failed = false;
+async function _sculptureGenerateAndFollow(jobId, artifactId, n, btnId, phase) {
+    // artifact-sourced sculpture data job: the SELECTED color artifact is
+    // the only source — its stored step_scores, transform chain, viewport,
+    // rotation, and palette drive the backend; no live render state
+    // travels. Async on the common task infra (DDB row + /check-status +
+    // jobs rail). Returns the sculpture block; throws on failure. No
+    // viewer tab is involved — SaveFull persists straight from the data.
+    const startResp = await lambdaPost('storage', { job_id: jobId, artifact_id: artifactId, n }, '/start-sculpture-artifact');
+    const taskId = startResp && startResp.task_id;
+    if (!taskId) throw new Error('start-sculpture-artifact returned no task_id');
+    const railId = 'sculpture:' + taskId;
+    const railLabel = `sculpture ${n}\u00b2 \u00b7 ${artifactId}`;
+    const startedAt = Date.now();
+    _jobsRailUpsert({ id: railId, kind: 'sculpture', label: railLabel,
+                      jobId, tab: 'render', state: 'running',
+                      startedAt, detail: 'starting' });
     try {
-        const jobId = document.getElementById('render-results-dir').value.trim();
-        if (!jobId) throw new Error('no job selected');
-        const art = _sculptureSourceColorArtifact();
-        if (!art || !art.artifact_id) throw new Error('no color artifact selected — pick one on the Color tab');
-        const artifactId = String(art.artifact_id);
-        const nSel = document.getElementById('render-sculpture-n');
-        const n = parseInt(nSel && nSel.value, 10) || 384;
-        // opened synchronously in the click task so popup blockers allow it;
-        // pointed at the viewer once the data links exist, closed on failure
-        win = window.open('', '_blank');
-        const btn = document.getElementById('btn-sculpture-generate');
-        if (btn) { btn.disabled = true; btn.textContent = 'Generate\u2026'; }
-        const startResp = await lambdaPost('storage', { job_id: jobId, artifact_id: artifactId, n }, '/start-sculpture-artifact');
-        const taskId = startResp && startResp.task_id;
-        if (!taskId) throw new Error('start-sculpture-artifact returned no task_id');
-        const railId = 'sculpture:' + taskId;
-        const railLabel = `sculpture ${n}\u00b2 \u00b7 ${artifactId}`;
-        const startedAt = Date.now();
-        _jobsRailUpsert({ id: railId, kind: 'sculpture', label: railLabel,
-                          jobId, tab: 'render', state: 'running',
-                          startedAt, detail: 'starting' });
-        let sc = null;
-        try {
-            for (;;) {
-                const elapsed = Math.round((Date.now() - startedAt) / 1000);
-                if (elapsed > 360) throw new Error('sculpture timed out after 6 minutes');
-                const liveBtn = document.getElementById('btn-sculpture-generate');
-                if (liveBtn) liveBtn.textContent = `Generate ${elapsed}s\u2026`;
-                _jobsRailProgress(railId, `${artifactId} \u00b7 ${n}\u00b2 \u00b7 ${elapsed}s`);
-                let check = null;
-                try {
-                    check = await lambdaPost('storage', {
-                        job_id: jobId, task_prefix: taskId, expected: 1,
-                    }, '/check-status');
-                } catch (err) { /* transient — keep polling */ }
-                if (check && check.errors > 0) {
-                    const detail = (check.error_details && check.error_details[0]
-                        && check.error_details[0].error_msg) || 'sculpture generation failed';
-                    throw new Error(detail);
-                }
-                if (check && check.done >= 1) {
-                    const row = (check.results || []).find((r) => r && r.sculpture);
-                    if (!row) throw new Error('sculpture result row carries no sculpture block');
-                    sc = row.sculpture;
-                    break;
-                }
-                await new Promise((r) => setTimeout(r, 3000));
+        for (;;) {
+            const elapsed = Math.round((Date.now() - startedAt) / 1000);
+            if (elapsed > 360) throw new Error('sculpture timed out after 6 minutes');
+            const liveBtn = btnId ? document.getElementById(btnId) : null;
+            if (liveBtn && liveBtn.disabled) liveBtn.textContent = `${phase} ${elapsed}s\u2026`;
+            _jobsRailProgress(railId, `${artifactId} \u00b7 ${n}\u00b2 \u00b7 ${elapsed}s`);
+            let check = null;
+            try {
+                check = await lambdaPost('storage', {
+                    job_id: jobId, task_prefix: taskId, expected: 1,
+                }, '/check-status');
+            } catch (err) { /* transient — keep polling */ }
+            if (check && check.errors > 0) {
+                const detail = (check.error_details && check.error_details[0]
+                    && check.error_details[0].error_msg) || 'sculpture generation failed';
+                throw new Error(detail);
             }
-        } catch (err) {
-            _jobsRailUpsert({ id: railId, kind: 'sculpture', label: railLabel,
-                              jobId, tab: 'render', state: 'failed',
-                              detail: err && err.message ? err.message : String(err) });
-            throw err;
+            if (check && check.done >= 1) {
+                const row = (check.results || []).find((r) => r && r.sculpture);
+                if (!row) throw new Error('sculpture result row carries no sculpture block');
+                const doneSecs = Math.round((Date.now() - startedAt) / 1000);
+                _jobsRailUpsert({ id: railId, kind: 'sculpture', label: railLabel,
+                                  jobId, tab: 'render', state: 'complete',
+                                  detail: `done in ${doneSecs}s` });
+                return row.sculpture;
+            }
+            await new Promise((r) => setTimeout(r, 3000));
         }
-        const doneSecs = Math.round((Date.now() - startedAt) / 1000);
+    } catch (err) {
         _jobsRailUpsert({ id: railId, kind: 'sculpture', label: railLabel,
-                          jobId, tab: 'render', state: 'complete',
-                          detail: `done in ${doneSecs}s` });
-        const vp = sc.viewport || {};
-        if (!sc.roots_url || !sc.palette_url) throw new Error('sculpture result missing data links');
-        const frag = new URLSearchParams({
-            v: '1', r: sc.roots_url, p: sc.palette_url,
-            fmt: sc.format || 'u16',
-            n: String(sc.grid_n), d: String(sc.degree), s: String(sc.step_count),
-            x0: String(vp.min_re), x1: String(vp.max_re),
-            y0: String(vp.min_im), y1: String(vp.max_im),
-            t: `${artifactId} \u00b7 ${sc.grid_n}\u00d7${sc.grid_n} \u00b7 ${sc.palette || ''}`,
-        });
-        const url = `sculpture.html#${frag.toString()}`;
-        if (win && !win.closed) {
-            win.location = url;
-            // the Sculpture tab's Save snapshots this window's live view
-            // settings (same-origin) so saves capture the tuned state
-            window._lastSculptureWin = win;
-        } else log(`Sculpture viewer (popup blocked, open manually): ${url}`, 'err', 'render-log');
-        // Save copies exactly this run's data — remember its identity
-        window._lastSculptureData = {
-            job_id: jobId,
-            grid_n: sc.grid_n, degree: sc.degree, step_count: sc.step_count,
-            pass_count: sc.pass_count, viewport: sc.viewport,
-            palette: sc.palette, roots_bytes: sc.roots_bytes,
-            format: sc.format || 'u16',
-            source_artifact_id: sc.source_artifact_id || artifactId,
-            cache_prefix: sc.cache_prefix || '',   // SplatBake's server source
-        };
-        log(`Sculpture from ${artifactId}: grid ${sc.grid_n}\u00d7${sc.grid_n} \u00b7 degree ${sc.degree} \u00b7 ${doneSecs}s`, 'ok', 'render-log');
-        if (statusEl) { statusEl.textContent = 'Sculpture ready'; statusEl.className = 'status success'; }
-    } catch (e) {
-        failed = true;
-        if (win && !win.closed) win.close();
-        const msg = e && e.message ? e.message : String(e);
-        log('Sculpture failed: ' + msg, 'err', 'render-log');
-        if (statusEl) { statusEl.textContent = 'Sculpture error: ' + msg; statusEl.className = 'status error'; }
-    } finally {
-        const btn = document.getElementById('btn-sculpture-generate');
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = failed ? '\u2717 Generate' : '\u2713 Generate';
-            setTimeout(() => {
-                const b = document.getElementById('btn-sculpture-generate');
-                if (b && !b.disabled) b.textContent = 'Generate';
-            }, 2500);
-        }
+                          jobId, tab: 'render', state: 'failed',
+                          detail: err && err.message ? err.message : String(err) });
+        throw err;
     }
-    return !failed;
 }
 
 async function runSolveScoreHistogramDebug() {

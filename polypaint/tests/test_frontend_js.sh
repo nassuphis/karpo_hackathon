@@ -621,10 +621,14 @@ assertIncludes("catalog[_solveScoreGenericMetricChipName] = {", 'solve-score cat
 assertIncludes("return [_solveScoreGenericMetricPublicName, ...(item.params || [])];", 'generic metric chip should serialize publicly without desugaring in saved programs');
 assertIncludes("id=\"render-preview-pix\" value=\"256\"", 'render output should expose default 256px lores preview size input');
 assertIncludes("id=\"btn-render-lores-preview\" onclick=\"runRenderLoresPreview()\"", 'render output should expose lores preview button');
-assertIncludes("id=\"btn-sculpture-generate\" onclick=\"runSculptureGenerate()\"", 'sculpture tab should expose the artifact-sourced Generate button');
-assertIncludes("id=\"sculpture-source-line\"", 'sculpture tab first line should show the source color artifact id');
+assertIncludes("id=\"btn-sculpture-savefull\" onclick=\"_saveFullOpenModal()\"", 'sculpture tab should expose SaveFull — popup-configured generate+save, no viewer tab');
+assertIncludes("async function runSaveFull() {", 'SaveFull should generate then save in one flow');
+assertIncludes("function _sculptureAsRenderArtifact(meta) {", 'saved viewers must ride the shared render-artifact catalog');
 assertIncludes("function _sculptureSourceColorArtifact() {", 'sculpture source should resolve from the color family selection');
-assertNotIncludes("<option value=\"preview\"", 'sculpture size select must not offer a preview mode — artifact-only sourcing');
+assertNotIncludes("id=\"btn-sculpture-generate\"", 'the Generate-then-Save viewer flow is gone (user spec)');
+assertNotIncludes("id=\"sculpture-title\"", 'no title input — too early in the workflow to name things, the id is fine');
+assertNotIncludes("id=\"render-sculpture-n\"", 'the pane-level size dropdown is gone — resolution lives in the SaveFull popup');
+assertNotIncludes("_sculptureBakeSaved", 'per-row buttons are gone — selection toolbar only');
 assertIncludes("function _viewRenderParamsFromArtifact(art, projection, vertical) {", 'ViewRender should derive its full render request from the selected Color artifact');
 assertIncludes("function _viewRenderGridN(art) {", 'ViewRender should derive image geometry from calculation N');
 assertIncludes("const pix = _viewRenderGridN(art);", 'ViewRender must use N for both image dimensions');

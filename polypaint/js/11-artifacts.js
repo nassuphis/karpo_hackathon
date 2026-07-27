@@ -405,6 +405,17 @@ function _renderArtifactSummary(art) {
             derived,
         ].filter(Boolean).join(' · ');
     }
+    if (art.family === 'sculpture') {
+        const label = art.kind === 'splatbake'
+            ? `baked · ${Number(art.splat_count || 0).toLocaleString()} splats`
+            : `full · ${art.grid_n || '?'}×${art.grid_n || '?'} · d${art.degree || '?'}`;
+        return [
+            String(art.artifact_id || ''),
+            label,
+            art.palette || '',
+            art.source_artifact_id ? `color:${art.source_artifact_id}` : '',
+        ].filter(Boolean).join(' · ');
+    }
     if (art.family === 'views') {
         return [
             art.projection || art.view_projection || '',
@@ -1044,8 +1055,13 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         palette: withFamily('palette', families.palette),
         pdf: withFamily('pdf', families.pdf),
         // saved sculptures for THIS job only — the panel is job-scoped like
-        // every other family (the server list is global; filter client-side)
-        sculpture: (window._sculptureInventory || []).filter((m) => m.job_id === jobId),
+        // every other family (the server list is global; filter client-side),
+        // normalized onto the shared render-artifact contract so the
+        // standard catalog/selection/arrow machinery applies (user spec:
+        // like the Views tab — list left, viewer frame right)
+        sculpture: (window._sculptureInventory || [])
+            .filter((m) => m.job_id === jobId)
+            .map(_sculptureAsRenderArtifact),
         // Views: ASSOCIATED artifacts of existing color renders (like the
         // palette) — server-listed per job under renders/{job}/views/, never
         // mixed into the Color family
@@ -1060,7 +1076,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     void _sculptureEnsureInventory();
     void _viewsEnsureInventory();
     if (!_renderArtifacts[_renderActiveFamily]) _renderActiveFamily = 'color';
-    for (const family of ['color', 'bilevel', 'coeffs', 'palette', 'pdf', 'views']) {
+    for (const family of ['color', 'bilevel', 'coeffs', 'palette', 'pdf', 'views', 'sculpture']) {
         const inv = _renderArtifacts[family] || [];
         const keyIdx = _renderSelectedArtifactKey[family]
             ? inv.findIndex((art) => _renderArtifactStableKey(art) === _renderSelectedArtifactKey[family])
@@ -1093,40 +1109,6 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         return `<button type="button" role="tab" class="subtab-btn${active ? ' active' : ''}" data-render-family="${family}" onclick="_renderSelectFamily('${family}')" aria-selected="${active ? 'true' : 'false'}">${_renderFamilyLabel(family)} <span class="subtab-count">(${count})</span></button>`;
     }).join('');
 
-    if (_renderActiveFamily === 'sculpture') {
-        // saved-sculpture pane: DeepZoom-style — a create block bound to the
-        // CURRENT render settings plus the global durable list. Selection /
-        // marquee / viewer machinery does not apply here.
-        preview.innerHTML = `
-        <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
-            <div class="subtab-bar render-artifact-family-tabs" role="tablist" aria-label="Render artifact family tabs">${familyTabs}</div>
-            <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap">
-                <span id="sculpture-source-line" style="font-size:12px; color:#cfd8e3; flex-basis:100%; font-family:monospace">source: &#8230;</span>
-                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-generate" onclick="runSculptureGenerate()" title="Generate the sculpture from the selected color artifact's recorded scores, transforms, viewport, and palette (async job on the rail)">Generate</button>
-                <select id="render-sculpture-n" title="Lattice: subsamples the FULL solve at this grid (range GETs, no solving; u16 dump). 128/192 = fast quick looks" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; font-size:11px; padding:2px 4px">
-                    <option value="128">128&#178;</option>
-                    <option value="192">192&#178;</option>
-                    <option value="384" selected>384&#178;</option>
-                    <option value="512">512&#178;</option>
-                </select>
-                <span style="border-left:1px solid #333; height:18px"></span>
-                <input type="text" id="sculpture-title" placeholder="sculpture title (optional)" style="flex:0 1 300px; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:5px 8px; font-family:monospace; font-size:12px">
-                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-save" onclick="runSculptureSave()">Save</button>
-                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-splatbake" onclick="_saveSplatOpenModal()" title="Bake a self-contained splat viewer from the selected color artifact — a popup sets resolution, splat res, z, height, and point; solid splats, no tour, hosted as a light shareable row">SaveSplat</button>
-                <button type="button" class="btn-secondary btn-inline" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)">Refresh</button>
-                <span style="font-size:11px; color:#666; flex-basis:100%">Generate builds the sculpture from the SELECTED color artifact — its stored per-solve scores, root transforms, viewport, and palette (no re-evaluation; async on the rail, ~30s). Save snapshots the open viewer.</span>
-                <span id="sculpture-view-hint" style="font-size:11px; color:#8899aa; flex-basis:100%"></span>
-            </div>
-            <div id="sculpture-list" style="max-height:520px; overflow-y:auto; border:1px solid #333; border-radius:4px">Loading…</div>
-        </div>`;
-        _sculptureRenderPane();
-        _sculptureUpdateSourceLine();
-        _sculptureUpdateViewHint();
-        void _sculptureEnsureInventory();
-        info.textContent = 'Job: ' + jobId;
-        return;
-    }
-
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
         const colorArtifactId = activeArt && activeArt.artifact_id ? String(activeArt.artifact_id) : '';
@@ -1140,6 +1122,12 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate opens the BiLevel popup and runs the logical-section path: sectioned solve reads, sparse occupancy fragments, then one assemble+encode finalize. Color2Bilevel is the faster derived path from a fused Color artifact and appears on the Color tab.</span>';
     } else if (_renderActiveFamily === 'pdf') {
         controlsExtra = '<span style="font-size:11px; color:#666">PDF artifacts are generated from the selected Color artifact using the PDF button on the Color tab. This tab lists and previews completed PDFs.</span>';
+    } else if (_renderActiveFamily === 'sculpture') {
+        const source = _sculptureSourceColorArtifact();
+        const sourceId = source && source.artifact_id ? String(source.artifact_id) : '';
+        controlsExtra = sourceId
+            ? `<span style="font-size:11px; color:#666">SaveFull / SaveSplat source: <span style="color:#cfd8e3; font-family:monospace">${_escapeHtml(sourceId)}</span>. Both generate from the artifact's stored data and save a hosted viewer — no tabs, ids name the saves. Select a row to preview it live; arrows navigate.</span>`
+            : '<span style="font-size:11px; color:#666">Select a Color artifact first (Color tab) — SaveFull and SaveSplat generate from its stored data.</span>';
     } else if (_renderActiveFamily === 'views') {
         const source = _sculptureSourceColorArtifact();
         const sourceId = source && source.artifact_id ? String(source.artifact_id) : '';
@@ -1171,7 +1159,9 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let viewerHtml = '<div style="color:#444; font-size:12px; padding:12px 0; text-align:center">No artifact selected</div>';
     if (activeArt && activeArt.viewer_url) {
-        if (activeArt.format === 'pdf' || (activeArt.content_type || '') === 'application/pdf') {
+        if (activeArt.family === 'sculpture') {
+            viewerHtml = `<iframe src="${activeArt.viewer_url}" style="width:100%; height:100%; border:0; background:#000" title="saved sculpture viewer"></iframe>`;
+        } else if (activeArt.format === 'pdf' || (activeArt.content_type || '') === 'application/pdf') {
             const pdfSrc = `${activeArt.viewer_url}#toolbar=0&navpanes=0&view=FitH`;
             viewerHtml = `<iframe src="${pdfSrc}" style="width:100%; height:100%; border:0; background:#000"></iframe>`;
         } else {
@@ -1180,8 +1170,17 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     }
 
     const actionButtons = [];
-    if (_renderActiveFamily !== 'color' && _renderActiveFamily !== 'pdf' && _renderActiveFamily !== 'views') {
+    if (_renderActiveFamily !== 'color' && _renderActiveFamily !== 'pdf' && _renderActiveFamily !== 'views' && _renderActiveFamily !== 'sculpture') {
         actionButtons.push('<button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>');
+    }
+    if (_renderActiveFamily === 'sculpture') {
+        const hasSculptureSel = !!(activeArt && activeArt.artifact_id);
+        actionButtons.push('<button class="btn-primary" id="btn-sculpture-savefull" onclick="_saveFullOpenModal()" style="padding:4px 12px; font-size:11px" title="Generate from the selected color artifact and save a FULL viewer in one go — a popup sets resolution and every viewer option; no tab opens">SaveFull</button>');
+        actionButtons.push('<button class="btn-secondary" id="btn-sculpture-splatbake" onclick="_saveSplatOpenModal()" style="padding:4px 12px; font-size:11px" title="Bake a self-contained splat viewer from the selected color artifact — a popup sets resolution, splat res, z, height, and point">SaveSplat</button>');
+        actionButtons.push('<button class="btn-secondary" id="btn-sculpture-refresh" onclick="_sculptureEnsureInventory(true)" style="padding:4px 12px; font-size:11px">Refresh</button>');
+        actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-open" onclick="_sculptureOpenSelected()" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Open</button>`);
+        actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-copy" onclick="_sculptureCopyLinkSelected(this)" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Copy Link</button>`);
+        actionButtons.push(`<button class="btn-secondary" id="btn-sculpture-delete" onclick="_sculptureDeleteSelected(this)" style="padding:4px 12px; font-size:11px" ${hasSculptureSel ? '' : 'disabled'}>Delete</button>`);
     }
     if (_renderActiveFamily === 'views') actionButtons.push('<button class="btn-primary" id="btn-view-render" onclick="_viewRenderOpenModal()" style="padding:4px 12px; font-size:11px" title="Render an N×N view from the selected Color artifact">ViewRender</button>');
     if (_renderActiveFamily === 'views') actionButtons.push('<button class="btn-secondary" id="btn-views-refresh" onclick="_viewsEnsureInventory(true)" style="padding:4px 12px; font-size:11px">Refresh</button>');
@@ -1202,7 +1201,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     if (_renderActiveFamily === 'color') actionButtons.push(`<button class="btn-secondary" id="btn-render-add-book" onclick="addSelectedRenderArtifactToBook()" style="padding:4px 12px; font-size:11px">Add to Book</button>`);
     if (_renderActiveFamily === 'palette') actionButtons.push(`<button class="btn-secondary" id="btn-render-go-color" onclick="goColorFromPalette()" style="padding:4px 12px; font-size:11px" disabled>GoColor${linkedColorId ? ': ' + linkedColorId : ''}</button>`);
     if (_renderActiveFamily === 'views') actionButtons.push(`<button class="btn-secondary" id="btn-render-go-color" onclick="goColorFromView()" style="padding:4px 12px; font-size:11px" disabled>GoColor${linkedColorId ? ': ' + linkedColorId : ''}</button>`);
-    actionButtons.push(`<div style="display:inline-block; position:relative">
+    if (_renderActiveFamily !== 'sculpture') actionButtons.push(`<div style="display:inline-block; position:relative">
         <button class="btn-secondary" id="btn-render-download" onclick="_toggleDownloadMenu()" style="padding:4px 12px; font-size:11px" disabled>Download \u25bc</button>
         <div id="download-menu" style="display:none; position:absolute; bottom:100%; left:0; background:#2a2a3e; border:1px solid #555; border-radius:4px; z-index:100; min-width:120px; margin-bottom:2px">
             ${_renderActiveFamily === 'pdf'
@@ -1213,8 +1212,8 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                    <div id="dl-menu-dir" onclick="_dlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Save to Dir\u2026</div>`}
         </div>
     </div>`);
-    actionButtons.push('<button class="btn-secondary" id="btn-render-delete" onclick="deleteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Delete</button>');
-    if (_renderActiveFamily !== 'pdf') actionButtons.push('<button class="btn-secondary" id="btn-render-deepzoom" onclick="deepZoomSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>DeepZoom</button>');
+    if (_renderActiveFamily !== 'sculpture') actionButtons.push('<button class="btn-secondary" id="btn-render-delete" onclick="deleteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Delete</button>');
+    if (_renderActiveFamily !== 'pdf' && _renderActiveFamily !== 'sculpture') actionButtons.push('<button class="btn-secondary" id="btn-render-deepzoom" onclick="deepZoomSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>DeepZoom</button>');
     const actionRowsHtml = _renderActionButtonRows(actionButtons, 5);
     const navigationHintHtml = _renderActiveFamily === 'color'
         ? ''
@@ -1667,73 +1666,6 @@ async function _dzPatchInventoryAfterExport(jobId, exportId) {
     }
 }
 
-function _sculptureCaptureViewSettings() {
-    // Create snapshots the LAST viewer window the app opened (same-origin):
-    // prepare a shared flythrough by tuning the ephemeral viewer — point,
-    // height, slices, show, style, connect — and leaving the tour you want
-    // PLAYING, then pressing Create.
-    try {
-        const win = window._lastSculptureWin;
-        if (!win || win.closed || !win.__sculptureViewer || !win.document) return null;
-        const doc = win.document;
-        const val = (id) => { const el = doc.getElementById(id); return el ? el.value : null; };
-        const chk = (id) => { const el = doc.getElementById(id); return !!(el && el.checked); };
-        const tourState = win.__sculptureViewer.tour;
-        const playing = !!(tourState && tourState.state && tourState.state.playing);
-        return {
-            point: parseInt(val('ctl-size'), 10) || 10,
-            height: (parseInt(val('ctl-height'), 10) || 0) / 100,
-            slices: parseInt(val('ctl-slices'), 10) || 0,
-            show: {
-                points: chk('ctl-show-points'),
-                ribbons: chk('ctl-show-ribbons'),
-                threads: chk('ctl-show-threads'),
-                clu: chk('ctl-show-clu'),
-                splats: chk('ctl-show-splats'),
-            },
-            splatRes: parseInt(val('ctl-splat-res'), 10) || 96,
-            style: val('ctl-style') || 'solid',
-            glow: Number.isFinite(parseInt(val('ctl-glow'), 10)) ? parseInt(val('ctl-glow'), 10) : 30,
-            order: val('ctl-order') || 'nearest',
-            lenq: Number.isFinite(parseInt(val('ctl-lenq'), 10)) ? parseInt(val('ctl-lenq'), 10) : 100,
-            zaxis: val('ctl-zaxis') === 't1' ? 't1' : 't2',
-            zlo: Number.isFinite(parseInt(val('ctl-zlo'), 10)) ? parseInt(val('ctl-zlo'), 10) / 100 : 0,
-            zhi: Number.isFinite(parseInt(val('ctl-zhi'), 10)) ? parseInt(val('ctl-zhi'), 10) / 100 : 1,
-            tour: playing ? (val('ctl-tour-mode') || 'orbit') : 'off',
-            tourSpeed: parseFloat(val('ctl-tour-speed')) || 1,
-        };
-    } catch (e) {
-        return null;
-    }
-}
-
-function _sculptureViewSummary(view) {
-    if (!view) return '';
-    const show = ['points', 'ribbons', 'threads', 'clu', 'splats'].filter((k) => view.show && view.show[k])
-        .map((k) => k.slice(0, 3)).join('+') || 'none';
-    return `point ${view.point} · height ${view.height.toFixed(2)} · slices ${view.slices || 'off'}`
-        + ` · ${show} · ${view.style}${view.style === 'cloud' && view.glow ? ` g${view.glow}` : ''} · ${view.order}`
-        + (view.lenq < 100 ? ` · len ${view.lenq}%` : '')
-        + (view.zaxis === 't1' ? ' · z=t1' : '')
-        + ((view.zlo > 0 || view.zhi < 1) ? ` · z∈[${view.zlo.toFixed(2)},${view.zhi.toFixed(2)}]` : '')
-        + ` · tour: ${view.tour}${view.tourSpeed && view.tourSpeed !== 1 ? ` ${view.tourSpeed}x` : ''}`;
-}
-
-function _sculptureUpdateViewHint() {
-    const el = document.getElementById('sculpture-view-hint');
-    if (!el) return;
-    const view = _sculptureCaptureViewSettings();
-    const data = window._lastSculptureData;
-    const jobId = document.getElementById('render-results-dir').value.trim();
-    if (!data || data.job_id !== jobId) {
-        el.textContent = 'Press Sculpture first — Save snapshots that run (its data AND the open viewer\u2019s settings).';
-        return;
-    }
-    el.textContent = view
-        ? `Save captures the open viewer: ${_sculptureViewSummary(view)}`
-        : 'Save uses viewer defaults — tune the open Sculpture window (start a tour for autoplay) before saving.';
-}
-
 function _sculptureSourceColorArtifact() {
     // the sculpture's source is the COLOR family's current selection —
     // artifact-only sourcing means no live render state is consulted.
@@ -1745,57 +1677,53 @@ function _sculptureSourceColorArtifact() {
     return inv[idx] || null;
 }
 
-function _sculptureUpdateSourceLine() {
-    const el = document.getElementById('sculpture-source-line');
-    const btn = document.getElementById('btn-sculpture-generate');
-    if (!el) return;
-    const art = _sculptureSourceColorArtifact();
-    const bakeBtn = document.getElementById('btn-sculpture-splatbake');
-    if (art && art.artifact_id) {
-        el.textContent = `source: ${art.artifact_id}`;
-        el.style.color = '#cfd8e3';
-        if (btn) btn.disabled = false;
-        if (bakeBtn) bakeBtn.disabled = false;
-    } else {
-        el.textContent = 'source: none — render a color artifact first (Color tab)';
-        el.style.color = '#8899aa';
-        if (btn) btn.disabled = true;
-        if (bakeBtn) bakeBtn.disabled = true;
-    }
-}
-
 function _sculptureShareUrl(meta) {
     const prefix = meta.prefix || `sculptures/${meta.id}/`;
     return _publicStorageUrl(prefix + 'viewer.html');
 }
 
 function _sculptureRenderPane() {
-    const el = document.getElementById('sculpture-list');
-    if (!el) return;
-    if (!window._sculptureInventoryLoaded) {
-        el.innerHTML = '<div style="padding:10px; color:#666">Loading…</div>';
-        return;
+    // the saved list IS the shared artifact catalog now — re-render the
+    // panel in place when the sculpture family is active
+    if (typeof _renderActiveFamily !== 'undefined' && _renderActiveFamily === 'sculpture') {
+        const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
+        renderArtifactPanel(jobId, window._lastRenderSummary || { families: _renderArtifacts, calc: {} }, { preserveScroll: true });
     }
-    const jobId = document.getElementById('render-results-dir').value.trim();
-    const inv = (window._sculptureInventory || []).filter((m) => m.job_id === jobId);
-    if (!inv.length) {
-        el.innerHTML = '<div style="padding:10px; color:#666">No saved sculptures for this job yet. Select a color artifact, press Generate, tune the viewer, then Save.</div>';
-        return;
-    }
-    el.innerHTML = inv.map((m) => `
-        <div style="display:flex; align-items:center; gap:10px; padding:6px 10px; border-bottom:1px solid #26263a; font-size:12px">
-            <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#e8eef5">${_escapeHtml(m.title || m.id || '')}</span>
-            <span style="color:#667a90; font-size:11px; white-space:nowrap; max-width:180px; overflow:hidden; text-overflow:ellipsis">${_escapeHtml(m.source_artifact_id ? 'src ' + m.source_artifact_id : '')}</span>
-            <span style="color:#778599; white-space:nowrap">${m.kind === 'splatbake'
-                ? `baked · ${Number(m.splat_count || 0).toLocaleString()} splats · ${((Number(m.bytes) || 0) / (1024 * 1024)).toFixed(1)}MB`
-                : `${Number(m.grid_n) || '?'}×${Number(m.grid_n) || '?'} · d${Number(m.degree) || '?'}`}</span>
-            <span style="color:#778599">${_escapeHtml(String(m.kind === 'splatbake' ? '' : (m.palette || '')))}</span>
-            <span style="color:#556; font-size:11px; white-space:nowrap">${_escapeHtml(String(m.created_at || '').slice(0, 16).replace('T', ' '))}</span>
-            ${m.kind === 'splatbake' ? '' : `<button type="button" class="btn-secondary btn-inline" onclick="_sculptureBakeSaved('${_escapeHtml(m.id || '')}', this)" title="Bake this saved sculpture into a light self-contained viewer (server-side, from its stored data + captured view)">Bake</button>`}
-            <button type="button" class="btn-secondary btn-inline" onclick="_sculptureOpen('${_escapeHtml(m.id || '')}')">Open</button>
-            <button type="button" class="btn-secondary btn-inline" onclick="_sculptureCopyLink('${_escapeHtml(m.id || '')}', this)">Copy link</button>
-            <button type="button" class="btn-secondary btn-inline" onclick="_sculptureDelete('${_escapeHtml(m.id || '')}', this)">Delete</button>
-        </div>`).join('');
+}
+
+function _sculptureAsRenderArtifact(meta) {
+    // normalize a saved-viewer row (full save OR splat bake) onto the shared
+    // render-artifact contract: the catalog lists it, the stable-key
+    // selection tracks it, and the preview panel embeds its hosted viewer
+    const row = meta && typeof meta === 'object' ? meta : {};
+    const id = String(row.id || '').trim();
+    return {
+        ...row,
+        family: 'sculpture',
+        artifact_id: id,
+        file_size: Number(row.bytes || row.roots_bytes || 0),
+        viewer_url: id ? _sculptureShareUrl(row) : '',
+    };
+}
+
+function _sculptureSelectedMeta() {
+    const art = _renderActiveFamily === 'sculpture' ? _renderSelectedArtifactEntry() : null;
+    return art && art.artifact_id ? _sculptureById(art.artifact_id) : null;
+}
+
+function _sculptureOpenSelected() {
+    const m = _sculptureSelectedMeta();
+    if (m) _sculptureOpen(m.id);
+}
+
+async function _sculptureCopyLinkSelected(btn) {
+    const m = _sculptureSelectedMeta();
+    if (m) await _sculptureCopyLink(m.id, btn);
+}
+
+async function _sculptureDeleteSelected(btn) {
+    const m = _sculptureSelectedMeta();
+    if (m) await _sculptureDelete(m.id, btn);
 }
 
 async function _sculptureEnsureInventory(force) {
@@ -1836,7 +1764,9 @@ function _sculptureSyncFamilyCount() {
     // family tab label in place — a full panel re-render here would stomp
     // the user's active tab/selection state
     const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
-    const rows = (window._sculptureInventory || []).filter((m) => m.job_id === jobId);
+    const rows = (window._sculptureInventory || [])
+        .filter((m) => m.job_id === jobId)
+        .map(_sculptureAsRenderArtifact);   // same contract as the rebuild
     if (typeof _renderArtifacts !== 'undefined' && _renderArtifacts) _renderArtifacts.sculpture = rows;
     for (const el of document.querySelectorAll('[data-render-family="sculpture"] .subtab-count')) {
         el.textContent = `(${rows.length})`;
@@ -1884,53 +1814,6 @@ async function _sculptureDelete(id, btn) {
     } catch (e) {
         log(`Sculpture delete failed: ${e.message}`, 'err', 'render-log');
         if (btn) { btn.disabled = false; btn.textContent = orig; }
-    }
-}
-
-async function runSculptureSave() {
-    const btn = document.getElementById('btn-sculpture-save');
-    const titleEl = document.getElementById('sculpture-title');
-    const title = titleEl ? titleEl.value.trim() : '';
-    const jobId = document.getElementById('render-results-dir').value.trim();
-    const data = window._lastSculptureData;
-    if (!data || data.job_id !== jobId) {
-        log('Sculpture save: press Sculpture first — Save snapshots that run for this job.', 'err', 'render-log');
-        return;
-    }
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-    const view = _sculptureCaptureViewSettings();
-    if (view) log(`Sculpture view captured: ${_sculptureViewSummary(view)}`, '', 'render-log');
-    let ok = false;
-    try {
-        const resp = await lambdaPost('storage', {
-            job_id: jobId,
-            title,
-            grid_n: data.grid_n,
-            degree: data.degree,
-            step_count: data.step_count,
-            viewport: data.viewport,
-            palette: data.palette,
-            format: data.format || 'f32',
-            source_artifact_id: data.source_artifact_id || undefined,
-            view: view || undefined,
-        }, '/save-sculpture');
-        const saved = resp && resp.sculpture;
-        if (!saved || !saved.id) throw new Error('save response missing sculpture');
-        window._sculptureInventory = [saved, ...(window._sculptureInventory || [])];
-        window._sculptureInventoryLoaded = true;
-        _sculptureRenderPane();
-        _sculptureSyncFamilyCount();
-        _splatsTabRefresh();
-        log(`Sculpture saved: ${saved.title || saved.id} — ${saved.share_url}`, 'ok', 'render-log');
-        ok = true;
-    } catch (e) {
-        log(`Sculpture save failed: ${e.message}`, 'err', 'render-log');
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = ok ? '\u2713 Saved' : '\u2717 Save';
-            setTimeout(() => { btn.textContent = 'Save'; }, 2500);
-        }
     }
 }
 
@@ -2368,6 +2251,185 @@ function _viewRenderParamsFromArtifact(art, projection, vertical) {
     return params;
 }
 
+function _saveFullEnsureModal() {
+    if (document.getElementById('save-full-modal-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'save-full-modal-overlay';
+    overlay.className = 'tri-popup-overlay';
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.style.zIndex = '1600';
+    overlay.addEventListener('click', (ev) => { if (ev.target === overlay) _saveFullClose(); });
+    const sel = (id, opts, dflt) => `<select id="${id}" style="background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:2px 4px">`
+        + opts.map(([v, label]) => `<option value="${v}"${String(v) === String(dflt) ? ' selected' : ''}>${label}</option>`).join('') + '</select>';
+    overlay.innerHTML = `
+        <div style="background:#141424; border:1px solid #444; border-radius:8px; padding:16px 18px; width:420px; font-family:monospace; color:#eee" role="dialog" aria-label="Save Full Viewer">
+            <div style="font-size:14px; color:#e8eef5; margin-bottom:2px">SaveFull</div>
+            <div id="save-full-source" style="font-size:11px; color:#8899aa; margin-bottom:10px"></div>
+            <div style="display:grid; grid-template-columns:90px 1fr 4ch; gap:7px 10px; align-items:center; font-size:12px">
+                <span>resolution</span><div style="grid-column:2/4">${sel('save-full-resolution', [[128, '128&#178;'], [192, '192&#178;'], [384, '384&#178;'], [512, '512&#178;']], 384)}</div>
+                <span>z</span><div style="grid-column:2/4">${sel('save-full-zaxis', [['t2', 't2'], ['t1', 't1']], 't2')}</div>
+                <span>height</span>
+                <input id="save-full-height" type="range" min="0" max="100" value="10" style="accent-color:#e94560"
+                    oninput="document.getElementById('save-full-height-val').textContent = (this.value / 100).toFixed(2)">
+                <span id="save-full-height-val" style="text-align:right">0.10</span>
+                <span>point</span>
+                <input id="save-full-point" type="range" min="1" max="40" value="10" style="accent-color:#e94560"
+                    oninput="document.getElementById('save-full-point-val').textContent = this.value">
+                <span id="save-full-point-val" style="text-align:right">10</span>
+                <span>z range</span>
+                <div style="grid-column:2/4; display:flex; gap:8px; align-items:center">
+                    <input id="save-full-zlo" type="range" min="0" max="100" value="0" style="flex:1; accent-color:#e94560"
+                        oninput="document.getElementById('save-full-zrange-val').textContent = (this.value / 100).toFixed(2) + '\u2013' + (document.getElementById('save-full-zhi').value / 100).toFixed(2)">
+                    <input id="save-full-zhi" type="range" min="0" max="100" value="100" style="flex:1; accent-color:#e94560"
+                        oninput="document.getElementById('save-full-zrange-val').textContent = (document.getElementById('save-full-zlo').value / 100).toFixed(2) + '\u2013' + (this.value / 100).toFixed(2)">
+                    <span id="save-full-zrange-val" style="width:9ch; text-align:right">0.00&#8211;1.00</span>
+                </div>
+                <span>slices</span><div style="grid-column:2/4">${sel('save-full-slices', [[0, 'off'], [2, '2'], [3, '3'], [4, '4'], [5, '5'], [8, '8'], [11, '11'], [16, '16'], [24, '24'], [32, '32']], 0)}</div>
+                <span>show</span>
+                <div style="grid-column:2/4; display:flex; gap:10px; flex-wrap:wrap; font-size:12px">
+                    <label><input id="save-full-show-points" type="checkbox" checked> pts</label>
+                    <label><input id="save-full-show-ribbons" type="checkbox"> rib</label>
+                    <label><input id="save-full-show-threads" type="checkbox"> thr</label>
+                    <label><input id="save-full-show-clu" type="checkbox"> clu</label>
+                    <label><input id="save-full-show-splats" type="checkbox"> spl</label>
+                </div>
+                <span>style</span><div style="grid-column:2/4">${sel('save-full-style', [['solid', 'solid'], ['ghost', 'ghost'], ['cloud', 'cloud']], 'solid')}</div>
+                <span>glow</span>
+                <input id="save-full-glow" type="range" min="1" max="100" value="30" style="accent-color:#e94560"
+                    oninput="document.getElementById('save-full-glow-val').textContent = this.value">
+                <span id="save-full-glow-val" style="text-align:right">30</span>
+                <span>rib connect</span><div style="grid-column:2/4">${sel('save-full-order', [['nearest', 'nearest'], ['angle', 'angle'], ['file', 'file order']], 'nearest')}</div>
+                <span>splat res</span><div style="grid-column:2/4">${sel('save-full-splat-res', [[64, '64'], [96, '96'], [128, '128'], [192, '192']], 96)}</div>
+                <span>len%</span>
+                <input id="save-full-lenq" type="range" min="0" max="100" value="100" style="accent-color:#e94560"
+                    oninput="document.getElementById('save-full-lenq-val').textContent = this.value">
+                <span id="save-full-lenq-val" style="text-align:right">100</span>
+                <span>tour</span>
+                <div style="grid-column:2/4; display:flex; gap:8px">
+                    ${sel('save-full-tour', [['off', 'off'], ['orbit', 'orbit'], ['wave', 'wave'], ['grand', 'grand'], ['weave', 'weave']], 'off')}
+                    ${sel('save-full-tour-speed', [[0.5, '0.5x'], [1, '1x'], [2, '2x'], [4, '4x']], 1)}
+                </div>
+            </div>
+            <div style="font-size:11px; color:#666; margin-top:10px">generates from the selected color artifact's stored data, then saves a hosted full viewer booting with EXACTLY these settings \u2014 no tab opens, the id names it</div>
+            <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+                <button type="button" class="btn-secondary btn-inline" onclick="_saveFullClose()">Cancel</button>
+                <button type="button" class="btn-secondary btn-inline" id="save-full-go" onclick="runSaveFull()">Save</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+function _saveFullOpenModal() {
+    // the SELECTED color artifact is the source; the popup carries every
+    // option the full viewer has (user spec: choose here, not in a tab)
+    const art = _sculptureSourceColorArtifact();
+    if (!art || !art.artifact_id) {
+        log('SaveFull: no color artifact selected — render one first (Color tab)', 'err', 'render-log');
+        return;
+    }
+    _saveFullEnsureModal();
+    document.getElementById('save-full-source').textContent = `source: ${art.artifact_id}`;
+    const overlay = document.getElementById('save-full-modal-overlay');
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    document.getElementById('save-full-go').focus();
+}
+
+function _saveFullClose() {
+    const overlay = document.getElementById('save-full-modal-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function _saveFullViewFromModal() {
+    const val = (id) => document.getElementById(id).value;
+    const chk = (id) => !!document.getElementById(id).checked;
+    let zlo = (parseInt(val('save-full-zlo'), 10) || 0) / 100;
+    let zhi = (parseInt(val('save-full-zhi'), 10) || 0) / 100;
+    if (zlo > zhi) zlo = zhi;
+    return {
+        point: parseInt(val('save-full-point'), 10) || 10,
+        height: (parseInt(val('save-full-height'), 10) || 0) / 100,
+        slices: parseInt(val('save-full-slices'), 10) || 0,
+        show: {
+            points: chk('save-full-show-points'),
+            ribbons: chk('save-full-show-ribbons'),
+            threads: chk('save-full-show-threads'),
+            clu: chk('save-full-show-clu'),
+            splats: chk('save-full-show-splats'),
+        },
+        splatRes: parseInt(val('save-full-splat-res'), 10) || 96,
+        style: val('save-full-style') || 'solid',
+        glow: parseInt(val('save-full-glow'), 10) || 30,
+        order: val('save-full-order') || 'nearest',
+        lenq: parseInt(val('save-full-lenq'), 10),
+        zaxis: val('save-full-zaxis') === 't1' ? 't1' : 't2',
+        zlo,
+        zhi,
+        tour: val('save-full-tour') || 'off',
+        tourSpeed: parseFloat(val('save-full-tour-speed')) || 1,
+    };
+}
+
+async function runSaveFull() {
+    // SaveFull = generate + save in ONE flow: the async data job runs on
+    // the rail, then the durable sculptures/{id}/ save is made straight
+    // from the ephemeral data with the popup's view settings. No viewer
+    // tab, no title — the id names it (user spec).
+    const btnId = 'btn-sculpture-savefull';
+    const btn = document.getElementById(btnId);
+    let ok = false;
+    try {
+        const jobId = document.getElementById('render-results-dir').value.trim();
+        if (!jobId) throw new Error('no job selected');
+        const art = _sculptureSourceColorArtifact();
+        if (!art || !art.artifact_id) throw new Error('no color artifact selected');
+        const artifactId = String(art.artifact_id);
+        const n = parseInt(document.getElementById('save-full-resolution').value, 10) || 384;
+        const view = _saveFullViewFromModal();
+        _saveFullClose();
+        if (btn) { btn.disabled = true; btn.textContent = 'Generating\u2026'; }
+        const sc = await _sculptureGenerateAndFollow(jobId, artifactId, n, btnId, 'Generating');
+        const liveBtn = document.getElementById(btnId);
+        if (liveBtn) liveBtn.textContent = 'Saving\u2026';
+        const resp = await lambdaPost('storage', {
+            job_id: jobId,
+            grid_n: sc.grid_n,
+            degree: sc.degree,
+            step_count: sc.step_count,
+            viewport: sc.viewport,
+            palette: sc.palette,
+            format: sc.format || 'u16',
+            source_artifact_id: sc.source_artifact_id || artifactId,
+            view,
+        }, '/save-sculpture');
+        const saved = resp && resp.sculpture;
+        if (!saved || !saved.id) throw new Error('save response missing sculpture');
+        window._sculptureInventory = [saved, ...(window._sculptureInventory || [])];
+        window._sculptureInventoryLoaded = true;
+        _renderSelectedArtifactKey.sculpture = `sculpture::${saved.id}`;
+        _sculptureSyncFamilyCount();
+        _sculptureRenderPane();
+        _splatsTabRefresh();
+        log(`SaveFull: ${saved.id} \u2014 ${saved.share_url}`, 'ok', 'render-log');
+        ok = true;
+    } catch (e) {
+        log(`SaveFull failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        const live = document.getElementById(btnId) || btn;
+        if (live) {
+            live.disabled = false;
+            live.textContent = ok ? '\u2713 Saved' : '\u2717 SaveFull';
+            setTimeout(() => {
+                const b = document.getElementById(btnId);
+                if (b && !b.disabled) b.textContent = 'SaveFull';
+            }, 2500);
+        }
+    }
+}
+
 function _saveSplatEnsureModal() {
     if (document.getElementById('save-splat-modal-overlay')) return;
     const overlay = document.createElement('div');
@@ -2482,51 +2544,16 @@ async function runSaveSplat() {
     } catch (e) {
         log(`SaveSplat failed: ${e.message}`, 'err', 'render-log');
     } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = ok ? '\u2713 Baked' : '\u2717 SaveSplat';
+        // re-query: the bake driver re-renders the panel on completion, so
+        // the captured node may be detached (the recorded trap)
+        const live = document.getElementById('btn-sculpture-splatbake') || btn;
+        if (live) {
+            live.disabled = false;
+            live.textContent = ok ? '\u2713 Baked' : '\u2717 SaveSplat';
             setTimeout(() => {
                 const b = document.getElementById('btn-sculpture-splatbake');
                 if (b && !b.disabled) b.textContent = 'SaveSplat';
             }, 2500);
-        }
-    }
-}
-
-async function _sculptureBakeSaved(id, btn) {
-    // bake straight from a SAVED row: its prefix holds roots + palette +
-    // meta, and its captured view supplies the settings — no viewer, no tab
-    const m = _sculptureById(id);
-    if (!m) return;
-    const orig = btn ? btn.textContent : 'Bake';
-    let ok = false;
-    try {
-        if (btn) { btn.disabled = true; btn.textContent = 'Baking\u2026'; }
-        const view = m.view || {};
-        const styleMode = view.style === 'cloud' ? 0 : (view.style === 'ghost' ? 1 : 2);
-        const params = {
-            res: [64, 96, 128, 192].includes(Number(view.splatRes)) ? Number(view.splatRes) : 96,
-            zaxis: view.zaxis === 't1' ? 't1' : 't2',
-            slices: Number.isFinite(Number(view.slices)) ? Number(view.slices) : 0,
-            mode: styleMode,
-            intensity: (Number(view.glow) || 30) / 30,
-            yscale: Number.isFinite(Number(view.height)) ? Number(view.height) : 0.1,
-            scalemul: (Number(view.point) || 10) / 10,
-            cam: [1.25, 0.85, 1.25], target: [0, 0, 0],
-            tour: ['orbit', 'wave', 'grand', 'weave'].includes(view.tour) ? view.tour : 'off',
-            tourSpeed: [0.5, 1, 2, 4].includes(Number(view.tourSpeed)) ? Number(view.tourSpeed) : 1,
-            title: `${m.title || m.id} \u00b7 baked`,
-        };
-        await _splatBakeStartAndFollow(m.job_id, { kind: 'saved', saved_id: id }, params, null,
-                                       `splat bake \u00b7 ${m.title || m.id}`);
-        ok = true;
-    } catch (e) {
-        log(`Saved-row bake failed: ${e.message}`, 'err', 'render-log');
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = ok ? '\u2713 Baked' : '\u2717 Bake';
-            setTimeout(() => { if (btn && !btn.disabled) btn.textContent = orig; }, 2500);
         }
     }
 }

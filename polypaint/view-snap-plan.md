@@ -177,6 +177,12 @@ There are two additional existing constraints:
   memory before parsing it, with several fragment workers active. That is
   not safe for camera fragments approaching gigabytes. Camera mode needs a
   bounded streaming parser; the legacy path can remain unchanged.
+- `RENDER_FINALIZE_MT_FRAGMENT_MANIFEST` sources `fragment_encoding` and
+  `record_size_bytes` from `$.solve_score_clip.parsed.*` — the CLIP
+  phase's solve-score contract, which describes only the existing `4 + C`
+  records and knows nothing about a camera projection. Without a new
+  authority, a camera raster writing `8 + C` records would be parsed by
+  Finalize under the wrong contract. Section 7.1 defines that authority.
 
 ## 2. V1 product behavior
 
@@ -229,6 +235,8 @@ V1 reproduces:
 - point-size attenuation;
 - the source Color artifact's root transforms, rotation, score program,
   palette, output format, quality, background, and viewport;
+- pass 0 only, exactly the solves the viewer displays (later passes are
+  never plotted in camera mode);
 - nearest-depth occlusion.
 
 V1 does not reproduce:
@@ -242,11 +250,18 @@ V1 does not reproduce:
 - cloud/additive density;
 - tours as motion.
 
-If any unsupported primitive is visible, or the style is not `solid`, the
-viewer must not silently dispatch a different-looking image. The Snap
-response should carry a structured unsupported-state list and the parent
-should refuse with a concise explanation. A later version can deliberately
-add those render contracts.
+The cube frame and the z-range slab guides are navigation CHROME, not
+data: the viewer always creates them (`sculpture.html` builds the frame
+unconditionally as the spatial reference), so treating them as
+unsupported primitives would disable Snap permanently. They are
+deliberately omitted from the output and never block a snap.
+
+If any unsupported DATA primitive is visible (ribbons, threads, cluster
+lines, splats), or the style is not `solid`, the viewer must not silently
+dispatch a different-looking image. The Snap response should carry a
+structured unsupported-state list and the parent should refuse with a
+concise explanation. A later version can deliberately add those render
+contracts.
 
 ### 2.3 Full saves only
 
@@ -408,6 +423,21 @@ Reject NaN, infinity, wrong lengths, unexpected keys, wrong enums,
 `effective_tlo > effective_thi`, bounds outside `[0,1]`, or a non-square
 target aspect at both the frontend and render plan.
 
+Finite floats are not enough: the backend derives the near plane from the
+projection matrix and prices admission with it, so both validators must
+also check STRUCTURE (column-major indices):
+
+- projection matrix has the Three.js perspective form: `m[11] = -1`,
+  `m[15] = 0`, `m[0] > 0`, `m[5] > 0`, zero in the non-perspective
+  off-diagonal slots;
+- unit aspect: `m[0] == m[5]` within a small epsilon (the square clone);
+- derived `near = m[14] / (m[10] - 1)` and `far = m[14] / (m[10] + 1)`
+  are finite with `0 < near < far`;
+- the model-view matrix is affine: bottom row exactly `[0, 0, 0, 1]`.
+
+A matrix that fails structure is rejected before any resource estimate
+uses it.
+
 ## 5. Square framing
 
 The embedded viewer is not guaranteed to be square. Reusing its current
@@ -492,6 +522,18 @@ t = (slices > 1) ? level / (slices - 1) : 0.5
 Do not replace this with `N - 1` denominators simply because they look
 more symmetrical; parity with the live viewer is the contract.
 
+Pass semantics are part of the same contract. The viewer displays pass 0
+only (`passSteps = N * N` in `sculpture.html`), while the native view
+path folds every later pass onto pass-0 t space (`(step_start + p) %
+N*N`). Folding is correct for the fixed architectural views but would
+render geometry the user is NOT looking at in a camera snap. Camera mode
+therefore rasterizes ONLY solves with `global_step < N*N` and counts the
+skipped remainder in telemetry. Scoring and the step-scores sidecar are
+unchanged — the standard full `grid x times` sidecar is still produced;
+only PLOTTING is pass-0-restricted. Pin a `times > 1` fixture proving a
+pass-1 root is absent from the camera output and present in a fixed-view
+output.
+
 The ordering is also part of the contract:
 
 1. derive raw `t1` or `t2`;
@@ -552,6 +594,17 @@ Record size is `8 + channels`.
 Add the encoding to the fragment manifest validator. A camera projection
 must require this encoding; a non-camera projection must reject it.
 
+The encoding has ONE producer-to-consumer authority: the render plan
+emits a `fragment_contract` block — `{encoding, record_size_bytes,
+channels}` — chosen at plan time from the projection. Both the raster
+item selector and the Finalize fragment manifest read it from
+`$.plan.fragment_contract.*`; the Finalize manifest must STOP sourcing
+encoding and record size from `$.solve_score_clip.parsed.*` for camera
+runs (the clip contract cannot express a camera record). The native
+assembler receives the selected encoding explicitly on its command line
+and hard-fails on a record-size mismatch. One authority, two readers,
+zero inference.
+
 ### 7.2 Section-local ownership
 
 Inside each `roots2pix_mt` invocation, the current claim bitset is
@@ -563,10 +616,17 @@ Use one shared section-local depth/score store across native threads:
 - initialize depth to infinity;
 - compare/update depth and score under striped locks or an equivalent
   race-free primitive;
-- append a pixel to the occupied set only on its first claim;
-- later nearer candidates update the stored depth and score without
-  appending duplicates;
-- emit one depth record per occupied pixel after workers join.
+- mark occupancy in the existing claim BITSET only — do NOT keep a
+  uint32 occupied-index list (worst case that is another `4 * P` = 4 GiB
+  at `N = 32768`, unaccounted);
+- later nearer candidates update the stored depth and score in place;
+- after workers join, enumerate the bitset's set bits in pixel order and
+  STREAM each record directly to the fragment file.
+
+Camera mode must not retain fragment records in memory: the existing
+per-worker `fragmentByteVec` accumulation is explicitly prohibited for
+the camera encoding — the depth/score planes already hold the state, and
+the fragment is produced once, sequentially, at emit time.
 
 Do not allocate a dense source-ordinal plane. It costs another `4 * P`
 bytes solely for the exact-equal-depth boundary case. In v1, a strictly
@@ -640,11 +700,47 @@ The two stages have different constraints:
   and writes the dense raw output plus encoded artifacts. It must not
   download complete camera fragments to memory or `/tmp`.
 - The final score plane IS the dense raw output: one `C * P` allocation
-  serves both roles, written out after the merge. Resident memory is
-  therefore `4P + C*P` (7.5 GiB at `N=32768`, `C=3` — inside the
-  10,240 MiB Lambda with roughly 2.5 GiB headroom) only if nobody
-  allocates the score plane and the raw buffer separately. State this in
-  the implementation and pin peak memory in the benchmark.
+  serves both roles, written out after the merge. `4P + C*P` is
+  7.0 GiB at `N=32768`, `C=3` (7P bytes = 7.52e9 B) — inside the
+  10,240 MiB Lambda only if nobody allocates the score plane and the raw
+  buffer separately. State this in the implementation and pin peak
+  memory in the benchmark.
+
+Allocation identities are not a peak model. Admission must price each
+PHASE's peak RSS and `/tmp` explicitly:
+
+```text
+Raster peak RSS   = section source buffers (logical materialization)
+                  + 4P depth + C*P score + P/8 occupancy
+                  + native reader + streaming emit buffer
+Raster /tmp       = fragment file <= (8 + C) * occupied  (hard: fits the
+                    10 GiB budget with named headroom; 11 * N^2 at
+                    N=32768 is 11.0 GiB and REJECTS)
+Finalize peak RSS = 4P depth + C*P score/raw (one allocation)
+                  + bounded stream carry buffer
+Finalize /tmp     = C*P raw + step-scores sidecar (C * P * times —
+                    Finalize writes it whenever N/times are present)
+                  + encoded image + preview
+Uploads           = any object over the 5 GiB single-PUT ceiling must go
+                    multipart or the plan rejects; the step-scores
+                    sidecar crosses it first at large N*times.
+```
+
+Output bytes are still not the whole cost — rasterization WORK is. Every
+footprint candidate is processed before deduplication, so the true work
+is approximately `sum(roots_s * footprint_area_s)`; with screen-space
+point size this grows toward `N^4` for a near camera on a dense cloud.
+Admission therefore also computes:
+
+```text
+estimated_footprint_updates = sum over sections of R_s * A_max
+```
+
+and rejects when it exceeds a budget calibrated from measured native
+throughput against the 600-second native subprocess limit (the raster
+handler's hard `timeout=600`), with named headroom. The benchmark
+supplies the updates-per-second constant; until it exists, camera
+admission is not enabled.
 - `total_fragment_bytes` is primarily a transfer and wall-time constraint,
   not resident memory once streaming is implemented. Report it and enforce
   a benchmark-derived wall-time policy rather than pretending it is free.
@@ -774,6 +870,8 @@ Rules:
 - Fixed projections reject a non-empty camera object.
 - Camera mode still requires `source_color_artifact_id`.
 - Camera mode remains family `views` and forces `pix=calc.N`.
+- Camera mode plots pass 0 only (`global_step < N*N`), matching the
+  viewer; the step-scores sidecar keeps its standard full semantics.
 - Validate matrices, enums, effective t-window, style, and point size.
 - Calculate camera depth-buffer resource requirements.
 - Store compact canonical camera JSON and `source_sculpture_id` in the
@@ -787,12 +885,23 @@ camera payload.
 
 ### 9.2 `workflow_contracts.py`
 
-Thread the validated camera object through the authoritative
-`RENDER_COLOR_RASTER_ITEM_SELECTOR`:
+Thread the validated camera object and the fragment contract through the
+authoritative contracts:
 
 ```text
-"view_camera.$": "$.plan.params.view_camera"
+RENDER_COLOR_RASTER_ITEM_SELECTOR:
+  "view_camera.$": "$.plan.params.view_camera"
+  "fragment_contract.$": "$.plan.fragment_contract"
+
+RENDER_FINALIZE_MT_FRAGMENT_MANIFEST:
+  "fragment_encoding.$": "$.plan.fragment_contract.encoding"
+  "record_size_bytes.$": "$.plan.fragment_contract.record_size_bytes"
 ```
+
+The plan emits `fragment_contract` for EVERY run (ASL `.$` selectors
+hard-fail on absent fields): existing projections emit their current
+encoding values, so legacy behavior is bit-identical while the authority
+moves to one place.
 
 Update workflow-definition tests. Do not hand-edit only the generated
 state-machine template selector; `workflow_contracts.py` is authoritative.
@@ -825,12 +934,18 @@ Pass:
 Modify:
 
 - `lambda/roots2pix_mt.c`
-- new focused camera projection header
+- `lambda/view_camera_projection.h` — projection math, included ONLY by
+  `roots2pix_mt`
+- `lambda/camera_fragment_format.h` — the record layout, included by
+  BOTH `roots2pix_mt` and `assemble_greyscale`
 - `lambda/assemble_greyscale.c`
 - `lambda/handler_finalize_mt.py`
 
-Update binary freshness inputs so changes to the new header make both
-affected binaries stale. Rebuild through the normal Docker ARM64 path.
+Freshness-pin each binary only to headers it actually includes: the
+projection header staling `assemble_greyscale` (or the record header
+missing from either binary's inputs) is false coupling that either
+forces pointless rebuilds or, worse, ships a stale assembler after a
+record change. Rebuild through the normal Docker ARM64 path.
 
 ### 9.5 Metadata and Views display
 
@@ -1065,8 +1180,13 @@ The depth prototype has a go/no-go gate before frontend integration:
 
 - run one collision-heavy synthetic case;
 - run one representative production Sculpture at its actual N;
-- confirm section fragment upload and sequential Finalize streaming fit
-  the 900-second Lambda envelope with safety margin.
+- confirm the native raster fits the 600-second SUBPROCESS limit
+  (`handler_raster_mt` runs the binary with `timeout=600` — that, not
+  the 900-second Lambda envelope, is the raster ceiling);
+- confirm sequential Finalize streaming fits its 900-second envelope AND
+  its manifest URLs: `build_native_manifest_urls` presigns for 900
+  seconds by default, so a long merge must regenerate URLs or request an
+  expiry sized to the measured merge time before it starts.
 
 The pass/fail thresholds are DEFINED AND RECORDED when the benchmark runs
 — wall-time headroom against the 900-second envelope, peak memory against
@@ -1100,30 +1220,38 @@ feature. That would be a separately designed v2.
 - Land Playwright coverage.
 - Do not expose the app Snap button yet.
 
-### Milestone 2: depth-aware backend
+### Milestone 2: depth-aware backend (local/native correctness only)
 
 - Add camera matrix projection.
 - Add section-local depth ownership.
 - Add depth fragment encoding.
 - Add final cross-section depth merge.
 - Add host and Docker ARM64 parity tests.
-- Run the synthetic and representative-production go/no-go benchmark.
+- Benchmark LOCALLY for correctness and rough throughput only — the
+  production go/no-go cannot run yet: it needs Milestone 3's plumbing to
+  invoke the deployed workflow at all.
 
 Existing projections must remain byte-identical under their existing
 tests.
 
-Do not proceed to workflow/frontend integration if the representative
-camera fragment path cannot stay inside the Lambda memory, `/tmp`, and
-wall-time envelope.
-
 ### Milestone 3: workflow plumbing
 
-- Thread `view_camera` through plan, authoritative workflow contract,
-  raster handler, finalizer metadata, and Views listing.
+- Thread `view_camera` and `fragment_contract` through plan,
+  authoritative workflow contracts, raster handler, finalizer metadata,
+  and Views listing.
 - Keep mode `color`, family `views`, and output `N x N`.
 - Run full render workflow tests.
 
-### Milestone 4: app integration
+### Milestone 4: internal production go/no-go
+
+- Invoke the deployed workflow directly (no UI) on the synthetic and the
+  representative production Sculpture.
+- Record the thresholds defined in section 13 into this document.
+- Calibrate `estimated_footprint_updates` throughput from these runs.
+- STOP here if the recorded thresholds fail — frontend work does not
+  start on a backend that cannot meet them.
+
+### Milestone 5: app integration
 
 - Add identity-scoped iframe controller and Snap button.
 - Load full catalogue rows through the current packaged viewer while
@@ -1132,7 +1260,7 @@ wall-time envelope.
 - Dispatch through the existing render orchestrator.
 - Add E2E stale-selection and exact-payload tests.
 
-### Milestone 5: production verification
+### Milestone 6: production verification
 
 - Deploy.
 - Run one modest-N and one representative high-N snap.

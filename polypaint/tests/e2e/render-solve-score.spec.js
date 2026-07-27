@@ -2374,6 +2374,29 @@ test.describe('Solve Score UI', () => {
     expect(noSrcLog).toContain('SaveSplat: no color artifact selected');
   });
 
+  test('a sculpture list outage backs off instead of looping requests', async ({ page }) => {
+    // CR: failure -> pane re-render -> silent kick used to spin an
+    // unbounded request loop during a storage outage. Silent kicks now
+    // back off; an explicit Refresh always retries.
+    const st = await page.evaluate(async () => {
+      window._sculptureInventoryLoaded = false;
+      window._lsCalls = 0;
+      window.lambdaPost = async function (name, body, path) {
+        if (path === '/list-sculptures') { window._lsCalls += 1; throw new Error('storage outage'); }
+        return {};
+      };
+      document.getElementById('render-results-dir').value = 'test_job';
+      await _sculptureEnsureInventory();        // fails, arms the backoff
+      await _sculptureEnsureInventory();        // silent kick: gated
+      await _sculptureEnsureInventory();        // silent kick: gated
+      const afterSilent = window._lsCalls;
+      await _sculptureEnsureInventory(true);    // explicit Refresh retries
+      return { afterSilent, total: window._lsCalls };
+    });
+    expect(st.afterSilent).toBe(1);
+    expect(st.total).toBe(2);
+  });
+
   test('Sculpture tab: shared catalog with frame preview, arrows, selection toolbar', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page);

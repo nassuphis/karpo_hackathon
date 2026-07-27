@@ -632,6 +632,14 @@ def assert_render_source(key, job_id, artifact_id=None, label="source_key"):
     return str(key)
 
 
+def random_b36(length):
+    """Cryptographically random base36 suffix — millisecond ids collide
+    across concurrent Lambdas (CR: global scu_/task-id collisions)."""
+    import secrets
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    return "".join(secrets.choice(digits) for _ in range(int(length)))
+
+
 def sanitize_sculpture_view(raw):
     """Whitelist-sanitize the captured viewer settings for meta.json. The
     viewer re-validates on boot, but the meta must never carry junk."""

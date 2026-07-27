@@ -611,6 +611,18 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
             raise AssertionError(f"unexpected key: {key}")
         return get_object
 
+    @classmethod
+    def _artifact_head_router(cls, **meta_overrides):
+        # head_object router: artifact image heads resolve; sculptures/
+        # publication markers are ABSENT (the fail-closed id mint heads them)
+        head = cls._artifact_head(**meta_overrides)
+
+        def _head(Bucket=None, Key=None, **kw):
+            if str(Key or "").startswith("sculptures/"):
+                raise ClientError({"Error": {"Code": "404", "Message": "absent"}}, "HeadObject")
+            return head
+        return _head
+
     @staticmethod
     def _artifact_head(**meta_overrides):
         metadata = {
@@ -707,15 +719,22 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(cached_block["source_artifact_id"], "color_run_abc")
         self.assertNotIn("roots_url", cached_block)   # stamps rebuilt per hit
         self.assertEqual(
-            set(by_key) - set(cache_json_keys),
+            {k for k in set(by_key) - set(cache_json_keys) if "/sculpture_cache/" not in k},
             {"renders/j/sculpture_roots.bin", "renders/j/sculpture_palette.png"})
         self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["Body"], xformed)
         self.assertEqual(by_key["renders/j/sculpture_roots.bin"]["CacheControl"], "no-cache")
         self.assertEqual(by_key["renders/j/sculpture_palette.png"]["ContentType"], "image/png")
-        # the binaries were server-side copied INTO the cache prefix
-        cache_copies = {c.kwargs["Key"] for c in mock_s3.copy_object.call_args_list}
+        # the cache binaries are UPLOADED from this invocation's local bytes
+        # — never copied through the job-wide mutable keys (CR: a concurrent
+        # same-job run could swap them mid-copy and poison the cache)
         cache_prefix = cache_json_keys[0].rsplit("/", 1)[0] + "/"
-        self.assertEqual(cache_copies, {cache_prefix + "roots.bin", cache_prefix + "palette.png"})
+        self.assertEqual(mock_s3.copy_object.call_args_list, [])
+        cache_puts = [c.kwargs["Key"] for c in mock_s3.put_object.call_args_list
+                      if c.kwargs["Key"].startswith(cache_prefix)]
+        self.assertEqual({k.rsplit("/", 1)[-1] for k in cache_puts},
+                         {"roots.bin", "palette.png", "sculpture.json"})
+        self.assertEqual(cache_puts[-1], cache_prefix + "sculpture.json")   # commit marker LAST
+        self.assertEqual(by_key[cache_prefix + "roots.bin"]["Body"], xformed)
         self.assertEqual(body["cache"], {"hit": False, "prefix": cache_prefix})
         calls = mock_report.call_args_list
         self.assertEqual(calls[0].args, ("j", "sculpture_artifact_9", "running"))
@@ -735,7 +754,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         calc, roots_key, roots_bytes = self._artifact_calc(4)
         step_scores = bytes(range(16))
         mock_s3.get_object.side_effect = self._artifact_get_object(calc, roots_key, roots_bytes, step_scores)
-        mock_s3.head_object.return_value = self._artifact_head()
+        mock_s3.head_object.side_effect = self._artifact_head_router()
         xformed = b"T" * (16 * 1 * 2 * 2)
 
         def subprocess_fake(cmd, **kwargs):
@@ -764,6 +783,9 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         body = json.loads(resp["body"])
         saved = body["saved_sculpture"]
         self.assertTrue(saved["id"].startswith("scu_"))
+        # collision-proof id: ms base36 + 6 random b36 chars (CR: same-ms
+        # Lambdas must not share a global prefix)
+        self.assertGreaterEqual(len(saved["id"]), 4 + 8 + 6)
         self.assertEqual(saved["title"], saved["id"])          # ids name saves
         self.assertEqual(saved["grid_n"], 4)
         self.assertEqual(saved["format"], "u16")
@@ -783,6 +805,20 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(put_keys[sprefix + "roots.bin"]["Body"], xformed)
         copy_keys = {c.kwargs["Key"] for c in mock_s3.copy_object.call_args_list}
         self.assertFalse({k for k in copy_keys if k.startswith("sculptures/")})
+        # the CACHE too is written from local bytes — never copied through
+        # the job-wide mutable keys a concurrent run can swap (CR)
+        self.assertFalse({k for k in copy_keys if "/sculpture_cache/" in k})
+        cache_puts = [c.kwargs["Key"] for c in mock_s3.put_object.call_args_list
+                      if "/sculpture_cache/" in c.kwargs["Key"]]
+        self.assertEqual(cache_puts[-1].rsplit("/", 1)[-1], "sculpture.json")   # commit marker LAST
+        self.assertEqual({k.rsplit("/", 1)[-1] for k in cache_puts},
+                         {"roots.bin", "palette.png", "sculpture.json"})
+        # publication order: meta.json (the listing's row marker) goes LAST
+        sprefix_puts = [c.kwargs["Key"] for c in mock_s3.put_object.call_args_list
+                        if c.kwargs["Key"].startswith(sprefix)]
+        self.assertEqual(sprefix_puts[-1], sprefix + "meta.json")
+        self.assertLess(sprefix_puts.index(sprefix + "viewer.html"),
+                        sprefix_puts.index(sprefix + "meta.json"))
         meta_row = json.loads(put_keys[sprefix + "meta.json"]["Body"])
         self.assertEqual(meta_row["view"]["show"], {"points": True, "ribbons": False,
                                                     "threads": False, "clu": True, "splats": False})
@@ -816,7 +852,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
             return self._artifact_get_object(calc, roots_key, roots_bytes, b"")(**kwargs)
 
         mock_s3.get_object.side_effect = get_object
-        mock_s3.head_object.return_value = self._artifact_head()
+        mock_s3.head_object.side_effect = self._artifact_head_router()
         with patch("handler_render_lores_preview.report_status") as mock_report:
             resp = handler(_event(
                 artifact_sculpture={"artifact_id": "color_run_abc"},
@@ -840,6 +876,143 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         done = mock_report.call_args_list[-1]
         self.assertEqual(done.args[2], "done")
         self.assertEqual(done.kwargs["result_data"]["saved_sculpture"]["id"], saved["id"])
+
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_cache_hit_save_failures_propagate_instead_of_regenerating(self, mock_s3, mock_run):
+        # CR: the cache-hit fallback catch must cover ONLY cache loading —
+        # a failure AFTER the hit (save or terminal status) must propagate,
+        # never silently rerun the full generation (which could mint a
+        # second sculpture after a successful save).
+        from handler_render_lores_preview import handler
+
+        cached_block = {
+            "format": "u16", "grid_n": 4, "degree": 1, "step_count": 16,
+            "pass_count": 1, "roots_bytes": 64,
+            "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -2.0, "max_im": 2.0},
+            "palette": "viridis", "source_artifact_id": "color_run_abc",
+        }
+        calc, roots_key, roots_bytes = self._artifact_calc(4)
+        calc_fetches = {"count": 0}
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key == "renders/j/calc.json":
+                calc_fetches["count"] += 1
+            if "sculpture_cache" in key and key.endswith("sculpture.json"):
+                body = MagicMock()
+                body.read.return_value = json.dumps(cached_block).encode("utf-8")
+                return {"Body": body}
+            return self._artifact_get_object(calc, roots_key, roots_bytes, b"")(**kwargs)
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.head_object.side_effect = self._artifact_head_router()
+        with patch("handler_render_lores_preview.report_status") as mock_report:
+            # the DONE write fails after a successful cache-hit save
+            mock_report.side_effect = [None, RuntimeError("ddb write failed")]
+            resp = handler(_event(
+                artifact_sculpture={"artifact_id": "color_run_abc"},
+                preview_source_size=4,
+                sculpture_task_id="sculpture_artifact_11",
+                save_full={"view": {"point": 12}},
+            ), None)
+        self.assertEqual(resp["statusCode"], 500)
+        self.assertIn("ddb write failed", json.loads(resp["body"])["detail"])
+        self.assertEqual(calc_fetches["count"], 0)     # NO regeneration
+
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_save_full_fails_closed_on_id_collision(self, mock_s3, mock_run):
+        # CR: two Lambdas in the same millisecond must never share a global
+        # sculptures/ prefix — an existing publication marker is an ERROR
+        from handler_render_lores_preview import handler
+
+        cached_block = {
+            "format": "u16", "grid_n": 4, "degree": 1, "step_count": 16,
+            "pass_count": 1, "roots_bytes": 64,
+            "viewport": {"min_re": -2.0, "max_re": 2.0, "min_im": -2.0, "max_im": 2.0},
+            "palette": "viridis", "source_artifact_id": "color_run_abc",
+        }
+        calc, roots_key, roots_bytes = self._artifact_calc(4)
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if "sculpture_cache" in key and key.endswith("sculpture.json"):
+                body = MagicMock()
+                body.read.return_value = json.dumps(cached_block).encode("utf-8")
+                return {"Body": body}
+            return self._artifact_get_object(calc, roots_key, roots_bytes, b"")(**kwargs)
+
+        mock_s3.get_object.side_effect = get_object
+        # every sculptures/ marker head SUCCEEDS -> the prefix is taken
+        mock_s3.head_object.return_value = self._artifact_head()
+        with patch("handler_render_lores_preview.report_status"):
+            resp = handler(_event(
+                artifact_sculpture={"artifact_id": "color_run_abc"},
+                preview_source_size=4,
+                save_full={"view": {"point": 12}},
+            ), None)
+        self.assertEqual(resp["statusCode"], 500)
+        self.assertIn("collision", json.loads(resp["body"])["detail"])
+        # nothing was written under the taken prefix
+        self.assertFalse([c for c in mock_s3.put_object.call_args_list
+                          if c.kwargs["Key"].startswith("sculptures/")])
+
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_splat_bake_cache_hit_generate_reads_the_immutable_cache(self, mock_s3, mock_run):
+        # CR: when the composed generate cache-HITS, the bake has no local
+        # files — its fallback must read the content-addressed prefix,
+        # never the job-wide mutable sculpture_* keys
+        from handler_render_lores_preview import TMP_PALETTE_IMAGE, TMP_XFORMED_ROOTS, handler
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
+        from png_rgb import encode_png_rgb
+
+        for stale in (TMP_XFORMED_ROOTS, TMP_PALETTE_IMAGE):
+            if os.path.exists(stale):
+                os.remove(stale)
+        cached_block = {
+            "format": "u16", "grid_n": 4, "degree": 2, "step_count": 16,
+            "pass_count": 1, "roots_bytes": 128,
+            "viewport": {"min_re": -1.0, "max_re": 1.0, "min_im": -1.0, "max_im": 1.0},
+            "palette": "viridis", "source_artifact_id": "color_run_abc",
+        }
+        calc, roots_key, roots_bytes = self._artifact_calc(4)
+        fetched = []
+        palette_png = encode_png_rgb(4, 4, bytes([10, 20, 30] * 16))
+        roots_blob = b"R" * 128
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            fetched.append(key)
+            if "sculpture_cache" in key:
+                if key.endswith("sculpture.json"):
+                    body = MagicMock()
+                    body.read.return_value = json.dumps(cached_block).encode("utf-8")
+                    return {"Body": body}
+                if key.endswith("roots.bin"):
+                    return {"Body": _ChunkBody(roots_blob)}
+                if key.endswith("palette.png"):
+                    return {"Body": _ChunkBody(palette_png)}
+            return self._artifact_get_object(calc, roots_key, roots_bytes, b"")(**kwargs)
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.head_object.side_effect = self._artifact_head_router()
+        seen = {}
+        mock_run.side_effect = self._bake_tool_fake(lambda cmd: seen.update(cmd=list(cmd)))
+        with patch("handler_render_lores_preview.report_status"):
+            resp = handler(_event(
+                splat_bake={"source": {"kind": "artifact", "artifact_id": "color_run_abc", "n": 4},
+                            "params": {"res": 64}},
+                sculpture_task_id="splat_bake_9",
+            ), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        cache_reads = [k for k in fetched if "/sculpture_cache/" in k]
+        self.assertTrue(any(k.endswith("roots.bin") for k in cache_reads))
+        self.assertTrue(any(k.endswith("palette.png") for k in cache_reads))
+        self.assertNotIn("renders/j/sculpture_roots.bin", fetched)
+        self.assertNotIn("renders/j/sculpture_palette.png", fetched)
 
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")
@@ -1062,6 +1235,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         from handler_render_lores_preview import handler
 
         mock_s3.get_object.side_effect = self._bake_saved_get_object()
+        mock_s3.head_object.side_effect = self._artifact_head_router()
         seen = {}
 
         def check(cmd):
@@ -1117,6 +1291,8 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
     @patch("handler_render_lores_preview.s3")
     def test_splat_bake_cache_source_binds_to_the_job(self, mock_s3, mock_run):
         from handler_render_lores_preview import handler
+
+        mock_s3.head_object.side_effect = self._artifact_head_router()
         import sys
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
         from png_rgb import encode_png_rgb
@@ -1183,7 +1359,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
             return {}
         mock_s3.get_object.side_effect = get_object
         mock_s3.put_object.side_effect = put_object
-        mock_s3.head_object.return_value = self._artifact_head()
+        mock_s3.head_object.side_effect = self._artifact_head_router()
 
         def subprocess_fake(cmd, **kwargs):
             if any(a.startswith("--xformed_roots_output") for a in cmd):

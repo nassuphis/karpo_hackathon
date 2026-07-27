@@ -1698,6 +1698,7 @@ let _sculpturePreviewTimer = null;
 // hide a just-saved one (CR: stale-response race)
 let _sculptureInventoryInflight = null;
 let _sculptureInventoryGen = 0;
+let _sculptureInventoryFailedAt = 0;   // backoff: a storage outage must not loop
 
 function _sculptureRenderPane() {
     // the saved list IS the shared artifact catalog now — re-render the
@@ -1761,6 +1762,10 @@ async function _sculptureDeleteSelected(btn) {
 
 async function _sculptureEnsureInventory(force) {
     if (window._sculptureInventoryLoaded && !force) return;
+    // a failed load + pane re-render must not spin a request loop (CR):
+    // silent kicks back off for 30s; an explicit Refresh always retries
+    if (!force && _sculptureInventoryFailedAt
+            && Date.now() - _sculptureInventoryFailedAt < 30000) return false;
     const btn = document.getElementById('btn-sculpture-refresh');
     let ok = false;
     // busy + lingering result on the button itself for the explicit press
@@ -1786,12 +1791,16 @@ async function _sculptureEnsureInventory(force) {
         }
     } catch (e) {
         if (!window._sculptureInventoryLoaded) window._sculptureInventory = [];
+        _sculptureInventoryFailedAt = Date.now();
         log(`Sculpture list failed: ${e.message}`, 'err', 'render-log');
     } finally {
         if (btn) btn.disabled = false;
     }
-    _sculptureRenderPane();
-    _splatsTabRefresh();
+    if (ok) {
+        _sculptureInventoryFailedAt = 0;
+        _sculptureRenderPane();
+        _splatsTabRefresh();
+    }
     if (force) {
         // feedback on the LIVE button, after the pane re-render (the trap)
         const live = document.getElementById('btn-sculpture-refresh');

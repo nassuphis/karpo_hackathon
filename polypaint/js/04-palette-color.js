@@ -191,10 +191,10 @@ let colorRepaletteBuiltinPalette = 'inferno';
 let colorRepaletteTriName = 'redgold';
 let colorRepaletteLongName = '';
 let _renderActiveFamily = 'color';
-let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [], views: [] };
-let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1, views: -1 };
-let _renderSelectedArtifactKey = { color: '', bilevel: '', coeffs: '', palette: '', pdf: '', views: '' };
-let _renderCatalogScrollTop = { color: 0, bilevel: 0, coeffs: 0, palette: 0, pdf: 0, views: 0 };
+let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [], views: [], sculpture: [] };
+let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1, views: -1, sculpture: -1 };
+let _renderSelectedArtifactKey = { color: '', bilevel: '', coeffs: '', palette: '', pdf: '', views: '', sculpture: '' };
+let _renderCatalogScrollTop = { color: 0, bilevel: 0, coeffs: 0, palette: 0, pdf: 0, views: 0, sculpture: 0 };
 let _renderPreviewSelectionState = {
     artifactKey: '',
     rect: null,

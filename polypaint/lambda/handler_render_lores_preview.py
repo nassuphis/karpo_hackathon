@@ -50,7 +50,7 @@ from logical_sections import (
 from raw_score_render import histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
 from root_pipeline_programs import root_program_for_run
 from shared import (BUCKET, REF_SIZE, compute_viewport_from_bin, ok_response, parse_body,
-                    parse_boolish, report_status, sanitize_sculpture_view)
+                    parse_boolish, random_b36, report_status, sanitize_sculpture_view)
 from solve_score_pipeline_programs import solve_score_program_for_run
 from solve_score_chain import (
     compiled_solve_score_fingerprint,
@@ -1194,7 +1194,7 @@ def _sculpture_save_full(save_spec, *, job_id, export, source):
     sculpture_* keys — a concurrent same-job generate could swap those
     between steps (CR: SaveFull silent-corruption race). Runs BEFORE the
     task reports done, so rail-complete means durable."""
-    sid = "scu_" + _b36_bake_id(int(time.time() * 1000))
+    sid = _mint_sculpture_id()
     raw_title = "".join(ch for ch in str((save_spec or {}).get("title") or "").strip() if ch.isprintable())[:80]
     title = raw_title or sid          # ids name saves (user doctrine)
     sprefix = f"sculptures/{sid}/"
@@ -1239,12 +1239,23 @@ def _sculpture_save_full(save_spec, *, job_id, export, source):
     view = sanitize_sculpture_view((save_spec or {}).get("view"))
     if view:
         meta["view"] = view
-    s3.put_object(Bucket=BUCKET, Key=sprefix + "meta.json",
-                  Body=json.dumps(meta).encode("utf-8"),
-                  ContentType="application/json", CacheControl="no-cache")
-    s3.put_object(Bucket=BUCKET, Key=sprefix + "viewer.html",
-                  Body=_sculpture_full_viewer_template(),
-                  ContentType="text/html", CacheControl=cache_forever)
+    # meta.json is the PUBLICATION MARKER the listing trusts — it goes
+    # LAST, after the viewer, so a failed upload can never expose a broken
+    # catalog row (CR); on failure the partial prefix is swept best-effort
+    try:
+        s3.put_object(Bucket=BUCKET, Key=sprefix + "viewer.html",
+                      Body=_sculpture_full_viewer_template(),
+                      ContentType="text/html", CacheControl=cache_forever)
+        s3.put_object(Bucket=BUCKET, Key=sprefix + "meta.json",
+                      Body=json.dumps(meta).encode("utf-8"),
+                      ContentType="application/json", CacheControl="no-cache")
+    except Exception:
+        try:
+            s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [
+                {"Key": sprefix + k} for k in ("roots.bin", "palette.png", "viewer.html")]})
+        except Exception:
+            pass
+        raise
     region = os.environ.get("AWS_REGION", "us-east-1")
     out = dict(meta)
     out["prefix"] = sprefix
@@ -1260,6 +1271,19 @@ def _b36_bake_id(v):
         v, rem = divmod(v, 36)
         out = digits[rem] + out
     return out or "0"
+
+
+def _mint_sculpture_id():
+    """scu_{ms}{6 random b36}: two Lambdas landing in the same millisecond
+    must not share a global sculptures/ prefix (CR: silent object mixing).
+    Fail closed on the publication marker — a taken prefix is an error,
+    never an overwrite."""
+    sid = f"scu_{_b36_bake_id(int(time.time() * 1000))}{random_b36(6)}"
+    try:
+        s3.head_object(Bucket=BUCKET, Key=f"sculptures/{sid}/meta.json")
+    except Exception:
+        return sid          # marker absent (or transient — the write path re-raises real errors)
+    raise RuntimeError(f"sculpture id collision on {sid} — retry the save")
 
 
 def _run_artifact_sculpture(params, job_id, spec, t_start):
@@ -1325,6 +1349,11 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
     sculpture_palette_key = f"renders/{job_id}/sculpture_palette.png"
     cached = _sculpture_cache_load(cache_prefix)
     if cached is not None:
+        # the fallback catch covers ONLY cache loading/validation — once
+        # the hit is materialized, save/report failures must PROPAGATE:
+        # swallowing them re-ran the whole generation and could mint a
+        # SECOND sculpture after a successful save (CR)
+        sculpture_export = None
         try:
             s3.copy_object(
                 Bucket=BUCKET, Key=sculpture_roots_key,
@@ -1347,6 +1376,10 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
                 "palette_key": sculpture_palette_key,
                 "palette_url": f"{base_url}/{sculpture_palette_key}?v={stamp}",
             })
+        except Exception:
+            # cached binaries missing/unreadable -> fall through to a full run
+            sculpture_export = None
+        if sculpture_export is not None:
             saved_row = None
             if params.get("save_full") is not None:
                 # immutable source: the content-addressed cache prefix
@@ -1375,9 +1408,6 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
             if saved_row:
                 body["saved_sculpture"] = saved_row
             return ok_response(body)
-        except Exception:
-            # cached binaries missing/unreadable -> fall through to a full run
-            pass
 
     calc = _load_calc(job_id)
     degree = int(calc.get("degree") or 0)
@@ -1502,14 +1532,17 @@ def _run_artifact_sculpture(params, job_id, spec, t_start):
         "palette_url": f"{base_url}/{sculpture_palette_key}?v={stamp}",
     }
     try:
-        s3.copy_object(
-            Bucket=BUCKET, Key=cache_prefix + "roots.bin",
-            CopySource={"Bucket": BUCKET, "Key": sculpture_roots_key},
-            MetadataDirective="REPLACE", ContentType="application/octet-stream")
-        s3.copy_object(
-            Bucket=BUCKET, Key=cache_prefix + "palette.png",
-            CopySource={"Bucket": BUCKET, "Key": sculpture_palette_key},
-            MetadataDirective="REPLACE", ContentType="image/png")
+        # the cache is written from the bytes THIS invocation produced —
+        # never via the job-wide mutable keys, which a concurrent same-job
+        # run can overwrite between steps (CR: poisoned cache under A's
+        # signature). sculpture.json goes last: it is the commit marker
+        # the cache loader trusts.
+        with open(TMP_XFORMED_ROOTS, "rb") as fh:
+            s3.put_object(Bucket=BUCKET, Key=cache_prefix + "roots.bin",
+                          Body=fh.read(), ContentType="application/octet-stream")
+        with open(TMP_PALETTE_IMAGE, "rb") as fh:
+            s3.put_object(Bucket=BUCKET, Key=cache_prefix + "palette.png",
+                          Body=fh.read(), ContentType="image/png")
         cache_block = {k: v for k, v in sculpture_export.items() if k not in ("roots_url", "palette_url")}
         s3.put_object(
             Bucket=BUCKET, Key=cache_prefix + "sculpture.json",
@@ -1739,13 +1772,16 @@ def _run_splat_bake(params, job_id, spec, t_start):
             os.replace(TMP_XFORMED_ROOTS, TMP_SPLAT_ROOTS)
             provenance["roots_reused_locally"] = True
         else:
-            _download_to_file(f"renders/{job_id}/sculpture_roots.bin", TMP_SPLAT_ROOTS)
+            # cache-hit generate left no local files: read the IMMUTABLE
+            # content-addressed prefix, never the mutable job-wide keys a
+            # concurrent run can swap (CR)
+            _download_to_file(str(sc.get("cache_prefix") or "") + "roots.bin", TMP_SPLAT_ROOTS)
             provenance["roots_reused_locally"] = False
         if os.path.exists(TMP_PALETTE_IMAGE) and os.path.getsize(TMP_PALETTE_IMAGE) > 0:
             with open(TMP_PALETTE_IMAGE, "rb") as fh:
                 palette_png = fh.read()
         else:
-            palette_png = _splat_bake_get_bytes(f"renders/{job_id}/sculpture_palette.png")
+            palette_png = _splat_bake_get_bytes(str(sc.get("cache_prefix") or "") + "palette.png")
         source_ids = {"source_artifact_id": artifact_id}
         title_default = f"{artifact_id} · {grid_n}²"
     else:
@@ -1818,16 +1854,7 @@ def _run_splat_bake(params, job_id, spec, t_start):
             .replace("__B64__", base64.b64encode(pack).decode("ascii")))
     html_bytes = html.encode("utf-8")
 
-    def _b36_bake(v):
-        digits = "0123456789abcdefghijklmnopqrstuvwxyz"
-        out = ""
-        v = int(v)
-        while v:
-            v, rem = divmod(v, 36)
-            out = digits[rem] + out
-        return out or "0"
-
-    sid_new = f"scu_{_b36_bake(int(time.time() * 1000))}"
+    sid_new = _mint_sculpture_id()
     sprefix = f"sculptures/{sid_new}/"
     s3.put_object(
         Bucket=BUCKET, Key=sprefix + "viewer.html",

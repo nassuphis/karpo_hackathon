@@ -48,7 +48,7 @@ from shared import (
     ascii_metadata,BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response,
                     _get_ddb, parse_boolish, assert_safe_render_image_key,
                     assert_render_identity, is_missing_s3_error, s3_error_reason,
-                    s3_error_code, assert_safe_id, CACHE_IMMUTABLE, report_status, sanitize_sculpture_view)
+                    s3_error_code, assert_safe_id, CACHE_IMMUTABLE, report_status, sanitize_sculpture_view, random_b36)
 from coeff_program_chain import (
     PROGRAM_KIND as COEFF_PROGRAM_KIND,
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
@@ -7213,7 +7213,7 @@ def handle_start_sculpture_from_artifact(event):
             "title": "".join(ch for ch in str(save_full.get("title") or "").strip() if ch.isprintable())[:80],
             "view": sanitize_sculpture_view(save_full.get("view")) or {},
         }
-    task_id = f"sculpture_artifact_{int(time.time() * 1000)}"
+    task_id = f"sculpture_artifact_{int(time.time() * 1000)}_{random_b36(6)}"
     report_status(job_id, task_id, "running")
     payload = {
         "job_id": job_id,
@@ -7282,7 +7282,7 @@ def handle_start_splat_bake(event):
     else:
         raise RuntimeError(f"start-splat-bake source kind must be cache/saved/artifact, got {kind!r}")
     bake_params = params.get("params") if isinstance(params.get("params"), dict) else {}
-    task_id = f"splat_bake_{int(time.time() * 1000)}"
+    task_id = f"splat_bake_{int(time.time() * 1000)}_{random_b36(6)}"
     report_status(job_id, task_id, "running")
     boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")).invoke(
         FunctionName=os.environ.get("RENDER_LORES_PREVIEW_FUNCTION", "polypaint-render-lores-preview"),

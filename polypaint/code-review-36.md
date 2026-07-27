@@ -3,7 +3,9 @@
 Date: 2026-07-27
 
 Reviewed range: `ac9ca1e..9dceb56` (the corrective rework), with the whole
-Views feature surface (`d155716..HEAD`) in scope.
+Views implementation surface (`d155716..9dceb56`) in scope. Later commits
+that only record or revise this review are intentionally outside the
+implementation range.
 
 - `ac9ca1e Views become associated artifacts: view_raster + modal + per-job list` — the build this review's author produced, rejected in use
 - `a691f1e Refactor ViewRender artifact workflow` — the corrective redesign
@@ -35,11 +37,14 @@ mode is never repeated.
 ## Why ac9ca1e was wrong (the design failure, named precisely)
 
 The corrected design makes the mistake easy to state: **ViewRender is one
-changed pixel-mapping inside a renderer that already existed.** The correct
-implementation is ~40 lines of plan/finalize routing (family = "views",
-pix = N) on top of machinery that was already built, tested, and deployed —
-d155716 had even already added the view flags to the raster and the plan.
-Instead, ac9ca1e built a second renderer:
+changed pixel-mapping inside a renderer that already existed.** The core
+backend distinction is a small plan/finalize routing delta (family =
+"views", pix = N) on top of machinery that was already built, tested, and
+deployed — d155716 had even already added the view flags to the raster and
+the plan. The complete corrective commit is not a 40-line change: it also
+contains the necessary frontend integration, storage normalization,
+metadata, tests, and deletion of the rejected UI. Instead, ac9ca1e built a
+second renderer:
 
 1. **A parallel pipeline instead of a parameter.** A bespoke lores path
    (lattice subsample ≤512², a new C tool, a new storage dispatch route, a
@@ -61,14 +66,17 @@ Instead, ac9ca1e built a second renderer:
    menu, Delete, and DeepZoom for free by normalizing view rows onto the
    shared render-artifact contract (`_viewAsRenderArtifact`).
 4. **Provenance narrowed instead of inherited.** The lores path carried a
-   subset of the source artifact's settings (palette, viewport, transforms)
-   and silently dropped the rest (quality, format, normalize, background,
-   interpretation fidelity via reconstruction fallbacks). The rework derives
-   the output-affecting render parameters from the source artifact's
-   recorded provenance (`_viewRenderParamsFromArtifact`) and dispatches the
-   same orchestrator as ColorRender-MT. Operational knobs such as thread and
-   worker counts use the current standard defaults rather than pretending to
-   be inherited provenance.
+   the selected artifact's palette, background, interpretation, viewport,
+   transformed-root geometry, and stored score bytes. It did not discard
+   those visual semantics. Its real provenance defects were narrower but
+   still material: it subsampled the permanent artifact, forced PNG with a
+   hard-coded output configuration, and persisted only a small metadata
+   subset rather than the normal render contract. The rework derives the
+   output-affecting render parameters from the source artifact's recorded
+   provenance (`_viewRenderParamsFromArtifact`) and dispatches the same
+   orchestrator as ColorRender-MT. Operational knobs such as thread and
+   worker counts use the current standard defaults rather than pretending
+   to be inherited provenance.
 5. **The foundation was already there and was abandoned.** d155716 wired
    view flags through roots2pix_mt, the plan, the ASL contracts, and the
    parity tests, then ac9ca1e ignored that path and built beside it. The
@@ -109,8 +117,10 @@ reason about.
 - **Storage**: `/list-views` normalizes rows onto the render-artifact shape
   (width/height/content_type/preview_url/viewer_url) with backward compat
   for pre-rework meta.json rows; `/delete-render-artifact` handles views by
-  prefix delete; `/start-view-render` and its handler are gone from code,
-  routes, and manifests.
+  prefix delete; the `/start-view-render` storage route and
+  `handle_start_view_render` storage handler are gone from code, routes, and
+  manifests. The separate `_run_view_render` branch still exists behind
+  `/render-lores-preview` and is CR36-F1.
 - **Tests**: plan (`test_view_plan_*`), ASL definition (contract-injected
   selector), raster parity (hand-computed pixel sets incl. isometric and
   section `view_step_start` offsets), finalize (views meta.json + family in
@@ -128,11 +138,11 @@ reason about.
 |---|---|---|
 | CR36-F9 | MEDIUM | At the shipped `pix=N`, elevation modes collapse the first two t rows and leave the top output row empty |
 | CR36-F1 | MEDIUM | The lores `view_render` mode + `view_raster` tool have no first-party caller but remain externally callable, built, bundled, and gate-tested |
-| CR36-F7 | MEDIUM | Views use ordinary image DeepZoom; the claimed raw integration is false and the frontend's `deepzoom_from_raw` branch cannot complete |
+| CR36-F7 | MEDIUM | Cross-cutting: Views use ordinary image DeepZoom; the frontend's nominal `deepzoom_from_raw` branch cannot complete |
 | CR36-F2 | MEDIUM (RESOLVED) | Docs described the replaced architecture as shipped; §7 was corrected with this review |
 | CR36-F3 | LOW | The ASL template's entire ColorRasterMap ItemSelector is dead text — the renderer replaces it from workflow_contracts.py |
 | CR36-F4 | LOW | `handle_list_views` treats every meta read failure as an absent row (CR28-F13 taxonomy: transient ≠ absent) |
-| CR36-F5 | LOW | Isometric occlusion is first-claim order, not depth order, and the winning root can depend on worker scheduling |
+| CR36-F5 | LOW | Renderer-wide first-claim ownership has no depth rule and the winning root can depend on worker scheduling |
 | CR36-F6 | LOW | `/delete-prefix` still carries the views widening alongside `/delete-render-artifact` — two delete surfaces for one artifact type |
 | CR36-F8 | INFO | ViewRender cost equals a full N×N MT render — deliberate; the F1 decision is where a future fast path would come from |
 
@@ -159,11 +169,20 @@ The hand-computed parity and ARM64 fixtures use `grid_n=4`, `pix=8`, where
 the samples map to 7,6,4,2 and remain distinct. That is why every gate is
 green while the actual `pix=N` product case is wrong.
 
-Recommendation: map the discrete t index to the full pixel range without a
-special-case collision — for example, with `t=k/N`, use
-`H - 1 - floor(t * H)` (equivalently `H - 1 - k` when `H=N`). Add exact
-front/t1 and front/t2 ownership oracles with `pix == grid_n`, in the host
-binary test and Docker ARM64 runtime suite.
+Recommendation: this is a discrete lattice, so do not repair it by
+round-tripping the index through floating-point `t`. Retain the integer
+selected index `k` (`vrow` or `vcol`) and map it with wide-integer
+arithmetic:
+
+```text
+py = H - 1 - floor(k * H / N)
+```
+
+For the product case `H=N`, this is exactly `H - 1 - k`; no clamp or
+floating-point boundary behavior is involved. Use a 64-bit product even
+though the current 32768 limit fits comfortably. Add exact front/t1 and
+front/t2 ownership oracles with `pix == grid_n`, in the host binary test
+and Docker ARM64 runtime suite.
 
 ### CR36-F1 (MEDIUM) — orphaned but externally callable lores view path
 
@@ -225,22 +244,25 @@ reads, then either surface a request error or return an explicit
 `metadata_error_count` and log the affected keys. Do not silently translate
 a transient failure into an authoritative shorter inventory.
 
-### CR36-F5 (LOW) — isometric ownership has no depth rule and can vary by schedule
+### CR36-F5 (LOW) — renderer-wide ownership can vary by schedule
 
 Per-pixel ownership is first successful claim, not depth order. Inside one
 `roots2pix_mt` section, workers race through an atomic
 `__atomic_fetch_or`; the modification is safe, but which thread claims a
 colliding pixel first is scheduler-dependent. Across completed sections,
-merge ordering adds another ownership layer. For elevations this is the
-established convention; for isometric — a projection of a genuinely 3D
-point set — a visually conventional result would require an explicit depth
-rule.
+merge ordering adds another ownership layer. This policy is renderer-wide:
+plan and elevation projections use the same claim path. Isometric merely
+makes the consequence more visually obvious because it projects a genuinely
+3D point set for which a conventional result would require an explicit
+depth rule.
 
-The accepted v1 caveat is therefore stronger than "deterministic but
-arbitrary": ownership is arbitrary and may vary between equivalent runs.
-That is acceptable only as an explicit art/performance tradeoff. Record it
-in the UI/help or projection documentation so a future rerender difference
-is not mistaken for corruption.
+The previously accepted "first pixel wins / no depth buffer" caveat does
+not, by itself, state that equivalent runs can choose different winners.
+Treat scheduler-dependent ownership as a separate explicit decision. If it
+is accepted as an art/performance tradeoff, record that in the UI/help or
+projection documentation so a rerender difference is not mistaken for
+corruption. If repeatability is required, winner identity needs a
+deterministic ordering rule rather than a scheduling race.
 
 ### CR36-F6 (LOW) — two delete surfaces for views
 
@@ -250,7 +272,7 @@ is not mistaken for corruption.
 artifact type with two delete APIs is drift waiting to diverge — drop the
 `/delete-prefix` widening unless something still calls it.
 
-### CR36-F7 (MEDIUM) — the claimed raw DeepZoom path does not execute
+### CR36-F7 (MEDIUM, CROSS-CUTTING) — the nominal raw DeepZoom path does not execute
 
 `deepZoomSelectedRenderArtifact` passes `image_key`, `raw_key`, and
 `raw_meta_key` to `runDeepZoomExport`, but that helper defines
@@ -272,7 +294,9 @@ always image-based, simplify the frontend and remove/rename the dead
 the handler actually consume `raw_key`/`raw_meta_key` and add an end-to-end
 test. For Views specifically, add a test that pins the current truthful
 behavior: selected `views/.../image.{jpeg,png}` dispatches
-`deepzoom_export`.
+`deepzoom_export`. This is shared DeepZoom technical debt discovered while
+tracing Views, not a defect in the ViewRender projection or artifact
+architecture.
 
 ### CR36-F8 (INFO) — cost model is deliberate
 

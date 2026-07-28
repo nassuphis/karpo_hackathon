@@ -210,6 +210,57 @@ test('baked splat navigation: pan, zoom-to-cursor, fly toggle, center', async ({
   }, stFly.cam, { timeout: 5000 });                 // W actually moved
   await page.keyboard.up('w');
 
+  // QUAKE MOUSELOOK — wiring pin. Headless chromium cannot actually
+  // engage pointer lock (requests reject or resolve with a null
+  // pointerLockElement), so the Pointer Lock API is stubbed and the
+  // assertions cover OUR side of the contract: a fly click requests the
+  // lock without starting a drag, a locked pointermove consumes RELATIVE
+  // movementX/Y with no button held, and lock release restores the hint.
+  await page.evaluate(() => {
+    window.__lockStub = { requests: 0, exits: 0, el: null };
+    Object.defineProperty(document, 'pointerLockElement', {
+      configurable: true, get: () => window.__lockStub.el,
+    });
+    Element.prototype.requestPointerLock = function () {
+      window.__lockStub.requests += 1;
+      window.__lockStub.el = this;
+      document.dispatchEvent(new Event('pointerlockchange'));
+      return Promise.resolve();
+    };
+    document.exitPointerLock = function () {
+      window.__lockStub.exits += 1;
+      window.__lockStub.el = null;
+      document.dispatchEvent(new Event('pointerlockchange'));
+    };
+  });
+  const lockState = await page.evaluate(() => {
+    window.__navDispatch.pointer('pointerdown', { clientX: 400, clientY: 300, button: 0, pointerType: 'mouse' });
+    return { requests: window.__lockStub.requests, locked: window.__bakedSplatViewer.state().locked,
+             hint: document.getElementById('h').textContent };
+  });
+  expect(lockState.requests).toBe(1);
+  expect(lockState.locked).toBe(true);
+  expect(lockState.hint).toContain('esc: release mouse');
+  const preLock = await live();
+  const postLock = await page.evaluate(() => {
+    const c = document.getElementById('c');
+    const ev = new PointerEvent('pointermove', { bubbles: true, pointerId: 11 });
+    Object.defineProperty(ev, 'movementX', { value: 80 });
+    Object.defineProperty(ev, 'movementY', { value: 0 });
+    c.dispatchEvent(ev);
+    return window.__bakedSplatViewer.state();
+  });
+  expect(Math.abs(postLock.yaw - preLock.yaw)).toBeCloseTo(0.24, 3);  // buttonless look
+  expect(Math.hypot(
+    postLock.cam[0] - preLock.cam[0],
+    postLock.cam[1] - preLock.cam[1],
+    postLock.cam[2] - preLock.cam[2],
+  )).toBeLessThan(1e-9);
+  await page.evaluate(() => document.exitPointerLock());   // browser's esc path
+  await page.waitForFunction(() => window.__bakedSplatViewer.state().locked === false, { timeout: 5000 });
+  const hintFree = await page.evaluate(() => document.getElementById('h').textContent);
+  expect(hintFree).toContain('click: capture mouse');
+
   // in fly EVERY drag is mouselook: shift-drag must turn the view (yaw),
   // never pan it — shift is the sprint key, and sprint+steer froze the
   // view direction when the orbit pan binding leaked into fly

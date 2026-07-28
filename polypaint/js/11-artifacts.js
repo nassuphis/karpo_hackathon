@@ -1176,7 +1176,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         if (activeArt.family === 'sculpture') {
             // src is set AFTER a debounce (arrow-scrubbing through 20-36MB
             // full saves must not download/boot a viewer per keypress)
-            viewerHtml = `<iframe data-viewer-src="${activeArt.viewer_url}" data-sculpture-id="${_escapeHtml(activeArt.artifact_id || '')}" style="width:100%; height:100%; border:0; background:#000" title="saved sculpture viewer"></iframe>`;
+            viewerHtml = `<iframe data-viewer-src="${activeArt.viewer_url}" data-sculpture-id="${_escapeHtml(activeArt.artifact_id || '')}" allow="pointer-lock" style="width:100%; height:100%; border:0; background:#000" title="saved sculpture viewer"></iframe>`;
         } else if (activeArt.format === 'pdf' || (activeArt.content_type || '') === 'application/pdf') {
             const pdfSrc = `${activeArt.viewer_url}#toolbar=0&navpanes=0&view=FitH`;
             viewerHtml = `<iframe src="${pdfSrc}" style="width:100%; height:100%; border:0; background:#000"></iframe>`;

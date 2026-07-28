@@ -210,11 +210,15 @@ var B64 = "__B64__";
             target[2] += ru[0][2] * mx + ru[1][2] * my;
         }
     }
+    function plock() { return document.pointerLockElement === canvas; }
     function hint() {
         document.getElementById("h").textContent = fly
-            ? "drag: look \u00b7 wasd+qe: move (shift: fast) \u00b7 wheel: forward \u00b7 1: orbit \u00b7 2: center"
+            ? (plock()
+                ? "mouse: look \u00b7 wasd+qe: move (shift: fast) \u00b7 wheel: forward \u00b7 esc: release mouse \u00b7 1: orbit \u00b7 2: center"
+                : "click: capture mouse \u00b7 drag: look \u00b7 wasd+qe: move (shift: fast) \u00b7 wheel: forward \u00b7 1: orbit \u00b7 2: center")
             : "drag: orbit \u00b7 right/shift-drag: pan \u00b7 wheel: zoom to cursor \u00b7 1: fly \u00b7 2: center \u00b7 input stops the tour";
     }
+    document.addEventListener("pointerlockchange", function () { hint(); });
     function toggleFly() {
         stopTour();
         if (!fly) {
@@ -224,6 +228,7 @@ var B64 = "__B64__";
             var f = forwardVec();
             target = [cam[0] + f[0] * radius, cam[1] + f[1] * radius, cam[2] + f[2] * radius];
             fly = false;
+            if (plock()) { try { document.exitPointerLock(); } catch (e) {} }
         }
         hint();
     }
@@ -245,8 +250,34 @@ var B64 = "__B64__";
     var pinchD = 0;
     var pinchC = null;
     canvas.addEventListener("contextmenu", function (ev) { ev.preventDefault(); });
+    var lockRetryAt = 0;
     canvas.addEventListener("pointerdown", function (ev) {
         stopTour();
+        if (plock()) return;
+        // fly: Quake mouselook — first click captures the mouse, then
+        // RELATIVE deltas steer with no button held and no screen edge;
+        // esc releases. No drag bookkeeping rides this click: taking
+        // pointer capture CANCELS a pending lock request. Rejections get
+        // a TIMED backoff (drag-look meanwhile), not a permanent latch:
+        // chrome also rejects transiently during the post-esc cooldown,
+        // while an embedding iframe policy denies forever — both settle
+        // into drag-look clicks with a lock re-try every few seconds.
+        if (fly && ev.pointerType === "mouse" && Date.now() >= lockRetryAt) {
+            var deny = function () { lockRetryAt = Date.now() + 2000; hint(); };
+            try {
+                var lp = canvas.requestPointerLock();
+                if (lp && lp.catch) {
+                    lp.catch(deny);
+                } else {
+                    var once = function () {
+                        deny();
+                        document.removeEventListener("pointerlockerror", once);
+                    };
+                    document.addEventListener("pointerlockerror", once);
+                }
+            } catch (e) { deny(); }
+            return;
+        }
         pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
         // fly: EVERY drag is mouselook — Shift doubles as the sprint key
         // and A/D + Q/E replace pan, so the orbit pan binding would turn a
@@ -260,6 +291,12 @@ var B64 = "__B64__";
         }
     });
     canvas.addEventListener("pointermove", function (ev) {
+        if (plock()) {
+            yaw += ev.movementX * 0.003;
+            pitch += ev.movementY * 0.003;
+            pitch = Math.max(-1.5, Math.min(1.5, pitch));
+            return;
+        }
         if (!pointers.has(ev.pointerId)) return;
         var prev = pointers.get(ev.pointerId);
         pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
@@ -491,7 +528,7 @@ var B64 = "__B64__";
             state: function () {
                 // live nav state on call — the per-frame fields above lag
                 // one rendered frame and freeze when rAF throttles
-                return { fly: fly, cam: cam.slice(), target: target.slice(),
+                return { fly: fly, locked: plock(), cam: cam.slice(), target: target.slice(),
                          radius: radius, yaw: yaw, pitch: pitch };
             },
             snapshotPayload: snapshotPayload

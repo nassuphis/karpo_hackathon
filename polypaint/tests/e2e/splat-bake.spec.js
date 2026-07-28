@@ -267,9 +267,11 @@ test('baked splat navigation: pan, zoom-to-cursor, fly toggle, center', async ({
     return window.__bakedSplatViewer.state();
   }, my);
   const stUp = await lookY(700);
-  expect(stUp.pitch).toBeGreaterThan(1.5);                 // unclamped
+  const dotF = (a, b) => a.ff[0] * b.ff[0] + a.ff[1] * b.ff[1] + a.ff[2] * b.ff[2];
+  expect(dotF(stUp, postLock)).toBeCloseTo(Math.cos(2.1), 3); // past the pole
+  expect(stUp.fu[1]).toBeLessThan(0);                      // flying inverted
   const stBack = await lookY(-700);
-  expect(Math.abs(stBack.pitch - postLock.pitch)).toBeLessThan(1e-9);
+  expect(dotF(stBack, postLock)).toBeGreaterThan(0.9999999); // exact inverse
 
   // E/Q ride the CAMERA triad: pitched down, E moves along screen-up
   // (r x f), not world-up — W/S forward, A/D right, E/Q up, one frame
@@ -284,8 +286,7 @@ test('baked splat navigation: pan, zoom-to-cursor, fly toggle, center', async ({
   {
     const d = [stE.cam[0] - stDown.cam[0], stE.cam[1] - stDown.cam[1], stE.cam[2] - stDown.cam[2]];
     const dl = Math.hypot(d[0], d[1], d[2]);
-    const sp = Math.sin(stDown.pitch), cp = Math.cos(stDown.pitch);
-    const u = [-sp * Math.cos(stDown.yaw), cp, -sp * Math.sin(stDown.yaw)];
+    const u = stDown.fu;                                   // camera-up basis
     const dot = (d[0] * u[0] + d[1] * u[1] + d[2] * u[2]) / dl;
     expect(dot).toBeGreaterThan(0.999);                     // along camera-up
     expect(Math.abs(stE.cam[1] - stDown.cam[1] - dl)).toBeGreaterThan(1e-3); // NOT world-up

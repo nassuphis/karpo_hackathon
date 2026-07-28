@@ -131,19 +131,13 @@ var B64 = "__B64__";
         out[15] = 1;
     }
     function flyView(out, ex, ey, ez) {
-        // roll-free fly basis straight from yaw/pitch: smooth through the
-        // poles (lookAt's world-up cross degenerates there), world shows
-        // inverted while |pitch| passes 90 deg — a loop without roll
-        var cp = Math.cos(pitch), sp = Math.sin(pitch);
-        var zx = cp * Math.cos(yaw), zy = sp, zz = cp * Math.sin(yaw);
-        var xx = Math.sin(yaw), xy = 0, xz = -Math.cos(yaw);
-        var yx = -sp * Math.cos(yaw), yy = cp, yz = -sp * Math.sin(yaw);
-        out[0] = xx; out[1] = yx; out[2] = zx; out[3] = 0;
-        out[4] = xy; out[5] = yy; out[6] = zy; out[7] = 0;
-        out[8] = xz; out[9] = yz; out[10] = zz; out[11] = 0;
-        out[12] = -(xx * ex + xy * ey + xz * ez);
-        out[13] = -(yx * ex + yy * ey + yz * ez);
-        out[14] = -(zx * ex + zy * ey + zz * ez);
+        // the fly triad IS the view basis: x=right, y=up, z=-forward
+        out[0] = fr[0]; out[1] = fu[0]; out[2] = -ff[0]; out[3] = 0;
+        out[4] = fr[1]; out[5] = fu[1]; out[6] = -ff[1]; out[7] = 0;
+        out[8] = fr[2]; out[9] = fu[2]; out[10] = -ff[2]; out[11] = 0;
+        out[12] = -(fr[0] * ex + fr[1] * ey + fr[2] * ez);
+        out[13] = -(fu[0] * ex + fu[1] * ey + fu[2] * ez);
+        out[14] = (ff[0] * ex + ff[1] * ey + ff[2] * ez);
         out[15] = 1;
     }
     var tour = { mode: H.tour, playing: H.tour !== "off", t: 0,
@@ -191,6 +185,33 @@ var B64 = "__B64__";
     var cam = [H.cam[0], H.cam[1], H.cam[2]];
     var currentTarget = target.slice();
     var fly = false;
+    // fly orientation is a full basis TRIAD (right/up/forward), not
+    // euler angles: mouselook rotates about the triad's OWN axes — a
+    // pure head-turn at any attitude, no world anchor. Roll therefore
+    // accumulates across loops+turns; "2" and the orbit toggle re-level.
+    var fr = [1, 0, 0], fu = [0, 1, 0], ff = [0, 0, -1];
+    function flyTriadFromAngles() {
+        var cp0 = Math.cos(pitch), sp0 = Math.sin(pitch);
+        ff = [-cp0 * Math.cos(yaw), -sp0, -cp0 * Math.sin(yaw)];
+        fr = [Math.sin(yaw), 0, -Math.cos(yaw)];
+        fu = [-sp0 * Math.cos(yaw), cp0, -sp0 * Math.sin(yaw)];
+    }
+    function flyLook(dx, dy) {
+        var th = dx * 0.003, ph = dy * 0.003;
+        var ct = Math.cos(th), st = Math.sin(th);
+        var f1 = [ff[0] * ct + fr[0] * st, ff[1] * ct + fr[1] * st, ff[2] * ct + fr[2] * st];
+        fr = [fr[0] * ct - ff[0] * st, fr[1] * ct - ff[1] * st, fr[2] * ct - ff[2] * st];
+        var cq = Math.cos(ph), sq = Math.sin(ph);
+        ff = [f1[0] * cq - fu[0] * sq, f1[1] * cq - fu[1] * sq, f1[2] * cq - fu[2] * sq];
+        fu = [fu[0] * cq + f1[0] * sq, fu[1] * cq + f1[1] * sq, fu[2] * cq + f1[2] * sq];
+        var fl = 1 / (Math.hypot(ff[0], ff[1], ff[2]) || 1);
+        ff = [ff[0] * fl, ff[1] * fl, ff[2] * fl];
+        var d0 = fr[0] * ff[0] + fr[1] * ff[1] + fr[2] * ff[2];
+        fr = [fr[0] - ff[0] * d0, fr[1] - ff[1] * d0, fr[2] - ff[2] * d0];
+        var rl = 1 / (Math.hypot(fr[0], fr[1], fr[2]) || 1);
+        fr = [fr[0] * rl, fr[1] * rl, fr[2] * rl];
+        fu = [fr[1] * ff[2] - fr[2] * ff[1], fr[2] * ff[0] - fr[0] * ff[2], fr[0] * ff[1] - fr[1] * ff[0]];
+    }
     var keys = {};
     var FOV = 50 * Math.PI / 180;
     function orbitCam() {
@@ -215,13 +236,13 @@ var B64 = "__B64__";
     function pan(dx, dy) {
         // world units per CSS pixel on the target plane: screen-true drag
         var wpp = 2 * radius * Math.tan(FOV / 2) / (canvas.clientHeight || 1);
-        var ru = rightUp(forwardVec());
         var mx = -dx * wpp, my = dy * wpp;
         if (fly) {
-            cam[0] += ru[0][0] * mx + ru[1][0] * my;
-            cam[1] += ru[0][1] * mx + ru[1][1] * my;
-            cam[2] += ru[0][2] * mx + ru[1][2] * my;
+            cam[0] += fr[0] * mx + fu[0] * my;
+            cam[1] += fr[1] * mx + fu[1] * my;
+            cam[2] += fr[2] * mx + fu[2] * my;
         } else {
+            var ru = rightUp(forwardVec());
             target[0] += ru[0][0] * mx + ru[1][0] * my;
             target[1] += ru[0][1] * mx + ru[1][1] * my;
             target[2] += ru[0][2] * mx + ru[1][2] * my;
@@ -240,19 +261,14 @@ var B64 = "__B64__";
         stopTour();
         if (!fly) {
             cam = orbitCam();
+            flyTriadFromAngles();
             fly = true;
         } else {
-            var f = forwardVec();
-            target = [cam[0] + f[0] * radius, cam[1] + f[1] * radius, cam[2] + f[2] * radius];
-            // orbit math lives in the principal range: wrap the free fly
-            // pitch, fold over-the-pole poses to the equivalent yaw+180
-            // orientation (identical forward), then apply orbit's clamp
-            var tp = Math.atan2(Math.sin(pitch), Math.cos(pitch));
-            if (Math.abs(tp) > Math.PI / 2) {
-                tp = (tp > 0 ? Math.PI : -Math.PI) - tp;
-                yaw += Math.PI;
-            }
-            pitch = Math.max(-1.5, Math.min(1.5, tp));
+            target = [cam[0] + ff[0] * radius, cam[1] + ff[1] * radius, cam[2] + ff[2] * radius];
+            // orbit is roll-free by construction: keep the forward, drop
+            // the roll (horizon re-levels), clamp into orbit's range
+            pitch = Math.max(-1.5, Math.min(1.5, Math.asin(Math.max(-1, Math.min(1, -ff[1])))));
+            yaw = Math.atan2(-ff[2], -ff[0]);
             fly = false;
             if (plock()) { try { document.exitPointerLock(); } catch (e) {} }
         }
@@ -269,7 +285,7 @@ var B64 = "__B64__";
         yaw = Math.atan2(ddz, ddx);
         pitch = Math.asin(Math.max(-1, Math.min(1, ddy / radius)));
         target = c;
-        if (fly) cam = eye;
+        if (fly) { cam = eye; flyTriadFromAngles(); }
     }
     var pointers = new Map();
     var panIds = new Set();
@@ -318,9 +334,7 @@ var B64 = "__B64__";
     });
     canvas.addEventListener("pointermove", function (ev) {
         if (plock()) {
-            // flying, not walking: pitch is as unbounded as yaw — loops
-            yaw += ev.movementX * 0.003;
-            pitch += ev.movementY * 0.003;
+            flyLook(ev.movementX, ev.movementY);
             return;
         }
         if (!pointers.has(ev.pointerId)) return;
@@ -331,9 +345,13 @@ var B64 = "__B64__";
             if (panIds.has(ev.pointerId)) {
                 pan(dx, dy);
             } else {
-                yaw += dx * (fly ? 0.003 : 0.005);
-                pitch += dy * (fly ? 0.003 : 0.005);
-                if (!fly) pitch = Math.max(-1.5, Math.min(1.5, pitch));
+                if (fly) {
+                    flyLook(dx, dy);
+                } else {
+                    yaw += dx * 0.005;
+                    pitch += dy * 0.005;
+                    pitch = Math.max(-1.5, Math.min(1.5, pitch));
+                }
             }
         } else if (pointers.size === 2) {
             var ps = Array.from(pointers.values());
@@ -354,9 +372,8 @@ var B64 = "__B64__";
         var f = Math.exp(ev.deltaY * 0.001);
         if (fly) {
             // forward dolly along the look direction, distance-scaled
-            var fv = forwardVec();
             var step = radius * (1 - f);
-            cam[0] += fv[0] * step; cam[1] += fv[1] * step; cam[2] += fv[2] * step;
+            cam[0] += ff[0] * step; cam[1] += ff[1] * step; cam[2] += ff[2] * step;
             return;
         }
         // zoom to CURSOR: the point under the pointer stays put — shift the
@@ -405,11 +422,9 @@ var B64 = "__B64__";
         // E/Q along screen up (r x f) — world-up in level flight, and it
         // keeps tracking the screen when pitched or inverted
         var speed = 0.6 * (keys.shift ? 3 : 1) * dt;
-        var f = forwardVec();
-        var ru = rightUp(f);
-        cam[0] += (f[0] * mv + ru[0][0] * ms + ru[1][0] * mu) * speed;
-        cam[1] += (f[1] * mv + ru[0][1] * ms + ru[1][1] * mu) * speed;
-        cam[2] += (f[2] * mv + ru[0][2] * ms + ru[1][2] * mu) * speed;
+        cam[0] += (ff[0] * mv + fr[0] * ms + fu[0] * mu) * speed;
+        cam[1] += (ff[1] * mv + fr[1] * ms + fu[1] * mu) * speed;
+        cam[2] += (ff[2] * mv + fr[2] * ms + fu[2] * mu) * speed;
     }
     hint();
     function bakedVerticalScale() {
@@ -516,8 +531,7 @@ var B64 = "__B64__";
             lookAt(view, cam[0], cam[1], cam[2], pz[3], pz[4], pz[5]);
         } else if (fly) {
             applyFlyKeys(dt);
-            var fv = forwardVec();
-            currentTarget = [cam[0] + fv[0] * radius, cam[1] + fv[1] * radius, cam[2] + fv[2] * radius];
+            currentTarget = [cam[0] + ff[0] * radius, cam[1] + ff[1] * radius, cam[2] + ff[2] * radius];
             flyView(view, cam[0], cam[1], cam[2]);
         } else {
             cam = orbitCam();
@@ -556,9 +570,13 @@ var B64 = "__B64__";
             pitch: pitch,
             state: function () {
                 // live nav state on call — the per-frame fields above lag
-                // one rendered frame and freeze when rAF throttles
+                // one rendered frame and freeze when rAF throttles; in fly
+                // the angles are DERIVED from the triad (principal range)
+                var p = fly ? Math.asin(Math.max(-1, Math.min(1, -ff[1]))) : pitch;
+                var y = fly ? Math.atan2(-ff[2], -ff[0]) : yaw;
                 return { fly: fly, locked: plock(), cam: cam.slice(), target: target.slice(),
-                         radius: radius, yaw: yaw, pitch: pitch };
+                         radius: radius, yaw: y, pitch: p,
+                         fr: fr.slice(), fu: fu.slice(), ff: ff.slice() };
             },
             snapshotPayload: snapshotPayload
         };

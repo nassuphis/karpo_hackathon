@@ -248,7 +248,10 @@ var B64 = "__B64__";
     canvas.addEventListener("pointerdown", function (ev) {
         stopTour();
         pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
-        if (ev.button === 2 || ev.shiftKey) panIds.add(ev.pointerId);
+        // fly: EVERY drag is mouselook — Shift doubles as the sprint key
+        // and A/D + Q/E replace pan, so the orbit pan binding would turn a
+        // sprint+steer drag into a translation with a frozen view direction
+        if (!fly && (ev.button === 2 || ev.shiftKey)) panIds.add(ev.pointerId);
         canvas.setPointerCapture(ev.pointerId);
         if (pointers.size === 2) {
             var ps = Array.from(pointers.values());

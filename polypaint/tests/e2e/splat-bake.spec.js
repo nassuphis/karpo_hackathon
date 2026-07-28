@@ -209,6 +209,24 @@ test('baked splat navigation: pan, zoom-to-cursor, fly toggle, center', async ({
     return Math.hypot(c[0] - c0[0], c[1] - c0[1], c[2] - c0[2]) > 0.01;
   }, stFly.cam, { timeout: 5000 });                 // W actually moved
   await page.keyboard.up('w');
+
+  // in fly EVERY drag is mouselook: shift-drag must turn the view (yaw),
+  // never pan it — shift is the sprint key, and sprint+steer froze the
+  // view direction when the orbit pan binding leaked into fly
+  const preLook = await live();
+  const postLook = await page.evaluate(() => {
+    window.__navDispatch.pointer('pointerdown', { clientX: 400, clientY: 300, shiftKey: true, button: 0 });
+    window.__navDispatch.pointer('pointermove', { clientX: 340, clientY: 300, shiftKey: true });
+    window.__navDispatch.pointer('pointerup', {});
+    return window.__bakedSplatViewer.state();
+  });
+  expect(Math.abs(postLook.yaw - preLook.yaw)).toBeGreaterThan(0.05);
+  expect(Math.hypot(
+    postLook.cam[0] - preLook.cam[0],
+    postLook.cam[1] - preLook.cam[1],
+    postLook.cam[2] - preLook.cam[2],
+  )).toBeLessThan(1e-6);                            // turned, not translated
+
   const preExit = await live();
   await page.keyboard.press('1');
   await page.waitForFunction(() => window.__bakedSplatViewer.state().fly === false, { timeout: 5000 });

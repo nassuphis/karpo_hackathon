@@ -270,6 +270,27 @@ test('baked splat navigation: pan, zoom-to-cursor, fly toggle, center', async ({
   expect(stUp.pitch).toBeGreaterThan(1.5);                 // unclamped
   const stBack = await lookY(-700);
   expect(Math.abs(stBack.pitch - postLock.pitch)).toBeLessThan(1e-9);
+
+  // E/Q ride the CAMERA triad: pitched down, E moves along screen-up
+  // (r x f), not world-up — W/S forward, A/D right, E/Q up, one frame
+  const stDown = await lookY(300);                          // pitch ~0.9
+  await page.keyboard.down('e');
+  await page.waitForFunction((c0) => {
+    const c = window.__bakedSplatViewer.state().cam;
+    return Math.hypot(c[0] - c0[0], c[1] - c0[1], c[2] - c0[2]) > 0.02;
+  }, stDown.cam, { timeout: 5000 });
+  await page.keyboard.up('e');
+  const stE = await live();
+  {
+    const d = [stE.cam[0] - stDown.cam[0], stE.cam[1] - stDown.cam[1], stE.cam[2] - stDown.cam[2]];
+    const dl = Math.hypot(d[0], d[1], d[2]);
+    const sp = Math.sin(stDown.pitch), cp = Math.cos(stDown.pitch);
+    const u = [-sp * Math.cos(stDown.yaw), cp, -sp * Math.sin(stDown.yaw)];
+    const dot = (d[0] * u[0] + d[1] * u[1] + d[2] * u[2]) / dl;
+    expect(dot).toBeGreaterThan(0.999);                     // along camera-up
+    expect(Math.abs(stE.cam[1] - stDown.cam[1] - dl)).toBeGreaterThan(1e-3); // NOT world-up
+  }
+  await lookY(-300);                                        // restore pitch
   await page.evaluate(() => document.exitPointerLock());   // browser's esc path
   await page.waitForFunction(() => window.__bakedSplatViewer.state().locked === false, { timeout: 5000 });
   const hintFree = await page.evaluate(() => document.getElementById('h').textContent);

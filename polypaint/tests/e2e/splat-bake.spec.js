@@ -256,6 +256,20 @@ test('baked splat navigation: pan, zoom-to-cursor, fly toggle, center', async ({
     postLock.cam[1] - preLock.cam[1],
     postLock.cam[2] - preLock.cam[2],
   )).toBeLessThan(1e-9);
+
+  // flying, not walking: pitch sails past the old +-1.5 walker clamp
+  // (and back — a full vertical loop is legal in fly)
+  const lookY = (my) => page.evaluate((v) => {
+    const ev = new PointerEvent('pointermove', { bubbles: true, pointerId: 11 });
+    Object.defineProperty(ev, 'movementX', { value: 0 });
+    Object.defineProperty(ev, 'movementY', { value: v });
+    document.getElementById('c').dispatchEvent(ev);
+    return window.__bakedSplatViewer.state();
+  }, my);
+  const stUp = await lookY(700);
+  expect(stUp.pitch).toBeGreaterThan(1.5);                 // unclamped
+  const stBack = await lookY(-700);
+  expect(Math.abs(stBack.pitch - postLock.pitch)).toBeLessThan(1e-9);
   await page.evaluate(() => document.exitPointerLock());   // browser's esc path
   await page.waitForFunction(() => window.__bakedSplatViewer.state().locked === false, { timeout: 5000 });
   const hintFree = await page.evaluate(() => document.getElementById('h').textContent);

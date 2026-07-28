@@ -1,9 +1,28 @@
 # SnapRender: hi-res camera reprojection
 
+STATUS: this describes the SHIPPED system (2026-07-28). It supersedes every
+earlier draft of this document. In particular, these earlier-draft ideas were
+DELIBERATELY DROPPED during implementation and must not be resurrected from
+old copies, reviews, or memory:
+
+- excluding baked splat viewers from Snap (both viewer kinds snap);
+- point-footprint expansion and its admission pricing (one root = one pixel);
+- timing calibration (artifact, matrix, modes, throughput constants —
+  admission is deterministic-resources-only; duration is telemetry);
+- style/show/point-size eligibility rules (a camera is a camera);
+- rerunning the score VM (stored score bytes are reprojected).
+
 ## 1. Product contract
 
 `SnapRender` is a ViewRender operation. The Sculpture viewer is only a camera
-controller.
+controller — and EVERY saved viewer kind is one: the full sculpture viewer
+AND the baked splat viewer both implement the same snapshot protocol
+(ready announcement + snapshot request/response). Snapping a baked view is
+a primary use case, not an exception: the light baked page is where a
+vantage gets found, and SnapRender renders the SOURCE artifact's full-res
+root cloud from that vantage. Baked pages are frozen per save, so protocol
+capability rides the template at bake time; pages baked before the
+protocol existed cannot answer and simply leave SnapRender disabled.
 
 The viewer contributes:
 
@@ -173,7 +192,7 @@ The Sculpture tab exposes one action: `SnapRender`.
 
 Enablement requires only:
 
-- a selected Sculpture row;
+- a selected Sculpture row — full save OR baked splat, either kind;
 - a loaded viewer capable of returning a camera snapshot;
 - no active render dispatch.
 

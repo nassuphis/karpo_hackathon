@@ -112,6 +112,139 @@ test('baked splat template: self-contained boot, solid render, tour stop', async
   expect(title).toBe('bake fixture');
 });
 
+test('baked splat navigation: pan, zoom-to-cursor, fly toggle, center', async ({ page }) => {
+  // vantage hunting is the point of a baked view (SnapRender doctrine):
+  // right/shift-drag pans the orbit target, wheel zooms TOWARD the cursor,
+  // "1" toggles wasd+mouselook fly, "2" re-aims at the bake center.
+  // All reads go through __bakedSplatViewer.state() — live on call — not
+  // the per-frame export fields, which lag a frame and freeze when rAF
+  // throttles an occluded page.
+  const splats = [
+    { center: [0, 0, 0], axisA: [0.3, 0, 0], axisB: [0, 0.3, 0], color: [1, 0, 0], weight: 1 },
+  ];
+  const html = bakeHtml(splats, {
+    mode: 2, intensity: 1, cam: [0, 0, 1.5], target: [0, 0, 0],
+    tour: 'off', tourSpeed: 1, title: 'nav fixture', zaxis: 't2', slices: 0, yscale: 0.5,
+  });
+  await page.route('**/baked/nav.html', (route) => route.fulfill({
+    status: 200, contentType: 'text/html', body: html,
+  }));
+  await page.goto('http://localhost:8765/baked/nav.html');
+  await page.waitForFunction(() => {
+    const v = window.__bakedSplatViewer;
+    return (v && v.frames > 2) || document.getElementById('m').style.display === 'flex';
+  }, { timeout: 8000 });
+  if (await page.evaluate(() => document.getElementById('m').style.display === 'flex')) return;
+
+  // in-page dispatch: the listeners read PointerEvent/WheelEvent init
+  // fields (shiftKey, clientX/Y) that page.dispatchEvent does not carry
+  await page.evaluate(() => {
+    window.__navDispatch = {
+      pointer(type, init) {
+        document.getElementById('c').dispatchEvent(
+          new PointerEvent(type, Object.assign({ bubbles: true, pointerId: 7 }, init)));
+      },
+      wheel(init) {
+        document.getElementById('c').dispatchEvent(
+          new WheelEvent('wheel', Object.assign({ bubbles: true, cancelable: true }, init)));
+      },
+    };
+  });
+  const live = () => page.evaluate(() => window.__bakedSplatViewer.state());
+  // the eye the user SEES: fly renders from cam, orbit derives the eye
+  // from target/radius/yaw/pitch (the cam field is stale during orbit)
+  const eye = (st) => {
+    if (st.fly) return st.cam;
+    const cp = Math.cos(st.pitch);
+    return [st.target[0] + st.radius * cp * Math.cos(st.yaw),
+            st.target[1] + st.radius * Math.sin(st.pitch),
+            st.target[2] + st.radius * cp * Math.sin(st.yaw)];
+  };
+  const st0 = await live();
+  expect(st0.fly).toBe(false);
+  expect(st0.target).toEqual([0, 0, 0]);
+
+  // PAN: shift-drag moves the orbit target, not the angles
+  const stPan = await page.evaluate(() => {
+    window.__navDispatch.pointer('pointerdown', { clientX: 200, clientY: 200, shiftKey: true, button: 0 });
+    window.__navDispatch.pointer('pointermove', { clientX: 260, clientY: 200, shiftKey: true });
+    window.__navDispatch.pointer('pointerup', {});
+    return window.__bakedSplatViewer.state();
+  });
+  expect(Math.hypot(
+    stPan.target[0] - st0.target[0],
+    stPan.target[1] - st0.target[1],
+    stPan.target[2] - st0.target[2],
+  )).toBeGreaterThan(0.01);
+  expect(stPan.yaw).toBeCloseTo(st0.yaw, 6);       // pan never orbits
+  expect(stPan.radius).toBeCloseTo(st0.radius, 6);
+
+  // ZOOM-TO-CURSOR: wheel-in at an off-center point pulls the target
+  // toward the cursor while shrinking the radius
+  const stZoom = await page.evaluate(() => {
+    window.__navDispatch.wheel({ deltaY: -480, clientX: 40, clientY: 40 });
+    return window.__bakedSplatViewer.state();
+  });
+  expect(stZoom.radius).toBeLessThan(stPan.radius);
+  expect(Math.hypot(
+    stZoom.target[0] - stPan.target[0],
+    stZoom.target[1] - stPan.target[1],
+    stZoom.target[2] - stPan.target[2],
+  )).toBeGreaterThan(0.001);                        // cursor pull, not center zoom
+
+  // "1" -> FLY: wasd moves the eye along the look direction; the toggle
+  // itself never jumps the pose
+  await page.keyboard.press('1');
+  await page.waitForFunction(() => window.__bakedSplatViewer.state().fly === true, { timeout: 5000 });
+  const stFly = await live();
+  const eyeZoom = eye(stZoom);
+  expect(Math.hypot(
+    stFly.cam[0] - eyeZoom[0],
+    stFly.cam[1] - eyeZoom[1],
+    stFly.cam[2] - eyeZoom[2],
+  )).toBeLessThan(1e-4);                            // no jump entering fly
+  await page.keyboard.down('w');
+  await page.waitForFunction((c0) => {
+    const c = window.__bakedSplatViewer.state().cam;
+    return Math.hypot(c[0] - c0[0], c[1] - c0[1], c[2] - c0[2]) > 0.01;
+  }, stFly.cam, { timeout: 5000 });                 // W actually moved
+  await page.keyboard.up('w');
+  const preExit = await live();
+  await page.keyboard.press('1');
+  await page.waitForFunction(() => window.__bakedSplatViewer.state().fly === false, { timeout: 5000 });
+  const postExit = await live();
+  const eyeOut = eye(postExit);
+  expect(Math.hypot(
+    eyeOut[0] - preExit.cam[0],
+    eyeOut[1] - preExit.cam[1],
+    eyeOut[2] - preExit.cam[2],
+  )).toBeLessThan(1e-4);                            // no jump leaving fly
+
+  // "2" -> CENTER: the target returns to the bake center; the eye stays
+  const preCenter = await live();
+  await page.keyboard.press('2');
+  await page.waitForFunction(() => {
+    const t = window.__bakedSplatViewer.state().target;
+    return Math.hypot(t[0], t[1], t[2]) < 1e-6;
+  }, { timeout: 5000 });
+  const stCenter = await live();
+  const eyePre = eye(preCenter), eyePost = eye(stCenter);
+  expect(Math.hypot(
+    eyePost[0] - eyePre[0],
+    eyePost[1] - eyePre[1],
+    eyePost[2] - eyePre[2],
+  )).toBeLessThan(1e-4);                            // re-aim, not teleport
+
+  // the hint line teaches the controls in both modes
+  const hintOrbit = await page.evaluate(() => document.getElementById('h').textContent);
+  expect(hintOrbit).toContain('pan');
+  expect(hintOrbit).toContain('zoom to cursor');
+  await page.keyboard.press('1');
+  await page.waitForFunction(() => window.__bakedSplatViewer.state().fly === true, { timeout: 5000 });
+  const hintFly = await page.evaluate(() => document.getElementById('h').textContent);
+  expect(hintFly).toContain('wasd');
+});
+
 test('baked splat template exposes its live camera as a ViewRender snapshot', async ({ page }) => {
   const html = bakeHtml([
     {

@@ -4,7 +4,7 @@
      object (JSON: count/bounds/amax/mode/intensity/camera/tour), and
      the 22-byte-per-splat pack (base64). Fully self-contained: no
      three.js, no vendor fetches — a dependency-free WebGL2 instanced-
-     quad renderer with orbit/pinch controls and the four tours. The
+     quad renderer with orbit/pan/fly controls and the four tours. The
      e2e spec substitutes this same file directly; each slot token
      appears in the body only (never in this comment), so first-
      occurrence and global replacement agree. -->
@@ -17,7 +17,7 @@
 <style>html,body{margin:0;height:100%;background:#05070c;overflow:hidden;font-family:monospace}canvas{display:block;width:100%;height:100%;touch-action:none}#t{position:fixed;top:10px;left:14px;color:#e8eef5;font-size:14px;pointer-events:none}#h{position:fixed;bottom:10px;left:14px;color:#5b6b80;font-size:11px;pointer-events:none}#m{position:fixed;inset:0;display:none;align-items:center;justify-content:center;color:#e8eef5}</style>
 </head>
 <body>
-<canvas id="c"></canvas><div id="t">__TITLE_HTML__</div><div id="h">drag: orbit · wheel/pinch: zoom · interaction stops the tour</div><div id="m">WebGL2 is not available in this browser</div>
+<canvas id="c"></canvas><div id="t">__TITLE_HTML__</div><div id="h"></div><div id="m">WebGL2 is not available in this browser</div>
 <script>
 var H = __HEADER_JSON__;
 var B64 = "__B64__";
@@ -174,15 +174,86 @@ var B64 = "__B64__";
     }
     var cam = [H.cam[0], H.cam[1], H.cam[2]];
     var currentTarget = target.slice();
+    var fly = false;
+    var keys = {};
+    var FOV = 50 * Math.PI / 180;
+    function orbitCam() {
+        var cp = Math.cos(pitch);
+        return [target[0] + radius * cp * Math.cos(yaw),
+                target[1] + radius * Math.sin(pitch),
+                target[2] + radius * cp * Math.sin(yaw)];
+    }
+    function forwardVec() {
+        // look direction: in orbit it is cam->target = -u; fly reuses the
+        // SAME yaw/pitch so mode toggles never jump the view
+        var cp = Math.cos(pitch);
+        return [-cp * Math.cos(yaw), -Math.sin(pitch), -cp * Math.sin(yaw)];
+    }
+    function rightUp(f) {
+        var rx = -f[2], rz = f[0];
+        var rl = 1 / (Math.hypot(rx, rz) || 1);
+        var r = [rx * rl, 0, rz * rl];
+        return [r, [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]]];
+    }
+    function pan(dx, dy) {
+        // world units per CSS pixel on the target plane: screen-true drag
+        var wpp = 2 * radius * Math.tan(FOV / 2) / (canvas.clientHeight || 1);
+        var ru = rightUp(forwardVec());
+        var mx = -dx * wpp, my = dy * wpp;
+        if (fly) {
+            cam[0] += ru[0][0] * mx + ru[1][0] * my;
+            cam[1] += ru[0][1] * mx + ru[1][1] * my;
+            cam[2] += ru[0][2] * mx + ru[1][2] * my;
+        } else {
+            target[0] += ru[0][0] * mx + ru[1][0] * my;
+            target[1] += ru[0][1] * mx + ru[1][1] * my;
+            target[2] += ru[0][2] * mx + ru[1][2] * my;
+        }
+    }
+    function hint() {
+        document.getElementById("h").textContent = fly
+            ? "drag: look \u00b7 wasd+qe: move (shift: fast) \u00b7 wheel: forward \u00b7 1: orbit \u00b7 2: center"
+            : "drag: orbit \u00b7 right/shift-drag: pan \u00b7 wheel: zoom to cursor \u00b7 1: fly \u00b7 2: center \u00b7 input stops the tour";
+    }
+    function toggleFly() {
+        stopTour();
+        if (!fly) {
+            cam = orbitCam();
+            fly = true;
+        } else {
+            var f = forwardVec();
+            target = [cam[0] + f[0] * radius, cam[1] + f[1] * radius, cam[2] + f[2] * radius];
+            fly = false;
+        }
+        hint();
+    }
+    function lookToCenter() {
+        // re-aim at the bake's center WITHOUT moving the eye; identical
+        // math serves both modes (orbit recomputes the same cam back)
+        stopTour();
+        var eye = fly ? cam : orbitCam();
+        var c = [H.target[0], H.target[1], H.target[2]];
+        var ddx = eye[0] - c[0], ddy = eye[1] - c[1], ddz = eye[2] - c[2];
+        radius = Math.max(0.05, Math.hypot(ddx, ddy, ddz));
+        yaw = Math.atan2(ddz, ddx);
+        pitch = Math.asin(Math.max(-1, Math.min(1, ddy / radius)));
+        target = c;
+        if (fly) cam = eye;
+    }
     var pointers = new Map();
+    var panIds = new Set();
     var pinchD = 0;
+    var pinchC = null;
+    canvas.addEventListener("contextmenu", function (ev) { ev.preventDefault(); });
     canvas.addEventListener("pointerdown", function (ev) {
         stopTour();
         pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
+        if (ev.button === 2 || ev.shiftKey) panIds.add(ev.pointerId);
         canvas.setPointerCapture(ev.pointerId);
         if (pointers.size === 2) {
             var ps = Array.from(pointers.values());
             pinchD = Math.hypot(ps[0][0] - ps[1][0], ps[0][1] - ps[1][1]);
+            pinchC = [(ps[0][0] + ps[1][0]) / 2, (ps[0][1] + ps[1][1]) / 2];
         }
     });
     canvas.addEventListener("pointermove", function (ev) {
@@ -190,24 +261,88 @@ var B64 = "__B64__";
         var prev = pointers.get(ev.pointerId);
         pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
         if (pointers.size === 1) {
-            yaw += (ev.clientX - prev[0]) * 0.005;
-            pitch += (ev.clientY - prev[1]) * 0.005;
-            pitch = Math.max(-1.5, Math.min(1.5, pitch));
+            var dx = ev.clientX - prev[0], dy = ev.clientY - prev[1];
+            if (panIds.has(ev.pointerId)) {
+                pan(dx, dy);
+            } else {
+                yaw += dx * (fly ? 0.003 : 0.005);
+                pitch += dy * (fly ? 0.003 : 0.005);
+                pitch = Math.max(-1.5, Math.min(1.5, pitch));
+            }
         } else if (pointers.size === 2) {
             var ps = Array.from(pointers.values());
             var d = Math.hypot(ps[0][0] - ps[1][0], ps[0][1] - ps[1][1]);
             if (pinchD > 0) radius = Math.max(0.05, Math.min(20, radius * pinchD / (d || 1)));
             pinchD = d;
+            var c = [(ps[0][0] + ps[1][0]) / 2, (ps[0][1] + ps[1][1]) / 2];
+            if (pinchC) pan(c[0] - pinchC[0], c[1] - pinchC[1]);
+            pinchC = c;
         }
     });
-    function drop(ev) { pointers.delete(ev.pointerId); pinchD = 0; }
+    function drop(ev) { pointers.delete(ev.pointerId); panIds.delete(ev.pointerId); pinchD = 0; pinchC = null; }
     canvas.addEventListener("pointerup", drop);
     canvas.addEventListener("pointercancel", drop);
     canvas.addEventListener("wheel", function (ev) {
         stopTour();
         ev.preventDefault();
-        radius = Math.max(0.05, Math.min(20, radius * Math.exp(ev.deltaY * 0.001)));
+        var f = Math.exp(ev.deltaY * 0.001);
+        if (fly) {
+            // forward dolly along the look direction, distance-scaled
+            var fv = forwardVec();
+            var step = radius * (1 - f);
+            cam[0] += fv[0] * step; cam[1] += fv[1] * step; cam[2] += fv[2] * step;
+            return;
+        }
+        // zoom to CURSOR: the point under the pointer stays put — shift the
+        // target toward it by the applied zoom factor
+        var oldR = radius;
+        radius = Math.max(0.05, Math.min(20, radius * f));
+        var fa = radius / oldR;
+        var rect = canvas.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+            var ndcX = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+            var ndcY = 1 - ((ev.clientY - rect.top) / rect.height) * 2;
+            var halfH = Math.tan(FOV / 2) * oldR;
+            var halfW = halfH * (rect.width / rect.height);
+            var ru = rightUp(forwardVec());
+            var ox = ru[0][0] * ndcX * halfW + ru[1][0] * ndcY * halfH;
+            var oy = ru[0][1] * ndcX * halfW + ru[1][1] * ndcY * halfH;
+            var oz = ru[0][2] * ndcX * halfW + ru[1][2] * ndcY * halfH;
+            target[0] += ox * (1 - fa);
+            target[1] += oy * (1 - fa);
+            target[2] += oz * (1 - fa);
+        }
     }, { passive: false });
+    window.addEventListener("keydown", function (ev) {
+        var k = (ev.key || "").toLowerCase();
+        if (k === "1") { toggleFly(); ev.preventDefault(); return; }
+        if (k === "2") { lookToCenter(); ev.preventDefault(); return; }
+        if (ev.key === "Shift") { keys.shift = true; return; }
+        if (fly && (k === "w" || k === "a" || k === "s" || k === "d" || k === "q" || k === "e")) {
+            stopTour();
+            keys[k] = true;
+            ev.preventDefault();
+        }
+    });
+    window.addEventListener("keyup", function (ev) {
+        var k = (ev.key || "").toLowerCase();
+        if (ev.key === "Shift") { delete keys.shift; return; }
+        delete keys[k];
+    });
+    window.addEventListener("blur", function () { keys = {}; });
+    function applyFlyKeys(dt) {
+        var mv = ((keys.w ? 1 : 0) - (keys.s ? 1 : 0));
+        var ms = ((keys.d ? 1 : 0) - (keys.a ? 1 : 0));
+        var mu = ((keys.e ? 1 : 0) - (keys.q ? 1 : 0));
+        if (!mv && !ms && !mu) return;
+        var speed = 0.6 * (keys.shift ? 3 : 1) * dt;
+        var f = forwardVec();
+        var ru = rightUp(f);
+        cam[0] += (f[0] * mv + ru[0][0] * ms) * speed;
+        cam[1] += (f[1] * mv + ru[0][1] * ms + mu) * speed;
+        cam[2] += (f[2] * mv + ru[0][2] * ms) * speed;
+    }
+    hint();
     function bakedVerticalScale() {
         var declared = Number(H.yscale);
         if (Number.isFinite(declared) && declared >= 0 && declared <= 1) return declared;
@@ -310,11 +445,13 @@ var B64 = "__B64__";
             cam = [pz[0], pz[1], pz[2]];
             currentTarget = [pz[3], pz[4], pz[5]];
             lookAt(view, cam[0], cam[1], cam[2], pz[3], pz[4], pz[5]);
+        } else if (fly) {
+            applyFlyKeys(dt);
+            var fv = forwardVec();
+            currentTarget = [cam[0] + fv[0] * radius, cam[1] + fv[1] * radius, cam[2] + fv[2] * radius];
+            lookAt(view, cam[0], cam[1], cam[2], cam[0] + fv[0], cam[1] + fv[1], cam[2] + fv[2]);
         } else {
-            var cp = Math.cos(pitch);
-            cam = [target[0] + radius * cp * Math.cos(yaw),
-                   target[1] + radius * Math.sin(pitch),
-                   target[2] + radius * cp * Math.sin(yaw)];
+            cam = orbitCam();
             currentTarget = target.slice();
             lookAt(view, cam[0], cam[1], cam[2], target[0], target[1], target[2]);
         }
@@ -342,6 +479,18 @@ var B64 = "__B64__";
             mode: H.mode,
             tour: tour.mode,
             playing: tour.playing,
+            fly: fly,
+            cam: cam.slice(),
+            target: target.slice(),
+            radius: radius,
+            yaw: yaw,
+            pitch: pitch,
+            state: function () {
+                // live nav state on call — the per-frame fields above lag
+                // one rendered frame and freeze when rAF throttles
+                return { fly: fly, cam: cam.slice(), target: target.slice(),
+                         radius: radius, yaw: yaw, pitch: pitch };
+            },
             snapshotPayload: snapshotPayload
         };
         announceReady();
